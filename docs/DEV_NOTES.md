@@ -1,0 +1,23 @@
+# Development Notes
+
+## Legal and Reference Boundary
+
+- `references/HEMA` is GPLv3 and used only for high-level reference.
+- EnergyBridge implementation in this repository is independently written.
+- Do not copy source code from `references/HEMA`.
+
+## Stage-1 Scope (Current)
+
+- Build a minimal runnable local agent loop.
+- Use deterministic Python functions for business logic.
+- Use LangGraph only as orchestration.
+- Keep LLM calls optional and isolated in `energybridge/llm`.
+- No frontend, no FastAPI, no real device connection.
+
+## Current TODO
+
+- Add unit tests for skills and safety checker edge cases.
+- Expand VPP-1 adapter with stricter validation.
+- Add configurable policy profiles for different households.
+- Add regression tests for memory update behavior.
+- Prepare interfaces for real MPC integration.

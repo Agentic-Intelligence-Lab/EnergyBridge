@@ -1,42 +1,55 @@
 # EnergyBridge
 
-EnergyBridge is a multi-agent coordination framework for home–grid interaction, integrating user preferences, grid signals, and control policies into a unified decision-making system.
+EnergyBridge is a home-grid coordination agent framework that connects user preferences, grid/VPP signals, home state, control decisions, safety checks, execution, and memory logging.
 
----
+Current status: stage-1 interactive agent loop is implemented with LangGraph. It runs locally without an API key by default, and can optionally use an OpenAI-compatible API from a local .env file to generate strategy options.
 
-## Overview
+## Quick Start
 
-Modern energy systems increasingly require tight coordination between residential environments and grid-level signals (e.g., dynamic pricing, demand response, and virtual power plant coordination).    However, existing solutions are often fragmented across control systems, user interfaces, and optimization modules.
+1. Activate environment:
 
-EnergyBridge aims to provide a unified framework that:
+```bash
+cd ~/work/EnergyBridge
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate energybridge
+```
 
-- bridges **user preferences** and **physical control systems**
-- enables **adaptive decision-making under dynamic grid conditions**
-- supports **multi-agent coordination** across heterogeneous components
+2. Run interactive demo:
 
-The system is designed as a **modular coordination layer** that can be deployed in real-world home energy management scenarios and extended to larger-scale cyber-physical systems.
+```bash
+python examples/run_agent_loop.py
+```
 
----
+3. Optional LLM wrapper test (requires `.env` and `USE_LLM=true`):
 
-## Key Features
+```bash
+python examples/run_llm_test.py
+```
 
+The demo will:
 
-**Preference-Aware Decision Making**
-- Incorporates user preferences into control strategies
-- Supports dynamic and context-dependent behavior
+- load a grid signal from mock VPP-1 or custom input;
+- ask for user preference text;
+- optionally call the configured API to generate strategy options;
+- let the user choose a strategy;
+- run safety checks and mock actuation;
+- update memory and save a trajectory log.
 
-**Grid Interaction**
-- Handles time-varying signals such as RTP, TOU, and demand response events
-- Enables bidirectional interaction with grid operators or aggregators
+## Minimal Loop
 
-**Control Integration**
-- Interfaces with control modules (e.g., MPC, rule-based systems)
-- Supports safe and constrained execution
+`user_input + grid_signal + home_state`
+`-> load memory`
+`-> parse preference`
+`-> translate grid signal`
+`-> generate strategy`
+`-> user selects strategy`
+`-> run mock control`
+`-> safety validation`
+`-> mock actuation`
+`-> explanation`
+`-> memory update`
+`-> trajectory logging`
 
-**Memory & Adaptation**
-- Persistent multi user preference modeling
-- Context-aware adaptation over time
+## Reference Note
 
-**Multi-Agent Coordination**
-- Modular agents for perception, decision-making, and control
-- Extensible to multi-building or grid-level coordination
+`references/HEMA` is kept only as architecture inspiration because it is GPLv3. EnergyBridge code is implemented independently and does not copy HEMA source code.
