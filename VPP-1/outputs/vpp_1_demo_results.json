@@ -1,0 +1,1112 @@
+[
+  {
+    "mode": "invitation",
+    "task": {
+      "task_id": "INV_20260716_2679",
+      "city": "广州",
+      "source": "VPP_MANAGEMENT_PLATFORM",
+      "task_type": "INVITATION_DEMAND_RESPONSE",
+      "time_scale": "INTRADAY",
+      "trigger_reason": "REGIONAL_PEAK_LOAD",
+      "publish_time": "2026-07-16 06:00",
+      "start_time": "2026-07-16 10:00",
+      "end_time": "2026-07-16 10:30",
+      "notice_minutes": 240,
+      "duration_minutes": 30,
+      "required_capacity_kw": 27142.43,
+      "safety_margin_factor": 1.242,
+      "target_query_capacity_kw": 33710.89806,
+      "declaration_deadline": "2026-07-16 07:00",
+      "baseline_method": "邀约型需求响应基线，VPP-1 仅保留任务说明。",
+      "performance_rule": "VPP-1 只生成能力查询，不做绩效结算。",
+      "reward_description": "邀约型需求响应补偿说明，VPP-1 不计算收益。",
+      "description": "邀约型削峰需求响应任务，VPP 需要查询建筑侧资源在目标时段内可提供的负荷削减能力。"
+    },
+    "query": {
+      "query_id": "query_INV_20260716_2679_small_office_group_A",
+      "query_type": "capacity_assessment",
+      "source_task": {
+        "task_id": "INV_20260716_2679",
+        "city": "广州",
+        "source_platform": "VPP_MANAGEMENT_PLATFORM",
+        "task_type": "INVITATION_DEMAND_RESPONSE",
+        "time_scale": "INTRADAY",
+        "trigger_reason": "REGIONAL_PEAK_LOAD",
+        "publish_time": "2026-07-16 06:00",
+        "start_time": "2026-07-16 10:00",
+        "end_time": "2026-07-16 10:30",
+        "notice_minutes": 240,
+        "required_capacity_kw": 27142.43,
+        "target_query_capacity_kw": 33710.89806,
+        "description": "邀约型削峰需求响应任务，VPP 需要查询建筑侧资源在目标时段内可提供的负荷削减能力。"
+      },
+      "target_building_group": {
+        "group_id": "small_office_group_A",
+        "building_archetype": "SMALL_COMMERCIAL_HVAC",
+        "representative_mode": true,
+        "estimated_user_count": 1,
+        "main_flexible_asset": "HVAC",
+        "participation_mode": "MANUAL_CONFIRM"
+      },
+      "query_window": {
+        "start_time": "2026-07-16 10:00",
+        "end_time": "2026-07-16 10:30",
+        "duration_minutes": 30
+      },
+      "requested_assessment": {
+        "assessment_target": "available_flexibility_capacity",
+        "response_direction": "load_reduction",
+        "power_unit": "kW",
+        "energy_unit": "kWh",
+        "suggested_reduction_kw_per_building": null,
+        "required_outputs": [
+          "estimated_reduction_kw_per_building",
+          "estimated_reduction_kwh_per_building",
+          "confidence",
+          "local_comfort_upper_bound_c",
+          "expected_max_temperature_c",
+          "comfort_risk",
+          "estimated_acceptance_probability",
+          "response_reliability",
+          "minimum_reward_required_yuan",
+          "requires_user_confirmation"
+        ]
+      },
+      "query_constraints": {
+        "privacy_mode": "summary_only",
+        "allow_raw_sensor_upload": false,
+        "allow_direct_device_control": false,
+        "comfort_constraint_source": "local_building_agent",
+        "requires_user_confirmation": true
+      },
+      "local_evaluation_instruction": {
+        "instruction": "请建筑侧 Agent 在本地评估该小型办公建筑在目标时段内可提供的负荷削减能力。评估过程应调用本地建筑状态、历史运行信息、用户约束、舒适边界和物理仿真工具。当前阶段仅进行能力评估，不执行控制动作，也不直接通知用户参与。",
+        "allowed_local_tools": [
+          "building_state_reader",
+          "energyplus_engine",
+          "comfort_constraint_checker",
+          "user_profile_model"
+        ],
+        "do_not_execute_control": true,
+        "do_not_notify_user_yet": true
+      },
+      "response_schema": {
+        "expected_response_type": "FlexibilitySummary",
+        "fields": [
+          "query_id",
+          "target_group_id",
+          "estimated_reduction_kw_per_building",
+          "estimated_reduction_kwh_per_building",
+          "confidence",
+          "local_comfort_upper_bound_c",
+          "expected_max_temperature_c",
+          "comfort_risk",
+          "estimated_acceptance_probability",
+          "response_reliability",
+          "minimum_reward_required_yuan",
+          "requires_user_confirmation",
+          "privacy_note"
+        ]
+      }
+    }
+  },
+  {
+    "mode": "emergency",
+    "task": {
+      "task_id": "EMG_20260715_1000_8578",
+      "city": "深圳",
+      "source": "GRID_DISPATCH_CENTER",
+      "task_type": "EMERGENCY_DEMAND_RESPONSE",
+      "time_scale": "REAL_TIME",
+      "trigger_reason": "LOCAL_OVERLOAD",
+      "publish_time": "2026-07-15 10:00",
+      "start_time": "2026-07-15 10:30",
+      "end_time": "2026-07-15 11:00",
+      "notice_minutes": 30,
+      "duration_minutes": 30,
+      "required_capacity_kw": 71495.15,
+      "safety_margin_factor": 1.881,
+      "target_query_capacity_kw": 134482.37715,
+      "declaration_deadline": "2026-07-15 10:15",
+      "baseline_method": "紧急需求响应基线，VPP-1 仅保留任务说明。",
+      "performance_rule": "VPP-1 只生成能力查询，不做绩效结算。",
+      "reward_description": "紧急需求响应补偿说明，VPP-1 不计算收益。",
+      "description": "紧急削峰需求响应任务，VPP 需要快速查询建筑侧资源在目标时段内可提供的负荷削减能力。"
+    },
+    "query": {
+      "query_id": "query_EMG_20260715_1000_8578_small_office_group_A",
+      "query_type": "capacity_assessment",
+      "source_task": {
+        "task_id": "EMG_20260715_1000_8578",
+        "city": "深圳",
+        "source_platform": "GRID_DISPATCH_CENTER",
+        "task_type": "EMERGENCY_DEMAND_RESPONSE",
+        "time_scale": "REAL_TIME",
+        "trigger_reason": "LOCAL_OVERLOAD",
+        "publish_time": "2026-07-15 10:00",
+        "start_time": "2026-07-15 10:30",
+        "end_time": "2026-07-15 11:00",
+        "notice_minutes": 30,
+        "required_capacity_kw": 71495.15,
+        "target_query_capacity_kw": 134482.37715,
+        "description": "紧急削峰需求响应任务，VPP 需要快速查询建筑侧资源在目标时段内可提供的负荷削减能力。"
+      },
+      "target_building_group": {
+        "group_id": "small_office_group_A",
+        "building_archetype": "SMALL_COMMERCIAL_HVAC",
+        "representative_mode": true,
+        "estimated_user_count": 1,
+        "main_flexible_asset": "HVAC",
+        "participation_mode": "MANUAL_CONFIRM"
+      },
+      "query_window": {
+        "start_time": "2026-07-15 10:30",
+        "end_time": "2026-07-15 11:00",
+        "duration_minutes": 30
+      },
+      "requested_assessment": {
+        "assessment_target": "available_flexibility_capacity",
+        "response_direction": "load_reduction",
+        "power_unit": "kW",
+        "energy_unit": "kWh",
+        "suggested_reduction_kw_per_building": null,
+        "required_outputs": [
+          "estimated_reduction_kw_per_building",
+          "estimated_reduction_kwh_per_building",
+          "confidence",
+          "local_comfort_upper_bound_c",
+          "expected_max_temperature_c",
+          "comfort_risk",
+          "estimated_acceptance_probability",
+          "response_reliability",
+          "minimum_reward_required_yuan",
+          "requires_user_confirmation"
+        ]
+      },
+      "query_constraints": {
+        "privacy_mode": "summary_only",
+        "allow_raw_sensor_upload": false,
+        "allow_direct_device_control": false,
+        "comfort_constraint_source": "local_building_agent",
+        "requires_user_confirmation": true
+      },
+      "local_evaluation_instruction": {
+        "instruction": "请建筑侧 Agent 在本地评估该小型办公建筑在目标时段内可提供的负荷削减能力。评估过程应调用本地建筑状态、历史运行信息、用户约束、舒适边界和物理仿真工具。当前阶段仅进行能力评估，不执行控制动作，也不直接通知用户参与。",
+        "allowed_local_tools": [
+          "building_state_reader",
+          "energyplus_engine",
+          "comfort_constraint_checker",
+          "user_profile_model"
+        ],
+        "do_not_execute_control": true,
+        "do_not_notify_user_yet": true
+      },
+      "response_schema": {
+        "expected_response_type": "FlexibilitySummary",
+        "fields": [
+          "query_id",
+          "target_group_id",
+          "estimated_reduction_kw_per_building",
+          "estimated_reduction_kwh_per_building",
+          "confidence",
+          "local_comfort_upper_bound_c",
+          "expected_max_temperature_c",
+          "comfort_risk",
+          "estimated_acceptance_probability",
+          "response_reliability",
+          "minimum_reward_required_yuan",
+          "requires_user_confirmation",
+          "privacy_note"
+        ]
+      }
+    }
+  },
+  {
+    "mode": "invitation",
+    "task": {
+      "task_id": "INV_20260715_4681",
+      "city": "广州",
+      "source": "VPP_MANAGEMENT_PLATFORM",
+      "task_type": "INVITATION_DEMAND_RESPONSE",
+      "time_scale": "DAY_AHEAD",
+      "trigger_reason": "REGIONAL_PEAK_LOAD",
+      "publish_time": "2026-07-15 09:00",
+      "start_time": "2026-07-16 19:00",
+      "end_time": "2026-07-16 22:00",
+      "notice_minutes": 2040,
+      "duration_minutes": 180,
+      "required_capacity_kw": 36569.82,
+      "safety_margin_factor": 1.287,
+      "target_query_capacity_kw": 47065.35834,
+      "declaration_deadline": "2026-07-15 10:00",
+      "baseline_method": "邀约型需求响应基线，VPP-1 仅保留任务说明。",
+      "performance_rule": "VPP-1 只生成能力查询，不做绩效结算。",
+      "reward_description": "邀约型需求响应补偿说明，VPP-1 不计算收益。",
+      "description": "邀约型削峰需求响应任务，VPP 需要查询建筑侧资源在目标时段内可提供的负荷削减能力。"
+    },
+    "query": {
+      "query_id": "query_INV_20260715_4681_small_office_group_A",
+      "query_type": "capacity_assessment",
+      "source_task": {
+        "task_id": "INV_20260715_4681",
+        "city": "广州",
+        "source_platform": "VPP_MANAGEMENT_PLATFORM",
+        "task_type": "INVITATION_DEMAND_RESPONSE",
+        "time_scale": "DAY_AHEAD",
+        "trigger_reason": "REGIONAL_PEAK_LOAD",
+        "publish_time": "2026-07-15 09:00",
+        "start_time": "2026-07-16 19:00",
+        "end_time": "2026-07-16 22:00",
+        "notice_minutes": 2040,
+        "required_capacity_kw": 36569.82,
+        "target_query_capacity_kw": 47065.35834,
+        "description": "邀约型削峰需求响应任务，VPP 需要查询建筑侧资源在目标时段内可提供的负荷削减能力。"
+      },
+      "target_building_group": {
+        "group_id": "small_office_group_A",
+        "building_archetype": "SMALL_COMMERCIAL_HVAC",
+        "representative_mode": true,
+        "estimated_user_count": 1,
+        "main_flexible_asset": "HVAC",
+        "participation_mode": "MANUAL_CONFIRM"
+      },
+      "query_window": {
+        "start_time": "2026-07-16 19:00",
+        "end_time": "2026-07-16 22:00",
+        "duration_minutes": 180
+      },
+      "requested_assessment": {
+        "assessment_target": "available_flexibility_capacity",
+        "response_direction": "load_reduction",
+        "power_unit": "kW",
+        "energy_unit": "kWh",
+        "suggested_reduction_kw_per_building": null,
+        "required_outputs": [
+          "estimated_reduction_kw_per_building",
+          "estimated_reduction_kwh_per_building",
+          "confidence",
+          "local_comfort_upper_bound_c",
+          "expected_max_temperature_c",
+          "comfort_risk",
+          "estimated_acceptance_probability",
+          "response_reliability",
+          "minimum_reward_required_yuan",
+          "requires_user_confirmation"
+        ]
+      },
+      "query_constraints": {
+        "privacy_mode": "summary_only",
+        "allow_raw_sensor_upload": false,
+        "allow_direct_device_control": false,
+        "comfort_constraint_source": "local_building_agent",
+        "requires_user_confirmation": true
+      },
+      "local_evaluation_instruction": {
+        "instruction": "请建筑侧 Agent 在本地评估该小型办公建筑在目标时段内可提供的负荷削减能力。评估过程应调用本地建筑状态、历史运行信息、用户约束、舒适边界和物理仿真工具。当前阶段仅进行能力评估，不执行控制动作，也不直接通知用户参与。",
+        "allowed_local_tools": [
+          "building_state_reader",
+          "energyplus_engine",
+          "comfort_constraint_checker",
+          "user_profile_model"
+        ],
+        "do_not_execute_control": true,
+        "do_not_notify_user_yet": true
+      },
+      "response_schema": {
+        "expected_response_type": "FlexibilitySummary",
+        "fields": [
+          "query_id",
+          "target_group_id",
+          "estimated_reduction_kw_per_building",
+          "estimated_reduction_kwh_per_building",
+          "confidence",
+          "local_comfort_upper_bound_c",
+          "expected_max_temperature_c",
+          "comfort_risk",
+          "estimated_acceptance_probability",
+          "response_reliability",
+          "minimum_reward_required_yuan",
+          "requires_user_confirmation",
+          "privacy_note"
+        ]
+      }
+    }
+  },
+  {
+    "mode": "emergency",
+    "task": {
+      "task_id": "EMG_20260715_1200_5967",
+      "city": "深圳",
+      "source": "GRID_DISPATCH_CENTER",
+      "task_type": "EMERGENCY_DEMAND_RESPONSE",
+      "time_scale": "REAL_TIME",
+      "trigger_reason": "LOCAL_OVERLOAD",
+      "publish_time": "2026-07-15 12:00",
+      "start_time": "2026-07-15 12:30",
+      "end_time": "2026-07-15 13:30",
+      "notice_minutes": 30,
+      "duration_minutes": 60,
+      "required_capacity_kw": 95184.41,
+      "safety_margin_factor": 1.629,
+      "target_query_capacity_kw": 155055.40389000002,
+      "declaration_deadline": "2026-07-15 12:15",
+      "baseline_method": "紧急需求响应基线，VPP-1 仅保留任务说明。",
+      "performance_rule": "VPP-1 只生成能力查询，不做绩效结算。",
+      "reward_description": "紧急需求响应补偿说明，VPP-1 不计算收益。",
+      "description": "紧急削峰需求响应任务，VPP 需要快速查询建筑侧资源在目标时段内可提供的负荷削减能力。"
+    },
+    "query": {
+      "query_id": "query_EMG_20260715_1200_5967_small_office_group_A",
+      "query_type": "capacity_assessment",
+      "source_task": {
+        "task_id": "EMG_20260715_1200_5967",
+        "city": "深圳",
+        "source_platform": "GRID_DISPATCH_CENTER",
+        "task_type": "EMERGENCY_DEMAND_RESPONSE",
+        "time_scale": "REAL_TIME",
+        "trigger_reason": "LOCAL_OVERLOAD",
+        "publish_time": "2026-07-15 12:00",
+        "start_time": "2026-07-15 12:30",
+        "end_time": "2026-07-15 13:30",
+        "notice_minutes": 30,
+        "required_capacity_kw": 95184.41,
+        "target_query_capacity_kw": 155055.40389000002,
+        "description": "紧急削峰需求响应任务，VPP 需要快速查询建筑侧资源在目标时段内可提供的负荷削减能力。"
+      },
+      "target_building_group": {
+        "group_id": "small_office_group_A",
+        "building_archetype": "SMALL_COMMERCIAL_HVAC",
+        "representative_mode": true,
+        "estimated_user_count": 1,
+        "main_flexible_asset": "HVAC",
+        "participation_mode": "MANUAL_CONFIRM"
+      },
+      "query_window": {
+        "start_time": "2026-07-15 12:30",
+        "end_time": "2026-07-15 13:30",
+        "duration_minutes": 60
+      },
+      "requested_assessment": {
+        "assessment_target": "available_flexibility_capacity",
+        "response_direction": "load_reduction",
+        "power_unit": "kW",
+        "energy_unit": "kWh",
+        "suggested_reduction_kw_per_building": null,
+        "required_outputs": [
+          "estimated_reduction_kw_per_building",
+          "estimated_reduction_kwh_per_building",
+          "confidence",
+          "local_comfort_upper_bound_c",
+          "expected_max_temperature_c",
+          "comfort_risk",
+          "estimated_acceptance_probability",
+          "response_reliability",
+          "minimum_reward_required_yuan",
+          "requires_user_confirmation"
+        ]
+      },
+      "query_constraints": {
+        "privacy_mode": "summary_only",
+        "allow_raw_sensor_upload": false,
+        "allow_direct_device_control": false,
+        "comfort_constraint_source": "local_building_agent",
+        "requires_user_confirmation": true
+      },
+      "local_evaluation_instruction": {
+        "instruction": "请建筑侧 Agent 在本地评估该小型办公建筑在目标时段内可提供的负荷削减能力。评估过程应调用本地建筑状态、历史运行信息、用户约束、舒适边界和物理仿真工具。当前阶段仅进行能力评估，不执行控制动作，也不直接通知用户参与。",
+        "allowed_local_tools": [
+          "building_state_reader",
+          "energyplus_engine",
+          "comfort_constraint_checker",
+          "user_profile_model"
+        ],
+        "do_not_execute_control": true,
+        "do_not_notify_user_yet": true
+      },
+      "response_schema": {
+        "expected_response_type": "FlexibilitySummary",
+        "fields": [
+          "query_id",
+          "target_group_id",
+          "estimated_reduction_kw_per_building",
+          "estimated_reduction_kwh_per_building",
+          "confidence",
+          "local_comfort_upper_bound_c",
+          "expected_max_temperature_c",
+          "comfort_risk",
+          "estimated_acceptance_probability",
+          "response_reliability",
+          "minimum_reward_required_yuan",
+          "requires_user_confirmation",
+          "privacy_note"
+        ]
+      }
+    }
+  },
+  {
+    "mode": "invitation",
+    "task": {
+      "task_id": "INV_20260715_9815",
+      "city": "广州",
+      "source": "VPP_MANAGEMENT_PLATFORM",
+      "task_type": "INVITATION_DEMAND_RESPONSE",
+      "time_scale": "DAY_AHEAD",
+      "trigger_reason": "REGIONAL_PEAK_LOAD",
+      "publish_time": "2026-07-15 09:00",
+      "start_time": "2026-07-16 10:00",
+      "end_time": "2026-07-16 12:00",
+      "notice_minutes": 1500,
+      "duration_minutes": 120,
+      "required_capacity_kw": 54416.87,
+      "safety_margin_factor": 1.246,
+      "target_query_capacity_kw": 67803.42002,
+      "declaration_deadline": "2026-07-15 10:00",
+      "baseline_method": "邀约型需求响应基线，VPP-1 仅保留任务说明。",
+      "performance_rule": "VPP-1 只生成能力查询，不做绩效结算。",
+      "reward_description": "邀约型需求响应补偿说明，VPP-1 不计算收益。",
+      "description": "邀约型削峰需求响应任务，VPP 需要查询建筑侧资源在目标时段内可提供的负荷削减能力。"
+    },
+    "query": {
+      "query_id": "query_INV_20260715_9815_small_office_group_A",
+      "query_type": "capacity_assessment",
+      "source_task": {
+        "task_id": "INV_20260715_9815",
+        "city": "广州",
+        "source_platform": "VPP_MANAGEMENT_PLATFORM",
+        "task_type": "INVITATION_DEMAND_RESPONSE",
+        "time_scale": "DAY_AHEAD",
+        "trigger_reason": "REGIONAL_PEAK_LOAD",
+        "publish_time": "2026-07-15 09:00",
+        "start_time": "2026-07-16 10:00",
+        "end_time": "2026-07-16 12:00",
+        "notice_minutes": 1500,
+        "required_capacity_kw": 54416.87,
+        "target_query_capacity_kw": 67803.42002,
+        "description": "邀约型削峰需求响应任务，VPP 需要查询建筑侧资源在目标时段内可提供的负荷削减能力。"
+      },
+      "target_building_group": {
+        "group_id": "small_office_group_A",
+        "building_archetype": "SMALL_COMMERCIAL_HVAC",
+        "representative_mode": true,
+        "estimated_user_count": 1,
+        "main_flexible_asset": "HVAC",
+        "participation_mode": "MANUAL_CONFIRM"
+      },
+      "query_window": {
+        "start_time": "2026-07-16 10:00",
+        "end_time": "2026-07-16 12:00",
+        "duration_minutes": 120
+      },
+      "requested_assessment": {
+        "assessment_target": "available_flexibility_capacity",
+        "response_direction": "load_reduction",
+        "power_unit": "kW",
+        "energy_unit": "kWh",
+        "suggested_reduction_kw_per_building": null,
+        "required_outputs": [
+          "estimated_reduction_kw_per_building",
+          "estimated_reduction_kwh_per_building",
+          "confidence",
+          "local_comfort_upper_bound_c",
+          "expected_max_temperature_c",
+          "comfort_risk",
+          "estimated_acceptance_probability",
+          "response_reliability",
+          "minimum_reward_required_yuan",
+          "requires_user_confirmation"
+        ]
+      },
+      "query_constraints": {
+        "privacy_mode": "summary_only",
+        "allow_raw_sensor_upload": false,
+        "allow_direct_device_control": false,
+        "comfort_constraint_source": "local_building_agent",
+        "requires_user_confirmation": true
+      },
+      "local_evaluation_instruction": {
+        "instruction": "请建筑侧 Agent 在本地评估该小型办公建筑在目标时段内可提供的负荷削减能力。评估过程应调用本地建筑状态、历史运行信息、用户约束、舒适边界和物理仿真工具。当前阶段仅进行能力评估，不执行控制动作，也不直接通知用户参与。",
+        "allowed_local_tools": [
+          "building_state_reader",
+          "energyplus_engine",
+          "comfort_constraint_checker",
+          "user_profile_model"
+        ],
+        "do_not_execute_control": true,
+        "do_not_notify_user_yet": true
+      },
+      "response_schema": {
+        "expected_response_type": "FlexibilitySummary",
+        "fields": [
+          "query_id",
+          "target_group_id",
+          "estimated_reduction_kw_per_building",
+          "estimated_reduction_kwh_per_building",
+          "confidence",
+          "local_comfort_upper_bound_c",
+          "expected_max_temperature_c",
+          "comfort_risk",
+          "estimated_acceptance_probability",
+          "response_reliability",
+          "minimum_reward_required_yuan",
+          "requires_user_confirmation",
+          "privacy_note"
+        ]
+      }
+    }
+  },
+  {
+    "mode": "emergency",
+    "task": {
+      "task_id": "EMG_20260715_1400_6627",
+      "city": "深圳",
+      "source": "GRID_DISPATCH_CENTER",
+      "task_type": "EMERGENCY_DEMAND_RESPONSE",
+      "time_scale": "REAL_TIME",
+      "trigger_reason": "LOCAL_OVERLOAD",
+      "publish_time": "2026-07-15 14:00",
+      "start_time": "2026-07-15 14:30",
+      "end_time": "2026-07-15 15:30",
+      "notice_minutes": 30,
+      "duration_minutes": 60,
+      "required_capacity_kw": 31254.53,
+      "safety_margin_factor": 1.777,
+      "target_query_capacity_kw": 55539.29981,
+      "declaration_deadline": "2026-07-15 14:15",
+      "baseline_method": "紧急需求响应基线，VPP-1 仅保留任务说明。",
+      "performance_rule": "VPP-1 只生成能力查询，不做绩效结算。",
+      "reward_description": "紧急需求响应补偿说明，VPP-1 不计算收益。",
+      "description": "紧急削峰需求响应任务，VPP 需要快速查询建筑侧资源在目标时段内可提供的负荷削减能力。"
+    },
+    "query": {
+      "query_id": "query_EMG_20260715_1400_6627_small_office_group_A",
+      "query_type": "capacity_assessment",
+      "source_task": {
+        "task_id": "EMG_20260715_1400_6627",
+        "city": "深圳",
+        "source_platform": "GRID_DISPATCH_CENTER",
+        "task_type": "EMERGENCY_DEMAND_RESPONSE",
+        "time_scale": "REAL_TIME",
+        "trigger_reason": "LOCAL_OVERLOAD",
+        "publish_time": "2026-07-15 14:00",
+        "start_time": "2026-07-15 14:30",
+        "end_time": "2026-07-15 15:30",
+        "notice_minutes": 30,
+        "required_capacity_kw": 31254.53,
+        "target_query_capacity_kw": 55539.29981,
+        "description": "紧急削峰需求响应任务，VPP 需要快速查询建筑侧资源在目标时段内可提供的负荷削减能力。"
+      },
+      "target_building_group": {
+        "group_id": "small_office_group_A",
+        "building_archetype": "SMALL_COMMERCIAL_HVAC",
+        "representative_mode": true,
+        "estimated_user_count": 1,
+        "main_flexible_asset": "HVAC",
+        "participation_mode": "MANUAL_CONFIRM"
+      },
+      "query_window": {
+        "start_time": "2026-07-15 14:30",
+        "end_time": "2026-07-15 15:30",
+        "duration_minutes": 60
+      },
+      "requested_assessment": {
+        "assessment_target": "available_flexibility_capacity",
+        "response_direction": "load_reduction",
+        "power_unit": "kW",
+        "energy_unit": "kWh",
+        "suggested_reduction_kw_per_building": null,
+        "required_outputs": [
+          "estimated_reduction_kw_per_building",
+          "estimated_reduction_kwh_per_building",
+          "confidence",
+          "local_comfort_upper_bound_c",
+          "expected_max_temperature_c",
+          "comfort_risk",
+          "estimated_acceptance_probability",
+          "response_reliability",
+          "minimum_reward_required_yuan",
+          "requires_user_confirmation"
+        ]
+      },
+      "query_constraints": {
+        "privacy_mode": "summary_only",
+        "allow_raw_sensor_upload": false,
+        "allow_direct_device_control": false,
+        "comfort_constraint_source": "local_building_agent",
+        "requires_user_confirmation": true
+      },
+      "local_evaluation_instruction": {
+        "instruction": "请建筑侧 Agent 在本地评估该小型办公建筑在目标时段内可提供的负荷削减能力。评估过程应调用本地建筑状态、历史运行信息、用户约束、舒适边界和物理仿真工具。当前阶段仅进行能力评估，不执行控制动作，也不直接通知用户参与。",
+        "allowed_local_tools": [
+          "building_state_reader",
+          "energyplus_engine",
+          "comfort_constraint_checker",
+          "user_profile_model"
+        ],
+        "do_not_execute_control": true,
+        "do_not_notify_user_yet": true
+      },
+      "response_schema": {
+        "expected_response_type": "FlexibilitySummary",
+        "fields": [
+          "query_id",
+          "target_group_id",
+          "estimated_reduction_kw_per_building",
+          "estimated_reduction_kwh_per_building",
+          "confidence",
+          "local_comfort_upper_bound_c",
+          "expected_max_temperature_c",
+          "comfort_risk",
+          "estimated_acceptance_probability",
+          "response_reliability",
+          "minimum_reward_required_yuan",
+          "requires_user_confirmation",
+          "privacy_note"
+        ]
+      }
+    }
+  },
+  {
+    "mode": "invitation",
+    "task": {
+      "task_id": "INV_20260716_8141",
+      "city": "广州",
+      "source": "VPP_MANAGEMENT_PLATFORM",
+      "task_type": "INVITATION_DEMAND_RESPONSE",
+      "time_scale": "INTRADAY",
+      "trigger_reason": "POWER_SHORTAGE",
+      "publish_time": "2026-07-16 14:00",
+      "start_time": "2026-07-16 18:00",
+      "end_time": "2026-07-16 19:00",
+      "notice_minutes": 240,
+      "duration_minutes": 60,
+      "required_capacity_kw": 65521.35,
+      "safety_margin_factor": 1.352,
+      "target_query_capacity_kw": 88584.8652,
+      "declaration_deadline": "2026-07-16 15:00",
+      "baseline_method": "邀约型需求响应基线，VPP-1 仅保留任务说明。",
+      "performance_rule": "VPP-1 只生成能力查询，不做绩效结算。",
+      "reward_description": "邀约型需求响应补偿说明，VPP-1 不计算收益。",
+      "description": "邀约型削峰需求响应任务，VPP 需要查询建筑侧资源在目标时段内可提供的负荷削减能力。"
+    },
+    "query": {
+      "query_id": "query_INV_20260716_8141_small_office_group_A",
+      "query_type": "capacity_assessment",
+      "source_task": {
+        "task_id": "INV_20260716_8141",
+        "city": "广州",
+        "source_platform": "VPP_MANAGEMENT_PLATFORM",
+        "task_type": "INVITATION_DEMAND_RESPONSE",
+        "time_scale": "INTRADAY",
+        "trigger_reason": "POWER_SHORTAGE",
+        "publish_time": "2026-07-16 14:00",
+        "start_time": "2026-07-16 18:00",
+        "end_time": "2026-07-16 19:00",
+        "notice_minutes": 240,
+        "required_capacity_kw": 65521.35,
+        "target_query_capacity_kw": 88584.8652,
+        "description": "邀约型削峰需求响应任务，VPP 需要查询建筑侧资源在目标时段内可提供的负荷削减能力。"
+      },
+      "target_building_group": {
+        "group_id": "small_office_group_A",
+        "building_archetype": "SMALL_COMMERCIAL_HVAC",
+        "representative_mode": true,
+        "estimated_user_count": 1,
+        "main_flexible_asset": "HVAC",
+        "participation_mode": "MANUAL_CONFIRM"
+      },
+      "query_window": {
+        "start_time": "2026-07-16 18:00",
+        "end_time": "2026-07-16 19:00",
+        "duration_minutes": 60
+      },
+      "requested_assessment": {
+        "assessment_target": "available_flexibility_capacity",
+        "response_direction": "load_reduction",
+        "power_unit": "kW",
+        "energy_unit": "kWh",
+        "suggested_reduction_kw_per_building": null,
+        "required_outputs": [
+          "estimated_reduction_kw_per_building",
+          "estimated_reduction_kwh_per_building",
+          "confidence",
+          "local_comfort_upper_bound_c",
+          "expected_max_temperature_c",
+          "comfort_risk",
+          "estimated_acceptance_probability",
+          "response_reliability",
+          "minimum_reward_required_yuan",
+          "requires_user_confirmation"
+        ]
+      },
+      "query_constraints": {
+        "privacy_mode": "summary_only",
+        "allow_raw_sensor_upload": false,
+        "allow_direct_device_control": false,
+        "comfort_constraint_source": "local_building_agent",
+        "requires_user_confirmation": true
+      },
+      "local_evaluation_instruction": {
+        "instruction": "请建筑侧 Agent 在本地评估该小型办公建筑在目标时段内可提供的负荷削减能力。评估过程应调用本地建筑状态、历史运行信息、用户约束、舒适边界和物理仿真工具。当前阶段仅进行能力评估，不执行控制动作，也不直接通知用户参与。",
+        "allowed_local_tools": [
+          "building_state_reader",
+          "energyplus_engine",
+          "comfort_constraint_checker",
+          "user_profile_model"
+        ],
+        "do_not_execute_control": true,
+        "do_not_notify_user_yet": true
+      },
+      "response_schema": {
+        "expected_response_type": "FlexibilitySummary",
+        "fields": [
+          "query_id",
+          "target_group_id",
+          "estimated_reduction_kw_per_building",
+          "estimated_reduction_kwh_per_building",
+          "confidence",
+          "local_comfort_upper_bound_c",
+          "expected_max_temperature_c",
+          "comfort_risk",
+          "estimated_acceptance_probability",
+          "response_reliability",
+          "minimum_reward_required_yuan",
+          "requires_user_confirmation",
+          "privacy_note"
+        ]
+      }
+    }
+  },
+  {
+    "mode": "emergency",
+    "task": {
+      "task_id": "EMG_20260715_1600_6300",
+      "city": "深圳",
+      "source": "GRID_DISPATCH_CENTER",
+      "task_type": "EMERGENCY_DEMAND_RESPONSE",
+      "time_scale": "REAL_TIME",
+      "trigger_reason": "POWER_SHORTAGE",
+      "publish_time": "2026-07-15 16:00",
+      "start_time": "2026-07-15 16:30",
+      "end_time": "2026-07-15 17:00",
+      "notice_minutes": 30,
+      "duration_minutes": 30,
+      "required_capacity_kw": 81979.38,
+      "safety_margin_factor": 1.967,
+      "target_query_capacity_kw": 161253.44046,
+      "declaration_deadline": "2026-07-15 16:15",
+      "baseline_method": "紧急需求响应基线，VPP-1 仅保留任务说明。",
+      "performance_rule": "VPP-1 只生成能力查询，不做绩效结算。",
+      "reward_description": "紧急需求响应补偿说明，VPP-1 不计算收益。",
+      "description": "紧急削峰需求响应任务，VPP 需要快速查询建筑侧资源在目标时段内可提供的负荷削减能力。"
+    },
+    "query": {
+      "query_id": "query_EMG_20260715_1600_6300_small_office_group_A",
+      "query_type": "capacity_assessment",
+      "source_task": {
+        "task_id": "EMG_20260715_1600_6300",
+        "city": "深圳",
+        "source_platform": "GRID_DISPATCH_CENTER",
+        "task_type": "EMERGENCY_DEMAND_RESPONSE",
+        "time_scale": "REAL_TIME",
+        "trigger_reason": "POWER_SHORTAGE",
+        "publish_time": "2026-07-15 16:00",
+        "start_time": "2026-07-15 16:30",
+        "end_time": "2026-07-15 17:00",
+        "notice_minutes": 30,
+        "required_capacity_kw": 81979.38,
+        "target_query_capacity_kw": 161253.44046,
+        "description": "紧急削峰需求响应任务，VPP 需要快速查询建筑侧资源在目标时段内可提供的负荷削减能力。"
+      },
+      "target_building_group": {
+        "group_id": "small_office_group_A",
+        "building_archetype": "SMALL_COMMERCIAL_HVAC",
+        "representative_mode": true,
+        "estimated_user_count": 1,
+        "main_flexible_asset": "HVAC",
+        "participation_mode": "MANUAL_CONFIRM"
+      },
+      "query_window": {
+        "start_time": "2026-07-15 16:30",
+        "end_time": "2026-07-15 17:00",
+        "duration_minutes": 30
+      },
+      "requested_assessment": {
+        "assessment_target": "available_flexibility_capacity",
+        "response_direction": "load_reduction",
+        "power_unit": "kW",
+        "energy_unit": "kWh",
+        "suggested_reduction_kw_per_building": null,
+        "required_outputs": [
+          "estimated_reduction_kw_per_building",
+          "estimated_reduction_kwh_per_building",
+          "confidence",
+          "local_comfort_upper_bound_c",
+          "expected_max_temperature_c",
+          "comfort_risk",
+          "estimated_acceptance_probability",
+          "response_reliability",
+          "minimum_reward_required_yuan",
+          "requires_user_confirmation"
+        ]
+      },
+      "query_constraints": {
+        "privacy_mode": "summary_only",
+        "allow_raw_sensor_upload": false,
+        "allow_direct_device_control": false,
+        "comfort_constraint_source": "local_building_agent",
+        "requires_user_confirmation": true
+      },
+      "local_evaluation_instruction": {
+        "instruction": "请建筑侧 Agent 在本地评估该小型办公建筑在目标时段内可提供的负荷削减能力。评估过程应调用本地建筑状态、历史运行信息、用户约束、舒适边界和物理仿真工具。当前阶段仅进行能力评估，不执行控制动作，也不直接通知用户参与。",
+        "allowed_local_tools": [
+          "building_state_reader",
+          "energyplus_engine",
+          "comfort_constraint_checker",
+          "user_profile_model"
+        ],
+        "do_not_execute_control": true,
+        "do_not_notify_user_yet": true
+      },
+      "response_schema": {
+        "expected_response_type": "FlexibilitySummary",
+        "fields": [
+          "query_id",
+          "target_group_id",
+          "estimated_reduction_kw_per_building",
+          "estimated_reduction_kwh_per_building",
+          "confidence",
+          "local_comfort_upper_bound_c",
+          "expected_max_temperature_c",
+          "comfort_risk",
+          "estimated_acceptance_probability",
+          "response_reliability",
+          "minimum_reward_required_yuan",
+          "requires_user_confirmation",
+          "privacy_note"
+        ]
+      }
+    }
+  },
+  {
+    "mode": "invitation",
+    "task": {
+      "task_id": "INV_20260716_8752",
+      "city": "广州",
+      "source": "VPP_MANAGEMENT_PLATFORM",
+      "task_type": "INVITATION_DEMAND_RESPONSE",
+      "time_scale": "INTRADAY",
+      "trigger_reason": "LOCAL_OVERLOAD",
+      "publish_time": "2026-07-16 15:00",
+      "start_time": "2026-07-16 19:00",
+      "end_time": "2026-07-16 20:30",
+      "notice_minutes": 240,
+      "duration_minutes": 90,
+      "required_capacity_kw": 54618.78,
+      "safety_margin_factor": 1.273,
+      "target_query_capacity_kw": 69529.70693999999,
+      "declaration_deadline": "2026-07-16 16:00",
+      "baseline_method": "邀约型需求响应基线，VPP-1 仅保留任务说明。",
+      "performance_rule": "VPP-1 只生成能力查询，不做绩效结算。",
+      "reward_description": "邀约型需求响应补偿说明，VPP-1 不计算收益。",
+      "description": "邀约型削峰需求响应任务，VPP 需要查询建筑侧资源在目标时段内可提供的负荷削减能力。"
+    },
+    "query": {
+      "query_id": "query_INV_20260716_8752_small_office_group_A",
+      "query_type": "capacity_assessment",
+      "source_task": {
+        "task_id": "INV_20260716_8752",
+        "city": "广州",
+        "source_platform": "VPP_MANAGEMENT_PLATFORM",
+        "task_type": "INVITATION_DEMAND_RESPONSE",
+        "time_scale": "INTRADAY",
+        "trigger_reason": "LOCAL_OVERLOAD",
+        "publish_time": "2026-07-16 15:00",
+        "start_time": "2026-07-16 19:00",
+        "end_time": "2026-07-16 20:30",
+        "notice_minutes": 240,
+        "required_capacity_kw": 54618.78,
+        "target_query_capacity_kw": 69529.70693999999,
+        "description": "邀约型削峰需求响应任务，VPP 需要查询建筑侧资源在目标时段内可提供的负荷削减能力。"
+      },
+      "target_building_group": {
+        "group_id": "small_office_group_A",
+        "building_archetype": "SMALL_COMMERCIAL_HVAC",
+        "representative_mode": true,
+        "estimated_user_count": 1,
+        "main_flexible_asset": "HVAC",
+        "participation_mode": "MANUAL_CONFIRM"
+      },
+      "query_window": {
+        "start_time": "2026-07-16 19:00",
+        "end_time": "2026-07-16 20:30",
+        "duration_minutes": 90
+      },
+      "requested_assessment": {
+        "assessment_target": "available_flexibility_capacity",
+        "response_direction": "load_reduction",
+        "power_unit": "kW",
+        "energy_unit": "kWh",
+        "suggested_reduction_kw_per_building": null,
+        "required_outputs": [
+          "estimated_reduction_kw_per_building",
+          "estimated_reduction_kwh_per_building",
+          "confidence",
+          "local_comfort_upper_bound_c",
+          "expected_max_temperature_c",
+          "comfort_risk",
+          "estimated_acceptance_probability",
+          "response_reliability",
+          "minimum_reward_required_yuan",
+          "requires_user_confirmation"
+        ]
+      },
+      "query_constraints": {
+        "privacy_mode": "summary_only",
+        "allow_raw_sensor_upload": false,
+        "allow_direct_device_control": false,
+        "comfort_constraint_source": "local_building_agent",
+        "requires_user_confirmation": true
+      },
+      "local_evaluation_instruction": {
+        "instruction": "请建筑侧 Agent 在本地评估该小型办公建筑在目标时段内可提供的负荷削减能力。评估过程应调用本地建筑状态、历史运行信息、用户约束、舒适边界和物理仿真工具。当前阶段仅进行能力评估，不执行控制动作，也不直接通知用户参与。",
+        "allowed_local_tools": [
+          "building_state_reader",
+          "energyplus_engine",
+          "comfort_constraint_checker",
+          "user_profile_model"
+        ],
+        "do_not_execute_control": true,
+        "do_not_notify_user_yet": true
+      },
+      "response_schema": {
+        "expected_response_type": "FlexibilitySummary",
+        "fields": [
+          "query_id",
+          "target_group_id",
+          "estimated_reduction_kw_per_building",
+          "estimated_reduction_kwh_per_building",
+          "confidence",
+          "local_comfort_upper_bound_c",
+          "expected_max_temperature_c",
+          "comfort_risk",
+          "estimated_acceptance_probability",
+          "response_reliability",
+          "minimum_reward_required_yuan",
+          "requires_user_confirmation",
+          "privacy_note"
+        ]
+      }
+    }
+  },
+  {
+    "mode": "emergency",
+    "task": {
+      "task_id": "EMG_20260715_1800_5031",
+      "city": "深圳",
+      "source": "GRID_DISPATCH_CENTER",
+      "task_type": "EMERGENCY_DEMAND_RESPONSE",
+      "time_scale": "REAL_TIME",
+      "trigger_reason": "REGIONAL_PEAK_LOAD",
+      "publish_time": "2026-07-15 18:00",
+      "start_time": "2026-07-15 18:30",
+      "end_time": "2026-07-15 19:00",
+      "notice_minutes": 30,
+      "duration_minutes": 30,
+      "required_capacity_kw": 170928.26,
+      "safety_margin_factor": 1.776,
+      "target_query_capacity_kw": 303568.58976,
+      "declaration_deadline": "2026-07-15 18:15",
+      "baseline_method": "紧急需求响应基线，VPP-1 仅保留任务说明。",
+      "performance_rule": "VPP-1 只生成能力查询，不做绩效结算。",
+      "reward_description": "紧急需求响应补偿说明，VPP-1 不计算收益。",
+      "description": "紧急削峰需求响应任务，VPP 需要快速查询建筑侧资源在目标时段内可提供的负荷削减能力。"
+    },
+    "query": {
+      "query_id": "query_EMG_20260715_1800_5031_small_office_group_A",
+      "query_type": "capacity_assessment",
+      "source_task": {
+        "task_id": "EMG_20260715_1800_5031",
+        "city": "深圳",
+        "source_platform": "GRID_DISPATCH_CENTER",
+        "task_type": "EMERGENCY_DEMAND_RESPONSE",
+        "time_scale": "REAL_TIME",
+        "trigger_reason": "REGIONAL_PEAK_LOAD",
+        "publish_time": "2026-07-15 18:00",
+        "start_time": "2026-07-15 18:30",
+        "end_time": "2026-07-15 19:00",
+        "notice_minutes": 30,
+        "required_capacity_kw": 170928.26,
+        "target_query_capacity_kw": 303568.58976,
+        "description": "紧急削峰需求响应任务，VPP 需要快速查询建筑侧资源在目标时段内可提供的负荷削减能力。"
+      },
+      "target_building_group": {
+        "group_id": "small_office_group_A",
+        "building_archetype": "SMALL_COMMERCIAL_HVAC",
+        "representative_mode": true,
+        "estimated_user_count": 1,
+        "main_flexible_asset": "HVAC",
+        "participation_mode": "MANUAL_CONFIRM"
+      },
+      "query_window": {
+        "start_time": "2026-07-15 18:30",
+        "end_time": "2026-07-15 19:00",
+        "duration_minutes": 30
+      },
+      "requested_assessment": {
+        "assessment_target": "available_flexibility_capacity",
+        "response_direction": "load_reduction",
+        "power_unit": "kW",
+        "energy_unit": "kWh",
+        "suggested_reduction_kw_per_building": null,
+        "required_outputs": [
+          "estimated_reduction_kw_per_building",
+          "estimated_reduction_kwh_per_building",
+          "confidence",
+          "local_comfort_upper_bound_c",
+          "expected_max_temperature_c",
+          "comfort_risk",
+          "estimated_acceptance_probability",
+          "response_reliability",
+          "minimum_reward_required_yuan",
+          "requires_user_confirmation"
+        ]
+      },
+      "query_constraints": {
+        "privacy_mode": "summary_only",
+        "allow_raw_sensor_upload": false,
+        "allow_direct_device_control": false,
+        "comfort_constraint_source": "local_building_agent",
+        "requires_user_confirmation": true
+      },
+      "local_evaluation_instruction": {
+        "instruction": "请建筑侧 Agent 在本地评估该小型办公建筑在目标时段内可提供的负荷削减能力。评估过程应调用本地建筑状态、历史运行信息、用户约束、舒适边界和物理仿真工具。当前阶段仅进行能力评估，不执行控制动作，也不直接通知用户参与。",
+        "allowed_local_tools": [
+          "building_state_reader",
+          "energyplus_engine",
+          "comfort_constraint_checker",
+          "user_profile_model"
+        ],
+        "do_not_execute_control": true,
+        "do_not_notify_user_yet": true
+      },
+      "response_schema": {
+        "expected_response_type": "FlexibilitySummary",
+        "fields": [
+          "query_id",
+          "target_group_id",
+          "estimated_reduction_kw_per_building",
+          "estimated_reduction_kwh_per_building",
+          "confidence",
+          "local_comfort_upper_bound_c",
+          "expected_max_temperature_c",
+          "comfort_risk",
+          "estimated_acceptance_probability",
+          "response_reliability",
+          "minimum_reward_required_yuan",
+          "requires_user_confirmation",
+          "privacy_note"
+        ]
+      }
+    }
+  }
+]
