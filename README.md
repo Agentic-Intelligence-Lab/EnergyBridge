@@ -21,22 +21,22 @@ The system is designed as a **modular coordination layer** that can be deployed 
 ## Key Features
 
 
-- **Preference-Aware Decision Making**
+**Preference-Aware Decision Making**
 - Incorporates user preferences into control strategies
 - Supports dynamic and context-dependent behavior
 
-- **Grid Interaction**
+**Grid Interaction**
 - Handles time-varying signals such as RTP, TOU, and demand response events
 - Enables bidirectional interaction with grid operators or aggregators
 
-- **Control Integration**
+**Control Integration**
 - Interfaces with control modules (e.g., MPC, rule-based systems)
 - Supports safe and constrained execution
 
-- **Memory & Adaptation**
+**Memory & Adaptation**
 - Persistent multi user preference modeling
 - Context-aware adaptation over time
 
-- **Multi-Agent Coordination**
+**Multi-Agent Coordination**
 - Modular agents for perception, decision-making, and control
 - Extensible to multi-building or grid-level coordination
