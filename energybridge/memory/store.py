@@ -15,6 +15,12 @@ def _default_memory() -> dict:
     }
 
 
+def _running_average(previous_value: float | None, current_value: float, count: int) -> float:
+    if previous_value is None:
+        return round(current_value, 3)
+    return round(((previous_value * count) + current_value) / (count + 1), 3)
+
+
 def load_memory(path: str = "logs/memory.json") -> dict:
     memory_path = Path(path)
     if not memory_path.exists():
@@ -44,13 +50,35 @@ def update_memory(memory: dict, episode: dict) -> dict:
 
     user_preferences = episode.get("user_preferences", {})
     if user_preferences:
-        updated["stable_preferences"].update(
-            {
-                "preferred_temp_min": user_preferences.get("preferred_temp_min"),
-                "preferred_temp_max": user_preferences.get("preferred_temp_max"),
-                "allow_temp_drift": user_preferences.get("allow_temp_drift"),
-            }
-        )
+        stable_preferences = updated["stable_preferences"]
+        observation_count = int(stable_preferences.get("observation_count", 0) or 0)
+
+        for field in [
+            "comfort_priority",
+            "cost_priority",
+            "grid_priority",
+            "preferred_temp_min",
+            "preferred_temp_max",
+        ]:
+            current_value = user_preferences.get(field)
+            if current_value is None:
+                continue
+            stable_preferences[field] = _running_average(
+                stable_preferences.get(field),
+                float(current_value),
+                observation_count,
+            )
+
+        for field in ["allow_pre_cooling", "allow_temp_drift"]:
+            current_value = bool(user_preferences.get(field, False))
+            true_count_key = f"{field}_true_count"
+            true_count = int(stable_preferences.get(true_count_key, 0) or 0)
+            if current_value:
+                true_count += 1
+            stable_preferences[true_count_key] = true_count
+            stable_preferences[field] = true_count >= ((observation_count + 1) / 2)
+
+        stable_preferences["observation_count"] = observation_count + 1
 
     updated["episodic_logs"].append(episode)
     updated["episodic_logs"] = updated["episodic_logs"][-50:]

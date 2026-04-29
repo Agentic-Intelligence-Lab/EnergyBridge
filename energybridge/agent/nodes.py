@@ -7,12 +7,13 @@ from typing import Any
 from energybridge.control.mock_actuator import execute_control_plan
 from energybridge.control.fallback_controller import fallback_control_plan
 from energybridge.control.mock_mpc import run_mock_mpc
+from energybridge.evaluation.metrics import summarize_run
 from energybridge.control.safety_checker import validate_safety
 from energybridge.evaluation.logger import build_trajectory_log_path, save_trajectory
 from energybridge.memory.store import load_memory, save_memory, update_memory
 from energybridge.skills.explanation_generator import generate_explanation
 from energybridge.skills.grid_signal_translator import translate_grid_signal
-from energybridge.skills.preference_parser import parse_user_preference
+from energybridge.skills.preference_parser import merge_preferences_with_memory, parse_user_preference
 from energybridge.skills.strategy_generator import generate_candidate_strategy
 
 
@@ -25,13 +26,15 @@ def _append_trajectory(
 
 
 def node_load_memory(state: dict[str, Any]) -> dict[str, Any]:
-    memory = load_memory()
+    memory_path = state.get("memory_path", "logs/memory.json")
+    memory = load_memory(memory_path)
     output = {"memory_loaded": True, "episodic_count": len(memory.get("episodic_logs", []))}
     return {"memory": memory, "trajectory": _append_trajectory(state, "load_memory", output)}
 
 
 def node_parse_preference(state: dict[str, Any]) -> dict[str, Any]:
-    prefs = parse_user_preference(state.get("user_input", ""))
+    parsed = parse_user_preference(state.get("user_input", ""))
+    prefs = merge_preferences_with_memory(parsed, state.get("memory", {}))
     return {
         "user_preferences": prefs,
         "trajectory": _append_trajectory(state, "parse_preference", prefs),
@@ -143,22 +146,38 @@ def node_explanation(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def node_metrics(state: dict[str, Any]) -> dict[str, Any]:
+    metrics = summarize_run(state)
+    return {
+        "metrics": metrics,
+        "trajectory": _append_trajectory(state, "metrics", metrics),
+    }
+
+
 def node_memory_update(state: dict[str, Any]) -> dict[str, Any]:
-    memory = state.get("memory", load_memory())
+    memory_path = state.get("memory_path", "logs/memory.json")
+    memory = state.get("memory", load_memory(memory_path))
     episode = {
+        "evaluation_user_id": state.get("evaluation_user_id", ""),
         "user_input": state.get("user_input", ""),
         "grid_signal": state.get("grid_signal", {}),
+        "grid_signal_source": state.get("grid_signal_source", ""),
+        "vpp_task": state.get("vpp_task", {}),
+        "vpp_query": state.get("vpp_query", {}),
         "user_preferences": state.get("user_preferences", {}),
         "strategy_options": state.get("strategy_options", []),
         "candidate_strategy": state.get("candidate_strategy", {}),
         "user_choice": state.get("user_choice", {}),
+        "user_feedback": state.get("user_feedback", {}),
+        "llm_metrics": state.get("llm_metrics", {}),
         "control_plan": state.get("control_plan", {}),
         "safety_report": state.get("safety_report", {}),
         "execution_result": state.get("execution_result", {}),
+        "metrics": state.get("metrics", {}),
         "final_response": state.get("final_response", ""),
     }
     updated_memory = update_memory(memory, episode)
-    save_memory(updated_memory)
+    save_memory(updated_memory, memory_path)
     output = {"memory_saved": True, "episodic_count": len(updated_memory.get("episodic_logs", []))}
     return {
         "memory": updated_memory,
@@ -167,7 +186,8 @@ def node_memory_update(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def node_logging(state: dict[str, Any]) -> dict[str, Any]:
-    log_path = build_trajectory_log_path()
+    log_dir = state.get("log_dir", "logs")
+    log_path = build_trajectory_log_path(log_dir=log_dir)
     output = {"trajectory_log_path": log_path}
     updated_trajectory = _append_trajectory(state, "logging", output)
     final_state = dict(state)

@@ -8,6 +8,9 @@ class EnergyBridgeState(TypedDict, total=False):
     grid_signal: dict[str, Any]
     home_state: dict[str, Any]
     grid_signal_source: str
+    memory_path: str
+    log_dir: str
+    evaluation_user_id: str
     vpp_task: dict[str, Any]
     vpp_query: dict[str, Any]
 

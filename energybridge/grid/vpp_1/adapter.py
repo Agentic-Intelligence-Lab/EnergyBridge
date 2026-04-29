@@ -77,6 +77,7 @@ def adapt_vpp1_result_to_grid_signal(
         "type": event_type,
         "start_time": str(query.get("query_window", {}).get("start_time", task.get("start_time", ""))),
         "end_time": str(query.get("query_window", {}).get("end_time", task.get("end_time", ""))),
+        "duration_minutes": int(query.get("query_window", {}).get("duration_minutes", task.get("duration_minutes", 60)) or 60),
         "target_reduction_kw": local_target_reduction_kw,
         "price_level": price_level,
         "vpp_task_id": str(task.get("task_id", "")),

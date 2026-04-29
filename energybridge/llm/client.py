@@ -6,12 +6,23 @@ import time
 
 from openai import OpenAI
 
-from energybridge.utils.config import load_llm_config
+from energybridge.utils.config import LLMConfig, load_llm_config
 
 
 class LLMClient:
-    def __init__(self) -> None:
-        self.config = load_llm_config()
+    def __init__(
+        self,
+        config: LLMConfig | None = None,
+        *,
+        config_prefix: str = "LLM",
+        use_key: str = "USE_LLM",
+        fallback_prefix: str | None = None,
+    ) -> None:
+        self.config = config or load_llm_config(
+            prefix=config_prefix,
+            use_key=use_key,
+            fallback_prefix=fallback_prefix,
+        )
         if self.config.provider != "openai_compatible":
             raise ValueError(
                 "Unsupported LLM_PROVIDER for now. Use 'openai_compatible'."

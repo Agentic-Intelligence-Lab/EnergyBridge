@@ -11,8 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from energybridge.agent.graph import build_energybridge_graph
-from energybridge.grid.vpp_1.adapter import adapt_vpp1_signal
-from energybridge.grid.vpp_1.mock_signal import get_mock_vpp1_raw_signal
+from energybridge.grid.vpp_1.adapter import adapt_vpp1_result_to_grid_signal, load_vpp1_dispatch
 from energybridge.llm.strategy_advisor import generate_strategy_options
 from energybridge.skills.grid_signal_translator import translate_grid_signal
 from energybridge.skills.preference_parser import parse_user_preference
@@ -25,31 +24,16 @@ def prompt_with_default(prompt: str, default: str) -> str:
     return value or default
 
 
-def get_demo_grid_signal() -> tuple[dict, str]:
-    print("=== Grid Signal Source ===")
-    print("1. Use mock VPP-1 signal")
-    print("2. Enter a custom simple grid signal")
-    selection = input("Choose source [1]: ").strip() or "1"
+def get_demo_grid_signal(home_state: dict) -> tuple[dict, dict, dict, str]:
+    print("=== VPP-1 Task Mode ===")
+    print("1. invitation")
+    print("2. emergency")
+    selection = input("Choose VPP-1 mode [1]: ").strip() or "1"
+    mode = "emergency" if selection == "2" else "invitation"
 
-    if selection == "2":
-        signal_type = prompt_with_default("Signal type", "DR_EVENT")
-        start_time = prompt_with_default("Start time", "18:00")
-        end_time = prompt_with_default("End time", "19:00")
-        target_reduction_kw = float(prompt_with_default("Target reduction kW", "0.5"))
-        price_level = prompt_with_default("Price level", "high")
-        return (
-            {
-                "type": signal_type,
-                "start_time": start_time,
-                "end_time": end_time,
-                "target_reduction_kw": target_reduction_kw,
-                "price_level": price_level,
-            },
-            "custom_cli",
-        )
-
-    raw_signal = get_mock_vpp1_raw_signal()
-    return adapt_vpp1_signal(raw_signal), "mock_vpp_1"
+    vpp_result = load_vpp1_dispatch(mode=mode)
+    grid_signal, vpp_task, vpp_query = adapt_vpp1_result_to_grid_signal(vpp_result, home_state)
+    return grid_signal, vpp_task, vpp_query, f"vpp_1:{mode}"
 
 
 def build_fallback_strategy_options(base_strategy: dict) -> list[dict]:
@@ -121,19 +105,35 @@ def choose_strategy(strategy_options: list[dict]) -> tuple[dict, dict]:
         print("Invalid choice. Please enter a valid strategy number.")
 
 
+def collect_user_feedback() -> dict:
+    print()
+    print("=== User Feedback ===")
+    print("Rate your expected satisfaction with the selected strategy.")
+
+    while True:
+        raw_score = input("Satisfaction score [1-5]: ").strip()
+        if raw_score.isdigit() and 1 <= int(raw_score) <= 5:
+            score = int(raw_score)
+            break
+        print("Invalid score. Please enter an integer from 1 to 5.")
+
+    labels = {
+        1: "very_dissatisfied",
+        2: "dissatisfied",
+        3: "neutral",
+        4: "satisfied",
+        5: "very_satisfied",
+    }
+    comment = input("Optional feedback comment: ").strip()
+    return {
+        "satisfaction_score": score,
+        "satisfaction_label": labels[score],
+        "comment": comment,
+    }
+
+
 def main() -> None:
     app = build_energybridge_graph()
-
-    grid_signal, grid_signal_source = get_demo_grid_signal()
-    print()
-    print("Detected grid signal:")
-    print(json.dumps(grid_signal, ensure_ascii=False, indent=2))
-
-    print()
-    user_input = prompt_with_default(
-        "Describe your preference",
-        "我希望尽量舒服，但如果电网有需求，也可以短时间配合削峰。",
-    )
 
     home_state = {
         "indoor_temp": 25.8,
@@ -142,6 +142,23 @@ def main() -> None:
         "hvac_power_kw": 2.2,
         "occupancy": True,
     }
+
+    grid_signal, vpp_task, vpp_query, grid_signal_source = get_demo_grid_signal(home_state)
+    print()
+    print("Detected VPP-1 task:")
+    print(json.dumps(vpp_task, ensure_ascii=False, indent=2))
+    print()
+    print("Translated VPP-1 query:")
+    print(json.dumps(vpp_query, ensure_ascii=False, indent=2))
+    print()
+    print("Derived EnergyBridge grid signal:")
+    print(json.dumps(grid_signal, ensure_ascii=False, indent=2))
+
+    print()
+    user_input = prompt_with_default(
+        "Describe your preference",
+        "我希望尽量舒服，但如果电网有需求，也可以短时间配合削峰。",
+    )
 
     user_preferences = parse_user_preference(user_input)
     translated_grid_signal = translate_grid_signal(grid_signal)
@@ -153,13 +170,22 @@ def main() -> None:
 
     strategy_options = build_fallback_strategy_options(base_strategy)
     llm_config = load_llm_config()
+    llm_metrics = {
+        "used": False,
+        "provider": llm_config.provider,
+        "model": "not_used",
+        "latency_seconds": 0.0,
+        "token_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+    }
     if llm_config.use_llm:
         try:
-            strategy_options = generate_strategy_options(
+            strategy_options, llm_metrics = generate_strategy_options(
                 context={
                     "user_input": user_input,
                     "user_preferences": user_preferences,
                     "grid_signal": grid_signal,
+                    "vpp_task": vpp_task,
+                    "vpp_query": vpp_query,
                     "translated_grid_signal": translated_grid_signal,
                     "home_state": home_state,
                     "fallback_strategy": base_strategy,
@@ -171,17 +197,22 @@ def main() -> None:
             print(f"LLM strategy generation failed, falling back to deterministic options: {exc}")
 
     selected_strategy, user_choice = choose_strategy(strategy_options)
+    user_feedback = collect_user_feedback()
 
     initial_state = {
         "user_input": user_input,
         "grid_signal": grid_signal,
         "grid_signal_source": grid_signal_source,
+        "vpp_task": vpp_task,
+        "vpp_query": vpp_query,
         "home_state": home_state,
         "user_preferences": user_preferences,
         "translated_grid_signal": translated_grid_signal,
         "strategy_options": strategy_options,
         "candidate_strategy": selected_strategy,
         "user_choice": user_choice,
+        "user_feedback": user_feedback,
+        "llm_metrics": llm_metrics,
         "trajectory": [],
     }
 
@@ -202,6 +233,10 @@ def main() -> None:
 
     print("=== Execution Result ===")
     print(json.dumps(result.get("execution_result", {}), ensure_ascii=False, indent=2))
+    print()
+
+    print("=== Metrics ===")
+    print(json.dumps(result.get("metrics", {}), ensure_ascii=False, indent=2))
     print()
 
     print("=== Trajectory Steps ===")

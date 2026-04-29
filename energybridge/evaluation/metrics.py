@@ -1,5 +1,7 @@
 """Minimal metrics utilities for the first-stage demo."""
 
+from __future__ import annotations
+
 
 def summarize_episode(episode: dict) -> dict:
     control_plan = episode.get("control_plan", {})
@@ -20,6 +22,7 @@ def summarize_run(state: dict) -> dict:
     user_feedback = state.get("user_feedback", {})
     control_plan = state.get("control_plan", {})
     translated_grid_signal = state.get("translated_grid_signal", {})
+    raw_grid_signal = state.get("grid_signal", {})
     safety_report = state.get("safety_report", {})
     duration_hours = float(control_plan.get("duration_minutes", 0) or 0) / 60.0
 
@@ -42,11 +45,78 @@ def summarize_run(state: dict) -> dict:
         "expected_reduction_kw": round(expected_reduction_kw, 3),
         "local_target_reduction_kw": round(local_target_reduction_kw, 3),
         "meets_vpp_requirement": expected_reduction_kw >= local_target_reduction_kw,
-        "vpp_requirement_basis": translated_grid_signal.get(
+        "vpp_requirement_basis": raw_grid_signal.get(
             "vpp_local_target_basis",
             "local_grid_signal_target_reduction_kw",
         ),
         "safety_ok": bool(safety_report.get("safe", False)),
         "api_used": bool(llm_metrics.get("used", False)),
         "llm_model": llm_metrics.get("model", "not_used"),
+        "vpp_task_id": raw_grid_signal.get("vpp_task_id", ""),
+        "vpp_query_id": raw_grid_signal.get("vpp_query_id", ""),
+    }
+
+
+def learning_score(persona_preferences: dict, learned_preferences: dict) -> dict:
+    components: list[float] = []
+
+    for field in ["comfort_priority", "cost_priority", "grid_priority"]:
+        target = float(persona_preferences.get(field, 0.0) or 0.0)
+        learned = float(learned_preferences.get(field, 0.0) or 0.0)
+        components.append(max(0.0, 1.0 - abs(target - learned)))
+
+    for field in ["preferred_temp_min", "preferred_temp_max"]:
+        target = float(persona_preferences.get(field, 0.0) or 0.0)
+        learned = float(learned_preferences.get(field, 0.0) or 0.0)
+        components.append(max(0.0, 1.0 - min(abs(target - learned) / 4.0, 1.0)))
+
+    for field in ["allow_pre_cooling", "allow_temp_drift"]:
+        target = bool(persona_preferences.get(field, False))
+        learned = bool(learned_preferences.get(field, False))
+        components.append(1.0 if target == learned else 0.0)
+
+    return {
+        "preference_learning_score": round(sum(components) / len(components), 3) if components else 0.0,
+        "persona_stable_preferences": persona_preferences,
+        "learned_stable_preferences": learned_preferences,
+    }
+
+
+def aggregate_roleplay_summaries(summaries: list[dict]) -> dict:
+    if not summaries:
+        return {
+            "user_count": 0,
+            "average_learning_score": 0.0,
+            "min_learning_score": 0.0,
+            "max_learning_score": 0.0,
+            "average_satisfaction_score": 0.0,
+            "vpp_requirement_meet_rate": 0.0,
+            "average_api_latency_seconds": 0.0,
+        }
+
+    learning_scores = [
+        float(summary.get("learning_summary", {}).get("preference_learning_score", 0.0) or 0.0)
+        for summary in summaries
+    ]
+    satisfaction_scores: list[float] = []
+    vpp_meets: list[bool] = []
+    latencies: list[float] = []
+
+    for summary in summaries:
+        for turn in summary.get("turn_overview", []):
+            if turn.get("satisfaction_score") is not None:
+                satisfaction_scores.append(float(turn["satisfaction_score"]))
+            if turn.get("meets_vpp_requirement") is not None:
+                vpp_meets.append(bool(turn["meets_vpp_requirement"]))
+            if turn.get("api_latency_seconds") is not None:
+                latencies.append(float(turn["api_latency_seconds"]))
+
+    return {
+        "user_count": len(summaries),
+        "average_learning_score": round(sum(learning_scores) / len(learning_scores), 3),
+        "min_learning_score": round(min(learning_scores), 3),
+        "max_learning_score": round(max(learning_scores), 3),
+        "average_satisfaction_score": round(sum(satisfaction_scores) / len(satisfaction_scores), 3) if satisfaction_scores else 0.0,
+        "vpp_requirement_meet_rate": round(sum(vpp_meets) / len(vpp_meets), 3) if vpp_meets else 0.0,
+        "average_api_latency_seconds": round(sum(latencies) / len(latencies), 3) if latencies else 0.0,
     }

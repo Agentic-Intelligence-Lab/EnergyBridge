@@ -23,6 +23,7 @@ def translate_grid_signal(grid_signal: dict) -> dict:
         "target_reduction_kw": target_reduction_kw,
         "start_time": str(signal.get("start_time", "")),
         "end_time": str(signal.get("end_time", "")),
+        "duration_minutes": int(signal.get("duration_minutes", 60) or 60),
         "control_intent": control_intent,
         "urgency": urgency,
     }

@@ -61,6 +61,32 @@ def _normalize_option(option: dict, fallback_strategy: dict, index: int) -> dict
     }
 
 
+def _enforce_load_reduction_guardrails(
+    normalized_option: dict,
+    fallback_strategy: dict,
+    context: dict,
+) -> dict:
+    home_state = context.get("home_state", {})
+    translated_grid_signal = context.get("translated_grid_signal", {})
+    current_setpoint = float(home_state.get("hvac_setpoint", 25.0) or 25.0)
+    control_intent = str(translated_grid_signal.get("control_intent", "normal_operation"))
+
+    if control_intent in {"reduce_load", "cost_saving"}:
+        recommended_setpoint = float(normalized_option.get("recommended_setpoint", current_setpoint))
+        if recommended_setpoint < current_setpoint:
+            normalized_option["recommended_setpoint"] = round(
+                max(current_setpoint, float(fallback_strategy.get("recommended_setpoint", current_setpoint))),
+                2,
+            )
+            rationale = list(normalized_option.get("rationale", []))
+            rationale.append(
+                "Setpoint was adjusted upward to avoid increasing HVAC load during a load-reduction event."
+            )
+            normalized_option["rationale"] = rationale
+
+    return normalized_option
+
+
 def generate_strategy_options(
     context: dict,
     fallback_strategy: dict,
@@ -77,7 +103,11 @@ def generate_strategy_options(
         raise ValueError("LLM did not return a non-empty strategy option list.")
 
     normalized_options = [
-        _normalize_option(option, fallback_strategy, index)
+        _enforce_load_reduction_guardrails(
+            _normalize_option(option, fallback_strategy, index),
+            fallback_strategy,
+            context,
+        )
         for index, option in enumerate(raw_options[:option_count], start=1)
         if isinstance(option, dict)
     ]
