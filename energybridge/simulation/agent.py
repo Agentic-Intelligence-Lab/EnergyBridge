@@ -9,7 +9,7 @@ from energybridge.control.fallback_controller import fallback_control_plan
 from energybridge.control.mock_mpc import run_mock_mpc
 from energybridge.control.safety_checker import validate_safety
 from energybridge.llm.strategy_advisor import generate_strategy_options
-from energybridge.skills.grid_signal_translator import translate_grid_signal
+from energybridge.skills.grid_signal_translator import translate_vpp_context_to_grid_demand
 from energybridge.skills.preference_parser import merge_preferences_with_memory, parse_user_preference
 from energybridge.skills.strategy_generator import generate_candidate_strategy
 from energybridge.utils.config import load_llm_config
@@ -73,7 +73,7 @@ class AgentSimulator:
         scenario: dict,
     ) -> dict:
         user_preferences = self.parse_preferences(user_input, memory_snapshot)
-        translated_grid_signal = translate_grid_signal(scenario["grid_signal"])
+        translated_grid_signal = translate_vpp_context_to_grid_demand(scenario["vpp_context"])
         base_strategy = generate_candidate_strategy(
             user_preferences=user_preferences,
             translated_grid_signal=translated_grid_signal,
@@ -97,9 +97,8 @@ class AgentSimulator:
                         "turn_index": turn_index,
                         "user_input": user_input,
                         "user_preferences": user_preferences,
-                        "grid_signal": scenario["grid_signal"],
-                        "vpp_task": scenario["vpp_task"],
-                        "vpp_query": scenario["vpp_query"],
+                        "grid_demand": scenario["grid_demand"],
+                        "vpp_context": scenario.get("vpp_context", {}),
                         "translated_grid_signal": translated_grid_signal,
                         "home_state": scenario["home_state"],
                         "fallback_strategy": base_strategy,
@@ -168,10 +167,9 @@ class AgentSimulator:
             "memory_path": memory_path,
             "log_dir": log_dir,
             "user_input": user_input,
-            "grid_signal": scenario["grid_signal"],
-            "grid_signal_source": scenario["grid_signal_source"],
-            "vpp_task": scenario["vpp_task"],
-            "vpp_query": scenario["vpp_query"],
+            "grid_demand": scenario["grid_demand"],
+            "grid_demand_source": scenario["grid_demand_source"],
+            "vpp_context": scenario.get("vpp_context", {}),
             "home_state": deepcopy(scenario["home_state"]),
             "user_preferences": prepared["user_preferences"],
             "translated_grid_signal": prepared["translated_grid_signal"],

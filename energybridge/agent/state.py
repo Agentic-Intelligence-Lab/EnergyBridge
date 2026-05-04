@@ -5,14 +5,13 @@ from typing import Any, TypedDict
 
 class EnergyBridgeState(TypedDict, total=False):
     user_input: str
-    grid_signal: dict[str, Any]
+    grid_demand: dict[str, Any]
     home_state: dict[str, Any]
-    grid_signal_source: str
+    grid_demand_source: str
     memory_path: str
     log_dir: str
     evaluation_user_id: str
-    vpp_task: dict[str, Any]
-    vpp_query: dict[str, Any]
+    vpp_context: dict[str, Any]
 
     user_preferences: dict[str, Any]
     translated_grid_signal: dict[str, Any]

@@ -22,7 +22,7 @@ def summarize_run(state: dict) -> dict:
     user_feedback = state.get("user_feedback", {})
     control_plan = state.get("control_plan", {})
     translated_grid_signal = state.get("translated_grid_signal", {})
-    raw_grid_signal = state.get("grid_signal", {})
+    vpp_context = state.get("vpp_context", {})
     safety_report = state.get("safety_report", {})
     duration_hours = float(control_plan.get("duration_minutes", 0) or 0) / 60.0
 
@@ -31,7 +31,10 @@ def summarize_run(state: dict) -> dict:
     baseline_power_kw = float(state.get("home_state", {}).get("hvac_power_kw", 0.0) or 0.0)
     baseline_energy_kwh = round(baseline_power_kw * duration_hours, 3)
     expected_reduction_kw = float(control_plan.get("estimated_reduction_kw", 0.0) or 0.0)
-    local_target_reduction_kw = float(translated_grid_signal.get("target_reduction_kw", 0.0) or 0.0)
+    total_required_capacity_kw = float(translated_grid_signal.get("total_required_capacity_kw", 0.0) or 0.0)
+    capacity_scope = str(translated_grid_signal.get("capacity_scope", "upstream_total_capacity"))
+    control_intent = str(translated_grid_signal.get("control_intent", "normal_operation"))
+    response_alignment = control_intent in {"reduce_load", "cost_saving"} and expected_reduction_kw > 0.0
 
     return {
         "api_latency_seconds": round(float(llm_metrics.get("latency_seconds", 0.0) or 0.0), 3),
@@ -43,17 +46,14 @@ def summarize_run(state: dict) -> dict:
         "baseline_energy_kwh": baseline_energy_kwh,
         "expected_energy_saving_kwh": round(max(0.0, baseline_energy_kwh - expected_energy_kwh), 3),
         "expected_reduction_kw": round(expected_reduction_kw, 3),
-        "local_target_reduction_kw": round(local_target_reduction_kw, 3),
-        "meets_vpp_requirement": expected_reduction_kw >= local_target_reduction_kw,
-        "vpp_requirement_basis": raw_grid_signal.get(
-            "vpp_local_target_basis",
-            "local_grid_signal_target_reduction_kw",
-        ),
+        "reference_required_capacity_kw": round(total_required_capacity_kw, 3),
+        "capacity_scope": capacity_scope,
+        "meets_vpp_requirement": response_alignment,
         "safety_ok": bool(safety_report.get("safe", False)),
         "api_used": bool(llm_metrics.get("used", False)),
         "llm_model": llm_metrics.get("model", "not_used"),
-        "vpp_task_id": raw_grid_signal.get("vpp_task_id", ""),
-        "vpp_query_id": raw_grid_signal.get("vpp_query_id", ""),
+        "vpp_task_id": vpp_context.get("vpp_task_id", ""),
+        "vpp_query_id": vpp_context.get("vpp_query_id", ""),
     }
 
 

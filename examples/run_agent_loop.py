@@ -11,9 +11,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from energybridge.agent.graph import build_energybridge_graph
-from energybridge.grid.vpp_1.adapter import adapt_vpp1_result_to_grid_signal, load_vpp1_dispatch
+from energybridge.grid.vpp_1.adapter import extract_vpp_context_from_result, load_vpp1_dispatch
 from energybridge.llm.strategy_advisor import generate_strategy_options
-from energybridge.skills.grid_signal_translator import translate_grid_signal
+from energybridge.skills.grid_signal_translator import translate_vpp_context_to_grid_demand
 from energybridge.skills.preference_parser import parse_user_preference
 from energybridge.skills.strategy_generator import generate_candidate_strategy
 from energybridge.utils.config import load_llm_config
@@ -24,7 +24,7 @@ def prompt_with_default(prompt: str, default: str) -> str:
     return value or default
 
 
-def get_demo_grid_signal(home_state: dict) -> tuple[dict, dict, dict, str]:
+def get_demo_vpp_context(home_state: dict) -> tuple[dict, str]:
     print("=== VPP-1 Task Mode ===")
     print("1. invitation")
     print("2. emergency")
@@ -32,8 +32,8 @@ def get_demo_grid_signal(home_state: dict) -> tuple[dict, dict, dict, str]:
     mode = "emergency" if selection == "2" else "invitation"
 
     vpp_result = load_vpp1_dispatch(mode=mode)
-    grid_signal, vpp_task, vpp_query = adapt_vpp1_result_to_grid_signal(vpp_result, home_state)
-    return grid_signal, vpp_task, vpp_query, f"vpp_1:{mode}"
+    vpp_context = extract_vpp_context_from_result(vpp_result)
+    return vpp_context, f"vpp_1:{mode}"
 
 
 def build_fallback_strategy_options(base_strategy: dict) -> list[dict]:
@@ -143,16 +143,10 @@ def main() -> None:
         "occupancy": True,
     }
 
-    grid_signal, vpp_task, vpp_query, grid_signal_source = get_demo_grid_signal(home_state)
-    print()
-    print("Detected VPP-1 task:")
-    print(json.dumps(vpp_task, ensure_ascii=False, indent=2))
-    print()
-    print("Translated VPP-1 query:")
-    print(json.dumps(vpp_query, ensure_ascii=False, indent=2))
-    print()
-    print("Derived EnergyBridge grid signal:")
-    print(json.dumps(grid_signal, ensure_ascii=False, indent=2))
+    vpp_context, grid_demand_source = get_demo_vpp_context(home_state)
+    translated_grid_signal = translate_vpp_context_to_grid_demand(vpp_context)
+    print("Translated VPP-1 signal:")
+    print(json.dumps(translated_grid_signal, ensure_ascii=False, indent=2))
 
     print()
     user_input = prompt_with_default(
@@ -161,7 +155,6 @@ def main() -> None:
     )
 
     user_preferences = parse_user_preference(user_input)
-    translated_grid_signal = translate_grid_signal(grid_signal)
     base_strategy = generate_candidate_strategy(
         user_preferences=user_preferences,
         translated_grid_signal=translated_grid_signal,
@@ -183,9 +176,8 @@ def main() -> None:
                 context={
                     "user_input": user_input,
                     "user_preferences": user_preferences,
-                    "grid_signal": grid_signal,
-                    "vpp_task": vpp_task,
-                    "vpp_query": vpp_query,
+                    "grid_demand": translated_grid_signal,
+                    "vpp_context": vpp_context,
                     "translated_grid_signal": translated_grid_signal,
                     "home_state": home_state,
                     "fallback_strategy": base_strategy,
@@ -201,10 +193,9 @@ def main() -> None:
 
     initial_state = {
         "user_input": user_input,
-        "grid_signal": grid_signal,
-        "grid_signal_source": grid_signal_source,
-        "vpp_task": vpp_task,
-        "vpp_query": vpp_query,
+        "grid_demand": translated_grid_signal,
+        "grid_demand_source": grid_demand_source,
+        "vpp_context": vpp_context,
         "home_state": home_state,
         "user_preferences": user_preferences,
         "translated_grid_signal": translated_grid_signal,

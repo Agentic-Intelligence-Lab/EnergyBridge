@@ -12,7 +12,7 @@ from energybridge.control.safety_checker import validate_safety
 from energybridge.evaluation.logger import build_trajectory_log_path, save_trajectory
 from energybridge.memory.store import load_memory, save_memory, update_memory
 from energybridge.skills.explanation_generator import generate_explanation
-from energybridge.skills.grid_signal_translator import translate_grid_signal
+from energybridge.skills.grid_signal_translator import translate_vpp_context_to_grid_demand
 from energybridge.skills.preference_parser import merge_preferences_with_memory, parse_user_preference
 from energybridge.skills.strategy_generator import generate_candidate_strategy
 
@@ -42,7 +42,7 @@ def node_parse_preference(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def node_translate_grid(state: dict[str, Any]) -> dict[str, Any]:
-    translated = translate_grid_signal(state.get("grid_signal", {}))
+    translated = translate_vpp_context_to_grid_demand(state.get("vpp_context", state.get("grid_demand", {})))
     return {
         "translated_grid_signal": translated,
         "trajectory": _append_trajectory(state, "translate_grid", translated),
@@ -160,10 +160,9 @@ def node_memory_update(state: dict[str, Any]) -> dict[str, Any]:
     episode = {
         "evaluation_user_id": state.get("evaluation_user_id", ""),
         "user_input": state.get("user_input", ""),
-        "grid_signal": state.get("grid_signal", {}),
-        "grid_signal_source": state.get("grid_signal_source", ""),
-        "vpp_task": state.get("vpp_task", {}),
-        "vpp_query": state.get("vpp_query", {}),
+        "grid_demand": state.get("grid_demand", {}),
+        "grid_demand_source": state.get("grid_demand_source", ""),
+        "vpp_context": state.get("vpp_context", {}),
         "user_preferences": state.get("user_preferences", {}),
         "strategy_options": state.get("strategy_options", []),
         "candidate_strategy": state.get("candidate_strategy", {}),

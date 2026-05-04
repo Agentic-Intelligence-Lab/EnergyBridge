@@ -27,6 +27,11 @@ VPP-1 的输入是上游任务 `MarketDispatchTask`。
 - `required_capacity_kw`：上游任务需要的总调节容量，单位 kW。注意，这不是单体建筑的削减目标。
 - `safety_margin_factor`：安全裕度系数。
 - `target_query_capacity_kw`：目标查询容量，等于 `required_capacity_kw × safety_margin_factor`。
+- `declaration_deadline`：参与申报/声明截止时间（若适用）。
+- `baseline_method`：如何定义削减基线（文本说明，结算相关）。
+- `performance_rule`：绩效/结算规则说明（文本，占位）。
+- `reward_description`：补偿/激励说明（文本，占位）。
+- `description`：可读的任务描述。
 
 ## 3. VPP-1 的输出
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from energybridge.skills.explanation_generator import generate_explanation
-from energybridge.skills.grid_signal_translator import translate_grid_signal
+from energybridge.skills.grid_signal_translator import translate_vpp_context_to_grid_demand
 from energybridge.skills.preference_parser import parse_user_preference
 from energybridge.skills.strategy_generator import generate_candidate_strategy
 
@@ -14,7 +14,7 @@ SKILL_REGISTRY = {
         "description": "Parse user preference text into structured comfort/cost/grid preferences.",
     },
     "translate_grid_signal": {
-        "function": translate_grid_signal,
+        "function": translate_vpp_context_to_grid_demand,
         "description": "Translate EnergyBridge grid signal into control intent and urgency.",
     },
     "generate_candidate_strategy": {

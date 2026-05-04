@@ -14,6 +14,16 @@
 - Keep LLM calls optional and isolated in `energybridge/llm`.
 - No frontend, no FastAPI, no real device connection.
 
+## Recent Updates
+
+### VPP Flow Cleanup
+
+- Renamed the runtime VPP boundary from `grid_signal` to `grid_demand`.
+- Moved VPP provenance fields into a separate `vpp_context` object.
+- Updated metrics to read VPP IDs and basis fields from `vpp_context`.
+- Simplified the VPP-1 flow so the adapter extracts `vpp_context`, the translator builds `translated_grid_signal`, and the example entrypoint only prints the translated signal.
+- `python examples/run_agent_loop.py` has been tested.
+
 ## Current TODO
 
 - Add unit tests for skills and safety checker edge cases.

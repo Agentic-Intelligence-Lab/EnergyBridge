@@ -30,7 +30,7 @@ The first version should run locally without real devices, without frontend, wit
 The loop should be:
 
 ```text
-user_input + grid_signal + home_state
+user_input + grid_demand + home_state
 → load memory
 → parse user preference
 → translate grid/VPP signal
@@ -191,8 +191,9 @@ Required fields:
 
 ```python
 user_input: str
-grid_signal: dict
+grid_demand: dict
 home_state: dict
+vpp_context: dict
 
 user_preferences: dict
 translated_grid_signal: dict
@@ -659,7 +660,8 @@ energybridge/grid/vpp_1/
 
 Purpose:
 
-- convert VPP-1 raw signals into EnergyBridge internal `grid_signal` schema;
+- convert VPP-1 raw signals into EnergyBridge internal `grid_demand` schema;
+- keep VPP-specific provenance in a separate `vpp_context` object;
 - keep VPP-specific parsing separate from agent logic.
 
 Create:
@@ -670,7 +672,7 @@ energybridge/grid/vpp_1/mock_signal.py
 energybridge/grid/vpp_1/adapter.py
 ```
 
-The internal `grid_signal` should look like:
+The internal `grid_demand` should look like:
 
 ```python
 {
@@ -707,12 +709,16 @@ Sample initial state:
 ```python
 {
     "user_input": "我希望尽量舒服，但如果电网有需求，也可以短时间配合削峰。",
-    "grid_signal": {
+    "grid_demand": {
         "type": "DR_EVENT",
         "start_time": "18:00",
         "end_time": "19:00",
         "target_reduction_kw": 0.5,
         "price_level": "high"
+    },
+    "vpp_context": {
+      "vpp_task_id": "...",
+      "vpp_query_id": "..."
     },
     "home_state": {
         "indoor_temp": 25.8,

@@ -24,7 +24,7 @@ python examples/run_agent_loop.py
 
 Expected behavior:
 - prompts for VPP-1 task mode, user preference, strategy choice, and satisfaction feedback;
-- loads a real VPP-1 dispatch task and translates it into internal `grid_signal`;
+- loads a real VPP-1 dispatch task and translates it into internal `grid_demand` plus `vpp_context`;
 - when `USE_LLM=true`, calls the configured OpenAI-compatible API for strategy options;
 - prints final response, control plan, safety report, execution result, metrics, and trajectory steps;
 - creates `logs/memory.json`;
