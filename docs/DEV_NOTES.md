@@ -16,6 +16,14 @@
 
 ## Recent Updates
 
+### Session Memory Layer
+
+- Added `session_summary` as a short-term memory layer.
+- Reshaped it into `current_round_summary` plus a rolling window of the previous 3 rounds.
+- Kept `stable_preferences` as long-term statistics only.
+- Wired `session_summary` into preference merging, strategy generation, and explanation generation.
+- `episodic_logs` still stores the full turn-by-turn episode history for replay and debugging.
+
 ### VPP Flow Cleanup
 
 - Renamed the runtime VPP boundary from `grid_signal` to `grid_demand`.

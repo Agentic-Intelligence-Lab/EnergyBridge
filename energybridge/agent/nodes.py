@@ -28,7 +28,12 @@ def _append_trajectory(
 def node_load_memory(state: dict[str, Any]) -> dict[str, Any]:
     memory_path = state.get("memory_path", "logs/memory.json")
     memory = load_memory(memory_path)
-    output = {"memory_loaded": True, "episodic_count": len(memory.get("episodic_logs", []))}
+    session_summary = memory.get("session_summary", {}) if isinstance(memory.get("session_summary", {}), dict) else {}
+    output = {
+        "memory_loaded": True,
+        "episodic_count": len(memory.get("episodic_logs", [])),
+        "session_summary_preview": session_summary.get("summary_text", ""),
+    }
     return {"memory": memory, "trajectory": _append_trajectory(state, "load_memory", output)}
 
 
@@ -62,6 +67,7 @@ def node_generate_strategy(state: dict[str, Any]) -> dict[str, Any]:
         user_preferences=state.get("user_preferences", {}),
         translated_grid_signal=state.get("translated_grid_signal", {}),
         home_state=state.get("home_state", {}),
+        memory=state.get("memory", {}),
     )
     return {
         "candidate_strategy": strategy,
@@ -133,6 +139,7 @@ def node_explanation(state: dict[str, Any]) -> dict[str, Any]:
         candidate_strategy=state.get("candidate_strategy", {}),
         control_plan=state.get("control_plan", {}),
         safety_report=state.get("safety_report", {}),
+        memory=state.get("memory", {}),
     )
     execution_result = state.get("execution_result", {})
     if execution_result:
@@ -177,7 +184,12 @@ def node_memory_update(state: dict[str, Any]) -> dict[str, Any]:
     }
     updated_memory = update_memory(memory, episode)
     save_memory(updated_memory, memory_path)
-    output = {"memory_saved": True, "episodic_count": len(updated_memory.get("episodic_logs", []))}
+    session_summary = updated_memory.get("session_summary", {}) if isinstance(updated_memory.get("session_summary", {}), dict) else {}
+    output = {
+        "memory_saved": True,
+        "episodic_count": len(updated_memory.get("episodic_logs", [])),
+        "session_summary_preview": session_summary.get("summary_text", ""),
+    }
     return {
         "memory": updated_memory,
         "trajectory": _append_trajectory(state, "memory_update", output),

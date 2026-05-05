@@ -59,18 +59,28 @@ def parse_user_preference(user_input: str) -> dict:
 
 def merge_preferences_with_memory(parsed_preferences: dict, memory: dict | None) -> dict:
     stable_preferences = (memory or {}).get("stable_preferences", {})
+    session_summary = (memory or {}).get("session_summary", {})
+    recent_preferences = session_summary.get("recent_preferences", {}) if isinstance(session_summary, dict) else {}
     mentioned = parsed_preferences.get("mentioned_preferences", {})
     merged = dict(parsed_preferences)
 
     for field in ["comfort_priority", "cost_priority", "grid_priority"]:
-        if not mentioned.get(field, False) and field in stable_preferences:
+        if not mentioned.get(field, False) and field in recent_preferences:
+            merged[field] = recent_preferences[field]
+        elif not mentioned.get(field, False) and field in stable_preferences:
             merged[field] = stable_preferences[field]
 
     for field in ["allow_pre_cooling", "allow_temp_drift"]:
-        if not mentioned.get(field, False) and field in stable_preferences:
+        if not mentioned.get(field, False) and field in recent_preferences:
+            merged[field] = recent_preferences[field]
+        elif not mentioned.get(field, False) and field in stable_preferences:
             merged[field] = stable_preferences[field]
 
     if not mentioned.get("preferred_temp_bounds", False):
+        if "preferred_temp_min" in recent_preferences:
+            merged["preferred_temp_min"] = recent_preferences["preferred_temp_min"]
+        if "preferred_temp_max" in recent_preferences:
+            merged["preferred_temp_max"] = recent_preferences["preferred_temp_max"]
         if "preferred_temp_min" in stable_preferences:
             merged["preferred_temp_min"] = stable_preferences["preferred_temp_min"]
         if "preferred_temp_max" in stable_preferences:
