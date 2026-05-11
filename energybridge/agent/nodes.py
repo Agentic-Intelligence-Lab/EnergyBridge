@@ -10,7 +10,7 @@ from energybridge.control.mock_mpc import run_mock_mpc
 from energybridge.evaluation.metrics import summarize_run
 from energybridge.control.safety_checker import validate_safety
 from energybridge.evaluation.logger import build_trajectory_log_path, save_trajectory
-from energybridge.memory.store import load_memory, save_memory, update_memory
+from energybridge.memory.store import load_memory, save_memory
 from energybridge.skills.explanation_generator import generate_explanation
 from energybridge.skills.grid_signal_translator import translate_vpp_context_to_grid_demand
 from energybridge.skills.preference_parser import merge_preferences_with_memory, parse_user_preference
@@ -161,38 +161,25 @@ def node_metrics(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def node_memory_update(state: dict[str, Any]) -> dict[str, Any]:
+def node_feedback(state: dict[str, Any]) -> dict[str, Any]:
     memory_path = state.get("memory_path", "logs/memory.json")
     memory = state.get("memory", load_memory(memory_path))
-    episode = {
-        "evaluation_user_id": state.get("evaluation_user_id", ""),
-        "user_input": state.get("user_input", ""),
-        "grid_demand": state.get("grid_demand", {}),
-        "grid_demand_source": state.get("grid_demand_source", ""),
-        "vpp_context": state.get("vpp_context", {}),
-        "user_preferences": state.get("user_preferences", {}),
-        "strategy_options": state.get("strategy_options", []),
-        "candidate_strategy": state.get("candidate_strategy", {}),
-        "user_choice": state.get("user_choice", {}),
-        "user_feedback": state.get("user_feedback", {}),
-        "llm_metrics": state.get("llm_metrics", {}),
-        "control_plan": state.get("control_plan", {}),
-        "safety_report": state.get("safety_report", {}),
-        "execution_result": state.get("execution_result", {}),
-        "metrics": state.get("metrics", {}),
-        "final_response": state.get("final_response", ""),
-    }
-    updated_memory = update_memory(memory, episode)
-    save_memory(updated_memory, memory_path)
-    session_summary = updated_memory.get("session_summary", {}) if isinstance(updated_memory.get("session_summary", {}), dict) else {}
+    user_feedback = dict(state.get("user_feedback", {}) or {})
+
+    feedback_history = list(memory.get("feedback_history", []) or [])
+    feedback_history.append(user_feedback)
+    memory["feedback_history"] = feedback_history[-50:]
+    memory["latest_user_feedback"] = user_feedback
+    save_memory(memory, memory_path)
+
     output = {
-        "memory_saved": True,
-        "episodic_count": len(updated_memory.get("episodic_logs", [])),
-        "session_summary_preview": session_summary.get("summary_text", ""),
+        "feedback_saved": True,
+        "feedback_score": user_feedback.get("satisfaction_score"),
+        "feedback_label": user_feedback.get("satisfaction_label"),
     }
     return {
-        "memory": updated_memory,
-        "trajectory": _append_trajectory(state, "memory_update", output),
+        "memory": memory,
+        "trajectory": _append_trajectory(state, "feedback", output),
     }
 
 

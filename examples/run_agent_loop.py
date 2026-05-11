@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from energybridge.agent.graph import build_energybridge_graph
+from energybridge.agent.graph import build_energybridge_graph, build_feedback_graph
 from energybridge.grid.vpp_1.adapter import extract_vpp_context_from_result, load_vpp1_dispatch
 from energybridge.llm.strategy_advisor import generate_strategy_options
 from energybridge.skills.grid_signal_translator import translate_vpp_context_to_grid_demand
@@ -108,7 +108,7 @@ def choose_strategy(strategy_options: list[dict]) -> tuple[dict, dict]:
 def collect_user_feedback() -> dict:
     print()
     print("=== User Feedback ===")
-    print("Rate your expected satisfaction with the selected strategy.")
+    print("Rate your actual satisfaction after seeing the execution result.")
 
     while True:
         raw_score = input("Satisfaction score [1-5]: ").strip()
@@ -134,6 +134,7 @@ def collect_user_feedback() -> dict:
 
 def main() -> None:
     app = build_energybridge_graph()
+    feedback_app = build_feedback_graph()
 
     home_state = {
         "indoor_temp": 25.8,
@@ -189,7 +190,6 @@ def main() -> None:
             print(f"LLM strategy generation failed, falling back to deterministic options: {exc}")
 
     selected_strategy, user_choice = choose_strategy(strategy_options)
-    user_feedback = collect_user_feedback()
 
     initial_state = {
         "user_input": user_input,
@@ -202,12 +202,20 @@ def main() -> None:
         "strategy_options": strategy_options,
         "candidate_strategy": selected_strategy,
         "user_choice": user_choice,
-        "user_feedback": user_feedback,
         "llm_metrics": llm_metrics,
         "trajectory": [],
     }
 
     result = app.invoke(initial_state)
+    user_feedback = collect_user_feedback()
+    feedback_result = feedback_app.invoke(
+        {
+            "memory": result.get("memory", {}),
+            "memory_path": str(PROJECT_ROOT / "logs" / "memory.json"),
+            "trajectory": result.get("trajectory", []),
+            "user_feedback": user_feedback,
+        }
+    )
 
     print()
     print("=== Final Response ===")
@@ -237,6 +245,15 @@ def main() -> None:
     if result.get("trajectory_log_path"):
         print()
         print(f"Trajectory log saved to: {result['trajectory_log_path']}")
+
+    print()
+    print("=== User Feedback ===")
+    print(json.dumps(user_feedback, ensure_ascii=False, indent=2))
+
+    print()
+    print("=== Feedback Update ===")
+    print(json.dumps(feedback_result.get("memory", {}).get("latest_user_feedback", {}), ensure_ascii=False, indent=2))
+    print(f"Memory updated at: {PROJECT_ROOT / 'logs' / 'memory.json'}")
 
 
 if __name__ == "__main__":

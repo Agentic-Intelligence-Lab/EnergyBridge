@@ -32,6 +32,14 @@
 - Simplified the VPP-1 flow so the adapter extracts `vpp_context`, the translator builds `translated_grid_signal`, and the example entrypoint only prints the translated signal.
 - `python examples/run_agent_loop.py` has been tested.
 
+### Feedback Flow Cleanup
+
+- Moved user feedback collection to after the main graph run in `examples/run_agent_loop.py`.
+- Added a dedicated `feedback` LangGraph node and `build_feedback_graph()` to persist only `user_feedback`.
+- Removed the old `node_memory_update` node and stopped storing full `feedback_episode` snapshots in memory.
+- Kept the demo flow simple: main run, then feedback update, then trajectory and memory logging.
+- `python -m compileall energybridge examples/run_agent_loop.py` has been tested.
+
 ## Current TODO
 
 - Add unit tests for skills and safety checker edge cases.
