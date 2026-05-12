@@ -1,0 +1,21 @@
+{
+  "id": "us_chicago_vpp_smoke",
+  "name": "US Chicago EPW VPP Smoke Test",
+  "idf_path": "Family_Model/Family_Simple_3day.idf",
+  "epw_path": "/home/ha_agent/EnergyPlus-24-1-0/WeatherData/USA_IL_Chicago-OHare.Intl.AP.725300_TMY3.epw",
+  "output_dir": "logs/benchmark_runs/us_chicago_vpp_smoke",
+  "trigger_hour": 42.0,
+  "user_input": "我希望舒适，但可以配合削峰。",
+  "vpp_context": {
+    "vpp_task_type": "INVITATION_DEMAND_RESPONSE",
+    "requested_reduction_kw": 0.5,
+    "duration_minutes": 60,
+    "urgency": "medium"
+  },
+  "expected_outcomes": {
+    "agent_triggered": true,
+    "valid_control_plan": true,
+    "execution_status": "executed"
+  },
+  "notes": "Smoke-test scenario using US EPW. Not a Tianjin local scenario."
+}
