@@ -16,6 +16,13 @@
 
 ## Recent Updates
 
+### EnergyPlus 24.1.0 Local Setup
+
+- Installed EnergyPlus 24.1.0 to `/home/ha_agent/EnergyPlus-24-1-0`.
+- Updated `EPLUS_ROOT` to `Path("/home/ha_agent/EnergyPlus-24-1-0")`.
+- Verified `pyenergyplus.api.EnergyPlusAPI` imports successfully in the `energybridge` conda environment.
+- Verified `control_model.py` passes with `python control_model.py --help`.
+
 ### Session Memory Layer
 
 - Added `session_summary` as a short-term memory layer.
