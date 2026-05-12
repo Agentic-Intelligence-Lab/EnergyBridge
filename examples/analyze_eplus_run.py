@@ -42,6 +42,8 @@ def _parse_args() -> argparse.Namespace:
                    help="Path to ReadVarsESO binary (optional)")
     p.add_argument("--report-name", default="eplus_run_report.md")
     p.add_argument("--metrics-name", default="eplus_run_metrics.json")
+    p.add_argument("--report", action="store_true", default=False,
+                   help="Also generate Markdown report (optional; JSON+CSV are always written)")
     return p.parse_args()
 
 # ---------------------------------------------------------------------------
@@ -960,11 +962,14 @@ def main() -> None:
     metrics_path.write_text(json.dumps(metrics, indent=2, ensure_ascii=False))
     print(f"\nMetrics JSON : {metrics_path}")
 
-    # Step 8: generate report
-    report_md = generate_report(metrics, output_dir, args.trigger, args.duration, eso_data)
-    report_path = output_dir / args.report_name
-    report_path.write_text(report_md, encoding="utf-8")
-    print(f"Report MD    : {report_path}")
+    # Step 8: generate report (optional)
+    if args.report:
+        report_md = generate_report(metrics, output_dir, args.trigger, args.duration, eso_data)
+        report_path = output_dir / args.report_name
+        report_path.write_text(report_md, encoding="utf-8")
+        print(f"Report MD    : {report_path}")
+    else:
+        print(f"Report MD    : (skipped; use --report to generate)")
 
     # Save CSV if ESO parsed
     if eso_data and eso_data["timeseries"]:
