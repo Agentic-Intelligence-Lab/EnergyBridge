@@ -80,6 +80,7 @@ class AgentResult:
     execution_result: dict[str, Any]
     final_response: str
     trajectory: list[dict[str, Any]] = field(default_factory=list)
+    llm_metrics: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +297,7 @@ class EplusEnv:
         execution_result = self._actuator_writer.apply(api.exchange, state, control_plan)
 
         # 6. Store result for the caller
+        llm_metrics = result.get("llm_metrics", {})
         agent_result = AgentResult(
             sim_hour=sim_hour,
             vpp_context=event.vpp_context,
@@ -305,6 +307,7 @@ class EplusEnv:
             execution_result=execution_result,
             final_response=result.get("final_response", ""),
             trajectory=result.get("trajectory", []),
+            llm_metrics=llm_metrics,
         )
         self.agent_results.append(agent_result)
 

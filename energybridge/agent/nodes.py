@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from energybridge.control.mock_actuator import execute_control_plan
+from energybridge.control.ep_controller import build_ep_control_plan
 from energybridge.control.fallback_controller import fallback_control_plan
-from energybridge.control.mock_mpc import run_mock_mpc
 from energybridge.evaluation.metrics import summarize_run
 from energybridge.control.safety_checker import validate_safety
 from energybridge.evaluation.logger import build_trajectory_log_path, save_trajectory
@@ -63,20 +63,79 @@ def node_generate_strategy(state: dict[str, Any]) -> dict[str, Any]:
             "trajectory": _append_trajectory(state, "generate_strategy", selected_strategy),
         }
 
+    # Rule-based fallback strategy (always computed as baseline)
     strategy = generate_candidate_strategy(
         user_preferences=state.get("user_preferences", {}),
         translated_grid_signal=state.get("translated_grid_signal", {}),
         home_state=state.get("home_state", {}),
         memory=state.get("memory", {}),
     )
+
+    # Attempt LLM-enhanced strategy generation when USE_LLM=true
+    llm_metrics: dict[str, Any] = {
+        "used": False,
+        "provider": "not_configured",
+        "model": "not_used",
+        "latency_seconds": 0.0,
+        "token_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+    }
+    try:
+        from energybridge.llm.strategy_advisor import generate_strategy_options
+        from energybridge.utils.config import load_llm_config
+        llm_cfg = load_llm_config()
+        if llm_cfg.use_llm:
+            home_state = state.get("home_state", {})
+            context = {
+                "user_input": state.get("user_input", ""),
+                "user_preferences": state.get("user_preferences", {}),
+                "translated_grid_signal": state.get("translated_grid_signal", {}),
+                "home_state": home_state,
+                "vpp_context": state.get("vpp_context", {}),
+                "fallback_strategy": strategy,
+                # Explicitly surface actual indoor temperature for the LLM
+                "actual_indoor_temp_c": home_state.get("indoor_temp"),
+                "hvac_setpoint_c": home_state.get("hvac_setpoint"),
+            }
+            options, llm_metrics = generate_strategy_options(
+                context=context,
+                fallback_strategy=strategy,
+            )
+            if options:
+                # Auto-select: prefer the option whose mode best matches grid intent
+                grid_intent = state.get("translated_grid_signal", {}).get(
+                    "control_intent", "normal_operation"
+                )
+                mode_pref = {
+                    "reduce_load": "grid_support",
+                    "cost_saving": "cost_saving",
+                }.get(grid_intent, "comfort")
+                best = next(
+                    (o for o in options if o.get("mode") == mode_pref),
+                    options[0],
+                )
+                strategy = best
+    except Exception as _exc:
+        llm_metrics["error"] = str(_exc)
+
+    # Merge existing llm_metrics if already set (e.g. pre-populated by caller)
+    existing = state.get("llm_metrics") or {}
+    if not existing.get("used"):
+        pass  # replace with the one we just computed
+    else:
+        llm_metrics = existing
+
     return {
         "candidate_strategy": strategy,
-        "trajectory": _append_trajectory(state, "generate_strategy", strategy),
+        "llm_metrics": llm_metrics,
+        "trajectory": _append_trajectory(state, "generate_strategy", {
+            **strategy,
+            "llm_used": llm_metrics.get("used", False),
+        }),
     }
 
 
 def node_control(state: dict[str, Any]) -> dict[str, Any]:
-    control_plan = run_mock_mpc(
+    control_plan = build_ep_control_plan(
         candidate_strategy=state.get("candidate_strategy", {}),
         home_state=state.get("home_state", {}),
         translated_grid_signal=state.get("translated_grid_signal", {}),

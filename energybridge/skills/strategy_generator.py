@@ -25,6 +25,17 @@ def generate_candidate_strategy(
     comfort_max = float(user_preferences.get("preferred_temp_max", 26.0))
     current_setpoint = float(home_state.get("hvac_setpoint", 25.0))
 
+    # Actual EP indoor temperature (may differ from thermostat setpoint).
+    # If the room is already below setpoint, there is thermal buffer to raise
+    # the setpoint more aggressively during demand response.
+    _indoor_raw = home_state.get("indoor_temp")
+    actual_indoor_temp = float(_indoor_raw) if _indoor_raw is not None else None
+    # Thermal buffer = how much cooler room is vs current setpoint (>=0)
+    thermal_buffer_c = (
+        max(0.0, current_setpoint - actual_indoor_temp)
+        if actual_indoor_temp is not None else 0.0
+    )
+
     # If the last turn produced a safe control plan, use it as a lightweight
     # short-term anchor when the current state is otherwise ambiguous.
     if (
@@ -52,9 +63,18 @@ def generate_candidate_strategy(
 
     if control_intent == "reduce_load":
         mode = "grid_support"
-        recommended_setpoint = _clamp(current_setpoint + 0.8, comfort_min, comfort_max + 0.8)
+        # Extra allowance if room has thermal buffer (cooler than setpoint)
+        extra = min(0.5, thermal_buffer_c * 0.4)
+        delta = round(0.8 + extra, 2)
+        recommended_setpoint = _clamp(current_setpoint + delta, comfort_min, comfort_max + 1.0)
         expected_user_impact = "slight_warmer"
-        rationale.append("Grid requested load reduction, so setpoint is moderately increased.")
+        temp_desc = (
+            f"actual indoor {actual_indoor_temp:.1f}°C, buffer {thermal_buffer_c:.1f}°C"
+            if actual_indoor_temp is not None else "indoor temp not available"
+        )
+        rationale.append(
+            f"Grid requested load reduction: setpoint +{delta:.1f}°C ({temp_desc})."
+        )
     elif control_intent == "cost_saving" or price_level in {"high", "critical"}:
         mode = "cost_saving"
         recommended_setpoint = _clamp(current_setpoint + 0.5, comfort_min, comfort_max + 0.5)

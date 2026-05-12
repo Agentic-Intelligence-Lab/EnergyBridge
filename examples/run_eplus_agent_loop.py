@@ -112,6 +112,84 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+
+def _run_roleplay_feedback(agent_result, output_dir: "Path", args) -> None:
+    """Run LLM-backed roleplay feedback scoring after the EP simulation.
+
+    Creates a minimal user persona from the --user input and asks the
+    RoleplayUserSimulator to score satisfaction with the agent's decision.
+    Saves roleplay_feedback.json next to agent_result.json.
+    """
+    from energybridge.utils.config import load_llm_config
+    llm_cfg = load_llm_config(use_key="USE_LLM")
+    if not llm_cfg.use_llm:
+        print("Roleplay scoring skipped (USE_LLM=false).")
+        return
+
+    try:
+        from energybridge.llm.roleplay_user import RoleplayUserSimulator
+
+        simulator = RoleplayUserSimulator()
+
+        # Build a minimal persona from the user input string
+        persona = {
+            "display_name": "EP Run User",
+            "summary": args.user,
+            "speaking_language": "zh-cn",
+            "stable_preferences": {
+                "comfort_priority": 0.5,
+                "cost_priority": 0.2,
+                "grid_priority": 0.3,
+                "preferred_temp_min": 24.0,
+                "preferred_temp_max": 26.0,
+                "allow_pre_cooling": True,
+                "allow_temp_drift": True,
+            },
+        }
+
+        feedback_result = simulator.generate_feedback(
+            persona=persona,
+            turn_index=1,
+            selected_strategy=agent_result.home_state,
+            projected_control_plan=agent_result.control_plan,
+            projected_safety_report=agent_result.safety_report,
+        )
+
+        fb = feedback_result.get("data", {})
+        score = fb.get("satisfaction_score")
+        label = fb.get("satisfaction_label", "unknown")
+        comment = fb.get("comment", "")
+        m = feedback_result.get("metrics", {})
+
+        print()
+        print("=== Roleplay Comfort Scoring ===")
+        print(f"  Satisfaction score : {score}/5  ({label})")
+        print(f"  Comment            : {comment}")
+        print(f"  LLM latency        : {m.get('latency_seconds', '?')} s")
+        print(f"  Tokens             : {m.get('token_usage', {}).get('total_tokens', '?')}")
+
+        # Save to disk
+        feedback_path = output_dir / "roleplay_feedback.json"
+        feedback_path.write_text(
+            json.dumps(
+                {
+                    "satisfaction_score": score,
+                    "satisfaction_label": label,
+                    "comment": comment,
+                    "llm_metrics": m,
+                    "persona_summary": args.user,
+                    "control_plan": agent_result.control_plan,
+                    "sim_hour": agent_result.sim_hour,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        print(f"  Roleplay feedback  : {feedback_path}")
+    except Exception as exc:
+        print(f"WARNING: Roleplay feedback failed: {exc}")
+
+
 def main() -> None:
     args = parse_args()
 
@@ -215,6 +293,7 @@ def main() -> None:
                 "execution_result": first_result.execution_result,
                 "final_response": first_result.final_response,
                 "trajectory": first_result.trajectory,
+                "llm_metrics": first_result.llm_metrics,
             }
             agent_result_path.write_text(
                 json.dumps(ar_dict, indent=2, ensure_ascii=False)
@@ -241,43 +320,10 @@ def main() -> None:
             print(f"WARNING: analyzer failed: {e}")
 
 
-    # Save agent_result.json into the output folder for post-run analysis
+    # ── Post-run roleplay comfort scoring ─────────────────────────────────
     if env.agent_results:
-        agent_result_path = output_dir / "agent_result.json"
         first_result = env.agent_results[0]
-        try:
-            ar_dict = {
-                "sim_hour": first_result.sim_hour,
-                "home_state": first_result.home_state,
-                "control_plan": first_result.control_plan,
-                "safety_report": first_result.safety_report,
-                "execution_result": first_result.execution_result,
-                "final_response": first_result.final_response,
-                "trajectory": first_result.trajectory,
-            }
-            agent_result_path.write_text(
-                json.dumps(ar_dict, indent=2, ensure_ascii=False)
-            )
-            print(f"Agent result JSON      : {agent_result_path}")
-        except Exception as e:
-            print(f"WARNING: Could not save agent_result.json: {e}")
-
-    # Optional post-run analysis
-    if args.analyze_output:
-        print()
-        print("Running post-run analyzer ...")
-        analyzer = Path(__file__).parent / "analyze_eplus_run.py"
-        try:
-            import subprocess as _sp
-            _sp.run(
-                [sys.executable, str(analyzer),
-                 "--output", str(output_dir),
-                 "--trigger", str(args.trigger),
-                 "--duration", "60"],
-                check=False,
-            )
-        except Exception as e:
-            print(f"WARNING: analyzer failed: {e}")
+        _run_roleplay_feedback(first_result, output_dir, args)
 
     sys.exit(exit_code)
 

@@ -401,6 +401,77 @@ def load_agent_result(output_dir: Path) -> dict:
 # Step 7: Build metrics JSON
 # ---------------------------------------------------------------------------
 
+
+
+def compute_ep_power_metrics(
+    timeseries: list,
+    trigger_h: float,
+    event_duration_min: int = 60,
+    comfort_min: float = 24.0,
+    comfort_max: float = 26.0,
+    post_window_h: float = 2.0,
+) -> dict:
+    """Compute actual EP power integral and comfort score from ESO timeseries.
+
+    Returns dict with:
+      actual_facility_energy_kwh_2h  - facility kWh in 2-hour post-trigger window
+      actual_hvac_proxy_kwh_2h       - cooling proxy kWh in same window
+      pre_event_avg_facility_kw      - 1-hour pre-event facility power baseline
+      comfort_violation_hot_min      - minutes indoor_temp > comfort_max
+      comfort_violation_cold_min     - minutes indoor_temp < comfort_min
+      comfort_ok_fraction            - fraction of event-window steps in band
+      comfort_score_1_5              - 1-5 score (5=fully comfortable)
+    """
+    # Detect timestep interval from first few rows
+    hours = [r["cum_hour"] for r in timeseries]
+    diffs = [hours[i+1] - hours[i] for i in range(min(len(hours)-1, 20)) if hours[i+1] > hours[i]]
+    ts_h = min(diffs) if diffs else (1.0 / 6.0)
+    ts_min = round(ts_h * 60)
+
+    end_h = trigger_h + post_window_h
+    event_end_h = trigger_h + event_duration_min / 60.0
+
+    post_rows = [r for r in timeseries if trigger_h <= r["cum_hour"] <= end_h]
+    pre_rows = [r for r in timeseries if (trigger_h - 1.0) <= r["cum_hour"] < trigger_h]
+
+    # Power integrals (rectangle rule, ts_h wide each step)
+    fac_sum = sum(
+        float(r["facility_kw"]) * ts_h
+        for r in post_rows if r.get("facility_kw") is not None
+    )
+    cool_sum = sum(
+        float(r["cooling_load_proxy_kw"]) * ts_h
+        for r in post_rows if r.get("cooling_load_proxy_kw") is not None
+    )
+    pre_vals = [float(r["facility_kw"]) for r in pre_rows if r.get("facility_kw") is not None]
+    pre_avg = round(sum(pre_vals) / len(pre_vals), 3) if pre_vals else None
+
+    # Comfort analysis over event window only
+    event_rows = [r for r in timeseries if trigger_h <= r["cum_hour"] <= event_end_h]
+    temp_rows = [r for r in event_rows if r.get("indoor_temp_c") is not None]
+    hot = sum(1 for r in temp_rows if float(r["indoor_temp_c"]) > comfort_max)
+    cold = sum(1 for r in temp_rows if float(r["indoor_temp_c"]) < comfort_min)
+    ok = len(temp_rows) - hot - cold
+    total = len(temp_rows)
+
+    ok_frac = round(ok / total, 3) if total > 0 else 1.0
+    comfort_score = round(1.0 + 4.0 * ok_frac, 2)
+
+    return {
+        "actual_facility_energy_kwh_2h": round(fac_sum, 4),
+        "actual_hvac_proxy_kwh_2h": round(cool_sum, 4),
+        "pre_event_avg_facility_kw": pre_avg,
+        "comfort_band_c": [comfort_min, comfort_max],
+        "comfort_violation_hot_min": hot * ts_min,
+        "comfort_violation_cold_min": cold * ts_min,
+        "comfort_ok_fraction": ok_frac,
+        "comfort_score_1_5": comfort_score,
+        "event_duration_min": event_duration_min,
+        "integration_window_h": post_window_h,
+        "timestep_interval_min": ts_min,
+    }
+
+
 def build_metrics(
     output_dir: Path,
     trigger_h: float,
@@ -480,6 +551,11 @@ def build_metrics(
         },
         "post_event_points": windows.get("points"),
         "post_event_windows": windows.get("windows"),
+        "ep_power_metrics": compute_ep_power_metrics(
+            timeseries=ts,
+            trigger_h=trigger_h,
+            event_duration_min=duration_min,
+        ) if ts else {"available": False},
         "physical_response_evidence": {
             "indoor_temp_delta_0_to_60min": delta_t,
             "interpretation": (
@@ -494,7 +570,8 @@ def build_metrics(
             "time_series_parsed": "yes" if eso_data and eso_data.get("total_points", 0) > 0 else "no",
             "physical_response_verified": phys_verified,
             "actual_energy_metrics": (
-                "available_proxy_only" if eso_data else "not_available"
+                "ep_integral_computed" if eso_data and eso_data.get("total_points", 0) > 0
+                else "available_proxy_only" if eso_data else "not_available"
             ),
         },
         "notes": notes,
@@ -515,6 +592,38 @@ def _fmt(val: Any, decimals: int = 3) -> str:
 
 def _table_row(label: str, *vals) -> str:
     return "| " + " | ".join([label] + [_fmt(v) for v in vals]) + " |"
+
+
+
+def _build_ep_power_section(ep: dict) -> list:
+    """Return report lines for the EP power integral + comfort scoring section."""
+    if not ep or ep.get("available") is False:
+        return ["*（无 ESO 时序数据，跳过功率积分计算）*"]
+    lines = [
+        "| 指标 | 数值 |",
+        "|------|------|",
+        f"| 事后2小时 Facility 用电量 (kWh) | {ep.get('actual_facility_energy_kwh_2h', '—')} |",
+        f"| 事后2小时 制冷代理用电量 (kWh) | {ep.get('actual_hvac_proxy_kwh_2h', '—')} |",
+        f"| 事件前1小时平均 Facility 功率 (kW) | {ep.get('pre_event_avg_facility_kw', '—')} |",
+        f"| 舒适带 [°C] | {ep.get('comfort_band_c', [24.0, 26.0])} |",
+        f"| 事件窗口内过热违规 (分钟) | {ep.get('comfort_violation_hot_min', 0)} |",
+        f"| 事件窗口内过冷违规 (分钟) | {ep.get('comfort_violation_cold_min', 0)} |",
+        f"| 舒适窗口内合格比例 | {ep.get('comfort_ok_fraction', '—')} |",
+        f"| **舒适度评分（1–5）** | **{ep.get('comfort_score_1_5', '—')}** |",
+        f"| 时步间隔 (分钟) | {ep.get('timestep_interval_min', '—')} |",
+    ]
+    score = ep.get("comfort_score_1_5")
+    if score is not None:
+        if score >= 4.5:
+            lines.append("")
+            lines.append("> 🟢 舒适度评分 ≥4.5：整个事件窗口内室内温度基本保持在舒适带内。")
+        elif score >= 3.0:
+            lines.append("")
+            lines.append("> 🟡 舒适度评分 3~4.5：存在短暂温度偏出舒适带，可接受。")
+        else:
+            lines.append("")
+            lines.append("> 🔴 舒适度评分 <3.0：超出舒适带时间较长，建议调整控制策略。")
+    return lines
 
 
 def generate_report(
@@ -742,17 +851,20 @@ def generate_report(
         ]
     lines += [
         "",
-        "## 8. 本次运行尚未证明",
+        "## 8. EP 功率积分 & 舒适度评分（来自 ESO 时序）",
+        "",
+    ] + _build_ep_power_section(m.get("ep_power_metrics", {})) + [
+        "",
+        "## 9. 本次运行尚未证明",
         "",
         "- ❌ **实际节电量**：ESO 中无 HVAC 独立电表，`facility_kw` 包含其他负载",
-        "- ❌ **真实 VPP 合规性**：estimated_reduction_kw 是 mock_mpc 估算，非实测",
-        "- ❌ **舒适违规时长**：需定义温度阈值后统计超出分钟数",
+        "- ❌ **真实 VPP 合规性**：仅基于 EP 实时 hvac_power_kw，不含未来积分误差",
         "- ❌ **天津场景有效性**：本次使用芝加哥 EPW 替代",
         "- ❌ **长期控制性能**：仅测试了单次触发",
         "",
         "---",
         "",
-        "## 9. 下一步建议",
+        "## 10. 下一步建议",
         "",
         "1. **修复 final_response actuator 文本不一致**（说 mock 但实际是 eplus_actuator_v1）",
         "2. **在 `run_eplus_agent_loop.py` 中自动保存 `agent_result.json`**（已在 `--analyze-output` flag 中实现）",
