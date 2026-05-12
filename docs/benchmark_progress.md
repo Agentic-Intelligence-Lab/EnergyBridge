@@ -73,3 +73,68 @@ python examples/run_benchmark_smoke.py \
 | Medium | Implement `evaluation/eso_parser.py` for actual energy metrics | Xudong |
 | Low | Connect MPC baseline (`Family_Model/control_model/`) | Xudong + Xuebing |
 | Low | Multi-scenario × multi-agent loop harness | Xudong |
+
+
+---
+
+## 6. Metric Extraction & Verification Layer (added 2026-05)
+
+### New modules
+
+| File | Purpose |
+|------|---------|
+| `energybridge/evaluation/trajectory_metrics.py` | Unified metric extraction from trajectory JSON or AgentResult; stdlib only |
+| `examples/inspect_metrics.py` | CLI: inspect single / latest / all trajectory metrics |
+| `examples/export_metrics_table.py` | CLI: scan all logs and export full CSV table |
+| `docs/physical_feedback_verification.md` | Simulator interface audit: what is truly from EP vs. Python-reflected |
+| `docs/metrics_schema.md` | Full metric field taxonomy with source labels |
+
+### Metric status taxonomy
+
+Each metric dict includes a `metric_status` block:
+```
+api_metrics:                available | missing
+event_physical_snapshot:    available | partial | missing
+user_preference_metrics:    available | missing
+physical_trajectory_metrics: not_implemented   ← requires .eso parsing
+```
+
+### Verified EP variables (snapshot-level)
+
+| home_state field       | EnergyPlus variable                        | Verified? |
+|------------------------|--------------------------------------------|-----------|
+| `indoor_temp`          | Zone Mean Air Temperature                  | ✓ EP read |
+| `outdoor_temp`         | Zone Outdoor Air Drybulb Temperature       | ✓ EP read |
+| `hvac_power_kw`        | Cooling Coil Total Cooling Rate            | ✓ EP read |
+| `facility_power_kw`    | Facility Total Electricity Demand Rate     | ✓ EP read |
+| `hvac_setpoint`        | —                                          | Python-reflected (not read from EP) |
+| `occupancy`            | —                                          | Hardcoded True |
+
+### How to use
+
+**Inspect latest run:**
+```bash
+python examples/inspect_metrics.py --latest
+```
+
+**Inspect specific trajectory:**
+```bash
+python examples/inspect_metrics.py --trajectory logs/trajectory_20260512_120758.json
+```
+
+**Table view + CSV export:**
+```bash
+python examples/inspect_metrics.py --dir logs --export
+python examples/export_metrics_table.py
+# Output: logs/metric_exports/metrics_<timestamp>.csv
+```
+
+**Benchmark runner now outputs unified_metrics.json automatically** alongside the existing `metrics.json`.
+
+### Not yet implemented
+
+- Actual energy kWh, peak power, comfort violation minutes → require `.eso` parsing (RA scope)
+- `post_action_temperature_delta`, `setpoint_tracking_error` → same
+- All future fields are `None` and labelled `future_placeholder` in `METRIC_SOURCES`
+
+---

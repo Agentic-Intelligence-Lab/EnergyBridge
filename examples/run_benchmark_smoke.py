@@ -165,17 +165,19 @@ def main():
         print("No agent result."); sys.exit(1)
 
     from energybridge.evaluation.benchmark_metrics import compute_benchmark_metrics
+    from energybridge.evaluation.trajectory_metrics import (
+        extract_metrics_from_agent_result, print_metric_summary, save_metrics,
+    )
     metrics = compute_benchmark_metrics(result, scenario, agent_id)
+    unified = extract_metrics_from_agent_result(result, scenario, agent_id)
 
     out = _outdir(scenario.get("id", "unknown"))
     raw = {k: getattr(result, k, None) for k in
            ("sim_hour","home_state","control_plan","safety_report","execution_result","final_response","trajectory")}
     _save(out, metrics, raw)
+    save_metrics(unified, out / "unified_metrics.json")
 
-    print(); print("── Benchmark Metrics ──────────────────────────────────")
-    for k, v in metrics.to_dict().items():
-        if v is not None:
-            print(f"  {k:<35} {v}")
+    print(); print_metric_summary(unified)
     print(); print(f"Outputs saved to: {out}")
 
 
