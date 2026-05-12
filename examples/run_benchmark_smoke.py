@@ -28,6 +28,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 BASELINE_NAMES = {"comfort_first", "grid_first", "rule_based_balanced"}
+LLM_AGENT_NAMES = {"llm_agent"}
 
 
 def _load_scenario(path: str) -> dict:
@@ -138,7 +139,110 @@ def _run_baseline(agent_id: str, scenario: dict):
     return r
 
 
+def _run_llm_agent(scenario: dict):
+    """Run LLM strategy generation with mock home_state (no EnergyPlus required).
+
+    Calls generate_strategy_options() via the real LLM, then invokes the
+    EnergyBridge LangGraph graph with llm_metrics in the initial state so that
+    the metrics node records latency, token counts, and model name.
+    """
+    from dotenv import load_dotenv
+    load_dotenv()
+    from energybridge.agent.graph import build_energybridge_graph
+    from energybridge.llm.strategy_advisor import generate_strategy_options
+    from energybridge.skills.grid_signal_translator import translate_vpp_context_to_grid_demand
+    from energybridge.skills.preference_parser import parse_user_preference
+    from energybridge.skills.strategy_generator import generate_candidate_strategy
+    from energybridge.utils.config import load_llm_config
+
+    user_input = scenario.get("user_input", "请在峰电时段帮我节省电费，但保持基本舒适。")
+    vpp_context = scenario.get("vpp_context", {})
+    home = {
+        "indoor_temp": 24.5, "outdoor_temp": 22.0,
+        "hvac_power_kw": 2.2, "facility_power_kw": 3.1,
+        "hvac_setpoint": 25.0, "occupancy": True,
+    }
+
+    translated_grid_signal = translate_vpp_context_to_grid_demand(vpp_context)
+    user_preferences = parse_user_preference(user_input)
+    base_strategy = generate_candidate_strategy(
+        user_preferences=user_preferences,
+        translated_grid_signal=translated_grid_signal,
+        home_state=home,
+    )
+
+    llm_config = load_llm_config()
+    llm_metrics = {
+        "used": False, "provider": llm_config.provider,
+        "model": "not_used", "latency_seconds": 0.0,
+        "token_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+    }
+    strategy_options = [base_strategy]
+
+    if llm_config.use_llm:
+        print("Calling LLM strategy advisor ...")
+        try:
+            strategy_options, llm_metrics = generate_strategy_options(
+                context={
+                    "user_input": user_input,
+                    "user_preferences": user_preferences,
+                    "grid_demand": translated_grid_signal,
+                    "vpp_context": vpp_context,
+                    "translated_grid_signal": translated_grid_signal,
+                    "home_state": home,
+                    "fallback_strategy": base_strategy,
+                },
+                fallback_strategy=base_strategy,
+            )
+            print(f"  LLM call success: {llm_metrics.get('latency_seconds', 0):.1f}s  "
+                  f"{llm_metrics.get('token_usage', {}).get('total_tokens', 0)} tokens  "
+                  f"model={llm_metrics.get('model', '?')}")
+        except Exception as exc:
+            print(f"  LLM call failed ({exc}), using fallback strategy.")
+            llm_metrics["model"] = "fallback_after_error"
+    else:
+        print("  USE_LLM=false — using deterministic strategy fallback.")
+
+    # Pick the first strategy option (highest-priority)
+    selected = strategy_options[0] if strategy_options else base_strategy
+    selected.setdefault("source", "llm_agent")
+
+    initial_state = {
+        "user_input": user_input,
+        "grid_demand": translated_grid_signal,
+        "grid_demand_source": "llm_agent_benchmark",
+        "vpp_context": vpp_context,
+        "home_state": home,
+        "user_preferences": user_preferences,
+        "translated_grid_signal": translated_grid_signal,
+        "strategy_options": strategy_options,
+        "candidate_strategy": selected,
+        "llm_metrics": llm_metrics,
+        "memory_path": str(PROJECT_ROOT / "logs" / "memory.json"),
+        "log_dir": str(PROJECT_ROOT / "logs"),
+        "trajectory": [],
+    }
+
+    app = build_energybridge_graph()
+    result = app.invoke(initial_state)
+
+    class _R:
+        sim_hour = float(scenario.get("trigger_hour", 42.0))
+        home_state = home
+        final_response = result.get("final_response", "")
+        trajectory = result.get("trajectory", [])
+    r = _R()
+    r.control_plan = result.get("control_plan", {})
+    r.safety_report = result.get("safety_report", {})
+    r.execution_result = result.get("execution_result", {"status": "simulated", "source": "llm_agent_benchmark"})
+    # Attach llm_metrics so trajectory_metrics can read them
+    r.llm_metrics = llm_metrics
+    r._full_state = result
+    return r
+
+
 def main():
+
     ap = argparse.ArgumentParser(description="EnergyBridge benchmark smoke-test runner")
     ap.add_argument("--scenario", required=True)
     ap.add_argument("--agent", default="current")
@@ -157,8 +261,10 @@ def main():
         result = _run_current(scenario)
     elif agent_id in BASELINE_NAMES:
         result = _run_baseline(agent_id, scenario)
+    elif agent_id in LLM_AGENT_NAMES:
+        result = _run_llm_agent(scenario)
     else:
-        print(f"ERROR: unknown --agent '{agent_id}'. Valid: current, {sorted(BASELINE_NAMES)}")
+        print(f"ERROR: unknown --agent '{agent_id}'. Valid: current, llm_agent, {sorted(BASELINE_NAMES)}")
         sys.exit(1)
 
     if result is None:
@@ -169,7 +275,20 @@ def main():
         extract_metrics_from_agent_result, print_metric_summary, save_metrics,
     )
     metrics = compute_benchmark_metrics(result, scenario, agent_id)
+    # For llm_agent mode: merge llm_metrics from full graph state into extracted metrics
     unified = extract_metrics_from_agent_result(result, scenario, agent_id)
+    if hasattr(result, 'llm_metrics') and result.llm_metrics:
+        lm = result.llm_metrics
+        tu = lm.get('token_usage', {})
+        unified['api_latency_seconds'] = lm.get('latency_seconds')
+        unified['total_tokens'] = tu.get('total_tokens')
+        unified['prompt_tokens'] = tu.get('prompt_tokens')
+        unified['completion_tokens'] = tu.get('completion_tokens')
+        unified['llm_model'] = lm.get('model')
+        unified['llm_provider'] = lm.get('provider')
+        unified['api_success'] = bool(lm.get('used', False))
+        from energybridge.evaluation.trajectory_metrics import _status_block
+        unified['metric_status'] = _status_block(unified)
 
     out = _outdir(scenario.get("id", "unknown"))
     raw = {k: getattr(result, k, None) for k in
