@@ -171,8 +171,14 @@ class EplusEnv:
         # simulation starts; calling it inside a callback is too late.
         self._state_reader.request_variables(api.exchange, state)
 
-        # Main control callback – fires every zone timestep
-        api.runtime.callback_begin_system_timestep_before_predictor(
+        # Main control callback – fires after HVAC calculations are complete.
+        # This timing is required so that HVAC-type output variables
+        # (e.g. "Facility Total Electricity Demand Rate",
+        #  "Zone Outdoor Air Drybulb Temperature") return valid handles and
+        # values.  Zone-type variables (indoor_temp, cooling_rate_w) are also
+        # available at this point.  Actuator writes here take effect in the
+        # next sub-timestep.
+        api.runtime.callback_end_system_timestep_after_hvac_reporting(
             state, self._make_timestep_callback(api, state)
         )
 
