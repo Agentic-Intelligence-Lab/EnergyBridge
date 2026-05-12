@@ -107,6 +107,8 @@ def parse_args() -> argparse.Namespace:
                         help="Simulation hour to inject VPP event (default: 42 = day2 18:00)")
     parser.add_argument("--user", default="我希望尽量舒服，但如果电网有需求，也可以短时间配合削峰。",
                         help="User preference string")
+    parser.add_argument("--analyze-output", action="store_true",
+                        help="Auto-run analyze_eplus_run.py after EP finishes")
     return parser.parse_args()
 
 
@@ -199,6 +201,83 @@ def main() -> None:
     print()
     print(f"EnergyPlus output files: {output_dir}")
     print(f"Agent memory log       : {PROJECT_ROOT / 'logs' / 'memory.json'}")
+
+    # Save agent_result.json into the output folder for post-run analysis
+    if env.agent_results:
+        agent_result_path = output_dir / "agent_result.json"
+        first_result = env.agent_results[0]
+        try:
+            ar_dict = {
+                "sim_hour": first_result.sim_hour,
+                "home_state": first_result.home_state,
+                "control_plan": first_result.control_plan,
+                "safety_report": first_result.safety_report,
+                "execution_result": first_result.execution_result,
+                "final_response": first_result.final_response,
+                "trajectory": first_result.trajectory,
+            }
+            agent_result_path.write_text(
+                json.dumps(ar_dict, indent=2, ensure_ascii=False)
+            )
+            print(f"Agent result JSON      : {agent_result_path}")
+        except Exception as e:
+            print(f"WARNING: Could not save agent_result.json: {e}")
+
+    # Optional post-run analysis
+    if args.analyze_output:
+        print()
+        print("Running post-run analyzer …")
+        analyzer = Path(__file__).parent / "analyze_eplus_run.py"
+        try:
+            import subprocess as _sp
+            _sp.run(
+                [sys.executable, str(analyzer),
+                 "--output", str(output_dir),
+                 "--trigger", str(args.trigger),
+                 "--duration", "60"],
+                check=False,
+            )
+        except Exception as e:
+            print(f"WARNING: analyzer failed: {e}")
+
+
+    # Save agent_result.json into the output folder for post-run analysis
+    if env.agent_results:
+        agent_result_path = output_dir / "agent_result.json"
+        first_result = env.agent_results[0]
+        try:
+            ar_dict = {
+                "sim_hour": first_result.sim_hour,
+                "home_state": first_result.home_state,
+                "control_plan": first_result.control_plan,
+                "safety_report": first_result.safety_report,
+                "execution_result": first_result.execution_result,
+                "final_response": first_result.final_response,
+                "trajectory": first_result.trajectory,
+            }
+            agent_result_path.write_text(
+                json.dumps(ar_dict, indent=2, ensure_ascii=False)
+            )
+            print(f"Agent result JSON      : {agent_result_path}")
+        except Exception as e:
+            print(f"WARNING: Could not save agent_result.json: {e}")
+
+    # Optional post-run analysis
+    if args.analyze_output:
+        print()
+        print("Running post-run analyzer ...")
+        analyzer = Path(__file__).parent / "analyze_eplus_run.py"
+        try:
+            import subprocess as _sp
+            _sp.run(
+                [sys.executable, str(analyzer),
+                 "--output", str(output_dir),
+                 "--trigger", str(args.trigger),
+                 "--duration", "60"],
+                check=False,
+            )
+        except Exception as e:
+            print(f"WARNING: analyzer failed: {e}")
 
     sys.exit(exit_code)
 
