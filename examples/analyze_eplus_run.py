@@ -44,6 +44,8 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--metrics-name", default="eplus_run_metrics.json")
     p.add_argument("--report", action="store_true", default=False,
                    help="Also generate Markdown report (optional; JSON+CSV are always written)")
+    p.add_argument("--baseline-output", default=None, dest="baseline_output",
+                   help="Path to a no-control baseline run folder for causal comparison")
     return p.parse_args()
 
 # ---------------------------------------------------------------------------
@@ -483,6 +485,7 @@ def build_metrics(
     eso_data: dict | None,
     windows: dict,
     agent_result: dict,
+    baseline_comparison: dict | None = None,
 ) -> dict:
     ts = eso_data["timeseries"] if eso_data else []
     event_snap = _nearest(ts, trigger_h) if ts else None
@@ -577,6 +580,16 @@ def build_metrics(
             ),
         },
         "notes": notes,
+        "agent_consistency_checks": _check_agent_consistency(agent_result),
+        "causal_control_effect": baseline_comparison if baseline_comparison is not None else {
+            "baseline_available": False,
+            "delta_indoor_temp_60min": None,
+            "delta_facility_kw_60min": None,
+            "delta_facility_energy_kwh_2h": None,
+            "verified": False,
+            "note": "Causal interpretation requires a no-control baseline run. "
+                    "Use --baseline-output to provide one.",
+        },
     }
 
 
@@ -640,6 +653,9 @@ def generate_report(
     fs = m["file_summary"]
     ar = m["agent_result"]
     ms = m["metric_status"]
+    cons = m.get("agent_consistency_checks", {})
+    causal = m.get("causal_control_effect", {})
+    llm = ar.get("llm_metrics", {}) if ar.get("available") else {}
 
     lines = [
         "# EnergyPlus-Agent 运行分析报告",
@@ -651,6 +667,55 @@ def generate_report(
         "",
         "---",
         "",
+    ]
+
+    # ------- Top-Level Verdict -------
+    ep_done = "YES" if rm["energyplus_completed"] else "NO"
+    loop_ok = "VERIFIED" if ms["api_level_loop"] == "verified" else ms["api_level_loop"].upper()
+    ep_state = "VERIFIED" if ar.get("available") and ar.get("home_state") else "NOT VERIFIED"
+    setpoint_written = (
+        "VERIFIED" if cons.get("setpoint_written_matches_control_plan") else
+        "PARTIAL" if cons.get("setpoint_written_matches_control_plan") is None else "MISMATCH"
+    )
+    ts_parsed = "YES" if ms["time_series_parsed"] == "yes" else "NO"
+    phys_resp = "YES" if ms["physical_response_verified"] == "yes" else ms["physical_response_verified"].upper()
+    causal_ok = "VERIFIED (see section 9)" if causal.get("baseline_available") else "NOT YET — needs no-control baseline"
+    energy_int = "APPROXIMATE (ESO integral, not sub-meter)" if ms["actual_energy_metrics"] == "ep_integral_computed" else "NOT AVAILABLE"
+    hvac_only = "NOT YET (no HVAC-only meter in IDF)"
+    tianjin_ok = "NOT YET (Chicago EPW used)"
+    all_consistent = cons.get("all_consistent", False)
+    consistency_ok = "PASSED" if all_consistent else (f"ISSUES: {len(cons.get('issues', []))}" if cons else "NOT CHECKED")
+
+    lines += [
+        "## Top-Level Verdict",
+        "",
+        "| 验证项目 | 状态 |",
+        "|---|---|",
+        f"| EnergyPlus completed | **{ep_done}** |",
+        f"| EP-agent API loop | **{loop_ok}** |",
+        f"| EP state read by agent | **{ep_state}** |",
+        f"| Setpoint written to EP actuator | **{setpoint_written}** |",
+        f"| Agent consistency check | **{consistency_ok}** |",
+        f"| Time-series parsed | **{ts_parsed}** |",
+        f"| Physical response observed | **{phys_resp}** |",
+        f"| Causal control effect verified | **{causal_ok}** |",
+        f"| Actual facility energy integration | **{energy_int}** |",
+        f"| HVAC-only electricity metric | **{hvac_only}** |",
+        f"| Tianjin scenario validity | **{tianjin_ok}** |",
+        "",
+    ]
+
+    # Show consistency issues as warnings if any
+    if cons.get("issues"):
+        lines += ["**⚠️ 一致性问题（报告顶部警告）**:", ""]
+        for issue in cons["issues"]:
+            lines.append(f"- ⚠️ {issue}")
+        lines.append("")
+
+    lines += ["---", ""]
+
+    # ------- Section 1: Run Metadata -------
+    lines += [
         "## 1. Run Metadata",
         "",
         f"| 项目 | 值 |",
@@ -662,9 +727,16 @@ def generate_report(
         f"| Fatal 数 | {rm['fatal_count']} |",
         f"| 分析时间 | {rm['analysis_time']} |",
         "",
+        "> **Warning 来源说明**：EnergyPlus 在运行时会将诊断信息写入 `eplusout.err`，"
+        "格式为 `** Warning **`（警告）、`** Severe **`（严重错误）、`** Fatal **`（致命错误）。"
+        "分析器通过正则计数这些标记行。警告通常由 HVAC 尺寸计算、天气数据插值或模型参数引起，"
+        "不影响仿真完成；Severe 以上错误才可能导致仿真中止。",
+        "",
+        "---",
+        "",
     ]
 
-    # ------- Section 2: Verdict -------
+    # ------- Section 2: Agent Result -------
     loop_status = ms["api_level_loop"]
     phys_status = ms["physical_response_verified"]
 
@@ -700,7 +772,7 @@ def generate_report(
         "",
     ]
 
-    # ------- Section 3: Agent Result -------
+    # ------- Section 3: Agent Result Summary -------
     lines += ["## 3. Agent Result 摘要", ""]
     if ar.get("available"):
         hs = ar.get("home_state", {})
@@ -722,6 +794,7 @@ def generate_report(
             f"| duration_minutes | {cp.get('duration_minutes')} min |",
             f"| estimated_power_kw | {cp.get('estimated_power_kw')} kW |",
             f"| estimated_reduction_kw | {cp.get('estimated_reduction_kw')} kW |",
+            f"| controller | `{cp.get('controller')}` |",
             f"| safety_ok | {'✅' if sr.get('safe') else '❌'} |",
             f"| execution_status | {er.get('status')} |",
             f"| actuator | `{er.get('actuator')}` |",
@@ -758,12 +831,6 @@ def generate_report(
     for fname, finfo in fs.get("key_file_sizes_bytes", {}).items():
         sz = f"{finfo:,} bytes" if finfo is not None else "—"
         lines.append(f"| `{fname}` | ✅ | {sz} |")
-    missing = [k for k, v in metrics["file_summary"].items()
-               if k.endswith("_exists") and v is False]
-    for fname in ["eplusout.end", "eplusout.err", "eplusout.eso",
-                  "eplusout.csv", "agent_result.json"]:
-        info = metrics["file_summary"].get(f"{fname.replace('.', '_').replace('-', '_')}_exists", None)
-        # use folder_info lookup
     lines.append("")
 
     # ------- Section 5: Event-time snapshot -------
@@ -779,7 +846,6 @@ def generate_report(
             f"| outdoor_temp | {_fmt(snap.get('outdoor_temp_c'))} °C | 室外温度 |",
             f"| cooling_load_proxy | {_fmt(snap.get('cooling_load_proxy_kw'))} kW | 冷盘管热功率（非电力） |",
             f"| facility_kw | {_fmt(snap.get('facility_kw'))} kW | 建筑总电功率 |",
-            f"| cooling_setpoint | {_fmt(snap.get('cooling_setpoint_c'))} °C | 温控设定（如有） |",
             "",
         ]
     else:
@@ -793,7 +859,7 @@ def generate_report(
             "### 6.1 关键时间点",
             "",
             "| 时间点 | cum_hour | indoor_temp (°C) | facility_kw | cooling_proxy_kw |",
-            "|--------|----------|-------------------|-------------|-----------------|",
+            "|--------|----------|-------------------|-------------|------------------|",
         ]
         for label, row in pts.items():
             if row:
@@ -805,7 +871,6 @@ def generate_report(
                 )
         lines.append("")
 
-        pre = m.get("post_event_windows", {}).get("pre_event_30min", {})
         phys = m.get("physical_response_evidence", {})
         delta_t = phys.get("indoor_temp_delta_0_to_60min")
 
@@ -836,7 +901,7 @@ def generate_report(
 
     lines += ["---", ""]
 
-    # ------- Section 7 & 8: What proves / doesn't prove -------
+    # ------- Section 7: What proves -------
     lines += [
         "## 7. 本次运行证明了什么",
         "",
@@ -851,29 +916,129 @@ def generate_report(
         lines += [
             "- ✅ 室内温度时序显示物理响应（setpoint 提高后温度上升），构成物理响应的时序证据",
         ]
+    lines += [""]
+
+    # ------- Section 8: EP Power Metrics -------
     lines += [
-        "",
         "## 8. EP 功率积分 & 舒适度评分（来自 ESO 时序）",
         "",
-    ] + _build_ep_power_section(m.get("ep_power_metrics", {})) + [
+    ] + _build_ep_power_section(m.get("ep_power_metrics", {})) + [""]
+
+    # ------- Section 9: Causal Control Effect (Baseline) -------
+    lines += ["## 9. 因果控制效果（Baseline 对比）", ""]
+    if causal.get("baseline_available"):
+        d_energy = causal.get("delta_facility_energy_kwh_2h")
+        d_temp = causal.get("delta_indoor_temp_points", {})
+        d_fac = causal.get("delta_facility_kw_points", {})
+        lines += [
+            "**Δ 室内温度（controlled − baseline）**:",
+            "",
+            "| 时间点 | Δ indoor_temp_c (°C) | Δ facility_kw |",
+            "|--------|----------------------|----------------|",
+        ]
+        for pt in ["t_plus_0min", "t_plus_30min", "t_plus_60min", "t_plus_120min"]:
+            dt = d_temp.get(pt)
+            df = d_fac.get(pt)
+            lines.append(f"| {pt} | {_fmt(dt, 3)} | {_fmt(df, 3)} |")
+        lines += [
+            "",
+            f"**Δ facility energy (2h integral)**: {_fmt(d_energy, 3)} kWh",
+            f"> 负值表示受控运行用电更少（节能）；正值表示受控运行用电更多（预期：事件期间节能但可能存在 pre-cooling 用电补偿）。",
+            "",
+            f"> ⚠️ {causal.get('causal_note', '')}",
+            "",
+        ]
+    else:
+        lines += [
+            "> ❌ **无 baseline 数据**。请提供 `--baseline-output <path>` 参数运行无控制基线仿真。",
+            ">",
+            "> 基线运行方式：使用相同 IDF + EPW，跳过 agent 介入（不设置 VPP trigger），",
+            "> 然后将其输出目录作为 `--baseline-output` 传入本分析器。",
+            "",
+        ]
+
+    # ------- Section 10: What does NOT prove -------
+    lines += [
+        "## 10. 本次运行尚未证明",
         "",
-        "## 9. 本次运行尚未证明",
-        "",
-        "- ❌ **实际节电量**：ESO 中无 HVAC 独立电表，`facility_kw` 包含其他负载",
+        "- ❌ **因果节电量**：需要 no-control baseline 对比（见第9节）",
+        "- ❌ **实际 HVAC 电耗**：ESO 中无 HVAC 独立电表，`facility_kw` 包含其他负载",
         "- ❌ **真实 VPP 合规性**：仅基于 EP 实时 hvac_power_kw，不含未来积分误差",
         "- ❌ **天津场景有效性**：本次使用芝加哥 EPW 替代",
         "- ❌ **长期控制性能**：仅测试了单次触发",
         "",
         "---",
         "",
-        "## 10. 下一步建议",
+    ]
+
+    # ------- Section 11: Agent Consistency Checks -------
+    lines += ["## 11. Agent 一致性检查", ""]
+    if cons.get("available") is False:
+        lines += ["> 无 agent_result.json，无法执行一致性检查。", ""]
+    else:
+        def _tick(v):
+            if v is True: return "✅"
+            if v is False: return "❌"
+            return "—"
+        lines += [
+            "| 检查项 | 结果 |",
+            "|--------|------|",
+            f"| execution_actuator_is_eplus | {_tick(cons.get('execution_actuator_is_eplus'))} |",
+            f"| final_response_actuator_consistent | {_tick(cons.get('final_response_actuator_consistent'))} |",
+            f"| control_plan_action_matches_execution | {_tick(cons.get('control_plan_action_matches_execution'))} |",
+            f"| setpoint_written_matches_control_plan | {_tick(cons.get('setpoint_written_matches_control_plan'))} |",
+            f"| trajectory_actuate_consistent | {_tick(cons.get('trajectory_actuate_consistent'))} |",
+            "",
+        ]
+        if cons.get("issues"):
+            lines += ["**问题列表**:", ""]
+            for issue in cons["issues"]:
+                lines.append(f"- ⚠️ {issue}")
+            lines.append("")
+        else:
+            lines.append("> ✅ 所有一致性检查通过。")
+            lines.append("")
+
+    lines += ["---", ""]
+
+    # ------- Section 12: LLM / API Runtime Metrics -------
+    lines += ["## 12. LLM / API Runtime Metrics", ""]
+    if llm.get("used"):
+        tu = llm.get("token_usage", {})
+        lines += [
+            "| 指标 | 值 |",
+            "|------|---|",
+            f"| provider | {llm.get('provider', '—')} |",
+            f"| model | `{llm.get('model', '—')}` |",
+            f"| api_used | ✅ True |",
+            f"| latency_seconds | {llm.get('latency_seconds', '—')} s |",
+            f"| prompt_tokens | {tu.get('prompt_tokens', '—')} |",
+            f"| completion_tokens | {tu.get('completion_tokens', '—')} |",
+            f"| total_tokens | {tu.get('total_tokens', '—')} |",
+            "",
+        ]
+    else:
+        lines += [
+            "| 指标 | 值 |",
+            "|------|---|",
+            "| api_used | not_available |",
+            "| model | not_available |",
+            "| latency_seconds | not_available |",
+            "| total_tokens | not_available |",
+            "",
+        ]
+
+    lines += ["---", ""]
+
+    # ------- Section 13: Next Steps -------
+    lines += [
+        "## 13. 下一步建议",
         "",
-        "1. **修复 final_response actuator 文本不一致**（说 mock 但实际是 eplus_actuator_v1）",
-        "2. **在 `run_eplus_agent_loop.py` 中自动保存 `agent_result.json`**（已在 `--analyze-output` flag 中实现）",
-        "3. **在 IDF 中添加 HVAC 独立电表**（`Output:Meter,Cooling:Electricity`）以量化节电",
-        "4. **添加 `Zone Outdoor Air Drybulb Temperature` 到 ESO 输出变量**",
-        "5. **将本分析集成进 `run_benchmark_smoke.py`**（EP agent 模式运行后自动调用）",
-        "6. **获取天津 EPW 文件** 以进行本地化场景验证",
+        "1. **在 IDF 中添加 HVAC 独立电表**（`Output:Meter,Cooling:Electricity`）以量化实际 HVAC 节电",
+        "2. **运行 no-control baseline** 并使用 `--baseline-output` 获取因果控制效果",
+        "3. **获取天津 EPW 文件** 以进行本地化场景验证",
+        "4. **将本分析集成进 `run_benchmark_smoke.py`**（EP agent 模式运行后自动调用）",
+        "5. **测试多次 VPP 触发**（当前仅测试单次 sim_hour=42）",
         "",
         "---",
         "",
@@ -886,6 +1051,154 @@ def generate_report(
 # ---------------------------------------------------------------------------
 # Step 9: Save CSV summary
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Agent consistency checks
+# ---------------------------------------------------------------------------
+
+def _check_agent_consistency(agent_result: dict) -> dict:
+    """Check internal consistency of agent_result.json fields."""
+    if not agent_result.get("available"):
+        return {"available": False}
+
+    er = agent_result.get("execution_result", {})
+    cp = agent_result.get("control_plan", {})
+    fr = agent_result.get("final_response", "")
+    traj = agent_result.get("trajectory", [])
+
+    exec_actuator = er.get("actuator", "")
+    is_eplus = exec_actuator == "eplus_actuator_v1"
+
+    fr_consistent = "mock_electrical_actuator" not in fr and (
+        exec_actuator in fr or "eplus_actuator" in fr
+    )
+
+    cp_action = cp.get("action", "")
+    er_action = er.get("action", "")
+    action_matches = cp_action == er_action if cp_action and er_action else None
+
+    cp_setpoint = cp.get("setpoint")
+    written_setpoint = er.get("written", {}).get("cooling_setpoint")
+    setpoint_matches = (
+        abs(cp_setpoint - written_setpoint) < 0.01
+        if cp_setpoint is not None and written_setpoint is not None
+        else None
+    )
+
+    # Check trajectory actuate node
+    traj_actuate = next((s["output"] for s in traj if s.get("node") == "actuate"), {})
+    traj_actuator = traj_actuate.get("actuator", "")
+    traj_consistent = traj_actuator == exec_actuator if traj_actuator else None
+
+    issues = []
+    if not is_eplus:
+        issues.append(f"execution_result.actuator is '{exec_actuator}' (expected eplus_actuator_v1)")
+    if not fr_consistent:
+        issues.append("final_response mentions mock actuator but execution used eplus_actuator_v1")
+    if action_matches is False:
+        issues.append(f"control_plan.action='{cp_action}' != execution_result.action='{er_action}'")
+    if setpoint_matches is False:
+        issues.append(f"control_plan.setpoint={cp_setpoint} != written.cooling_setpoint={written_setpoint}")
+    if traj_consistent is False:
+        issues.append(f"trajectory.actuate.actuator='{traj_actuator}' != execution_result.actuator='{exec_actuator}'")
+
+    return {
+        "execution_actuator_is_eplus": is_eplus,
+        "final_response_actuator_consistent": fr_consistent,
+        "control_plan_action_matches_execution": action_matches,
+        "setpoint_written_matches_control_plan": setpoint_matches,
+        "trajectory_actuate_consistent": traj_consistent,
+        "all_consistent": len(issues) == 0,
+        "issues": issues,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Baseline comparison
+# ---------------------------------------------------------------------------
+
+def _compare_baseline(
+    controlled_ts: list[dict],
+    baseline_ts: list[dict],
+    trigger_h: float,
+    duration_min: int,
+) -> dict:
+    """Compute delta between controlled and baseline runs at key time points."""
+    VARS = ["indoor_temp_c", "facility_kw", "cooling_load_proxy_kw", "water_heater_kw"]
+
+    def _nn(ts, t):
+        return _nearest(ts, t)
+
+    def _win(ts, t_start, t_end):
+        return _window_avg(ts, t_start, t_end)
+
+    offsets_min = [0, 30, 60, 120]
+    points_delta = {}
+    for off in offsets_min:
+        t = trigger_h + off / 60.0
+        c = _nn(controlled_ts, t) or {}
+        b = _nn(baseline_ts, t) or {}
+        d = {}
+        for v in VARS:
+            cv, bv = c.get(v), b.get(v)
+            d[v] = round(cv - bv, 4) if cv is not None and bv is not None else None
+        points_delta[f"t_plus_{off}min"] = d
+
+    windows_delta = {}
+    window_defs = [
+        ("first_30min", trigger_h, trigger_h + 0.5),
+        ("first_1h",    trigger_h, trigger_h + 1.0),
+        ("first_2h",    trigger_h, trigger_h + 2.0),
+    ]
+    for wname, t0, t1 in window_defs:
+        c = _win(controlled_ts, t0, t1)
+        b = _win(baseline_ts, t0, t1)
+        d = {}
+        for v in VARS:
+            cv, bv = c.get(v), b.get(v)
+            d[v] = round(cv - bv, 4) if cv is not None and bv is not None else None
+        windows_delta[wname] = d
+
+    # Facility energy delta
+    def _integral(ts, t0, t1, var="facility_kw"):
+        seg = [r for r in ts if t0 <= r.get("cum_hour", -1) <= t1]
+        if len(seg) < 2:
+            return None
+        seg = sorted(seg, key=lambda r: r["cum_hour"])
+        total = 0.0
+        for i in range(len(seg) - 1):
+            dt = seg[i+1]["cum_hour"] - seg[i]["cum_hour"]
+            v = (seg[i].get(var, 0) + seg[i+1].get(var, 0)) / 2
+            total += v * dt
+        return round(total, 4)
+
+    t_end = trigger_h + 2.0
+    c_energy = _integral(controlled_ts, trigger_h, t_end)
+    b_energy = _integral(baseline_ts, trigger_h, t_end)
+    delta_energy = round(c_energy - b_energy, 4) if c_energy is not None and b_energy is not None else None
+
+    return {
+        "baseline_available": True,
+        "causal_note": (
+            "Requires same IDF, same EPW, same run period, same trigger window — "
+            "only valid if the two runs differ ONLY in the control action."
+        ),
+        "delta_indoor_temp_points": {k: v.get("indoor_temp_c") for k, v in points_delta.items()},
+        "delta_facility_kw_points": {k: v.get("facility_kw") for k, v in points_delta.items()},
+        "delta_cooling_proxy_kw_points": {k: v.get("cooling_load_proxy_kw") for k, v in points_delta.items()},
+        "all_variables_by_point": points_delta,
+        "all_variables_by_window": windows_delta,
+        "delta_facility_energy_kwh_2h": delta_energy,
+        "controlled_facility_energy_kwh_2h": c_energy,
+        "baseline_facility_energy_kwh_2h": b_energy,
+        "interpretation": (
+            f"Controlled run used {delta_energy:+.3f} kWh more (+) or less (-) "
+            f"facility electricity over 2h post-event vs baseline."
+            if delta_energy is not None else "Could not compute."
+        ),
+    }
+
 
 def save_timeseries_csv(timeseries: list[dict], path: Path) -> None:
     if not timeseries:
@@ -951,10 +1264,30 @@ def main() -> None:
     else:
         print(f"agent_result.json: not found ({agent_result.get('reason')})")
 
-    # Step 7: build metrics
+    # Step 7: baseline comparison (optional)
+    baseline_comparison = None
+    if args.baseline_output:
+        baseline_dir = Path(args.baseline_output)
+        if baseline_dir.is_dir():
+            baseline_eso_path = baseline_dir / "eplusout.eso"
+            baseline_eso = parse_eso(baseline_eso_path)
+            if baseline_eso and baseline_eso["timeseries"]:
+                baseline_ts = baseline_eso["timeseries"]
+                controlled_ts = eso_data["timeseries"] if eso_data else []
+                baseline_comparison = _compare_baseline(
+                    controlled_ts, baseline_ts, args.trigger, args.duration
+                )
+                print(f"Baseline ESO : {baseline_dir} ({baseline_eso['total_points']} records)")
+            else:
+                print(f"Baseline ESO : {baseline_dir} — ESO parse failed or empty")
+        else:
+            print(f"Baseline dir : NOT FOUND — {args.baseline_output}")
+
+    # Step 7b: build metrics
     metrics = build_metrics(
         output_dir, args.trigger, args.duration,
-        folder_info, err_info, eso_data, windows, agent_result
+        folder_info, err_info, eso_data, windows, agent_result,
+        baseline_comparison=baseline_comparison,
     )
 
     # Save metrics JSON
@@ -1003,12 +1336,25 @@ def main() -> None:
 
     # Print status
     ms = metrics["metric_status"]
+    cons = metrics.get("agent_consistency_checks", {})
     print()
     print("=== Metric Status ===")
     print(f"  api_level_loop          : {ms['api_level_loop']}")
     print(f"  time_series_parsed      : {ms['time_series_parsed']}")
     print(f"  physical_response_verified: {ms['physical_response_verified']}")
     print(f"  actual_energy_metrics   : {ms['actual_energy_metrics']}")
+    if cons.get("issues"):
+        print()
+        print("=== ⚠️  Consistency Issues ===")
+        for issue in cons["issues"]:
+            print(f"  - {issue}")
+    else:
+        print(f"  agent_consistency      : all_consistent={cons.get('all_consistent', '—')}")
+    if baseline_comparison:
+        d = baseline_comparison.get("delta_facility_energy_kwh_2h")
+        print()
+        print("=== Baseline Comparison ===")
+        print(f"  delta_facility_energy_kwh_2h: {d} kWh (controlled − baseline)")
 
 
 if __name__ == "__main__":

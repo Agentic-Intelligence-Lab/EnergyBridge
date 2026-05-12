@@ -204,7 +204,7 @@ def node_explanation(state: dict[str, Any]) -> dict[str, Any]:
     if execution_result:
         response = (
             f"{response} Execution status: {execution_result.get('status', 'unknown')} "
-            f"via {execution_result.get('actuator', 'mock_electrical_actuator_v0')}."
+            f"via {execution_result.get('actuator', 'unknown')}."
         )
     return {
         "final_response": response,

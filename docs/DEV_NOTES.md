@@ -47,15 +47,50 @@
 - Kept the demo flow simple: main run, then feedback update, then trajectory and memory logging.
 - `python -m compileall energybridge examples/run_agent_loop.py` has been tested.
 
-## EnergyPlus Co-simulation Integration (Stage-2)
-
+##  Stage-2 EnergyPlus Integration
 ### Overview
 
-Added `energybridge/simulation/` as a thin adapter layer connecting the
-EnergyBridge agent loop to a real EnergyPlus building simulation via
-`pyenergyplus`.  The agent graph and all skills are completely unchanged;
-only the data source (home_state) and the actuation target (EnergyPlus
-actuators) are replaced.
+Added `energybridge/simulation/` as a adapter layer connecting the EnergyBridge agent loop to a real EnergyPlus building simulation via `pyenergyplus`.  The agent graph and all skills are completely unchanged; only the data source (home_state) and the actuation target (EnergyPlus actuators) are replaced.
+
+### EnergyPlus Installation
+Installed EnergyPlus 24.1.0 to `/home/ha_agent/EnergyPlus-24-1-0`
+
+```bash
+wget https://github.com/NREL/EnergyPlus/releases/download/v24.1.0/EnergyPlus-24.1.0-9d7789a3ac-Linux-Ubuntu22.04-x86_64.sh
+chmod +x EnergyPlus-24.1.0-9d7789a3ac-Linux-Ubuntu22.04-x86_64.sh
+./EnergyPlus-24.1.0-9d7789a3ac-Linux-Ubuntu22.04-x86_64.sh
+```
+
+### Introduction
+## IDF 文件
+
+`Family_Model/Family_Simple.idf`
+
+IDF（Input Data File）是 EnergyPlus 的建筑模型输入文件，描述建筑的全部物理信息。这个文件是在 EnergyPlus 24.1 官方示例 `SingleFamilyHouse_HP_Slab.idf`（即 `original_model.idf`基础上改造而来的，主要改动记录在 `envelope_retrofit_report.md`第 8-10 节：
+
+- **地点**：从美国费尔班克斯改为天津（纬度 39.08°N，经度 117.07°E）
+- **围护结构**：外墙换成 `CN_ExteriorWall_AAC_RockWool_Cold`（加气混凝土 + 岩棉外保温），顶棚换成 `CN_AtticFloor_RockWool_Cold`，外窗换成 Low-E 中空玻璃
+- **地面边界**：去掉了 Slab 预处理器依赖，改为 `Ground` + 月地温，可以直接运行
+- **可控设备**：新增 EV 充电器（`EV_Charger`，7 kW）和储水式电热水器（`WaterHeater:Stratified`，120 L / 3 kW），各自挂了 `Schedule:Constant` 作为外部控制接口
+- **Agent 控制接口**：IDF 中保留了 `cooling_sch` 和 `heating_sch` 两个 `Schedule:Compact`，这正是 `variable_catalog.py` 里 `ACTUATORS` 字典指向的 actuator 目标
+
+另外还有一个 `Family_Simple_3day.idf`，RunPeriod 只跑 7 月 1-3 日，用于快速调试。
+
+---
+
+## EPW 文件
+
+由 `_find_epw()` 按优先级搜索：
+
+```
+Family_Model/Weather/Tianjin/CHN_Tianjin.Tianjin.545270_CSWD.epw
+```
+
+EPW（EnergyPlus Weather）是逐小时气象数据文件。这个文件是天津的 CSWD（中国标准气象数据）格式气象文件，WMO 站号 545270，与 IDF 里 `Site:Location` 的坐标完全对应（39.08°N / 117.07°E / UTC+8 / 海拔 2.5 m）。
+
+`_find_epw()` 还列了几个备用路径，最后兜底是 EnergyPlus 自带的芝加哥或旧金山 EPW，保证脚本在没有天津气象文件时也能跑通功能测试。
+
+---
 
 ### Architecture: Event-Driven Loose Coupling
 
@@ -118,22 +153,6 @@ Result:
 - Agent decision: setpoint=26.5°C (cost_saving mode, safety passed)
 - Actuator written: cooling_setpoint=26.5°C, heating_setpoint=24.5°C
 - No WARNING messages; all variable/actuator handles resolved
-
-### What Was NOT Changed
-
-- `energybridge/agent/` — all nodes and graph unchanged
-- `energybridge/skills/` — all skills unchanged
-- `energybridge/control/safety_checker.py` — unchanged
-- `energybridge/control/mock_mpc.py` — still used (first stage)
-- `energybridge/memory/` and `energybridge/evaluation/` — unchanged
-- `energybridge/grid/vpp_1/` — unchanged
-- `Family_Model/control_model/control_model.py` — EV/EWH kept independent
-- `examples/run_agent_loop.py` — mock mode preserved
-
-### EnergyPlus Installation
-
-- EnergyPlus 24.1.0 at `/home/ha_agent/EnergyPlus-24-1-0`
-- pyenergyplus importable in `energybridge` conda environment
 
 ### Next Steps
 

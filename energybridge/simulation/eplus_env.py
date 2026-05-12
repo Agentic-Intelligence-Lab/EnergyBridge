@@ -296,6 +296,23 @@ class EplusEnv:
         control_plan = result.get("control_plan", {})
         execution_result = self._actuator_writer.apply(api.exchange, state, control_plan)
 
+        # 5a. Patch trajectory actuate node and final_response to reflect real actuator
+        real_actuator = execution_result.get("actuator", "eplus_actuator_v1")
+        trajectory = list(result.get("trajectory", []))
+        for step in trajectory:
+            if step.get("node") == "actuate":
+                step["output"] = {
+                    "status": execution_result.get("status", "executed"),
+                    "actuator": real_actuator,
+                    "action": execution_result.get("action", control_plan.get("action")),
+                    "written": execution_result.get("written", {}),
+                }
+        result["trajectory"] = trajectory
+        # Patch final_response text to replace any mock actuator mention
+        fr = result.get("final_response", "")
+        fr = fr.replace("mock_electrical_actuator_v0", real_actuator)
+        result["final_response"] = fr
+
         # 6. Store result for the caller
         llm_metrics = result.get("llm_metrics", {})
         agent_result = AgentResult(
