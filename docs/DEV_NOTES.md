@@ -47,10 +47,109 @@
 - Kept the demo flow simple: main run, then feedback update, then trajectory and memory logging.
 - `python -m compileall energybridge examples/run_agent_loop.py` has been tested.
 
+## EnergyPlus Co-simulation Integration (Stage-2)
+
+### Overview
+
+Added `energybridge/simulation/` as a thin adapter layer connecting the
+EnergyBridge agent loop to a real EnergyPlus building simulation via
+`pyenergyplus`.  The agent graph and all skills are completely unchanged;
+only the data source (home_state) and the actuation target (EnergyPlus
+actuators) are replaced.
+
+### Architecture: Event-Driven Loose Coupling
+
+```
+VPP signal injected into event queue
+  → EnergyPlus timestep callback fires (every 10 min)
+  → StateReader reads Zone Temp / Outdoor Temp / HVAC Power from EnergyPlus
+  → EnergyBridge agent graph invoked (full loop: preference → strategy → MPC → safety → explanation)
+  → ActuatorWriter writes cooling_sch / heating_sch setpoints back to EnergyPlus
+  → EnergyPlus continues with new setpoints until next event
+```
+
+### New Files
+
+| File | Purpose |
+|---|---|
+| `energybridge/simulation/__init__.py` | Package docstring |
+| `energybridge/simulation/variable_catalog.py` | Centralised EnergyPlus variable/actuator name registry |
+| `energybridge/simulation/state_reader.py` | EnergyPlus output variables → `home_state` dict |
+| `energybridge/simulation/actuator_writer.py` | `control_plan` → EnergyPlus Schedule actuator writes |
+| `energybridge/simulation/eplus_env.py` | Main env class: lifecycle, event queue, callback, agent invocation |
+| `examples/run_eplus_agent_loop.py` | Demo entry point for EnergyPlus co-simulation mode |
+| `Family_Model/Family_Simple_3day.idf` | 3-day test IDF (July 1–3) for fast functional testing |
+
+### EnergyPlus Variable / Actuator Mapping
+
+**State reads (variable_catalog.py):**
+
+| home_state field | EnergyPlus variable | Key |
+|---|---|---|
+| `indoor_temp` | `Zone Mean Air Temperature` | `living_unit1` |
+| `outdoor_temp` | `Zone Outdoor Air Drybulb Temperature` | `living_unit1` |
+| `hvac_power_kw` | `Cooling Coil Total Cooling Rate` | `DX Cooling Coil_unit1` |
+| `facility_power_kw` | `Facility Total Electricity Demand Rate` | `Whole Building` |
+
+**Actuator writes (variable_catalog.py):**
+
+| control_plan action | EnergyPlus actuator | Key |
+|---|---|---|
+| `set_hvac_temperature` → cooling | `Schedule:Compact / Schedule Value` | `cooling_sch` |
+| `set_hvac_temperature` → heating | `Schedule:Compact / Schedule Value` | `heating_sch` |
+
+Heating setpoint is automatically set to `cooling_setpoint - 2.0°C` to avoid
+thermostat conflicts.
+
+### Verified Test Run
+
+```bash
+python examples/run_eplus_agent_loop.py \
+  --idf Family_Model/Family_Simple_3day.idf \
+  --epw /home/ha_agent/EnergyPlus-24-1-0/WeatherData/USA_IL_Chicago-OHare.Intl.AP.725300_TMY3.epw \
+  --output logs/eplus_test_run4 \
+  --trigger 18.0
+```
+
+Result:
+- EnergyPlus Completed Successfully (exit code 0)
+- VPP event fired at sim_hour=18.00
+- home_state read: indoor=23.86°C, outdoor=16.09°C, hvac=0.613 kW
+- Agent decision: setpoint=26.5°C (cost_saving mode, safety passed)
+- Actuator written: cooling_setpoint=26.5°C, heating_setpoint=24.5°C
+- No WARNING messages; all variable/actuator handles resolved
+
+### What Was NOT Changed
+
+- `energybridge/agent/` — all nodes and graph unchanged
+- `energybridge/skills/` — all skills unchanged
+- `energybridge/control/safety_checker.py` — unchanged
+- `energybridge/control/mock_mpc.py` — still used (first stage)
+- `energybridge/memory/` and `energybridge/evaluation/` — unchanged
+- `energybridge/grid/vpp_1/` — unchanged
+- `Family_Model/control_model/control_model.py` — EV/EWH kept independent
+- `examples/run_agent_loop.py` — mock mode preserved
+
+### EnergyPlus Installation
+
+- EnergyPlus 24.1.0 at `/home/ha_agent/EnergyPlus-24-1-0`
+- pyenergyplus importable in `energybridge` conda environment
+
+### Next Steps
+
+- Stage 2b: Merge EV/EWH control from `control_model.py` into `EplusEnv`
+- Stage 3: Replace `mock_mpc` with a physics-based thermal prediction model
+  now that real `home_state` is available
+- Stage 4: Split `living_unit1` into multiple thermal zones with independent
+  temperature control
+- Add Tianjin EPW to `Family_Model/Weather/Tianjin/` for China-specific runs
+
 ## Current TODO
 
 - Add unit tests for skills and safety checker edge cases.
 - Expand VPP-1 adapter with stricter validation.
 - Add configurable policy profiles for different households.
 - Add regression tests for memory update behavior.
-- Prepare interfaces for real MPC integration.
+- Add Tianjin EPW file to enable China-specific EnergyPlus runs.
+- Merge EV/EWH control from control_model.py into EplusEnv (Stage 2b).
+- Replace mock_mpc with physics-based thermal model (Stage 3).

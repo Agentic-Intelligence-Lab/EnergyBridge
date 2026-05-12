@@ -1,8 +1,10 @@
-"""Simulation object layer for EnergyBridge evaluations."""
+"""EnergyPlus co-simulation adapter for EnergyBridge.
 
-from energybridge.simulation.agent import AgentSimulator
-from energybridge.simulation.grid import GridSimulator
-from energybridge.simulation.home import HomeSimulator
-from energybridge.simulation.user import SimulatedUser
+This package provides a thin adapter layer between the EnergyBridge agent
+and EnergyPlus via pyenergyplus.  The agent loop itself is unchanged; this
+layer only handles:
 
-__all__ = ["AgentSimulator", "GridSimulator", "HomeSimulator", "SimulatedUser"]
+- reading EnergyPlus output variables into the home_state dict format
+- writing agent control_plan decisions back as EnergyPlus actuators
+- managing the EnergyPlus process lifecycle and the VPP event queue
+"""
