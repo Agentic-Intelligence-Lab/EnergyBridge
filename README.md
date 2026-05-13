@@ -104,6 +104,29 @@ Main files:
 `-> memory update`
 `-> trajectory logging`
 
+## EnergyPlus Benchmark / EP-Agent Loop
+
+For running the EnergyPlus co-simulation agent loop, analyzing outputs, and generating benchmark metrics, see:
+
+- [`docs/eplus_benchmark_loop_readme.md`](docs/eplus_benchmark_loop_readme.md) — commands, parameters, metrics reference
+- [`docs/eplus_baseline_comparison_report.md`](docs/eplus_baseline_comparison_report.md) — controlled vs no-control baseline comparison
+- [`docs/benchmark_metric_line_progress_report.md`](docs/benchmark_metric_line_progress_report.md) — project progress report
+
+Quick EP run:
+
+```bash
+python examples/run_eplus_agent_loop.py \
+  --idf Family_Model/Family_Simple_3day.idf \
+  --epw /path/to/weather.epw \
+  --output logs/eplus_new_run \
+  --trigger 42.0
+
+python examples/analyze_eplus_run.py \
+  --output logs/eplus_new_run \
+  --trigger 42.0 \
+  --report
+```
+
 ## Reference Note
 
 `references/HEMA` is kept only as architecture inspiration because it is GPLv3. EnergyBridge code is implemented independently and does not copy HEMA source code.
