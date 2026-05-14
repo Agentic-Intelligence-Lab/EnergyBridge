@@ -39,6 +39,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from energybridge.simulation.appliance_controller import ApplianceController
+
 
 # ---------------------------------------------------------------------------
 # EnergyPlus path bootstrap (mirrors control_model.py convention)
@@ -125,6 +127,9 @@ class EplusEnv:
 
         # Track simulation start day so trigger_hour is relative (cumulative)
         self._sim_start_day: int | None = None
+
+        # Background EV + EWH automation (runs every timestep)
+        self._appliance_controller = ApplianceController()
 
     # ------------------------------------------------------------------
     # Public API
@@ -221,6 +226,29 @@ class EplusEnv:
             if self._sim_start_day is None:
                 self._sim_start_day = day
             sim_hour = (day - self._sim_start_day) * 24.0 + api.exchange.current_time(s)
+
+            # Run background EV + EWH automation every timestep.
+            # Use a fixed dt of 1/6 h (= 10 min IDF timestep) instead of
+            # api.exchange.zone_time_step() which can vary slightly with HVAC
+            # state and would cause divergent EV SOC between controlled and
+            # baseline runs.
+            warmup = api.exchange.warmup_flag(s)
+            tank_temp = self._state_reader.read(api.exchange, s).get("ewh_tank_temp_c")
+            day = api.exchange.day_of_year(s)
+            _FIXED_DT_HOURS = 1.0 / 6.0  # 10-min IDF timestep
+            appliance_vals = self._appliance_controller.step(
+                hour=api.exchange.current_time(s),
+                dt_hours=_FIXED_DT_HOURS,
+                day_of_year=day,
+                tank_temp_c=tank_temp,
+                warmup=warmup,
+            )
+            self._actuator_writer.apply_appliances(
+                api.exchange, s,
+                ev_fraction=appliance_vals["ev_fraction"],
+                ewh_setpoint_c=appliance_vals["ewh_setpoint_c"],
+                ewh_availability=appliance_vals["ewh_availability"],
+            )
 
             # Check if any queued event should fire now
             event = self._peek_event(sim_hour)
@@ -332,7 +360,7 @@ class EplusEnv:
             f"\n[EplusEnv] VPP event processed at sim_hour={sim_hour:.2f}\n"
             f"  home_state : indoor={home_state.get('indoor_temp')}°C  "
             f"outdoor={home_state.get('outdoor_temp')}°C  "
-            f"hvac={home_state.get('hvac_power_kw')} kW\n"
+            f"hvac_thermal={home_state.get('hvac_cooling_thermal_kw')} kW(th)  ev={home_state.get('ev_power_kw',0):.3f} kW  ewh={home_state.get('ewh_power_kw',0):.3f} kW\n"
             f"  control    : setpoint={control_plan.get('setpoint')}°C  "
             f"action={control_plan.get('action')}\n"
             f"  execution  : {execution_result.get('status')}  "

@@ -144,7 +144,7 @@ def parse_eso(eso_path: Path) -> dict | None:
         if any(k in s for k in OUTDOOR_KEYS):
             return "outdoor_temp_c"
         if any(k in s for k in COOLING_KEYS):
-            return "cooling_rate_w"
+            return "hvac_cooling_thermal_w"
         if any(k in s for k in FACILITY_KEYS):
             return "facility_j"          # in Joules per timestep
         if any(k in s for k in COOL_SP_KEYS):
@@ -272,8 +272,8 @@ def parse_eso(eso_path: Path) -> dict | None:
     for row in timeseries:
         if "facility_j" in row:
             row["facility_kw"] = round(row.pop("facility_j") / (ts_interval_s * 1000), 4)
-        if "cooling_rate_w" in row:
-            row["cooling_load_proxy_kw"] = round(row.pop("cooling_rate_w") / 1000, 4)
+        if "hvac_cooling_thermal_w" in row:
+            row["hvac_cooling_thermal_kw"] = round(row.pop("hvac_cooling_thermal_w") / 1000, 4)
         if "water_heater_w" in row:
             row["water_heater_kw"] = round(row.pop("water_heater_w") / 1000, 4)
 
@@ -362,7 +362,7 @@ def extract_windows(timeseries: list[dict], trigger_h: float, duration_min: int)
         return {"available": False, "reason": "no timeseries data"}
 
     t0 = trigger_h
-    offsets = [0, 30, 60, 120]
+    offsets = [0, 30, 80, 120]
     points = {}
     for off in offsets:
         label = f"t_plus_{off}_min"
@@ -444,8 +444,8 @@ def compute_ep_power_metrics(
         for r in post_rows if r.get("facility_kw") is not None
     )
     cool_sum = sum(
-        float(r["cooling_load_proxy_kw"]) * ts_h
-        for r in post_rows if r.get("cooling_load_proxy_kw") is not None
+        float(r["hvac_cooling_thermal_kw"]) * ts_h
+        for r in post_rows if r.get("hvac_cooling_thermal_kw") is not None
     )
     pre_vals = [float(r["facility_kw"]) for r in pre_rows if r.get("facility_kw") is not None]
     pre_avg = round(sum(pre_vals) / len(pre_vals), 3) if pre_vals else None
@@ -505,7 +505,7 @@ def build_metrics(
     # Physical response evidence
     pts = windows.get("points", {}) if windows.get("available") else {}
     t0 = pts.get("t_plus_0_min")
-    t60 = pts.get("t_plus_60_min")
+    t60 = pts.get("t_plus_80_min")
     if t0 and t60 and "indoor_temp_c" in t0 and "indoor_temp_c" in t60:
         delta_t = round(t60["indoor_temp_c"] - t0["indoor_temp_c"], 3)
         phys_verified = "yes" if abs(delta_t) >= 0.3 else "insufficient_evidence"
@@ -786,7 +786,7 @@ def generate_report(
             f"| sim_hour | {ar.get('sim_hour')} |",
             f"| indoor_temp | {hs.get('indoor_temp')} °C |",
             f"| outdoor_temp | {hs.get('outdoor_temp')} °C |",
-            f"| hvac_power_kw | {hs.get('hvac_power_kw')} kW |",
+            f"| hvac_cooling_thermal_kw | {hs.get('hvac_cooling_thermal_kw')} kW |",
             f"| facility_power_kw | {hs.get('facility_power_kw', '—')} |",
             f"| setpoint（执行前） | {hs.get('hvac_setpoint', '—')} °C |",
             f"| 控制动作 | {cp.get('action')} |",
@@ -844,7 +844,7 @@ def generate_report(
             f"| cum_hour | {snap.get('cum_hour')} h | 触发时刻 |",
             f"| indoor_temp | {_fmt(snap.get('indoor_temp_c'))} °C | 室内温度（LIVING_UNIT1） |",
             f"| outdoor_temp | {_fmt(snap.get('outdoor_temp_c'))} °C | 室外温度 |",
-            f"| cooling_load_proxy | {_fmt(snap.get('cooling_load_proxy_kw'))} kW | 冷盘管热功率（非电力） |",
+            f"| hvac_cooling_thermal | {_fmt(snap.get('hvac_cooling_thermal_kw'))} kW | 冷盘管热功率（非电力） |",
             f"| facility_kw | {_fmt(snap.get('facility_kw'))} kW | 建筑总电功率 |",
             "",
         ]
@@ -867,7 +867,7 @@ def generate_report(
                     f"| {label} | {_fmt(row.get('cum_hour'), 3)} | "
                     f"{_fmt(row.get('indoor_temp_c'), 2)} | "
                     f"{_fmt(row.get('facility_kw'), 3)} | "
-                    f"{_fmt(row.get('cooling_load_proxy_kw'), 3)} |"
+                    f"{_fmt(row.get('hvac_cooling_thermal_kw'), 3)} |"
                 )
         lines.append("")
 
@@ -886,14 +886,14 @@ def generate_report(
                     f"| {wname} | {wrow.get('n_points', '—')} | "
                     f"{_fmt(wrow.get('indoor_temp_c'), 2)} | "
                     f"{_fmt(wrow.get('facility_kw'), 3)} | "
-                    f"{_fmt(wrow.get('cooling_load_proxy_kw'), 3)} |"
+                    f"{_fmt(wrow.get('hvac_cooling_thermal_kw'), 3)} |"
                 )
         lines += [
             "",
             f"**室内温度变化（trigger → +60min）**: {f'{delta_t:+.3f}°C' if delta_t is not None else '—'}",
             "",
             "> ⚠️ `facility_kw` 包含热水器、EV充电桩等其他负载，峰值可达 2-3 kW，**不等于 HVAC 用电**。",
-            "> `cooling_load_proxy_kw` 为冷盘管热功率（非电力），仅作物理响应代理指标。",
+            "> `hvac_cooling_thermal_kw` 为HVAC制冷热功率（非电力，即冷盘管制冷量），非HVAC电功率。",
             "",
         ]
     else:
@@ -936,7 +936,7 @@ def generate_report(
             "| 时间点 | Δ indoor_temp_c (°C) | Δ facility_kw |",
             "|--------|----------------------|----------------|",
         ]
-        for pt in ["t_plus_0min", "t_plus_30min", "t_plus_60min", "t_plus_120min"]:
+        for pt in ["t_plus_0min", "t_plus_30min", "t_plus_80min", "t_plus_120min"]:
             dt = d_temp.get(pt)
             df = d_fac.get(pt)
             lines.append(f"| {pt} | {_fmt(dt, 3)} | {_fmt(df, 3)} |")
@@ -963,7 +963,7 @@ def generate_report(
         "",
         "- ❌ **因果节电量**：需要 no-control baseline 对比（见第9节）",
         "- ❌ **实际 HVAC 电耗**：ESO 中无 HVAC 独立电表，`facility_kw` 包含其他负载",
-        "- ❌ **真实 VPP 合规性**：仅基于 EP 实时 hvac_power_kw，不含未来积分误差",
+        "- ❌ **真实 VPP 合规性**：仅基于 EP 实时 hvac_cooling_thermal_kw（热功率），不含未来积分误差",
         "- ❌ **天津场景有效性**：本次使用芝加哥 EPW 替代",
         "- ❌ **长期控制性能**：仅测试了单次触发",
         "",
@@ -1125,7 +1125,7 @@ def _compare_baseline(
     duration_min: int,
 ) -> dict:
     """Compute delta between controlled and baseline runs at key time points."""
-    VARS = ["indoor_temp_c", "facility_kw", "cooling_load_proxy_kw", "water_heater_kw"]
+    VARS = ["indoor_temp_c", "facility_kw", "hvac_cooling_thermal_kw", "water_heater_kw"]
 
     def _nn(ts, t):
         return _nearest(ts, t)
@@ -1133,7 +1133,7 @@ def _compare_baseline(
     def _win(ts, t_start, t_end):
         return _window_avg(ts, t_start, t_end)
 
-    offsets_min = [0, 30, 60, 120]
+    offsets_min = [0, 30, 80, 120]
     points_delta = {}
     for off in offsets_min:
         t = trigger_h + off / 60.0
@@ -1186,7 +1186,7 @@ def _compare_baseline(
         ),
         "delta_indoor_temp_points": {k: v.get("indoor_temp_c") for k, v in points_delta.items()},
         "delta_facility_kw_points": {k: v.get("facility_kw") for k, v in points_delta.items()},
-        "delta_cooling_proxy_kw_points": {k: v.get("cooling_load_proxy_kw") for k, v in points_delta.items()},
+        "delta_hvac_cooling_thermal_kw_points": {k: v.get("hvac_cooling_thermal_kw") for k, v in points_delta.items()},
         "all_variables_by_point": points_delta,
         "all_variables_by_window": windows_delta,
         "delta_facility_energy_kwh_2h": delta_energy,
@@ -1323,7 +1323,7 @@ def main() -> None:
                     f"{lbl:<18} {row.get('cum_hour', 0):>6.3f} "
                     f"{_fmt(row.get('indoor_temp_c'), 2):>10} "
                     f"{_fmt(row.get('facility_kw'), 3):>12} "
-                    f"{_fmt(row.get('cooling_load_proxy_kw'), 3):>18}"
+                    f"{_fmt(row.get('hvac_cooling_thermal_kw'), 3):>18}"
                 )
         phys = metrics.get("physical_response_evidence", {})
         delta_t = phys.get("indoor_temp_delta_0_to_60min")

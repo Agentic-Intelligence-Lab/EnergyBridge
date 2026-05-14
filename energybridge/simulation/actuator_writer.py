@@ -132,6 +132,34 @@ class ActuatorWriter:
             result["errors"] = errors
         return result
 
+    def apply_appliances(
+        self,
+        exchange,
+        state,
+        ev_fraction: float,
+        ewh_setpoint_c: float,
+        ewh_availability: float,
+    ) -> None:
+        """Write EV and EWH actuator values to EnergyPlus.
+
+        Called every timestep by EplusEnv for background automation.
+        Does nothing silently if handles are not ready.
+        """
+        if not self._initialized:
+            return
+
+        ev_handle = self._handles.get("ev_fraction", -1)
+        if ev_handle != -1:
+            exchange.set_actuator_value(state, ev_handle, float(ev_fraction))
+
+        ewh_sp_handle = self._handles.get("ewh_setpoint", -1)
+        if ewh_sp_handle != -1:
+            exchange.set_actuator_value(state, ewh_sp_handle, float(ewh_setpoint_c))
+
+        ewh_av_handle = self._handles.get("ewh_availability", -1)
+        if ewh_av_handle != -1:
+            exchange.set_actuator_value(state, ewh_av_handle, float(ewh_availability))
+
     # ------------------------------------------------------------------
     # Accessors
     # ------------------------------------------------------------------

@@ -93,17 +93,35 @@ class StateReader:
         if raw.get("outdoor_temp") is not None:
             home_state["outdoor_temp"] = round(float(raw["outdoor_temp"]), 2)
 
-        # HVAC cooling power (kW) – EnergyPlus reports in W
-        if raw.get("cooling_rate_w") is not None:
-            home_state["hvac_power_kw"] = round(float(raw["cooling_rate_w"]) / 1000.0, 3)
+        # HVAC *thermal* cooling rate (kW) – EnergyPlus reports in W.
+        # This is thermal output of the refrigerant cycle, NOT electrical power.
+        # Electrical HVAC ≈ hvac_cooling_thermal_kw / COP (COP ≈ 3–4).
+        if raw.get("hvac_cooling_thermal_w") is not None:
+            home_state["hvac_cooling_thermal_kw"] = round(float(raw["hvac_cooling_thermal_w"]) / 1000.0, 3)
         else:
-            home_state["hvac_power_kw"] = 0.0
+            home_state["hvac_cooling_thermal_kw"] = 0.0
 
         # Whole-building electricity demand (kW)
         if raw.get("facility_power_w") is not None:
             home_state["facility_power_kw"] = round(
                 float(raw["facility_power_w"]) / 1000.0, 3
             )
+
+        # EV charger electricity rate (kW)
+        if raw.get("ev_power_w") is not None:
+            home_state["ev_power_kw"] = round(float(raw["ev_power_w"]) / 1000.0, 3)
+        else:
+            home_state["ev_power_kw"] = 0.0
+
+        # Electric water heater electricity rate (kW)
+        if raw.get("ewh_power_w") is not None:
+            home_state["ewh_power_kw"] = round(float(raw["ewh_power_w"]) / 1000.0, 3)
+        else:
+            home_state["ewh_power_kw"] = 0.0
+
+        # Water heater tank temperature (°C) – used for EWH control decisions
+        if raw.get("ewh_tank_temp_c") is not None:
+            home_state["ewh_tank_temp_c"] = round(float(raw["ewh_tank_temp_c"]), 2)
 
         # HVAC setpoint is not a readable variable in the same way; we leave it
         # to the agent to track via its own state.  Default to 25 °C.

@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -101,8 +102,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="EnergyBridge + EnergyPlus co-simulation demo")
     parser.add_argument("--idf", default=str(_DEFAULT_IDF), help="Path to IDF file")
     parser.add_argument("--epw", default=None, help="Path to EPW weather file")
-    parser.add_argument("--output", default=str(PROJECT_ROOT / "logs" / "eplus_run"),
-                        help="EnergyPlus output directory")
+    parser.add_argument("--output", default=None,
+                        help="EnergyPlus output directory (default: logs/eplus_run_YYYYMMDD_HHMMSS)")
     parser.add_argument("--trigger", type=float, default=42.0,
                         help="Simulation hour to inject VPP event (default: 42 = day2 18:00)")
     parser.add_argument("--user", default="我希望尽量舒服，但如果电网有需求，也可以短时间配合削峰。",
@@ -195,7 +196,12 @@ def main() -> None:
 
     idf_path = Path(args.idf)
     epw_path = Path(args.epw) if args.epw else _find_epw()
-    output_dir = Path(args.output)
+    # Generate timestamped output dir when not explicitly specified
+    if args.output is None:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = PROJECT_ROOT / "logs" / f"eplus_run_{ts}"
+    else:
+        output_dir = Path(args.output)
 
     # Validate paths before starting EnergyPlus
     if not idf_path.exists():
