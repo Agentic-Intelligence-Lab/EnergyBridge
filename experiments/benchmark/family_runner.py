@@ -443,42 +443,32 @@ Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, "reason": "..."}
                 loop.sp = 28.0   # unoccupied: save energy automatically
             else:
                 psim = loop.prev_sim_h
-                triggered = False
+                # VPP-only: only intervene at VPP event start (max 6 LLM interventions per sim)
                 triggered_vpp = None
-                # Trigger 1: crossing into occupied period each day
-                if psim >= 0 and (psim % 24) < OCCUPIED_START <= (sim_h % 24):
-                    triggered = True
-                # Trigger 2: VPP event start crossing
                 for ev in VPP_EVENTS:
                     if psim < ev["trigger_h"] <= sim_h:
-                        triggered = True; triggered_vpp = ev; break
-                # Trigger 3: agent-scheduled next check
-                if loop.next_check is not None and psim < loop.next_check <= sim_h:
-                    triggered = True
-                if triggered:
-                    is_vpp = triggered_vpp is not None
-                    vid = triggered_vpp["id"] if triggered_vpp else ""
-                    # User in the loop: get roleplay user preference BEFORE agent acts
-                    if is_vpp:
-                        try:
-                            from user_pref_scorer import get_user_preference_input
-                            ev_idx = next((i+1 for i,ev in enumerate(VPP_EVENTS)
-                                           if ev["id"]==vid), 1)
-                            loop.vpp_user_input = get_user_preference_input(
-                                "family", ev_idx,
-                                {"vpp_id": vid, "hour": sim_h, "duration_h": 1.0},
-                                loop.vpp_event_log)
-                        except Exception as _e:
-                            print(f"  [UserInput] {_e}")
-                            loop.vpp_user_input = ""
-                    else:
+                        triggered_vpp = ev; break
+                if triggered_vpp is not None:
+                    vid = triggered_vpp["id"]
+                    try:
+                        from user_pref_scorer import get_user_preference_input
+                        ev_idx = next((i+1 for i,ev in enumerate(VPP_EVENTS)
+                                       if ev["id"]==vid), 1)
+                        loop.vpp_user_input = get_user_preference_input(
+                            "family", ev_idx,
+                            {"vpp_id": vid, "hour": sim_h, "duration_h": 1.0},
+                            loop.vpp_event_log)
+                    except Exception as _e:
+                        print(f"  [UserInput] {_e}")
                         loop.vpp_user_input = ""
                     res = _llm_trigger(temp, out_t, hod, sim_h, 72.0 - sim_h,
-                                       vpp_active=is_vpp, vpp_id=vid,
+                                       vpp_active=True, vpp_id=vid,
                                        user_pref_input=loop.vpp_user_input)
                     loop.sp = res["setpoint"]
-                    loop.next_check = res.get("next_check_hour")
                     loop.vpp_last_reason = res.get("reason", "")
+                elif active_vpp is None:
+                    # Non-VPP occupied hours: maintain comfort default setpoint
+                    loop.sp = 24.0
 
             # Collect per-VPP-window data
             if active_vpp:

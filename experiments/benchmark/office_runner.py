@@ -293,45 +293,36 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
         elif mode=="agent":
             if occ:
                 psim = loop.prev_sim_h
-                triggered = False; triggered_vpp = None
-                # Trigger 1: crossing into occupied period each day
-                if psim >= 0 and (psim % 24) < OCC_START <= (sim_h % 24):
-                    triggered = True
-                # Trigger 2: VPP event start crossing
+                # VPP-only: only intervene at VPP event start (max 6 LLM interventions per sim)
+                triggered_vpp = None
                 for ev in VPP_EVENTS:
                     if psim < ev["trigger_h"] <= sim_h:
-                        triggered = True; triggered_vpp = ev; break
-                # Trigger 3: agent-scheduled next check
-                if loop.next_check is not None and psim < loop.next_check <= sim_h:
-                    triggered = True
-                if triggered:
-                    is_vpp = triggered_vpp is not None
-                    vid = triggered_vpp["id"] if triggered_vpp else ""
-                    # User in the loop: get roleplay user preference BEFORE agent acts
-                    if is_vpp:
-                        try:
-                            from user_pref_scorer import get_user_preference_input
-                            ev_idx = next((i+1 for i,ev in enumerate(VPP_EVENTS)
-                                           if ev["id"]==vid), 1)
-                            loop.vpp_user_input = get_user_preference_input(
-                                "office", ev_idx,
-                                {"vpp_id": vid, "hour": sim_h, "duration_h": 1.0},
-                                loop.vpp_event_log)
-                        except Exception as _e:
-                            print(f"  [UserInput] {_e}")
-                            loop.vpp_user_input = ""
-                    else:
+                        triggered_vpp = ev; break
+                if triggered_vpp is not None:
+                    vid = triggered_vpp["id"]
+                    try:
+                        from user_pref_scorer import get_user_preference_input
+                        ev_idx = next((i+1 for i,ev in enumerate(VPP_EVENTS)
+                                       if ev["id"]==vid), 1)
+                        loop.vpp_user_input = get_user_preference_input(
+                            "office", ev_idx,
+                            {"vpp_id": vid, "hour": sim_h, "duration_h": 1.0},
+                            loop.vpp_event_log)
+                    except Exception as _e:
+                        print(f"  [UserInput] {_e}")
                         loop.vpp_user_input = ""
                     result = _llm_advise(zone_t, out_t, PMV_RH, hod, sim_h, user_pref,
-                                         vpp_active=is_vpp, vpp_id=vid, vpp_mem=loop.vpp_mem_ctx,
+                                         vpp_active=True, vpp_id=vid, vpp_mem=loop.vpp_mem_ctx,
                                          user_pref_input=loop.vpp_user_input)
                     loop.llm_n += 1
                     gsps = result["setpoints"]
-                    loop.next_check = result.get("next_check_hour")
                     loop.vpp_last_reason = result.get("reason", "")
                     for z in ZONES: loop.sp[z] = gsps.get(ZONE_GROUP[z], SP_DEF)
                     loop.decisions.append({"sim_h": round(sim_h, 1), "hod": round(hod, 1),
-                        "gsps": gsps, "out_t": round(out_t, 1), "vpp": is_vpp})
+                        "gsps": gsps, "out_t": round(out_t, 1), "vpp": True})
+                elif active_vpp is None:
+                    # Non-VPP occupied hours: maintain comfort default setpoint
+                    for z in ZONES: loop.sp[z] = 24.0
                 # Collect VPP window data
                 if active_vpp:
                     t_avg = sum(zone_t.values())/len(zone_t)
