@@ -130,3 +130,113 @@ python examples/analyze_eplus_run.py \
 ## Reference Note
 
 `references/HEMA` is kept only as architecture inspiration because it is GPLv3. EnergyBridge code is implemented independently and does not copy HEMA source code.
+
+---
+
+## EnergyPlus Co-Simulation Benchmark (`experiments/`)
+
+The `experiments/` directory contains a full EnergyPlus co-simulation benchmark
+suite evaluating LLM-based demand-response control against a PMV (Predicted Mean
+Vote) baseline across **3 cities × 2 building types × 2 methods = 12 scenarios**.
+
+### Directory layout
+
+```
+experiments/
+├── benchmark/              # Simulation runners & orchestrator
+│   ├── family_runner.py    # Single-zone family home (EnergyPlus Python API)
+│   ├── office_runner.py    # 15-zone medium office (EnergyPlus Python API)
+│   ├── run_benchmark.py    # 12-scenario orchestrator, result table
+│   ├── user_pref_scorer.py # Roleplay LLM user preference + satisfaction scoring
+│   └── results/            # JSON results + per-scenario EP output
+├── models/
+│   ├── family_home/        # family_simple_3day.idf  (July 1–3, single zone)
+│   └── medium_office/      # medium_office_3day.idf  (June 1–3, 15 zones)
+└── weather/epw/            # Beijing / Shanghai / Tianjin EPW files (CSWD)
+```
+
+### Benchmark design
+
+| Dimension | Value |
+|-----------|-------|
+| Simulation duration | 3 days (72 h) |
+| VPP demand-response events | 3 × per simulation (1 h each, same clock hour daily) |
+| Family event trigger | 18:00 each day |
+| Office event trigger | 17:00 each day |
+| Methods compared | **PMV baseline** (physics-optimal setpoint) vs **LLM Agent** (claude-sonnet-4-6) |
+| Cities | Beijing, Shanghai, Tianjin (CSWD weather) |
+| Buildings | Single-zone family home, 15-zone medium office |
+
+### LLM Agent control loop (per VPP event)
+
+```
+1. RoleplayUser.generate_user_input()   ← user preference BEFORE agent acts
+2. HVAC LLM → setpoint decision + reason  (reads user preference + past memory)
+3. EnergyPlus runs VPP window (1 h)
+4. RoleplayUser.generate_feedback()     ← satisfaction score (1–5) AFTER event
+5. Score + comment stored in agent memory → agent learns across 3 events
+```
+
+### Key metrics
+
+| Metric | Description |
+|--------|-------------|
+| `能耗(kWh)` | Total 3-day electricity consumption |
+| `PMV达标率` | Fraction of occupied hours with |PMV| ≤ 0.5 |
+| `均温(°C)` | Mean zone dry-bulb temperature during occupied hours |
+| `未满足(h)` | Hours where zone temp > setpoint + 0.556°C (unmet cooling) |
+| `VPP响应率` | Fraction of VPP events where setpoint raised ≥ 0.5°C above baseline (Agent only; PMV = 0%) |
+| `Roleplay评分(s1/s2/s3)` | Satisfaction score per VPP event from LLM roleplay persona (1–5) |
+
+### How to run
+
+```bash
+cd experiments/benchmark
+conda activate energybridge
+
+# Full 12-scenario benchmark
+python run_benchmark.py
+
+# Single scenario
+python run_benchmark.py --scenario family/tianjin/agent
+
+# Only one building type
+python run_benchmark.py --building office
+python run_benchmark.py --building family
+```
+
+Requires:
+- EnergyPlus 24.1.0 at `/home/ha_agent/EnergyPlus-24-1-0/` (Linux default)
+- `energybridge` conda env with `pyenergyplus`, `pythermalcomfort`, `openai`
+- `.env` at `EnergyBridge/.env` with `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`
+
+### Latest benchmark results (3-day, 3×VPP-1, Roleplay user-in-the-loop)
+
+```
+场景       方法    能耗(kWh)  PMV达标率  VPP响应率  Roleplay评分(s1/s2/s3)
+─────────────────────────────────────────────────────────────────────
+家庭/北京  PMV     99.7      100.0%    0%(PMV)   4.0/4.0/4.0
+           AGENT   82.1       71.2%    100%      3.0/3.0/4.0  (-17.7%能耗, ↑学习)
+家庭/上海  PMV     91.3      100.0%    0%(PMV)   5.0/5.0/4.0
+           AGENT   91.2       94.0%    100%      4.0/4.0/4.0  (-0.1%能耗)
+家庭/天津  PMV     77.3      100.0%    0%(PMV)   5.0/5.0/5.0
+           AGENT   78.3       95.5%    100%      4.0/4.0/3.0
+办公/北京  PMV    958.6       98.4%    0%(PMV)   4.0/4.0/4.0
+           AGENT  821.6       96.4%    100%      3.0/4.0/4.0  (-14.3%能耗, ↑学习)
+办公/上海  PMV   2636.3       97.0%    0%(PMV)   2.0/2.0/4.0
+           AGENT 2169.9       91.5%    100%      3.0/2.0/4.0  (-17.7%能耗, ↑学习)
+办公/天津  PMV   2514.7       96.8%    0%(PMV)   4.0/4.0/4.0
+           AGENT 2090.8       91.2%    100%      4.0/3.0/4.0  (-16.9%能耗)
+```
+
+Agent achieves **14–18% energy savings** on office scenarios while maintaining
+>91% PMV compliance. Learning curve (score s1→s3) shows improvement in 3/6
+agent scenarios. PMV baseline maintains higher comfort due to no VPP response.
+
+### LLM reliability
+
+The `LLMClient` now includes **exponential-backoff retry** (3 retries,
+5/10/20 s delays) to handle API rate-limiting. Root cause of previous failures:
+the dmxapi.cn endpoint returns an empty response body (rather than an HTTP error
+code) when throttled; the client now detects empty responses and retries.
+
