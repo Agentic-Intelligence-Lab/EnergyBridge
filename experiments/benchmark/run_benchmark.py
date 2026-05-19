@@ -44,7 +44,7 @@ CITIES = {
     "shanghai": {"epw": EPW_DIR/"CHN_SH_Shanghai.583620_CSWD.epw", "label":"上海"},
     "tianjin":  {"epw": EPW_DIR/"CHN_TJ_Tianjin.545270_CSWD.epw", "label":"天津"},
 }
-METHODS = ["pmv", "agent", "agent_pmv"]
+METHODS = ["pmv", "pmv_rule", "agent", "agent_pmv"]
 
 def preflight(bldgs, cities):
     errs = []
@@ -97,10 +97,11 @@ def run_one(building, city, method, verbose=True):
     result = None
     try:
         if building == "family":
-            from family_runner import run_family_agent_pmv
-            if method == "pmv": fn = run_family_pmv
-            elif method == "agent": fn = run_family_agent
-            else: fn = run_family_agent_pmv  # agent_pmv
+            from family_runner import run_family_pmv_rule, run_family_agent_pmv
+            if method == "pmv":        fn = run_family_pmv
+            elif method == "pmv_rule": fn = run_family_pmv_rule
+            elif method == "agent":    fn = run_family_agent
+            else:                      fn = run_family_agent_pmv  # agent_pmv
             result = fn(idf_path=idf, epw_path=epw, output_dir=out, weather_label=city)
         else:
             result = run_office(mode=method, idf_path=idf, epw_path=epw,
@@ -162,13 +163,13 @@ def make_table(results):
 
     agent_wins=pmv_wins=ties=0
     for sc_key, sc_res in sorted(by_sc.items()):
-        _order = {"pmv": 0, "agent": 1, "agent_pmv": 2}
+        _order = {"pmv": 0, "pmv_rule": 1, "agent": 2, "agent_pmv": 3}
         sc_res.sort(key=lambda x: _order.get(x.get("method",""), 9))
         for idx,r in enumerate(sc_res):
             b = "家庭" if r.get("building")=="family" else "办公"
             cl = CITIES.get(r.get("city",""),{}).get("label","?")
             sc = f"{b}/{cl}" if idx==0 else ""
-            _mmap = {"pmv":"PMV","agent":"AGENT","agent_pmv":"AGNT+PMV"}
+            _mmap = {"pmv":"PMV","pmv_rule":"PMV+RULE","agent":"AGENT","agent_pmv":"AGNT+PMV"}
             m = _mmap.get(r.get("method","?"), r.get("method","?").upper()[:10])
             e = f"{r.get('energy_kwh_total',0):.1f}" if r.get('energy_kwh_total') is not None else "N/A"
             pmv = f"{(r.get('pmv_ok_fraction',0)*100):.1f}%" if r.get('pmv_ok_fraction') is not None else "N/A"
@@ -183,7 +184,7 @@ def make_table(results):
                 us = "N/A"
             st = "ERROR" if r.get("has_fatal_error") or r.get("exit_code",-1)!=0 else "OK"
             vr = r.get("vpp_compliance_rate", 0.0)
-            vc = f"{vr*100:.0f}%" if r.get("method","pmv") in ("agent","agent_pmv") else "0%(PMV)"
+            vc = f"{vr*100:.0f}%" if r.get("method","pmv") in ("agent","agent_pmv","pmv_rule") else "0%(PMV)"
             lines.append(f"{sc:<22}{m:<10}{e:<13}{pmv:<11}{t:<10}{uh:<12}{vc:<11}{us:<20}{st}")
         lines.append("-"*129)
 
@@ -250,7 +251,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--building", choices=["family","office","all"], default="all")
     ap.add_argument("--city", choices=["beijing","shanghai","tianjin","all"], default="all")
-    ap.add_argument("--method", choices=["pmv","agent","all"], default="all")
+    ap.add_argument("--method", choices=["pmv","pmv_rule","agent","agent_pmv","all"], default="all")
     ap.add_argument("--scenario", help="e.g. family/tianjin or family/tianjin/pmv")
     ap.add_argument("--skip-existing", action="store_true")
     ap.add_argument("--quiet", action="store_true")

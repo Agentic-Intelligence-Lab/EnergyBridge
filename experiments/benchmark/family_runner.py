@@ -158,6 +158,123 @@ def run_family_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
         user_pref_score=sum(pref_scores)/max(1,len(pref_scores)) if pref_scores else None,
         control_decisions=loop.decisions[-50:], output_dir=str(output_dir))
 
+def run_family_pmv_rule(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
+                        output_dir=None, weather_label=""):
+    """PMV+Rule: PMV controls setpoint every timestep for comfort.
+    During VPP window, a simple rule forces setpoint up to >=26.0C (demand response).
+    No LLM involved. Scored by roleplay after each VPP window ends.
+    Provides a fair comparison point vs Agent+PMV to isolate LLM's contribution."""
+    if output_dir is None:
+        output_dir = BENCHMARK_DIR / "results" / f"family_pmv_rule_{weather_label}"
+    output_dir = Path(output_dir)
+    if output_dir.exists(): shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    from pyenergyplus.api import EnergyPlusAPI
+    loop = _FamilyLoop(); api = EnergyPlusAPI(); state = api.state_manager.new_state()
+    ex = api.exchange
+    ex.request_variable(state, "Zone Mean Air Temperature", "living_unit1")
+    ex.request_variable(state, "Facility Total Electricity Demand Rate", "Whole Building")
+
+    _VPP_RULE_SP = 26.0  # rule: during VPP window, clamp setpoint to at least this
+
+    def cb(s):
+        if not loop.init(ex, s): return
+        day = ex.day_of_year(s)
+        if loop.start_day is None: loop.start_day = day
+        hod = ex.current_time(s); dt = ex.zone_time_step(s)
+        sim_h = (day - loop.start_day)*24 + hod
+        wu = ex.warmup_flag(s)
+        temp = ex.get_variable_value(s, loop.h_temp) if loop.h_temp != -1 else SP_DEFAULT
+        fac  = ex.get_variable_value(s, loop.h_fac)  if loop.h_fac  != -1 else 0.0
+
+        # Detect active VPP window
+        active_vpp = None
+        for ev in VPP_EVENTS:
+            if ev["trigger_h"] <= sim_h < ev["end_h"]:
+                active_vpp = ev; break
+
+        # PMV step (every timestep for comfort)
+        pmv = _compute_pmv(temp)
+        if pmv > PMV_DEADBAND:   loop.sp = max(SP_MIN, loop.sp - SP_STEP)
+        elif pmv < -PMV_DEADBAND: loop.sp = min(SP_MAX, loop.sp + SP_STEP)
+
+        # RULE: during VPP window, override setpoint upward (demand reduction)
+        if active_vpp is not None:
+            loop.sp = max(loop.sp, _VPP_RULE_SP)
+
+        if loop.h_cool != -1: ex.set_actuator_value(s, loop.h_cool, loop.sp)
+        if loop.h_heat != -1: ex.set_actuator_value(s, loop.h_heat, HTG_SP)
+
+        if wu: return
+        loop.e_wh += fac * dt
+
+        # Collect per-VPP-window data
+        if active_vpp:
+            wd = loop.vpp_window_data.setdefault(active_vpp["id"],
+                                                  {"temps": [], "pmvs": [], "sp": loop.sp})
+            wd["temps"].append(temp)
+            wd["pmvs"].append(abs(pmv) <= PMV_DEADBAND)
+            wd["sp"] = loop.sp
+
+        # Score VPP event after window ends
+        psim = loop.prev_sim_h
+        for ev in VPP_EVENTS:
+            if psim < ev["end_h"] <= sim_h and ev["id"] not in loop.vpp_scored:
+                ev_idx = next((i+1 for i,e in enumerate(VPP_EVENTS) if e["id"] == ev["id"]), 1)
+                try:
+                    from user_pref_scorer import score_user_preference
+                    wd_e = loop.vpp_window_data.get(ev["id"], {})
+                    wtemps = wd_e.get("temps", [])
+                    wpmvs  = wd_e.get("pmvs", [])
+                    sp_w   = wd_e.get("sp", SP_DEFAULT)
+                    mean_t = sum(wtemps)/max(1, len(wtemps)) if wtemps else (loop.temp_s/max(loop.occ_h, 1))
+                    pmv_ok = sum(wpmvs)/max(1, len(wpmvs)) if wpmvs else 0.5
+                    e_day  = (loop.e_wh/1000) / max(1, sim_h/24)
+                    r = score_user_preference(building="family", method="pmv_rule",
+                            mean_temp_c=mean_t, pmv_ok_fraction=pmv_ok,
+                            energy_kwh_per_day=e_day, agent_setpoint_c=sp_w,
+                            event_index=ev_idx)
+                    sc = r.get("score") or 0.0
+                    print(f"  [FamilyPMVRule VPP score {ev['id']} idx={ev_idx}] {sc}/5")
+                    loop.vpp_event_log.append({"id": ev["id"], "setpoint": sp_w,
+                        "score": sc, "comment": r.get("comment", "")[:80]})
+                except Exception as e2:
+                    print(f"  [FamilyPMVRule VPP score] error: {e2}")
+                    loop.vpp_event_log.append({"id": ev["id"], "setpoint": SP_DEFAULT,
+                        "score": None, "comment": str(e2)[:60]})
+                loop.vpp_scored.add(ev["id"])
+
+        if _occupied(hod):
+            loop.occ_h += dt; loop.pmv_s += pmv*dt; loop.temp_s += temp*dt
+            if abs(pmv) <= PMV_DEADBAND: loop.pmv_ok_h += dt
+            if temp > loop.sp + UNMET_TOL: loop.unmet_h += dt
+            loop.decisions.append((round(sim_h, 2), round(loop.sp, 1), round(pmv, 3)))
+        loop.prev_sim_h = sim_h
+
+    api.runtime.callback_end_system_timestep_after_hvac_reporting(state, cb)
+    ec = api.runtime.run_energyplus(state, ["-w", str(epw_path), "-d", str(output_dir), str(idf_path)])
+    api.state_manager.delete_state(state)
+
+    kwh = loop.e_wh/1000; occ = max(loop.occ_h, 1e-6)
+    pref_scores = [e["score"] for e in loop.vpp_event_log if e.get("score") is not None]
+    _VPP_COMPLY_SP = 26.0
+    n_comply = sum(1 for e in loop.vpp_event_log if e.get("setpoint", 0) >= _VPP_COMPLY_SP)
+    vpp_comply_rate = n_comply / max(1, len(VPP_EVENTS))
+    print(f"  [family/pmv_rule] exit={ec} energy={kwh:.1f}kWh pmv_ok={loop.pmv_ok_h/occ*100:.1f}% "
+          f"vpp_scores={pref_scores} vpp_comply={vpp_comply_rate*100:.0f}%")
+
+    return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
+        weather=weather_label, method="pmv_rule", exit_code=ec,
+        vpp_compliance_rate=vpp_comply_rate,
+        energy_kwh_total=kwh, energy_kwh_per_day=kwh/3,
+        pmv_ok_fraction=loop.pmv_ok_h/occ, mean_pmv=loop.pmv_s/occ,
+        mean_temp_c=loop.temp_s/occ, unmet_cooling_h=loop.unmet_h,
+        user_pref_scores=pref_scores,
+        user_pref_score=sum(pref_scores)/max(1, len(pref_scores)) if pref_scores else None,
+        control_decisions=loop.decisions[-50:], output_dir=str(output_dir))
+
+
 def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
                      output_dir=None, weather_label="",
                      user_pref="我希望室内舒适，但也愿意在不影响舒适的前提下节约电力。"):

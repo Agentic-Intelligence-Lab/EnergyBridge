@@ -119,7 +119,7 @@ class _OfficeLoop:
         self.vpp_last_reason: str = ""   # agent reason from last LLM call
 
     def init_pmv(self):
-        if self.mode not in ("pmv","agent_pmv") or self._pmv_ctrl: return
+        if self.mode not in ("pmv","agent_pmv","pmv_rule") or self._pmv_ctrl: return
         try:
             from energybridge.control.pmv_baseline_controller import PMVBaselineController, PMVControllerParams
             p = PMVControllerParams(pmv_upper=PMV_DB,pmv_lower=PMV_DB,step_c=SP_STEP,
@@ -225,6 +225,52 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
                 t_avg = sum(zone_t.values())/len(zone_t)
                 vpp_window_temps[active_vpp["id"]].append(t_avg)
                 vpp_window_pmvs[active_vpp["id"]].append(abs(_pmv(t_avg)) <= PMV_DB)
+        elif mode=="pmv_rule" and loop._pmv_ctrl:
+            # PMV+Rule: PMV for comfort, rule-based VPP response (no LLM)
+            _VPP_RULE_SP = 26.5  # office VPP compliance threshold
+            if occ:
+                for z in ZONES:
+                    loop.sp[z] = loop._pmv_ctrl.step(z, zone_t[z], outdoor_rh=PMV_RH)
+                    if active_vpp is not None:
+                        loop.sp[z] = max(loop.sp[z], _VPP_RULE_SP)  # rule: clamp up during VPP
+            else:
+                for z in ZONES: loop.sp[z] = UNOCCUPIED
+            # Collect VPP window data
+            if active_vpp and occ:
+                t_avg = sum(zone_t.values())/len(zone_t)
+                sp_avg = sum(loop.sp.values())/len(loop.sp)
+                wd = loop.vpp_window_data.setdefault(active_vpp["id"],
+                                                      {"temps":[],"pmvs":[],"sp":sp_avg})
+                wd["temps"].append(t_avg)
+                wd["pmvs"].append(abs(_pmv(t_avg)) <= PMV_DB)
+                wd["sp"] = sp_avg
+            # Score VPP event after window ends (outside occ check)
+            psim_r = loop.prev_sim_h
+            for ev in VPP_EVENTS:
+                if psim_r < ev["end_h"] <= sim_h and ev["id"] not in loop.vpp_scored:
+                    ev_idx = next((i+1 for i,e in enumerate(VPP_EVENTS) if e["id"]==ev["id"]), 1)
+                    try:
+                        from user_pref_scorer import score_user_preference
+                        wd_e = loop.vpp_window_data.get(ev["id"], {})
+                        wtemps = wd_e.get("temps", [])
+                        wpmvs  = wd_e.get("pmvs", [])
+                        sp_w   = wd_e.get("sp", SP_DEF)
+                        mean_t = sum(wtemps)/max(1,len(wtemps)) if wtemps else loop.temp_s/max(loop.occ_h,1)
+                        pmv_ok = sum(wpmvs)/max(1,len(wpmvs)) if wpmvs else 0.5
+                        e_day  = (loop.e_wh/1000) / max(1, sim_h/24)
+                        r = score_user_preference(building="office", method="pmv_rule",
+                                mean_temp_c=mean_t, pmv_ok_fraction=pmv_ok,
+                                energy_kwh_per_day=e_day, agent_setpoint_c=sp_w,
+                                event_index=ev_idx)
+                        sc = r.get("score") or 0.0
+                        print(f"  [OfficePMVRule VPP score {ev['id']} idx={ev_idx}] {sc}/5")
+                        loop.vpp_event_log.append({"id": ev["id"], "setpoint": sp_w,
+                            "score": sc, "comment": r.get("comment","")[:80]})
+                    except Exception as e2:
+                        print(f"  [OfficePMVRule VPP score] error: {e2}")
+                        loop.vpp_event_log.append({"id": ev["id"], "setpoint": SP_DEF,
+                            "score": None, "comment": str(e2)[:60]})
+                    loop.vpp_scored.add(ev["id"])
         elif mode=="agent":
             if occ:
                 psim = loop.prev_sim_h
@@ -389,7 +435,7 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
 
     kwh=loop.e_wh/1000; occ=max(loop.occ_h,1e-6)
     pref_scores = []
-    if mode in ("agent", "agent_pmv"):
+    if mode in ("agent", "agent_pmv", "pmv_rule"):
         pref_scores = [e["score"] for e in loop.vpp_event_log if e.get("score") is not None]
     elif mode == "pmv":
         # Score PMV for each VPP window
@@ -410,7 +456,7 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
     # VPP compliance: office baseline 26.0C -> compliant if VPP setpoint >= 26.5C
     _VPP_COMPLY_SP = 26.5
     n_comply = sum(1 for e in loop.vpp_event_log if e.get("setpoint", 0) >= _VPP_COMPLY_SP)
-    vpp_comply_rate = n_comply / max(1, len(VPP_EVENTS)) if mode in ("agent","agent_pmv") else 0.0
+    vpp_comply_rate = n_comply / max(1, len(VPP_EVENTS)) if mode in ("agent","agent_pmv","pmv_rule") else 0.0
     print(f"  [office/{mode}] exit={ec} llm_calls={loop.llm_n} "
           f"energy={kwh:.1f}kWh pmv_ok={loop.pmv_ok_h/occ*100:.1f}% vpp_scores={pref_scores} "
           f"vpp_comply={vpp_comply_rate*100:.0f}%")
