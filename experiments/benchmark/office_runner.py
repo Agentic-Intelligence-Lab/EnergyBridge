@@ -59,8 +59,9 @@ _LLM_SYS = """You are an HVAC optimization AI for a 15-zone office building (3-d
 You are called at start of occupied period and VPP events (17:00 each day).
 
 COMFORT: PMV in [-0.5,+0.5]. clo=0.5, met=1.2. PMV~0 at 25C. PMV>+0.5 when zone>26.5C.
-  -> DO NOT set setpoint above 26.0C.
-VPP DEMAND RESPONSE: When VPP_ACTIVE, raise setpoints to 26.0-27.0C to reduce load.
+  -> During normal hours: keep setpoints <= 26.0C for comfort.
+VPP DEMAND RESPONSE: When VPP_ACTIVE, you MUST raise ALL zone setpoints to >= 26.5C.
+  HARD RULE: setpoint < 26.5C during VPP = non-compliant. Aim for 26.5-27.0C.
   User scores your VPP response after each event. Past scores are in memory - LEARN.
 
 Return JSON ONLY: {"Core": X, "Bottom": X, "Middle": X, "Top": X, "next_check_hour": Y_or_null}
@@ -106,7 +107,7 @@ class _OfficeLoop:
         self.mode=mode; self.ready=False; self.start_day=None; self.step=0
         self.h_clg={}; self.h_htg={}; self.h_temp={}; self.h_fac=-1; self.h_out=-1
         self.sp={z:SP_DEF for z in ZONES}; self._pmv_ctrl=None
-        self.e_wh=0.0; self.occ_h=0.0; self.pmv_ok_h=0.0; self.pmv_s=0.0
+        self.e_wh=0.0; self.occ_h=0.0; self.pmv_ok_h=0.0; self.pmv_s=0.0; self.e_vpp_wh=0.0
         self.temp_s=0.0; self.unmet_h=0.0; self.decisions=[]; self.llm_n=0
         self.next_check: Optional[float] = OCC_START
         self.prev_sim_h: float = -1.0
@@ -422,6 +423,7 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
         if wu: return
         fac=ex.get_variable_value(s,loop.h_fac) if loop.h_fac!=-1 else 0.0
         loop.e_wh+=fac*dt
+        if active_vpp is not None: loop.e_vpp_wh+=fac*dt
         if occ:
             for z in ZONES:
                 t=zone_t[z]; pmv=_pmv(t)
@@ -465,9 +467,15 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
         (output_dir/"decisions.json").write_text(
             json.dumps(loop.decisions[-100:], indent=2, ensure_ascii=False))
 
+    _vpp_total_h = float(len(VPP_EVENTS))
+    _e_vpp_kwh = loop.e_vpp_wh / 1000
+    _non_vpp_rate = (kwh - _e_vpp_kwh) / max(1.0, 72.0 - _vpp_total_h)
+    _vpp_reduction_kwh = round(_non_vpp_rate * _vpp_total_h - _e_vpp_kwh, 4)
+
     return BenchmarkResult(scenario=f"office/{weather_label}", building="office",
         weather=weather_label, method=mode, exit_code=ec,
         energy_kwh_total=kwh, energy_kwh_per_day=kwh/3,
+        vpp_energy_reduction_kwh=_vpp_reduction_kwh,
         pmv_ok_fraction=loop.pmv_ok_h/occ, mean_pmv=loop.pmv_s/occ,
         mean_temp_c=loop.temp_s/occ, unmet_cooling_h=loop.unmet_h,
         user_pref_scores=pref_scores,

@@ -61,6 +61,7 @@ class _FamilyLoop:
         self.sp = SP_DEFAULT; self.ready = False; self.start_day = None
         self.h_cool = self.h_heat = self.h_temp = self.h_fac = -1
         self.e_wh = self.occ_h = self.pmv_ok_h = self.pmv_s = self.temp_s = self.unmet_h = 0.0
+        self.e_vpp_wh: float = 0.0  # energy consumed during VPP windows only
         self.decisions = []; self.step = 0; self.h_out = -1
         self.next_check: Optional[float] = 8.0   # first LLM trigger (sim-hour)
         self.prev_sim_h: float = -1.0              # for crossing detection
@@ -115,6 +116,8 @@ def run_family_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
         if loop.h_heat!=-1: ex.set_actuator_value(s, loop.h_heat, HTG_SP)
         if wu: return
         loop.e_wh += fac * dt
+        if any(ev["trigger_h"] <= sim_h < ev["end_h"] for ev in VPP_EVENTS):
+            loop.e_vpp_wh += fac * dt
         # Collect per-VPP-window data
         for ev in VPP_EVENTS:
             if ev["trigger_h"] <= sim_h < ev["end_h"]:
@@ -131,6 +134,11 @@ def run_family_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     api.state_manager.delete_state(state)
 
     kwh = loop.e_wh/1000; occ = max(loop.occ_h, 1e-6)
+    _vpp_total_h = float(len(VPP_EVENTS))  # 3h total VPP window
+    _e_vpp_kwh = loop.e_vpp_wh / 1000
+    _e_non_vpp_kwh = kwh - _e_vpp_kwh
+    _non_vpp_rate = _e_non_vpp_kwh / max(1, 72.0 - _vpp_total_h)  # avg kW outside VPP
+    _vpp_reduction_kwh = _non_vpp_rate * _vpp_total_h - _e_vpp_kwh  # positive = saved
 
     # Score PMV for each VPP window (shows no adaptation)
     pref_scores = []
@@ -148,10 +156,16 @@ def run_family_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     except Exception as e:
         print(f"  [PMV score] {e}")
 
+    _vpp_total_h = float(len(VPP_EVENTS))
+    _e_vpp_kwh = loop.e_vpp_wh / 1000
+    _non_vpp_rate = (kwh - _e_vpp_kwh) / max(1.0, 72.0 - _vpp_total_h)
+    _vpp_reduction_kwh = round(_non_vpp_rate * _vpp_total_h - _e_vpp_kwh, 4)
+
     return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
         weather=weather_label, method="pmv", exit_code=ec,
         vpp_compliance_rate=0.0,
         energy_kwh_total=kwh, energy_kwh_per_day=kwh/3,
+        vpp_energy_reduction_kwh=_vpp_reduction_kwh,
         pmv_ok_fraction=loop.pmv_ok_h/occ, mean_pmv=loop.pmv_s/occ,
         mean_temp_c=loop.temp_s/occ, unmet_cooling_h=loop.unmet_h,
         user_pref_scores=pref_scores,
@@ -208,6 +222,7 @@ def run_family_pmv_rule(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW
 
         if wu: return
         loop.e_wh += fac * dt
+        if active_vpp is not None: loop.e_vpp_wh += fac * dt
 
         # Collect per-VPP-window data
         if active_vpp:
@@ -264,10 +279,16 @@ def run_family_pmv_rule(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW
     print(f"  [family/pmv_rule] exit={ec} energy={kwh:.1f}kWh pmv_ok={loop.pmv_ok_h/occ*100:.1f}% "
           f"vpp_scores={pref_scores} vpp_comply={vpp_comply_rate*100:.0f}%")
 
+    _vpp_total_h = float(len(VPP_EVENTS))
+    _e_vpp_kwh = loop.e_vpp_wh / 1000
+    _non_vpp_rate = (kwh - _e_vpp_kwh) / max(1.0, 72.0 - _vpp_total_h)
+    _vpp_reduction_kwh = round(_non_vpp_rate * _vpp_total_h - _e_vpp_kwh, 4)
+
     return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
         weather=weather_label, method="pmv_rule", exit_code=ec,
         vpp_compliance_rate=vpp_comply_rate,
         energy_kwh_total=kwh, energy_kwh_per_day=kwh/3,
+        vpp_energy_reduction_kwh=_vpp_reduction_kwh,
         pmv_ok_fraction=loop.pmv_ok_h/occ, mean_pmv=loop.pmv_s/occ,
         mean_temp_c=loop.temp_s/occ, unmet_cooling_h=loop.unmet_h,
         user_pref_scores=pref_scores,
@@ -300,7 +321,8 @@ Set a cooling setpoint and optionally schedule your next check.
 Occupied: 08:00-22:00 daily. Unoccupied auto-set 28C. Sim total: 72h (3 days).
 COMFORT: PMV in [-0.5,+0.5]. PMV~0 at 25.5C. PMV>+0.5 when zone>27C.
   -> Keep setpoint <= 26.0C during occupied hours for comfort.
-VPP DEMAND RESPONSE: When VPP_ACTIVE, reduce load by raising setpoint to 26.0-27.0C.
+VPP DEMAND RESPONSE: When VPP_ACTIVE, you MUST raise setpoint to >= 26.0C.
+  HARD RULE: setpoint < 26.0C during VPP = non-compliant. Aim for 26.0-27.0C.
   But comfort still matters - user scores your VPP response after each event.
   Past VPP responses (if any) show user feedback - LEARN from it.
 
@@ -472,6 +494,7 @@ Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, "reason": "..."}
         if wu: return
         pmv = _compute_pmv(temp)
         loop.e_wh += fac * dt
+        if active_vpp is not None: loop.e_vpp_wh += fac * dt
         if occ:
             loop.occ_h += dt; loop.pmv_s += pmv * dt; loop.temp_s += temp * dt
             if abs(pmv) <= PMV_DEADBAND: loop.pmv_ok_h += dt
@@ -491,9 +514,15 @@ Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, "reason": "..."}
     vpp_comply_rate = n_comply / max(1, len(VPP_EVENTS))
     print(f"  [family/agent] exit={ec} energy={kwh:.1f}kWh pmv_ok={loop.pmv_ok_h/occ*100:.1f}% "
           f"vpp_scores={pref_scores} vpp_comply={vpp_comply_rate*100:.0f}%")
+    _vpp_total_h = float(len(VPP_EVENTS))
+    _e_vpp_kwh = loop.e_vpp_wh / 1000
+    _non_vpp_rate = (kwh - _e_vpp_kwh) / max(1.0, 72.0 - _vpp_total_h)
+    _vpp_reduction_kwh = round(_non_vpp_rate * _vpp_total_h - _e_vpp_kwh, 4)
+
     return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
         weather=weather_label, method="agent", exit_code=ec,
         energy_kwh_total=kwh, energy_kwh_per_day=kwh/3,
+        vpp_energy_reduction_kwh=_vpp_reduction_kwh,
         pmv_ok_fraction=loop.pmv_ok_h/occ, mean_pmv=loop.pmv_s/occ,
         mean_temp_c=loop.temp_s/occ, unmet_cooling_h=loop.unmet_h,
         agent_setpoint_c=round(avg_sp, 1),
@@ -525,6 +554,7 @@ def run_family_agent_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EP
     _SYS = """You are an HVAC agent for a family home during a VPP demand-response event.
 PMV baseline controls the home at all other times.  Your ONLY job is the VPP window.
 Reduce electricity load by raising the cooling setpoint during the 1-hour VPP window.
+HARD RULE: you MUST set setpoint >= 26.0C (compliance threshold). Aim for 26.0-27.0C.
 Balance: demand reduction vs user comfort.  User will score your VPP response.
 Return JSON ONLY: {"setpoint": X, "reason": "..."}  setpoint range: 22.0-28.0C"""
 
@@ -658,6 +688,7 @@ Return JSON ONLY: {"setpoint": X, "reason": "..."}  setpoint range: 22.0-28.0C""
         if wu: return
         pmv = _compute_pmv(temp)
         loop.e_wh += fac * dt
+        if active_vpp is not None: loop.e_vpp_wh += fac * dt
         if occ:
             loop.occ_h += dt; loop.pmv_s += pmv*dt; loop.temp_s += temp*dt
             if abs(pmv) <= PMV_DEADBAND: loop.pmv_ok_h += dt
@@ -676,9 +707,15 @@ Return JSON ONLY: {"setpoint": X, "reason": "..."}  setpoint range: 22.0-28.0C""
     vpp_comply_rate = n_comply / max(1, len(VPP_EVENTS))
     print(f"  [family/agent_pmv] exit={ec} energy={kwh:.1f}kWh pmv_ok={loop.pmv_ok_h/occ*100:.1f}% "
           f"vpp_scores={pref_scores} vpp_comply={vpp_comply_rate*100:.0f}%")
+    _vpp_total_h = float(len(VPP_EVENTS))
+    _e_vpp_kwh = loop.e_vpp_wh / 1000
+    _non_vpp_rate = (kwh - _e_vpp_kwh) / max(1.0, 72.0 - _vpp_total_h)
+    _vpp_reduction_kwh = round(_non_vpp_rate * _vpp_total_h - _e_vpp_kwh, 4)
+
     return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
         weather=weather_label, method="agent_pmv", exit_code=ec,
         energy_kwh_total=kwh, energy_kwh_per_day=kwh/3,
+        vpp_energy_reduction_kwh=_vpp_reduction_kwh,
         pmv_ok_fraction=loop.pmv_ok_h/occ, mean_pmv=loop.pmv_s/occ,
         mean_temp_c=loop.temp_s/occ, unmet_cooling_h=loop.unmet_h,
         agent_setpoint_c=round(avg_sp,1),
