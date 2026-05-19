@@ -36,9 +36,13 @@ class BenchmarkResult:
     pmv_ok_fraction: float = 0.0; mean_pmv: float = 0.0; mean_temp_c: float = 0.0
     unmet_cooling_h: float = 0.0; vpp_energy_reduction_kwh: float = 0.0
     agent_setpoint_c: Optional[float] = None
-    user_pref_score: Optional[float] = None       # legacy single score (PMV)
-    user_pref_scores: List[float] = field(default_factory=list)  # per-VPP-event scores [e1,e2,e3]
-    vpp_compliance_rate: float = 0.0  # fraction of VPP events where setpoint raised >=0.5C above normal
+    user_pref_score: Optional[float] = None       # legacy single score (overall avg)
+    user_pref_scores: List[float] = field(default_factory=list)  # per-event overall scores [e1,e2,e3]
+    # M1 — per-dimension scores (list of per-event scores)
+    user_comfort_scores: List[int] = field(default_factory=list)   # thermal comfort 1-5
+    user_energy_scores: List[int] = field(default_factory=list)    # energy/cost 1-5
+    user_vpp_scores: List[int] = field(default_factory=list)       # VPP handling 1-5
+    vpp_compliance_rate: float = 0.0
     user_pref_comment: str = ""
     control_decisions: List[Tuple[float, float, float]] = field(default_factory=list)
     output_dir: str = ""; error: str = ""
@@ -142,6 +146,7 @@ def run_family_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
 
     # Score PMV for each VPP window (shows no adaptation)
     pref_scores = []
+    _pmv_comfort_scores = []; _pmv_energy_scores = []; _pmv_vpp_scores = []
     try:
         from user_pref_scorer import score_user_preference
         for idx, ev in enumerate(VPP_EVENTS):
@@ -152,7 +157,10 @@ def run_family_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
             r = score_user_preference(building="family", method="pmv",
                 mean_temp_c=wt, pmv_ok_fraction=wp,
                 energy_kwh_per_day=kwh/3, event_index=idx+1)
-            pref_scores.append(r.get("score") or 0.0)
+            pref_scores.append(r.get("score") or 3)
+            _pmv_comfort_scores.append(r.get("comfort_score", 3))
+            _pmv_energy_scores.append(r.get("energy_score", 3))
+            _pmv_vpp_scores.append(r.get("vpp_score", 3))
     except Exception as e:
         print(f"  [PMV score] {e}")
 
@@ -170,6 +178,9 @@ def run_family_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
         mean_temp_c=loop.temp_s/occ, unmet_cooling_h=loop.unmet_h,
         user_pref_scores=pref_scores,
         user_pref_score=sum(pref_scores)/max(1,len(pref_scores)) if pref_scores else None,
+        user_comfort_scores=_pmv_comfort_scores,
+        user_energy_scores=_pmv_energy_scores,
+        user_vpp_scores=_pmv_vpp_scores,
         control_decisions=loop.decisions[-50:], output_dir=str(output_dir))
 
 def run_family_pmv_rule(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
@@ -369,7 +380,7 @@ Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, "reason": "..."}
             return fallback
 
     def _score_event(ev, loop_ref, sim_h, event_index=1):
-        """Score agent strategy for a VPP event window after it ends (roleplay LLM)."""
+        """Score agent strategy for VPP event (roleplay LLM). Returns M1 3D scores."""
         try:
             from user_pref_scorer import score_user_preference
             wd = loop_ref.vpp_window_data.get(ev["id"], {})
@@ -386,17 +397,23 @@ Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, "reason": "..."}
                 event_index=event_index,
                 user_preference_text=loop_ref.vpp_user_input,
                 agent_reason=loop_ref.vpp_last_reason)
-            sc = r.get("score") or 0.0
-            lbl = r.get("label", "?")
+            sc  = r.get("score") or 3
+            lbl = r.get("label", "neutral")
             cmt = r.get("comment", "")[:100]
             src = r.get("source", "?")
-            print(f"  [VPP score {ev['id']} idx={event_index}] {sc}/5 ({lbl}) [{src}] | {cmt[:60]}")
+            print(f"  [VPP score {ev['id']} idx={event_index}] overall={sc} "
+                  f"comfort={r.get('comfort_score')} energy={r.get('energy_score')} "
+                  f"vpp={r.get('vpp_score')} [{src}] | {cmt[:60]}")
             return {"id": ev["id"], "setpoint": sp_w, "score": sc, "label": lbl,
+                    "comfort_score": r.get("comfort_score", 3),
+                    "energy_score": r.get("energy_score", 3),
+                    "vpp_score": r.get("vpp_score", 3),
                     "comment": cmt, "user_input": loop_ref.vpp_user_input[:80], "source": src}
         except Exception as e:
             print(f"  [VPP score {ev['id']}] error: {e}")
-            return {"id": ev["id"], "setpoint": loop_ref.sp, "score": None, "label": "?",
-                    "comment": str(e)[:60], "user_input": "", "source": "error"}
+            return {"id": ev["id"], "setpoint": loop_ref.sp, "score": 3,
+                    "comfort_score": 3, "energy_score": 3, "vpp_score": 3,
+                    "label": "neutral", "comment": str(e)[:60], "user_input": "", "source": "error"}
 
     def cb(s):
         if not loop.init(ex, s): return
@@ -478,14 +495,23 @@ Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, "reason": "..."}
                     result = _score_event(ev, loop, sim_h, event_index=ev_idx)
                     loop.vpp_event_log.append(result)
                     loop.vpp_scored.add(ev["id"])
-                    # Update memory context for subsequent LLM calls
+                    # L3: Update rich memory context for subsequent LLM calls (cross-day learning)
                     mem_entries = [{"event": e["id"], "sp": e["setpoint"],
-                                    "score": e["score"],
-                                    "user_said": e.get("user_input","")[:50],
-                                    "feedback": e["comment"][:60]}
+                                    "overall": e["score"],
+                                    "comfort": e.get("comfort_score", "?"),
+                                    "energy": e.get("energy_score", "?"),
+                                    "vpp_compliance": e.get("vpp_score", "?"),
+                                    "user_said": e.get("user_input","")[:60],
+                                    "feedback": e["comment"][:80]}
                                    for e in loop.vpp_event_log]
-                    loop.vpp_mem_ctx = ("\nPast VPP responses (user in the loop): "
-                                        + json.dumps(mem_entries, ensure_ascii=False))
+                    # Extract learning insight
+                    avg_comfort = sum(e.get("comfort_score",3) for e in loop.vpp_event_log)/max(1,len(loop.vpp_event_log))
+                    avg_energy  = sum(e.get("energy_score",3) for e in loop.vpp_event_log)/max(1,len(loop.vpp_event_log))
+                    trend = "improve_comfort" if avg_comfort < 3.5 else ("save_energy" if avg_energy > avg_comfort else "balanced")
+                    loop.vpp_mem_ctx = (
+                        f"\n[L3 cross-day learning] Past VPP events: {json.dumps(mem_entries, ensure_ascii=False)}"
+                        f"\nLearned user preference trend: {trend} (avg_comfort={avg_comfort:.1f}, avg_energy={avg_energy:.1f})"
+                        f"\nFor next VPP: {'prioritize thermal comfort, user was uncomfortable' if trend=='improve_comfort' else 'user is comfortable, consider more aggressive demand reduction' if trend=='save_energy' else 'maintain current balance'}")
 
         if loop.h_cool != -1: ex.set_actuator_value(s, loop.h_cool, loop.sp)
         if loop.h_heat != -1: ex.set_actuator_value(s, loop.h_heat, HTG_SP)
@@ -528,6 +554,9 @@ Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, "reason": "..."}
         agent_setpoint_c=round(avg_sp, 1),
         user_pref_scores=pref_scores,
         user_pref_score=sum(pref_scores)/max(1,len(pref_scores)) if pref_scores else None,
+        user_comfort_scores=[e.get("comfort_score",3) for e in loop.vpp_event_log],
+        user_energy_scores=[e.get("energy_score",3) for e in loop.vpp_event_log],
+        user_vpp_scores=[e.get("vpp_score",3) for e in loop.vpp_event_log],
         vpp_compliance_rate=vpp_comply_rate,
         control_decisions=loop.decisions[-50:], output_dir=str(output_dir))
 
@@ -551,11 +580,22 @@ def run_family_agent_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EP
     ex.request_variable(state, "Facility Total Electricity Demand Rate", "Whole Building")
     ex.request_variable(state, "Site Outdoor Air Drybulb Temperature", "Environment")
 
-    _SYS = """You are an HVAC agent for a family home during a VPP demand-response event.
-PMV baseline controls the home at all other times.  Your ONLY job is the VPP window.
-Reduce electricity load by raising the cooling setpoint during the 1-hour VPP window.
-HARD RULE: you MUST set setpoint >= 26.0C (compliance threshold). Aim for 26.0-27.0C.
-Balance: demand reduction vs user comfort.  User will score your VPP response.
+    _SYS = """You are a hybrid HVAC agent for a family home.
+PMV thermal-comfort control runs at all times; you activate ONLY during VPP demand-response events.
+You are the BEST of both worlds: PMV ensures daily comfort; you handle VPP intelligently.
+
+Your inputs include:
+  - Current zone temperature and outdoor temperature
+  - Static user preference profile (user_pref)
+  - Dynamic user statement expressed NOW before this event (User says NOW)
+  - L3 cross-day learning: past VPP scores (comfort/energy/vpp dimensions) and user feedback
+
+Decision rules:
+  HARD RULE: setpoint MUST be >= 26.0C during VPP (compliance threshold). Non-negotiable.
+  Aim for 26.0-27.0C. If past comfort_score < 3.5, prefer 26.0C to protect comfort.
+  If past energy_score < comfort_score, lean toward 26.5-27.0C for more demand reduction.
+  Always honor what the user says NOW — their real-time preference overrides defaults.
+
 Return JSON ONLY: {"setpoint": X, "reason": "..."}  setpoint range: 22.0-28.0C"""
 
     def _llm_vpp(temp, out_t, hod, sim_h, vpp_id, user_pref_input=""):
@@ -583,6 +623,7 @@ Return JSON ONLY: {"setpoint": X, "reason": "..."}  setpoint range: 22.0-28.0C""
             return fallback
 
     def _score_event(ev, loop_ref, sim_h, event_index=1):
+        """Score agent_pmv VPP event. Returns M1 3D scores."""
         try:
             from user_pref_scorer import score_user_preference
             wd = loop_ref.vpp_window_data.get(ev["id"], {})
@@ -597,13 +638,19 @@ Return JSON ONLY: {"setpoint": X, "reason": "..."}  setpoint range: 22.0-28.0C""
                 event_index=event_index,
                 user_preference_text=loop_ref.vpp_user_input,
                 agent_reason=loop_ref.vpp_last_reason)
-            score = r.get("score") or 3.0; comment = r.get("comment","")
-            print(f"  [AgentPMV score event={ev['id']}] score={score} comment={comment[:60]}")
+            score = r.get("score", 3); comment = r.get("comment","")
+            print(f"  [AgentPMV score event={ev['id']}] overall={score} "
+                  f"comfort={r.get('comfort_score')} energy={r.get('energy_score')} "
+                  f"vpp={r.get('vpp_score')} | {comment[:60]}")
             return {"id": ev["id"], "setpoint": sp_w, "score": score, "comment": comment,
-                    "user_input": loop_ref.vpp_user_input, "source": "llm"}
+                    "comfort_score": r.get("comfort_score", 3),
+                    "energy_score": r.get("energy_score", 3),
+                    "vpp_score": r.get("vpp_score", 3),
+                    "user_input": loop_ref.vpp_user_input, "source": r.get("source","llm")}
         except Exception as e:
             print(f"  [AgentPMV score] error: {e}")
-            return {"id": ev["id"], "setpoint": loop_ref.sp, "score": 3.0,
+            return {"id": ev["id"], "setpoint": loop_ref.sp, "score": 3,
+                    "comfort_score": 3, "energy_score": 3, "vpp_score": 3,
                     "comment": str(e)[:60], "user_input": "", "source": "error"}
 
     h_out_handle = [-1]
@@ -675,12 +722,22 @@ Return JSON ONLY: {"setpoint": X, "reason": "..."}  setpoint range: 22.0-28.0C""
                     result = _score_event(ev, loop, sim_h, event_index=ev_idx)
                     loop.vpp_event_log.append(result)
                     loop.vpp_scored.add(ev["id"])
-                    mem_entries = [{"event": e["id"], "sp": e["setpoint"], "score": e["score"],
-                                    "user_said": e.get("user_input","")[:50],
-                                    "feedback": e["comment"][:60]}
+                    # L3 cross-day learning: richer memory with 3D scores
+                    mem_entries = [{"event": e["id"], "sp": e["setpoint"],
+                                    "overall": e["score"],
+                                    "comfort": e.get("comfort_score","?"),
+                                    "energy": e.get("energy_score","?"),
+                                    "vpp_compliance": e.get("vpp_score","?"),
+                                    "user_said": e.get("user_input","")[:60],
+                                    "feedback": e["comment"][:80]}
                                    for e in loop.vpp_event_log]
-                    loop.vpp_mem_ctx = ("\nPast VPP responses (user in the loop): "
-                                        + json.dumps(mem_entries, ensure_ascii=False))
+                    avg_comfort = sum(e.get("comfort_score",3) for e in loop.vpp_event_log)/max(1,len(loop.vpp_event_log))
+                    avg_energy  = sum(e.get("energy_score",3) for e in loop.vpp_event_log)/max(1,len(loop.vpp_event_log))
+                    trend = "improve_comfort" if avg_comfort < 3.5 else ("save_energy" if avg_energy > avg_comfort else "balanced")
+                    loop.vpp_mem_ctx = (
+                        f"\n[L3 cross-day learning] Past VPP: {json.dumps(mem_entries, ensure_ascii=False)}"
+                        f"\nLearned trend: {trend} (avg_comfort={avg_comfort:.1f}, avg_energy={avg_energy:.1f})"
+                        f"\nNext VPP guidance: {'prioritize thermal comfort' if trend=='improve_comfort' else 'user comfortable, increase demand reduction' if trend=='save_energy' else 'maintain balance'}")
 
         if loop.h_cool != -1: ex.set_actuator_value(s, loop.h_cool, loop.sp)
         if loop.h_heat != -1: ex.set_actuator_value(s, loop.h_heat, HTG_SP)
@@ -721,6 +778,9 @@ Return JSON ONLY: {"setpoint": X, "reason": "..."}  setpoint range: 22.0-28.0C""
         agent_setpoint_c=round(avg_sp,1),
         user_pref_scores=pref_scores,
         user_pref_score=sum(pref_scores)/max(1,len(pref_scores)) if pref_scores else None,
+        user_comfort_scores=[e.get("comfort_score",3) for e in loop.vpp_event_log],
+        user_energy_scores=[e.get("energy_score",3) for e in loop.vpp_event_log],
+        user_vpp_scores=[e.get("vpp_score",3) for e in loop.vpp_event_log],
         vpp_compliance_rate=vpp_comply_rate,
         control_decisions=loop.decisions[-50:], output_dir=str(output_dir))
 

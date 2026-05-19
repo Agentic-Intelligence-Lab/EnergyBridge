@@ -166,6 +166,7 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
     vpp_window_pmvs:  Dict[str, list] = {ev["id"]: [] for ev in VPP_EVENTS}
 
     def _score_event(ev, loop_ref, sim_h, event_index=1):
+        """Score office VPP event. Returns M1 3D scores + M2 zone_group comfort scores."""
         try:
             from user_pref_scorer import score_user_preference
             wd = loop_ref.vpp_window_data.get(ev["id"], {})
@@ -175,25 +176,37 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
             mean_t = sum(wtemps)/max(1,len(wtemps)) if wtemps else loop_ref.temp_s/max(loop_ref.occ_h,1)
             pmv_ok = sum(wpmvs)/max(1,len(wpmvs)) if wpmvs else 0.5
             e_day  = (loop_ref.e_wh/1000) / max(1, sim_h/24)
+            # M2: compute per-zone-group mean temperature from vpp_window_data
+            zgt = wd.get("zone_group_temps", {})  # {group: [temps]}
+            zone_group_means = {g: (sum(ts)/len(ts) if ts else mean_t) for g, ts in zgt.items()} if zgt else None
             r = score_user_preference(
                 building="office", method="agent",
                 mean_temp_c=mean_t, pmv_ok_fraction=pmv_ok,
                 energy_kwh_per_day=e_day, agent_setpoint_c=sp_w,
                 event_index=event_index,
                 user_preference_text=loop_ref.vpp_user_input,
-                agent_reason=loop_ref.vpp_last_reason)
-            sc = r.get("score") or 0.0
-            lbl = r.get("label","?")
+                agent_reason=loop_ref.vpp_last_reason,
+                zone_group_temps=zone_group_means)
+            sc  = r.get("score", 3)
+            lbl = r.get("label", "neutral")
             cmt = r.get("comment","")[:100]
             src = r.get("source","?")
             ev_id = ev["id"]
-            print(f"  [Office VPP score {ev_id} idx={event_index}] {sc}/5 ({lbl}) [{src}] | {cmt[:60]}")
+            print(f"  [Office VPP score {ev_id} idx={event_index}] overall={sc} "
+                  f"comfort={r.get('comfort_score')} energy={r.get('energy_score')} "
+                  f"vpp={r.get('vpp_score')} zone={r.get('zone_comfort_scores')} [{src}]")
             return {"id": ev["id"], "setpoint": sp_w, "score": sc, "label": lbl,
+                    "comfort_score": r.get("comfort_score", 3),
+                    "energy_score": r.get("energy_score", 3),
+                    "vpp_score": r.get("vpp_score", 3),
+                    "zone_comfort_scores": r.get("zone_comfort_scores"),
                     "comment": cmt, "user_input": loop_ref.vpp_user_input[:80], "source": src}
         except Exception as e:
             print(f"  [Office VPP score] error: {e}")
-            return {"id": ev["id"], "setpoint": SP_DEF, "score": None, "label":"?",
-                    "comment": str(e)[:60], "user_input": "", "source": "error"}
+            return {"id": ev["id"], "setpoint": SP_DEF, "score": 3,
+                    "comfort_score": 3, "energy_score": 3, "vpp_score": 3,
+                    "zone_comfort_scores": None,
+                    "label": "neutral", "comment": str(e)[:60], "user_input": "", "source": "error"}
 
     def cb(s):
         if not loop.init_handles(ex, s): return
@@ -241,10 +254,15 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
                 t_avg = sum(zone_t.values())/len(zone_t)
                 sp_avg = sum(loop.sp.values())/len(loop.sp)
                 wd = loop.vpp_window_data.setdefault(active_vpp["id"],
-                                                      {"temps":[],"pmvs":[],"sp":sp_avg})
+                                                      {"temps":[],"pmvs":[],"sp":sp_avg,"zone_group_temps":{}})
                 wd["temps"].append(t_avg)
                 wd["pmvs"].append(abs(_pmv(t_avg)) <= PMV_DB)
                 wd["sp"] = sp_avg
+                # M2: accumulate per-zone-group temperatures
+                for g in ("Core","Bottom","Middle","Top"):
+                    g_temps = [zone_t[z] for z in ZONES if ZONE_GROUP.get(z)==g and z in zone_t]
+                    if g_temps:
+                        wd["zone_group_temps"].setdefault(g, []).append(sum(g_temps)/len(g_temps))
             # Score VPP event after window ends (outside occ check)
             psim_r = loop.prev_sim_h
             for ev in VPP_EVENTS:
@@ -334,12 +352,22 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
                     loop.vpp_event_log.append(result)
                     loop.vpp_scored.add(ev["id"])
                     mem_entries = [{"event": e["id"], "sp": e["setpoint"],
-                                    "score": e["score"],
-                                    "user_said": e.get("user_input","")[:50],
-                                    "feedback": e["comment"][:60]}
+                                    "overall": e["score"],
+                                    "comfort": e.get("comfort_score","?"),
+                                    "energy": e.get("energy_score","?"),
+                                    "vpp": e.get("vpp_score","?"),
+                                    "zone": e.get("zone_comfort_scores"),
+                                    "user_said": e.get("user_input","")[:60],
+                                    "feedback": e["comment"][:80]}
                                    for e in loop.vpp_event_log]
-                    loop.vpp_mem_ctx = ("\nPast VPP responses (user in the loop): "
-                                        + json.dumps(mem_entries, ensure_ascii=False))
+                    avg_c = sum(e.get("comfort_score",3) for e in loop.vpp_event_log)/max(1,len(loop.vpp_event_log))
+                    avg_e = sum(e.get("energy_score",3) for e in loop.vpp_event_log)/max(1,len(loop.vpp_event_log))
+                    trend = "improve_comfort" if avg_c < 3.5 else ("save_energy" if avg_e > avg_c else "balanced")
+                    loop.vpp_mem_ctx = (
+                        f"\n[L3 cross-day] Past VPP: {mem_entries}"
+                        f"\nLearned trend: {trend} (avg_comfort={avg_c:.1f}, avg_energy={avg_e:.1f})"
+                        f"\nNext VPP: {'prioritize comfort' if trend=='improve_comfort' else 'increase demand reduction' if trend=='save_energy' else 'maintain balance'}"
+                    )
 
         elif mode=="agent_pmv":
             if occ:
@@ -407,12 +435,22 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
                     loop.vpp_event_log.append(result)
                     loop.vpp_scored.add(ev["id"])
                     mem_entries = [{"event": e["id"], "sp": e["setpoint"],
-                                    "score": e["score"],
-                                    "user_said": e.get("user_input","")[:50],
-                                    "feedback": e["comment"][:60]}
+                                    "overall": e["score"],
+                                    "comfort": e.get("comfort_score","?"),
+                                    "energy": e.get("energy_score","?"),
+                                    "vpp": e.get("vpp_score","?"),
+                                    "zone": e.get("zone_comfort_scores"),
+                                    "user_said": e.get("user_input","")[:60],
+                                    "feedback": e["comment"][:80]}
                                    for e in loop.vpp_event_log]
-                    loop.vpp_mem_ctx = ("\nPast VPP responses (user in the loop): "
-                                        + json.dumps(mem_entries, ensure_ascii=False))
+                    avg_c = sum(e.get("comfort_score",3) for e in loop.vpp_event_log)/max(1,len(loop.vpp_event_log))
+                    avg_e = sum(e.get("energy_score",3) for e in loop.vpp_event_log)/max(1,len(loop.vpp_event_log))
+                    trend = "improve_comfort" if avg_c < 3.5 else ("save_energy" if avg_e > avg_c else "balanced")
+                    loop.vpp_mem_ctx = (
+                        f"\n[L3 cross-day] Past VPP: {mem_entries}"
+                        f"\nLearned trend: {trend} (avg_comfort={avg_c:.1f}, avg_energy={avg_e:.1f})"
+                        f"\nNext VPP: {'prioritize comfort' if trend=='improve_comfort' else 'increase demand reduction' if trend=='save_energy' else 'maintain balance'}"
+                    )
 
         for z in ZONES:
             hc=loop.h_clg.get(z,-1); hh_=loop.h_htg.get(z,-1)
@@ -437,6 +475,7 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
 
     kwh=loop.e_wh/1000; occ=max(loop.occ_h,1e-6)
     pref_scores = []
+    _off_comfort_scores = []; _off_energy_scores = []; _off_vpp_scores = []
     if mode in ("agent", "agent_pmv", "pmv_rule"):
         pref_scores = [e["score"] for e in loop.vpp_event_log if e.get("score") is not None]
     elif mode == "pmv":
@@ -451,7 +490,10 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
                 r = score_user_preference(building="office", method="pmv",
                     mean_temp_c=wt, pmv_ok_fraction=wp, energy_kwh_per_day=kwh/3,
                     event_index=idx+1)
-                pref_scores.append(r.get("score") or 0.0)
+                pref_scores.append(r.get("score", 3))
+                _off_comfort_scores.append(r.get("comfort_score", 3))
+                _off_energy_scores.append(r.get("energy_score", 3))
+                _off_vpp_scores.append(r.get("vpp_score", 3))
         except Exception as e:
             print(f"  [Office PMV score] {e}")
 
@@ -480,6 +522,9 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
         mean_temp_c=loop.temp_s/occ, unmet_cooling_h=loop.unmet_h,
         user_pref_scores=pref_scores,
         user_pref_score=sum(pref_scores)/max(1,len(pref_scores)) if pref_scores else None,
+        user_comfort_scores=([e.get("comfort_score",3) for e in loop.vpp_event_log] if loop.vpp_event_log else _off_comfort_scores),
+        user_energy_scores=([e.get("energy_score",3) for e in loop.vpp_event_log] if loop.vpp_event_log else _off_energy_scores),
+        user_vpp_scores=([e.get("vpp_score",3) for e in loop.vpp_event_log] if loop.vpp_event_log else _off_vpp_scores),
         vpp_compliance_rate=vpp_comply_rate,
         control_decisions=[(d["sim_h"],d.get("gsps",{}).get("Core",SP_DEF),0.0)
                            for d in loop.decisions[-10:]],

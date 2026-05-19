@@ -126,11 +126,19 @@ class RoleplayUserSimulator:
         selected_strategy: dict[str, Any],
         projected_control_plan: dict[str, Any],
         projected_safety_report: dict[str, Any],
+        zone_group_context: dict | None = None,
     ) -> dict[str, Any]:
         system_prompt = (
-            "You are role-playing the same residential user. Judge satisfaction realistically. "
+            "You are role-playing the same residential/office user. Judge satisfaction realistically. "
             "Return only valid JSON."
         )
+        zone_section = ""
+        if zone_group_context:
+            zone_section = (
+                "\nZone group thermal context (office building):\n"
+                + json.dumps(zone_group_context, ensure_ascii=False)
+                + "\nScore zone_comfort_scores per group (Core/Bottom/Middle/Top).\n"
+            )
         user_prompt = (
             "Persona:\n"
             f"{json.dumps(persona, ensure_ascii=False)}\n\n"
@@ -140,8 +148,16 @@ class RoleplayUserSimulator:
             "Projected control plan:\n"
             f"{json.dumps(projected_control_plan, ensure_ascii=False)}\n\n"
             "Projected safety report:\n"
-            f"{json.dumps(projected_safety_report, ensure_ascii=False)}\n\n"
-            "Return a JSON object with fields: satisfaction_score, satisfaction_label, comment. "
-            "satisfaction_score must be an integer from 1 to 5."
+            f"{json.dumps(projected_safety_report, ensure_ascii=False)}\n"
+            f"{zone_section}\n"
+            "Return a JSON object with EXACTLY these fields:\n"
+            "  satisfaction_score (int 1-5): overall satisfaction\n"
+            "  comfort_score (int 1-5): thermal comfort satisfaction\n"
+            "  energy_score (int 1-5): satisfaction with energy usage / cost\n"
+            "  vpp_score (int 1-5): satisfaction with VPP demand-response handling\n"
+            "  satisfaction_label: one of very_satisfied/satisfied/neutral/dissatisfied/very_dissatisfied\n"
+            "  comment (str <=80 chars): brief reason\n"
+            + ("  zone_comfort_scores: {Core: X, Bottom: X, Middle: X, Top: X}\n" if zone_group_context else "")
+            + "All score fields must be integers 1-5."
         )
         return self._call_json(system_prompt, user_prompt)
