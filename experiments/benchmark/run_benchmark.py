@@ -4,7 +4,7 @@
 Usage:
   conda activate energybridge
   cd /home/ha_agent/work/EnergyBridge/experiments/benchmark
-  python run_benchmark.py                              # full 12-run benchmark
+  python run_benchmark.py                              # full 18-run benchmark (3 methods)
   python run_benchmark.py --scenario family/tianjin/pmv   # single run
   python run_benchmark.py --building family            # only family home
   python run_benchmark.py --skip-existing              # resume interrupted run
@@ -44,7 +44,7 @@ CITIES = {
     "shanghai": {"epw": EPW_DIR/"CHN_SH_Shanghai.583620_CSWD.epw", "label":"上海"},
     "tianjin":  {"epw": EPW_DIR/"CHN_TJ_Tianjin.545270_CSWD.epw", "label":"天津"},
 }
-METHODS = ["pmv", "agent"]
+METHODS = ["pmv", "agent", "agent_pmv"]
 
 def preflight(bldgs, cities):
     errs = []
@@ -97,7 +97,10 @@ def run_one(building, city, method, verbose=True):
     result = None
     try:
         if building == "family":
-            fn = run_family_pmv if method=="pmv" else run_family_agent
+            from family_runner import run_family_agent_pmv
+            if method == "pmv": fn = run_family_pmv
+            elif method == "agent": fn = run_family_agent
+            else: fn = run_family_agent_pmv  # agent_pmv
             result = fn(idf_path=idf, epw_path=epw, output_dir=out, weather_label=city)
         else:
             result = run_office(mode=method, idf_path=idf, epw_path=epw,
@@ -147,9 +150,9 @@ def make_table(results):
     lines += [HR,"EnergyBridge Benchmark Results",
               f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",HR]
     # header
-    h = f"{'场景(建筑/城市)':<22}{'方法':<8}{'能耗(kWh)':<13}{'PMV达标率':<11}{'均温(°C)':<10}{'未满足(h)':<12}{'VPP响应率':<11}{'Roleplay评分(1-5)':<20}{'状态'}"
+    h = f"{'场景(建筑/城市)':<22}{'方法':<10}{'能耗(kWh)':<13}{'PMV达标率':<11}{'均温(°C)':<10}{'未满足(h)':<12}{'VPP响应率':<11}{'Roleplay评分(1-5)':<20}{'状态'}"
     lines.append(h)
-    lines.append("-"*127)
+    lines.append("-"*129)
 
     # group by building/city
     by_sc: Dict[str,List] = {}
@@ -159,12 +162,14 @@ def make_table(results):
 
     agent_wins=pmv_wins=ties=0
     for sc_key, sc_res in sorted(by_sc.items()):
-        sc_res.sort(key=lambda x: 0 if x.get("method")=="pmv" else 1)
+        _order = {"pmv": 0, "agent": 1, "agent_pmv": 2}
+        sc_res.sort(key=lambda x: _order.get(x.get("method",""), 9))
         for idx,r in enumerate(sc_res):
             b = "家庭" if r.get("building")=="family" else "办公"
             cl = CITIES.get(r.get("city",""),{}).get("label","?")
             sc = f"{b}/{cl}" if idx==0 else ""
-            m = r.get("method","?").upper()
+            _mmap = {"pmv":"PMV","agent":"AGENT","agent_pmv":"AGNT+PMV"}
+            m = _mmap.get(r.get("method","?"), r.get("method","?").upper()[:10])
             e = f"{r.get('energy_kwh_total',0):.1f}" if r.get('energy_kwh_total') is not None else "N/A"
             pmv = f"{(r.get('pmv_ok_fraction',0)*100):.1f}%" if r.get('pmv_ok_fraction') is not None else "N/A"
             t  = f"{r.get('mean_temp_c',0):.2f}" if r.get('mean_temp_c') else "N/A"
@@ -178,12 +183,12 @@ def make_table(results):
                 us = "N/A"
             st = "ERROR" if r.get("has_fatal_error") or r.get("exit_code",-1)!=0 else "OK"
             vr = r.get("vpp_compliance_rate", 0.0)
-            vc = f"{vr*100:.0f}%" if r.get("method","pmv")=="agent" else "0%(PMV)"
-            lines.append(f"{sc:<22}{m:<8}{e:<13}{pmv:<11}{t:<10}{uh:<12}{vc:<11}{us:<20}{st}")
-        lines.append("-"*127)
+            vc = f"{vr*100:.0f}%" if r.get("method","pmv") in ("agent","agent_pmv") else "0%(PMV)"
+            lines.append(f"{sc:<22}{m:<10}{e:<13}{pmv:<11}{t:<10}{uh:<12}{vc:<11}{us:<20}{st}")
+        lines.append("-"*129)
 
         pmv_r = next((x for x in sc_res if x.get("method")=="pmv"),{})
-        agent_r = next((x for x in sc_res if x.get("method")=="agent"),{})
+        agent_r = next((x for x in sc_res if x.get("method") in ("agent","agent_pmv")),{})
         if pmv_r and agent_r:
             ps = pmv_r.get("user_pref_score") or 0
             as_ = agent_r.get("user_pref_score") or 0

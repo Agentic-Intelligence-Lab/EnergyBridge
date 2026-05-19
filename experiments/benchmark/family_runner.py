@@ -385,6 +385,191 @@ Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, "reason": "..."}
         vpp_compliance_rate=vpp_comply_rate,
         control_decisions=loop.decisions[-50:], output_dir=str(output_dir))
 
+
+def run_family_agent_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
+                         output_dir=None, weather_label="",
+                         user_pref="\u6211\u5e0c\u671b\u5ba4\u5185\u8212\u9002\uff0c\u4f46\u4e5f\u613f\u610f\u5728\u4e0d\u5f71\u54cd\u8002\u9002\u7684\u524d\u63d0\u4e0b\u8282\u7ea6\u7535\u529b\u3002"):
+    """Hybrid: PMV controls during normal occupied hours; Agent (LLM) takes over
+    only during VPP demand-response events.  After VPP ends, PMV resumes."""
+    if output_dir is None:
+        output_dir = BENCHMARK_DIR / "results" / f"family_agent_pmv_{weather_label}"
+    output_dir = Path(output_dir)
+    if output_dir.exists(): shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    import math as _math
+    from pyenergyplus.api import EnergyPlusAPI
+    loop = _FamilyLoop(); api = EnergyPlusAPI(); state = api.state_manager.new_state()
+    ex = api.exchange
+    ex.request_variable(state, "Zone Mean Air Temperature", "living_unit1")
+    ex.request_variable(state, "Facility Total Electricity Demand Rate", "Whole Building")
+    ex.request_variable(state, "Site Outdoor Air Drybulb Temperature", "Environment")
+
+    _SYS = """You are an HVAC agent for a family home during a VPP demand-response event.
+PMV baseline controls the home at all other times.  Your ONLY job is the VPP window.
+Reduce electricity load by raising the cooling setpoint during the 1-hour VPP window.
+Balance: demand reduction vs user comfort.  User will score your VPP response.
+Return JSON ONLY: {"setpoint": X, "reason": "..."}  setpoint range: 22.0-28.0C"""
+
+    def _llm_vpp(temp, out_t, hod, sim_h, vpp_id, user_pref_input=""):
+        import json as _j
+        hh = int(hod % 24)
+        mem_tag = loop.vpp_mem_ctx
+        user_now_tag = f"\n[User says NOW]: {user_pref_input}" if user_pref_input else ""
+        prompt = (f"sim_hour={sim_h:.1f}  clock={hh:02d}:00  *** VPP_ACTIVE ({vpp_id}): reduce load! ***\n"
+                  f"zone_temp={temp:.1f}C  outdoor={out_t:.1f}C\n"
+                  f"PMV comfort baseline setpoint: {SP_DEFAULT}C  VPP reduction target: >=26.0C\n"
+                  f"user_pref: {user_pref}{user_now_tag}{mem_tag}")
+        fallback = {"setpoint": 26.5, "reason": "fallback"}
+        try:
+            from energybridge.llm.client import LLMClient
+            resp = LLMClient().chat(_SYS, prompt).strip()
+            if resp.startswith("```"):
+                resp = "\n".join(l for l in resp.splitlines() if not l.strip().startswith("```")).strip()
+            data = _j.loads(resp)
+            sp = round(max(SP_MIN, min(28.0, float(data.get("setpoint", 26.5)))), 1)
+            reason = str(data.get("reason", ""))[:100]
+            print(f"  [FamilyAgentPMV h={sim_h:.1f} vpp={vpp_id}] sp={sp} | {reason}")
+            return {"setpoint": sp, "reason": reason}
+        except Exception as e:
+            print(f"  [FamilyAgentPMV] LLM error at h={sim_h:.1f}: {e}")
+            return fallback
+
+    def _score_event(ev, loop_ref, sim_h, event_index=1):
+        try:
+            from user_pref_scorer import score_user_preference
+            wd = loop_ref.vpp_window_data.get(ev["id"], {})
+            wtemps = wd.get("temps", []); wpmvs = wd.get("pmvs", [])
+            sp_w = wd.get("sp", loop_ref.sp)
+            occ_ref = max(loop_ref.occ_h, 1e-6)
+            mean_t = sum(wtemps)/max(1, len(wtemps)) if wtemps else (loop_ref.temp_s/occ_ref)
+            pmv_ok = sum(wpmvs)/max(1, len(wpmvs)) if wpmvs else 0.5
+            r = score_user_preference(building="family", method="agent_pmv",
+                mean_temp_c=mean_t, pmv_ok_fraction=pmv_ok,
+                energy_kwh_per_day=loop_ref.e_wh/1000/3, agent_setpoint_c=sp_w,
+                event_index=event_index,
+                user_preference_text=loop_ref.vpp_user_input,
+                agent_reason=loop_ref.vpp_last_reason)
+            score = r.get("score") or 3.0; comment = r.get("comment","")
+            print(f"  [AgentPMV score event={ev['id']}] score={score} comment={comment[:60]}")
+            return {"id": ev["id"], "setpoint": sp_w, "score": score, "comment": comment,
+                    "user_input": loop_ref.vpp_user_input, "source": "llm"}
+        except Exception as e:
+            print(f"  [AgentPMV score] error: {e}")
+            return {"id": ev["id"], "setpoint": loop_ref.sp, "score": 3.0,
+                    "comment": str(e)[:60], "user_input": "", "source": "error"}
+
+    h_out_handle = [-1]
+
+    def cb(s):
+        if not loop.init(ex, s): return
+        day = ex.day_of_year(s)
+        if loop.start_day is None: loop.start_day = day
+        hod = ex.current_time(s); dt = ex.zone_time_step(s)
+        sim_h = (day - loop.start_day)*24 + hod
+        wu = ex.warmup_flag(s)
+        temp = ex.get_variable_value(s, loop.h_temp) if loop.h_temp != -1 else SP_DEFAULT
+        fac  = ex.get_variable_value(s, loop.h_fac)  if loop.h_fac  != -1 else 0.0
+
+        out_t = 30.0
+        if h_out_handle[0] == -1:
+            h_out_handle[0] = ex.get_variable_handle(s, "Site Outdoor Air Drybulb Temperature", "Environment")
+        if h_out_handle[0] != -1:
+            v = ex.get_variable_value(s, h_out_handle[0])
+            if v is not None and not _math.isnan(v): out_t = v
+
+        occ = _occupied(hod)
+        active_vpp = None
+        for ev in VPP_EVENTS:
+            if ev["trigger_h"] <= sim_h < ev["end_h"]:
+                active_vpp = ev; break
+
+        if not wu:
+            if not occ:
+                loop.sp = 28.0
+            elif active_vpp is not None:
+                # VPP WINDOW: Agent (LLM) controls
+                psim = loop.prev_sim_h
+                triggered_vpp = None
+                for ev in VPP_EVENTS:
+                    if psim < ev["trigger_h"] <= sim_h:
+                        triggered_vpp = ev; break
+                if triggered_vpp:
+                    vid = triggered_vpp["id"]
+                    try:
+                        from user_pref_scorer import get_user_preference_input
+                        ev_idx = next((i+1 for i,e in enumerate(VPP_EVENTS) if e["id"]==vid), 1)
+                        loop.vpp_user_input = get_user_preference_input(
+                            "family", ev_idx,
+                            {"vpp_id": vid, "hour": sim_h, "duration_h": 1.0},
+                            loop.vpp_event_log)
+                    except Exception as _e:
+                        print(f"  [UserInput] {_e}"); loop.vpp_user_input = ""
+                    res = _llm_vpp(temp, out_t, hod, sim_h, vid, loop.vpp_user_input)
+                    loop.sp = res["setpoint"]
+                    loop.vpp_last_reason = res.get("reason", "")
+                # else: hold agent setpoint through VPP window
+            else:
+                # NORMAL OCCUPIED: PMV controls every timestep
+                pmv_now = _compute_pmv(temp)
+                if pmv_now > PMV_DEADBAND:   loop.sp = max(SP_MIN, loop.sp - SP_STEP)
+                elif pmv_now < -PMV_DEADBAND: loop.sp = min(SP_MAX, loop.sp + SP_STEP)
+
+            if active_vpp:
+                wd = loop.vpp_window_data.setdefault(active_vpp["id"], {"temps":[],"pmvs":[],"sp":loop.sp})
+                wd["temps"].append(temp)
+                wd["pmvs"].append(abs(_compute_pmv(temp)) <= PMV_DEADBAND)
+                wd["sp"] = loop.sp
+
+            psim = loop.prev_sim_h
+            for ev in VPP_EVENTS:
+                if psim < ev["end_h"] <= sim_h and ev["id"] not in loop.vpp_scored:
+                    ev_idx = next((i+1 for i,e in enumerate(VPP_EVENTS) if e["id"]==ev["id"]), 1)
+                    result = _score_event(ev, loop, sim_h, event_index=ev_idx)
+                    loop.vpp_event_log.append(result)
+                    loop.vpp_scored.add(ev["id"])
+                    mem_entries = [{"event": e["id"], "sp": e["setpoint"], "score": e["score"],
+                                    "user_said": e.get("user_input","")[:50],
+                                    "feedback": e["comment"][:60]}
+                                   for e in loop.vpp_event_log]
+                    loop.vpp_mem_ctx = ("\nPast VPP responses (user in the loop): "
+                                        + json.dumps(mem_entries, ensure_ascii=False))
+
+        if loop.h_cool != -1: ex.set_actuator_value(s, loop.h_cool, loop.sp)
+        if loop.h_heat != -1: ex.set_actuator_value(s, loop.h_heat, HTG_SP)
+        loop.prev_sim_h = sim_h
+        if wu: return
+        pmv = _compute_pmv(temp)
+        loop.e_wh += fac * dt
+        if occ:
+            loop.occ_h += dt; loop.pmv_s += pmv*dt; loop.temp_s += temp*dt
+            if abs(pmv) <= PMV_DEADBAND: loop.pmv_ok_h += dt
+            if temp > loop.sp + UNMET_TOL: loop.unmet_h += dt
+            loop.decisions.append((round(sim_h,2), round(loop.sp,1), round(pmv,3)))
+
+    api.runtime.callback_end_system_timestep_after_hvac_reporting(state, cb)
+    ec = api.runtime.run_energyplus(state, ["-w",str(epw_path),"-d",str(output_dir),str(idf_path)])
+    api.state_manager.delete_state(state)
+
+    kwh = loop.e_wh/1000; occ = max(loop.occ_h, 1e-6)
+    avg_sp = sum(d[1] for d in loop.decisions)/max(1,len(loop.decisions)) if loop.decisions else SP_DEFAULT
+    pref_scores = [e["score"] for e in loop.vpp_event_log if e.get("score") is not None]
+    _VPP_COMPLY_SP = 26.0
+    n_comply = sum(1 for e in loop.vpp_event_log if e.get("setpoint", 0) >= _VPP_COMPLY_SP)
+    vpp_comply_rate = n_comply / max(1, len(VPP_EVENTS))
+    print(f"  [family/agent_pmv] exit={ec} energy={kwh:.1f}kWh pmv_ok={loop.pmv_ok_h/occ*100:.1f}% "
+          f"vpp_scores={pref_scores} vpp_comply={vpp_comply_rate*100:.0f}%")
+    return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
+        weather=weather_label, method="agent_pmv", exit_code=ec,
+        energy_kwh_total=kwh, energy_kwh_per_day=kwh/3,
+        pmv_ok_fraction=loop.pmv_ok_h/occ, mean_pmv=loop.pmv_s/occ,
+        mean_temp_c=loop.temp_s/occ, unmet_cooling_h=loop.unmet_h,
+        agent_setpoint_c=round(avg_sp,1),
+        user_pref_scores=pref_scores,
+        user_pref_score=sum(pref_scores)/max(1,len(pref_scores)) if pref_scores else None,
+        vpp_compliance_rate=vpp_comply_rate,
+        control_decisions=loop.decisions[-50:], output_dir=str(output_dir))
+
 def _read_ep_energy(out_dir):
     """Read total electricity [kWh] from eplustbl.csv (GJ col) or fallback."""
     import csv as _csv

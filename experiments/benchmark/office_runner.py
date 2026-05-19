@@ -119,7 +119,7 @@ class _OfficeLoop:
         self.vpp_last_reason: str = ""   # agent reason from last LLM call
 
     def init_pmv(self):
-        if self.mode!="pmv" or self._pmv_ctrl: return
+        if self.mode not in ("pmv","agent_pmv") or self._pmv_ctrl: return
         try:
             from energybridge.control.pmv_baseline_controller import PMVBaselineController, PMVControllerParams
             p = PMVControllerParams(pmv_upper=PMV_DB,pmv_lower=PMV_DB,step_c=SP_STEP,
@@ -294,6 +294,79 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
                     loop.vpp_mem_ctx = ("\nPast VPP responses (user in the loop): "
                                         + json.dumps(mem_entries, ensure_ascii=False))
 
+        elif mode=="agent_pmv":
+            if occ:
+                psim = loop.prev_sim_h
+                if active_vpp is not None:
+                    # VPP WINDOW: LLM decides at VPP start only
+                    triggered_vpp = None
+                    for ev in VPP_EVENTS:
+                        if psim < ev["trigger_h"] <= sim_h:
+                            triggered_vpp = ev; break
+                    if triggered_vpp:
+                        vid = triggered_vpp["id"]
+                        try:
+                            from user_pref_scorer import get_user_preference_input
+                            ev_idx = next((i+1 for i,ev2 in enumerate(VPP_EVENTS)
+                                           if ev2["id"]==vid), 1)
+                            loop.vpp_user_input = get_user_preference_input(
+                                "office", ev_idx,
+                                {"vpp_id": vid, "hour": sim_h, "duration_h": 1.0},
+                                loop.vpp_event_log)
+                        except Exception as _e:
+                            print(f"  [UserInput] {_e}"); loop.vpp_user_input = ""
+                        gavg = {g: sum(zone_t[z] for z in ZONES if ZONE_GROUP[z]==g)
+                                    / max(1, sum(1 for z in ZONES if ZONE_GROUP[z]==g))
+                                for g in set(ZONE_GROUP.values())}
+                        result = _llm_advise(zone_t, out_t, PMV_RH, hod, sim_h, user_pref,
+                                             vpp_active=True, vpp_id=vid,
+                                             vpp_mem=loop.vpp_mem_ctx,
+                                             user_pref_input=loop.vpp_user_input)
+                        loop.llm_n += 1
+                        gsps = result["setpoints"]
+                        loop.next_check = None
+                        loop.vpp_last_reason = result.get("reason","")
+                        for z in ZONES: loop.sp[z] = gsps.get(ZONE_GROUP[z], SP_DEF)
+                        loop.decisions.append({"sim_h": round(sim_h,1), "hod": round(hod,1),
+                            "gsps": gsps, "out_t": round(out_t,1), "vpp": True})
+                    # else: keep agent setpoint through VPP window
+                else:
+                    # NORMAL OCCUPIED: PMV controls every timestep
+                    if loop._pmv_ctrl:
+                        for z in ZONES:
+                            loop.sp[z] = loop._pmv_ctrl.step(z, zone_t[z], outdoor_rh=PMV_RH)
+                    else:
+                        for z in ZONES:
+                            pmv_z = _pmv(zone_t[z])
+                            if pmv_z > PMV_DB:    loop.sp[z] = max(SP_MIN, loop.sp[z]-SP_STEP)
+                            elif pmv_z < -PMV_DB: loop.sp[z] = min(SP_MAX, loop.sp[z]+SP_STEP)
+                # Collect VPP window data
+                if active_vpp:
+                    t_avg = sum(zone_t.values())/len(zone_t)
+                    sp_avg = sum(loop.sp.values())/len(loop.sp)
+                    wd = loop.vpp_window_data.setdefault(active_vpp["id"],
+                                                          {"temps":[],"pmvs":[],"sp":sp_avg})
+                    wd["temps"].append(t_avg)
+                    wd["pmvs"].append(abs(_pmv(t_avg)) <= PMV_DB)
+                    wd["sp"] = sp_avg
+            else:
+                for z in ZONES: loop.sp[z] = UNOCCUPIED
+            # Score VPP event after window ends (outside if occ: so end_h==OCC_END works)
+            psim2 = loop.prev_sim_h
+            for ev in VPP_EVENTS:
+                if psim2 < ev["end_h"] <= sim_h and ev["id"] not in loop.vpp_scored:
+                    ev_idx = next((i+1 for i,e in enumerate(VPP_EVENTS) if e["id"]==ev["id"]), 1)
+                    result = _score_event(ev, loop, sim_h, event_index=ev_idx)
+                    loop.vpp_event_log.append(result)
+                    loop.vpp_scored.add(ev["id"])
+                    mem_entries = [{"event": e["id"], "sp": e["setpoint"],
+                                    "score": e["score"],
+                                    "user_said": e.get("user_input","")[:50],
+                                    "feedback": e["comment"][:60]}
+                                   for e in loop.vpp_event_log]
+                    loop.vpp_mem_ctx = ("\nPast VPP responses (user in the loop): "
+                                        + json.dumps(mem_entries, ensure_ascii=False))
+
         for z in ZONES:
             hc=loop.h_clg.get(z,-1); hh_=loop.h_htg.get(z,-1)
             if hc!=-1: ex.set_actuator_value(s,hc,loop.sp[z])
@@ -316,7 +389,7 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
 
     kwh=loop.e_wh/1000; occ=max(loop.occ_h,1e-6)
     pref_scores = []
-    if mode == "agent":
+    if mode in ("agent", "agent_pmv"):
         pref_scores = [e["score"] for e in loop.vpp_event_log if e.get("score") is not None]
     elif mode == "pmv":
         # Score PMV for each VPP window
@@ -337,7 +410,7 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
     # VPP compliance: office baseline 26.0C -> compliant if VPP setpoint >= 26.5C
     _VPP_COMPLY_SP = 26.5
     n_comply = sum(1 for e in loop.vpp_event_log if e.get("setpoint", 0) >= _VPP_COMPLY_SP)
-    vpp_comply_rate = n_comply / max(1, len(VPP_EVENTS)) if mode == "agent" else 0.0
+    vpp_comply_rate = n_comply / max(1, len(VPP_EVENTS)) if mode in ("agent","agent_pmv") else 0.0
     print(f"  [office/{mode}] exit={ec} llm_calls={loop.llm_n} "
           f"energy={kwh:.1f}kWh pmv_ok={loop.pmv_ok_h/occ*100:.1f}% vpp_scores={pref_scores} "
           f"vpp_comply={vpp_comply_rate*100:.0f}%")
