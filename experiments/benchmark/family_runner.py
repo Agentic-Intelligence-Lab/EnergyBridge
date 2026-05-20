@@ -108,7 +108,7 @@ def run_family_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
         if not loop.init(ex, s): return
         day = ex.day_of_year(s)
         if loop.start_day is None: loop.start_day = day
-        hod = ex.current_time(s); dt = ex.zone_time_step(s)
+        hod = ex.current_time(s); dt = ex.system_time_step(s)
         sim_h = (day - loop.start_day)*24 + hod
         wu = ex.warmup_flag(s)
         temp = ex.get_variable_value(s, loop.h_temp) if loop.h_temp!=-1 else SP_DEFAULT
@@ -207,7 +207,7 @@ def run_family_pmv_rule(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW
         if not loop.init(ex, s): return
         day = ex.day_of_year(s)
         if loop.start_day is None: loop.start_day = day
-        hod = ex.current_time(s); dt = ex.zone_time_step(s)
+        hod = ex.current_time(s); dt = ex.system_time_step(s)
         sim_h = (day - loop.start_day)*24 + hod
         wu = ex.warmup_flag(s)
         temp = ex.get_variable_value(s, loop.h_temp) if loop.h_temp != -1 else SP_DEFAULT
@@ -421,7 +421,7 @@ Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, "reason": "..."}
             loop.h_out = ex.get_variable_handle(s, "Site Outdoor Air Drybulb Temperature", "Environment")
         day = ex.day_of_year(s)
         if loop.start_day is None: loop.start_day = day
-        hod = ex.current_time(s); dt = ex.zone_time_step(s)
+        hod = ex.current_time(s); dt = ex.system_time_step(s)
         sim_h = (day - loop.start_day) * 24 + hod
         wu = ex.warmup_flag(s)
         occ = _occupied(hod)
@@ -468,7 +468,7 @@ Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, "reason": "..."}
                     loop.vpp_last_reason = res.get("reason", "")
                 elif active_vpp is None:
                     # Non-VPP occupied hours: maintain comfort default setpoint
-                    loop.sp = 24.0
+                    loop.sp = SP_DEFAULT
 
             # Collect per-VPP-window data
             if active_vpp:
@@ -502,6 +502,18 @@ Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, "reason": "..."}
                         f"\n[L3 cross-day learning] Past VPP events: {json.dumps(mem_entries, ensure_ascii=False)}"
                         f"\nLearned user preference trend: {trend} (avg_comfort={avg_comfort:.1f}, avg_energy={avg_energy:.1f})"
                         f"\nFor next VPP: {'prioritize thermal comfort, user was uncomfortable' if trend=='improve_comfort' else 'user is comfortable, consider more aggressive demand reduction' if trend=='save_energy' else 'maintain current balance'}")
+                    # VPP END: recovery setpoint decision
+                    try:
+                        _rec = _llm_trigger(temp, out_t, hod, sim_h, 72.0 - sim_h,
+                                            vpp_active=False, vpp_id="",
+                                            user_pref_input=(
+                                                f"VPP {ev['id']} just ended. "
+                                                f"Score: {result.get('score', 3)}/5 "
+                                                f"(comfort={result.get('comfort_score', 3)}/5). "
+                                                "Set recovery setpoint for the next occupied period."))
+                        loop.sp = _rec["setpoint"]
+                    except Exception:
+                        pass
 
         if loop.h_cool != -1: ex.set_actuator_value(s, loop.h_cool, loop.sp)
         if loop.h_heat != -1: ex.set_actuator_value(s, loop.h_heat, HTG_SP)
@@ -588,15 +600,19 @@ Decision rules:
 
 Return JSON ONLY: {"setpoint": X, "reason": "..."}  setpoint range: 22.0-28.0C"""
 
-    def _llm_vpp(temp, out_t, hod, sim_h, vpp_id, user_pref_input=""):
+    def _llm_vpp(temp, out_t, hod, sim_h, vpp_id, user_pref_input="", pmv_ref_sp=None):
         import json as _j
         hh = int(hod % 24)
         mem_tag = loop.vpp_mem_ctx
         user_now_tag = f"\n[User says NOW]: {user_pref_input}" if user_pref_input else ""
+        pmv_ref_val = f"{pmv_ref_sp:.1f}" if pmv_ref_sp is not None else f"{SP_DEFAULT:.1f}"
+        pmv_ref_tag = (f"\n[PMV without VPP recommends {pmv_ref_val}C for thermal comfort]"
+                       if pmv_ref_sp is not None else "")
         prompt = (f"sim_hour={sim_h:.1f}  clock={hh:02d}:00  *** VPP_ACTIVE ({vpp_id}): reduce load! ***\n"
                   f"zone_temp={temp:.1f}C  outdoor={out_t:.1f}C\n"
-                  f"PMV comfort baseline setpoint: {SP_DEFAULT}C  VPP reduction target: >=26.0C\n"
-                  f"user_pref: {user_pref}{user_now_tag}{mem_tag}")
+                  f"VPP compliance: setpoint MUST be >=26.0C. PMV comfort reference: {pmv_ref_val}C (non-VPP optimal).\n"
+                  f"Balance user comfort (PMV wants {pmv_ref_val}C) vs VPP demand reduction (need >=26C) vs energy.\n"
+                  f"user_pref: {user_pref}{user_now_tag}{pmv_ref_tag}{mem_tag}")
         fallback = {"setpoint": 26.5, "reason": "fallback"}
         try:
             from energybridge.llm.client import LLMClient
@@ -649,7 +665,7 @@ Return JSON ONLY: {"setpoint": X, "reason": "..."}  setpoint range: 22.0-28.0C""
         if not loop.init(ex, s): return
         day = ex.day_of_year(s)
         if loop.start_day is None: loop.start_day = day
-        hod = ex.current_time(s); dt = ex.zone_time_step(s)
+        hod = ex.current_time(s); dt = ex.system_time_step(s)
         sim_h = (day - loop.start_day)*24 + hod
         wu = ex.warmup_flag(s)
         temp = ex.get_variable_value(s, loop.h_temp) if loop.h_temp != -1 else SP_DEFAULT
@@ -669,9 +685,7 @@ Return JSON ONLY: {"setpoint": X, "reason": "..."}  setpoint range: 22.0-28.0C""
                 active_vpp = ev; break
 
         if not wu:
-            if not occ:
-                loop.sp = 28.0
-            elif active_vpp is not None:
+            if active_vpp is not None:
                 # VPP WINDOW: Agent (LLM) controls
                 psim = loop.prev_sim_h
                 triggered_vpp = None
@@ -689,12 +703,13 @@ Return JSON ONLY: {"setpoint": X, "reason": "..."}  setpoint range: 22.0-28.0C""
                             loop.vpp_event_log)
                     except Exception as _e:
                         print(f"  [UserInput] {_e}"); loop.vpp_user_input = ""
-                    res = _llm_vpp(temp, out_t, hod, sim_h, vid, loop.vpp_user_input)
+                    pmv_ref_sp = loop.sp  # PMV-adjusted setpoint before VPP intervention
+                    res = _llm_vpp(temp, out_t, hod, sim_h, vid, loop.vpp_user_input, pmv_ref_sp=pmv_ref_sp)
                     loop.sp = res["setpoint"]
                     loop.vpp_last_reason = res.get("reason", "")
                 # else: hold agent setpoint through VPP window
             else:
-                # NORMAL OCCUPIED: PMV controls every timestep
+                # ALL non-VPP times (occupied or not): PMV controls 24/7
                 pmv_now = _compute_pmv(temp)
                 if pmv_now > PMV_DEADBAND:   loop.sp = max(SP_MIN, loop.sp - SP_STEP)
                 elif pmv_now < -PMV_DEADBAND: loop.sp = min(SP_MAX, loop.sp + SP_STEP)
@@ -728,6 +743,8 @@ Return JSON ONLY: {"setpoint": X, "reason": "..."}  setpoint range: 22.0-28.0C""
                         f"\n[L3 cross-day learning] Past VPP: {json.dumps(mem_entries, ensure_ascii=False)}"
                         f"\nLearned trend: {trend} (avg_comfort={avg_comfort:.1f}, avg_energy={avg_energy:.1f})"
                         f"\nNext VPP guidance: {'prioritize thermal comfort' if trend=='improve_comfort' else 'user comfortable, increase demand reduction' if trend=='save_energy' else 'maintain balance'}")
+                    # VPP END: PMV resumes naturally from VPP setpoint (no forced reset)
+                    print(f"  [AgentPMV h={sim_h:.1f} vpp={ev['id']} END] PMV resumes from sp={loop.sp:.1f}")
 
         if loop.h_cool != -1: ex.set_actuator_value(s, loop.h_cool, loop.sp)
         if loop.h_heat != -1: ex.set_actuator_value(s, loop.h_heat, HTG_SP)

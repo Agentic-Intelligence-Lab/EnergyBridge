@@ -203,31 +203,29 @@ python run_benchmark.py --scenario family/tianjin/agent
 # Only one building type
 python run_benchmark.py --building office
 python run_benchmark.py --building family
+
+
+# 生成全部 18 个场景的 CSV（默认输出到 metrics_table.csv）
+python3 generate_metrics_csv.py
+
+# 只输出住宅
+python3 generate_metrics_csv.py --building family
+
+# 指定路径
+python3 generate_metrics_csv.py --results-dir ./results --output my_metrics.csv
+
+# 只写 CSV，不打印
+python3 generate_metrics_csv.py --no-print
+
 ```
+
+
 
 Requires:
 - EnergyPlus 24.1.0 at `/home/ha_agent/EnergyPlus-24-1-0/` (Linux default)
 - `energybridge` conda env with `pyenergyplus`, `pythermalcomfort`, `openai`
 - `.env` at `EnergyBridge/.env` with `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`
 
-### Latest benchmark results (3-day, 3×VPP-1, Roleplay user-in-the-loop)
-
-```
-场景       方法    能耗(kWh)  PMV达标率  VPP响应率  Roleplay评分(s1/s2/s3)
-─────────────────────────────────────────────────────────────────────
-家庭/北京  PMV     99.7      100.0%    0%(PMV)   4.0/4.0/4.0
-           AGENT   82.1       71.2%    100%      3.0/3.0/4.0  (-17.7%能耗, ↑学习)
-家庭/上海  PMV     91.3      100.0%    0%(PMV)   5.0/5.0/4.0
-           AGENT   91.2       94.0%    100%      4.0/4.0/4.0  (-0.1%能耗)
-家庭/天津  PMV     77.3      100.0%    0%(PMV)   5.0/5.0/5.0
-           AGENT   78.3       95.5%    100%      4.0/4.0/3.0
-办公/北京  PMV    958.6       98.4%    0%(PMV)   4.0/4.0/4.0
-           AGENT  821.6       96.4%    100%      3.0/4.0/4.0  (-14.3%能耗, ↑学习)
-办公/上海  PMV   2636.3       97.0%    0%(PMV)   2.0/2.0/4.0
-           AGENT 2169.9       91.5%    100%      3.0/2.0/4.0  (-17.7%能耗, ↑学习)
-办公/天津  PMV   2514.7       96.8%    0%(PMV)   4.0/4.0/4.0
-           AGENT 2090.8       91.2%    100%      4.0/3.0/4.0  (-16.9%能耗)
-```
 
 Agent achieves **14–18% energy savings** on office scenarios while maintaining
 >91% PMV compliance. Learning curve (score s1→s3) shows improvement in 3/6

@@ -68,7 +68,7 @@ Return JSON ONLY: {"Core": X, "Bottom": X, "Middle": X, "Top": X, "next_check_ho
   Valid range: 22.0-27.0C. next_check_hour: sim-hour or null."""
 
 def _llm_advise(zone_temps, outdoor_temp, rh, hod, sim_h, user_pref, sim_days=3,
-                vpp_active=False, vpp_id="", vpp_mem="", user_pref_input=""):
+                vpp_active=False, vpp_id="", vpp_mem="", user_pref_input="", pmv_ref_sps=None):
     groups = {"Core":[],"Bottom":[],"Middle":[],"Top":[]}
     for z,t in zone_temps.items():
         groups[ZONE_GROUP.get(z,"Core")].append(t)
@@ -78,10 +78,12 @@ def _llm_advise(zone_temps, outdoor_temp, rh, hod, sim_h, user_pref, sim_days=3,
     fallback = {g: _fb_val for g in gavg}
     vpp_tag = f"  *** VPP_ACTIVE ({vpp_id}): reduce load! user will score response ***" if vpp_active else ""
     user_now_tag = f"\n[User says NOW]: {user_pref_input}" if user_pref_input else ""
+    pmv_ref_tag = (f"\n[PMV without VPP recommends {pmv_ref_sps} (group setpoints for comfort)]"
+                   if vpp_active and pmv_ref_sps else "")
     prompt = (f"sim_hour={sim_h:.1f}  clock={int(hod%24):02d}:00{vpp_tag}\n"
               f"Outdoor: {outdoor_temp:.1f}C, {rh:.0f}%RH\n"
               f"Zone groups (C): {json.dumps(gavg)}\nUser preference: {user_pref}"
-              f"{user_now_tag}{vpp_mem}")
+              f"{user_now_tag}{pmv_ref_tag}{vpp_mem}")
     try:
         from energybridge.llm.client import LLMClient
         resp = LLMClient().chat(_LLM_SYS, prompt).strip()
@@ -212,7 +214,7 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
         if not loop.init_handles(ex, s): return
         day=ex.day_of_year(s)
         if loop.start_day is None: loop.start_day=day
-        hod=ex.current_time(s); dt=ex.zone_time_step(s)
+        hod=ex.current_time(s); dt=ex.system_time_step(s)
         sim_h=(day-loop.start_day)*24+hod; wu=ex.warmup_flag(s)
         occ=_occ(hod); loop.step+=1
 
@@ -311,9 +313,13 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
                     except Exception as _e:
                         print(f"  [UserInput] {_e}")
                         loop.vpp_user_input = ""
+                    pmv_ref_sps = {g: round(sum(loop.sp[z] for z in ZONES if ZONE_GROUP[z]==g)
+                                             / max(1, sum(1 for z in ZONES if ZONE_GROUP[z]==g)), 1)
+                                    for g in set(ZONE_GROUP.values())}
                     result = _llm_advise(zone_t, out_t, PMV_RH, hod, sim_h, user_pref,
                                          vpp_active=True, vpp_id=vid, vpp_mem=loop.vpp_mem_ctx,
-                                         user_pref_input=loop.vpp_user_input)
+                                         user_pref_input=loop.vpp_user_input,
+                                         pmv_ref_sps=pmv_ref_sps)
                     loop.llm_n += 1
                     gsps = result["setpoints"]
                     loop.vpp_last_reason = result.get("reason", "")
@@ -322,7 +328,7 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
                         "gsps": gsps, "out_t": round(out_t, 1), "vpp": True})
                 elif active_vpp is None:
                     # Non-VPP occupied hours: maintain comfort default setpoint
-                    for z in ZONES: loop.sp[z] = 24.0
+                    for z in ZONES: loop.sp[z] = SP_DEF
                 # Collect VPP window data
                 if active_vpp:
                     t_avg = sum(zone_t.values())/len(zone_t)
@@ -359,6 +365,20 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
                         f"\nLearned trend: {trend} (avg_comfort={avg_c:.1f}, avg_energy={avg_e:.1f})"
                         f"\nNext VPP: {'prioritize comfort' if trend=='improve_comfort' else 'increase demand reduction' if trend=='save_energy' else 'maintain balance'}"
                     )
+                    # VPP END: recovery setpoint decision
+                    try:
+                        _rec_pref = (f"VPP {ev['id']} just ended. "
+                                     f"Score={result.get('score', 3)}/5 "
+                                     f"(comfort={result.get('comfort_score', 3)}/5). "
+                                     "Set recovery setpoints for next occupied period.")
+                        _rec = _llm_advise(zone_t, out_t, PMV_RH, hod, sim_h, user_pref,
+                                           vpp_active=False, vpp_id="",
+                                           vpp_mem=loop.vpp_mem_ctx,
+                                           user_pref_input=_rec_pref)
+                        _gsps_r = _rec["setpoints"]
+                        for z in ZONES: loop.sp[z] = _gsps_r.get(ZONE_GROUP[z], SP_DEF)
+                    except Exception:
+                        pass
 
         elif mode=="agent_pmv":
             if occ:
@@ -384,10 +404,14 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
                         gavg = {g: sum(zone_t[z] for z in ZONES if ZONE_GROUP[z]==g)
                                     / max(1, sum(1 for z in ZONES if ZONE_GROUP[z]==g))
                                 for g in set(ZONE_GROUP.values())}
+                        pmv_ref_sps2 = {g: round(sum(loop.sp[z] for z in ZONES if ZONE_GROUP[z]==g)
+                                                 / max(1, sum(1 for z in ZONES if ZONE_GROUP[z]==g)), 1)
+                                        for g in set(ZONE_GROUP.values())}
                         result = _llm_advise(zone_t, out_t, PMV_RH, hod, sim_h, user_pref,
                                              vpp_active=True, vpp_id=vid,
                                              vpp_mem=loop.vpp_mem_ctx,
-                                             user_pref_input=loop.vpp_user_input)
+                                             user_pref_input=loop.vpp_user_input,
+                                             pmv_ref_sps=pmv_ref_sps2)
                         loop.llm_n += 1
                         gsps = result["setpoints"]
                         loop.next_check = None
@@ -442,6 +466,8 @@ def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_
                         f"\nLearned trend: {trend} (avg_comfort={avg_c:.1f}, avg_energy={avg_e:.1f})"
                         f"\nNext VPP: {'prioritize comfort' if trend=='improve_comfort' else 'increase demand reduction' if trend=='save_energy' else 'maintain balance'}"
                     )
+                    # VPP END: PMV resumes naturally from VPP setpoints (no forced reset)
+                    print(f"  [OfficeAgentPMV h={sim_h:.1f} vpp={ev['id']} END] PMV resumes from sp")
 
         for z in ZONES:
             hc=loop.h_clg.get(z,-1); hh_=loop.h_htg.get(z,-1)
