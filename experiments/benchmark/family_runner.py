@@ -199,6 +199,11 @@ def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
 
     # --- Shiftable tasks ---
     for name in ("washer", "dishwasher", "dryer"):
+        skip_val = actions.get(f"{name}_skip")
+        if skip_val is True:
+            ok = suite.skip_appliance(name, day_idx)
+            print(f"    [Appliance] skip {name} day={day_idx} -> {'ok' if ok else 'rejected'}")
+            continue  # don't shift if skipping
         key = f"{name}_start_h"
         val = actions.get(key)
         if val is None:
@@ -211,23 +216,50 @@ def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
         except (TypeError, ValueError) as e:
             print(f"    [Appliance] bad {key} value={val}: {e}")
 
-    # --- Water heater pre-heat ---
-    preheat = actions.get("water_heater_preheat")
-    if preheat is not None:
+    # --- Water heater preheat schedule ---
+    preheat     = actions.get("water_heater_preheat")
+    ph_start    = actions.get("water_heater_preheat_start_h")
+    ph_end      = actions.get("water_heater_preheat_end_h")
+    ph_temp     = actions.get("water_heater_preheat_temp_c")
+    _any_ph = preheat is not None or ph_start is not None or ph_end is not None or ph_temp is not None
+    if _any_ph:
         try:
-            ok = suite.preheat_water_heater(day_idx) if bool(preheat) else False
-            print(f"    [Appliance] water_heater preheat={preheat} -> {'ok' if ok else 'rejected'}")
+            if preheat is False and ph_start is None and ph_end is None and ph_temp is None:
+                # explicit disable-only: no-op (preheat stays inactive)
+                print(f"    [Appliance] water_heater preheat=False -> no-op")
+            else:
+                ok = suite.set_ewh_preheat_schedule(
+                    day_idx,
+                    start_h=float(ph_start) if ph_start is not None else None,
+                    end_h=float(ph_end)     if ph_end   is not None else None,
+                    temp_c=float(ph_temp)   if ph_temp  is not None else None,
+                )
+                print(f"    [Appliance] water_heater preheat schedule: "
+                      f"start={ph_start} end={ph_end} temp={ph_temp} "
+                      f"-> {'ok' if ok else 'rejected'}")
         except Exception as e:
             print(f"    [Appliance] water_heater preheat error: {e}")
 
-    # --- EV charging mode ---
-    ev_mode = actions.get("ev_mode")
+    # --- EV charging mode + per-day window ---
+    ev_mode     = actions.get("ev_mode")
+    ev_ch_start = actions.get("ev_charge_start_h")
+    ev_ch_end   = actions.get("ev_charge_end_h")
     if ev_mode is not None:
         try:
             ok = suite.set_ev_mode(day_idx, str(ev_mode))
             print(f"    [Appliance] ev mode={ev_mode} -> {'ok' if ok else 'rejected'}")
         except Exception as e:
             print(f"    [Appliance] ev mode error: {e}")
+    if ev_ch_start is not None or ev_ch_end is not None:
+        try:
+            ok = suite.set_ev_charge_window(
+                day_idx,
+                start_h=float(ev_ch_start) if ev_ch_start is not None else None,
+                end_h=float(ev_ch_end)     if ev_ch_end   is not None else None,
+            )
+            print(f"    [Appliance] ev charge_window={ev_ch_start}-{ev_ch_end} -> {'ok' if ok else 'rejected'}")
+        except Exception as e:
+            print(f"    [Appliance] ev charge_window error: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -284,13 +316,17 @@ def _write_appliance_actuators(ex, s, loop, powers: dict, sim_h: float) -> None:
             print(f"  [Appliance OFF] day={day} h={hod:05.2f} ev: charging complete")
         loop._appl_prev_state["ev"] = ev_kw
 
-    # Water heater — temperature setpoint control
+    # Water heater — temperature setpoint control (per-day schedule from LLM)
     if loop.h_ewh_sp != -1 and loop.appliance_suite is not None:
         wh = loop.appliance_suite._water_heater
         day_idx = int(sim_h // 24)
         state = wh._days.get(day_idx, {})
-        if state.get("preheat_requested") and wh.pre_heat_window_start_h <= hod < wh.pre_heat_window_end_h:
-            ewh_sp = 65.0   # preheat: aggressive heating before VPP window
+        # Per-day LLM schedule overrides (fall back to class defaults if not set)
+        ph_start = state.get("preheat_start_h") or wh.pre_heat_window_start_h
+        ph_end   = state.get("preheat_end_h")   or wh.pre_heat_window_end_h
+        ph_temp  = state.get("preheat_temp_c")  or 65.0
+        if state.get("preheat_requested") and ph_start <= hod < ph_end:
+            ewh_sp = ph_temp  # LLM-specified (or default) preheat temperature
         elif not state.get("preheat_requested") and wh._normal_on_start <= hod < wh._normal_on_end:
             ewh_sp = 60.0   # normal heating window
         else:
@@ -354,22 +390,58 @@ Allowed setpoint range: {_run_sp_min:.1f}–{_run_sp_max:.1f}°C.
 [VPP DEMAND RESPONSE — 18:00-19:00 each day]
 Goal: reduce total electricity consumption for 1 hour to support the grid.
 AC strategy: raise setpoint to {_ac_sp_vpp_min:.1f}–{_ac_sp_vpp_max:.1f}°C (pre-cool BEFORE event, drift DURING event).
-Appliances: shift washer/dishwasher/dryer AWAY from 18:00-19:00 window.
-Water heater: set preheat=true to heat tank water BEFORE 18:00 (thermal storage).
-EV: set mode=delay to charge AFTER 22:00 instead of immediately at arrival.
-IMPORTANT: control each appliance independently. Learn from past VPP event scores.
+Appliances: you have full scheduling control over all independent devices (see details below).
+IMPORTANT: control each appliance independently. Decisions persist until you change them. Learn from past VPP event scores.
+
+[APPLIANCE CONTROL — default strategy & available parameters]
+
+WASHER / DISHWASHER / DRYER (run once per day)
+  Default: run at 14:00 (well before VPP window). Shift earlier or later as needed.
+  On VPP days: shift to BEFORE 17:00 so laundry finishes before peak demand.
+  Parameters:
+    washer_start_h      : float  — hour-of-day to start (e.g. 10.0 = 10:00). Allowed window shown in status.
+    washer_skip         : bool   — true = do not run today (e.g. no laundry needed).
+    (same pattern for dishwasher_start_h, dishwasher_skip, dryer_start_h, dryer_skip)
+
+WATER HEATER (electric tank, thermal storage)
+  Default: preheat 15:00-18:00 at 65°C so hot water is ready by bath time 21:00.
+  On VPP days: keep same or extend window earlier (e.g. 13:00-17:00) to avoid heating during 18:00-19:00.
+  Hotter tank = more thermal storage = less chance of heating during VPP.
+  Parameters:
+    water_heater_preheat_start_h : float  — hour-of-day to begin preheating (default 15.0).
+    water_heater_preheat_end_h   : float  — hour-of-day to stop preheating  (default 18.0, must be ≤18 on VPP days).
+    water_heater_preheat_temp_c  : float  — tank setpoint during preheat, 45–75°C (default 65.0).
+    water_heater_preheat         : bool   — true = activate, false = disable (you can omit if setting times).
+
+EV CHARGER (home charger, arrives 18:00, departs 07:30)
+  Default (smart mode): charge immediately on arrival, skip VPP window automatically.
+  On VPP days: use delay mode OR set explicit window to charge 22:00-07:00 (overnight valley).
+  SOC and arrival time shown in status each step.
+  Parameters:
+    ev_mode             : "smart"|"delay"|"normal"  — smart=avoid-VPP, delay=after-22:00, normal=immediate.
+    ev_charge_start_h   : float  — override: begin charging at this hour (e.g. 22.0).
+    ev_charge_end_h     : float  — override: stop  charging at this hour (e.g. 7.0 = 07:00 next morning).
+    (window override takes priority over ev_mode when set)
 
 Return JSON ONLY (no markdown, no explanation):
 {{"setpoint": X, "next_check_hour": Y_or_null, "reason": "≤100 chars",
  "appliances": {{
    "washer_start_h": null_or_float,
+   "washer_skip": null_or_bool,
    "dishwasher_start_h": null_or_float,
+   "dishwasher_skip": null_or_bool,
    "dryer_start_h": null_or_float,
+   "dryer_skip": null_or_bool,
+   "water_heater_preheat_start_h": null_or_float,
+   "water_heater_preheat_end_h": null_or_float,
+   "water_heater_preheat_temp_c": null_or_float,
    "water_heater_preheat": null_or_bool,
-   "ev_mode": null_or_"smart"|"delay"|"normal"
+   "ev_mode": null_or_"smart"|"delay"|"normal",
+   "ev_charge_start_h": null_or_float,
+   "ev_charge_end_h": null_or_float
  }}
 }}
-null means no change. *_start_h = desired start hour-of-day (0–23)."""
+null means no change / keep current. All times are hour-of-day (0–23.9)."""
 
     def _llm_trigger(temp, out_t, hod, sim_h, remaining_h, vpp_active=False, vpp_id="",
                      user_pref_input=""):
