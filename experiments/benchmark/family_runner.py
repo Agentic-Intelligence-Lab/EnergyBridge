@@ -44,6 +44,11 @@ class BenchmarkResult:
     user_vpp_scores: List[int] = field(default_factory=list)       # VPP handling 1-5
     vpp_compliance_rate: float = 0.0
     user_pref_comment: str = ""
+    # Persona + shiftable-load fields
+    persona_id: str = ""
+    washer_energy_kwh: float = 0.0
+    washer_completed_days: List[bool] = field(default_factory=list)
+    washer_during_vpp_days: List[bool] = field(default_factory=list)
     control_decisions: List[Tuple[float, float, float]] = field(default_factory=list)
     output_dir: str = ""; error: str = ""
     def as_dict(self):
@@ -230,6 +235,17 @@ def run_family_pmv_rule(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW
 
         if loop.h_cool != -1: ex.set_actuator_value(s, loop.h_cool, loop.sp)
         if loop.h_heat != -1: ex.set_actuator_value(s, loop.h_heat, HTG_SP)
+        # ── Washer tick ──
+        if not wu:
+            _sim_day_now = int(sim_h // 24)
+            if _sim_day_now > _washer_sim_day:
+                _washer_completed_days.append(_washer.state in ("RUNNING", "DONE"))
+                _washer_vpp_days.append(any(
+                    _washer.is_running_during(ev["trigger_h"], ev["end_h"])
+                    for ev in VPP_EVENTS if ev["day"] - 1 == _washer_sim_day))
+                _washer.reset_for_day()
+                _washer_sim_day = _sim_day_now
+            _washer_kwh_total += _washer.tick(sim_h, dt)
 
         if wu: return
         loop.e_wh += fac * dt
@@ -309,13 +325,32 @@ def run_family_pmv_rule(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW
 
 def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
                      output_dir=None, weather_label="",
-                     user_pref="我希望室内舒适，但也愿意在不影响舒适的前提下节约电力。"):
+                     persona_name: str = "commuter", user_pref=None):
     """Event-driven LLM control: 3x VPP-1 events (Day1/2/3 18:00). Score after each."""
     if output_dir is None:
         output_dir = BENCHMARK_DIR / "results" / f"family_agent_{weather_label}"
     output_dir = Path(output_dir)
     if output_dir.exists(): shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── Persona + Washer initialisation ──────────────────────────────────────
+    from personas import get_persona, persona_user_pref_string
+    from shiftable_load import make_washer_from_persona
+    _persona   = get_persona(persona_name)
+    if user_pref is None:
+        user_pref = persona_user_pref_string(_persona)
+    _washer    = make_washer_from_persona(_persona)
+    _washer_sim_day   = 0
+    _washer_kwh_total = 0.0
+    _washer_completed_days = []
+    _washer_vpp_days       = []
+    _diag_log = (BENCHMARK_DIR / "logs" / "dialogue" /
+                 f"family_agent_{persona_name}_{weather_label}.jsonl")
+    _diag_log.parent.mkdir(parents=True, exist_ok=True)
+    print(f"  [FamilyAgent] persona={persona_name} | "
+          f"washer window {_washer.earliest:.0f}h-{_washer.latest:.0f}h "
+          f"preferred {_washer.preferred:.0f}h | log={_diag_log.name}")
+    # ─────────────────────────────────────────────────────────────────────────
 
     import math as _math
     from pyenergyplus.api import EnergyPlusAPI
@@ -325,21 +360,22 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     ex.request_variable(state, "Facility Total Electricity Demand Rate", "Whole Building")
     ex.request_variable(state, "Site Outdoor Air Drybulb Temperature", "Environment")
 
-    _LLM_SYS_FAM = """You are an autonomous HVAC agent for a family home (3-day July simulation).
-Called at: (1) start of occupied period each day, (2) VPP demand-response events, (3) times YOU schedule.
-Set a cooling setpoint and optionally schedule your next check.
-
-Occupied: 08:00-22:00 daily. Unoccupied auto-set 28C. Sim total: 72h (3 days).
-COMFORT: PMV in [-0.5,+0.5]. PMV~0 at 25.5C. PMV>+0.5 when zone>27C.
-  -> Keep setpoint <= 26.0C during occupied hours for comfort.
-VPP DEMAND RESPONSE: When VPP_ACTIVE, you MUST raise setpoint to >= 26.0C.
-  HARD RULE: setpoint < 26.0C during VPP = non-compliant. Aim for 26.0-27.0C.
-  But comfort still matters - user scores your VPP response after each event.
-  Past VPP responses (if any) show user feedback - LEARN from it.
-
-Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, "reason": "..."}
-  setpoint range: 22.0-28.0C
-  next_check_hour: sim-hour for next call, or null (wait for next fixed trigger)"""
+    _LLM_SYS_FAM = (
+        "You are an autonomous HVAC agent for a family home (3-day July simulation).\n"
+        "Called at: (1) occupied-period start, (2) VPP demand-response, (3) self-scheduled times.\n"
+        "Occupied: 08:00-22:00. Sim total: 72h (3 days).\n"
+        "COMFORT: PMV in [-0.5,+0.5]. PMV~0 at 25.5C. Keep setpoint <= 26.0C for comfort.\n"
+        "VPP DEMAND RESPONSE: When VPP_ACTIVE, MUST raise setpoint >= 26.0C (HARD RULE).\n"
+        "  Learn from past VPP feedback -- adapt strategy across days.\n"
+        f"\nUSER PROFILE:\n{_persona.get('persona_prompt', '')}\n"
+        "WASHING MACHINE (shiftable 1.5kW load):\n"
+        "  Running washer during VPP adds 1.5kW peak load (penalises VPP score).\n"
+        "  Include \"start_washer\": true in JSON to start it (IDLE and in time window only).\n"
+        "  Prefer starting OUTSIDE VPP windows; respect user preferred time.\n"
+        'Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, '
+        '"start_washer": true/false, "reason": "..."}\n'
+        "  setpoint range: 22.0-28.0C"
+    )
 
     def _llm_trigger(temp, out_t, hod, sim_h, remaining_h, vpp_active=False, vpp_id="",
                      user_pref_input=""):
@@ -352,6 +388,7 @@ Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, "reason": "..."}
         prompt = (f"sim_hour={sim_h:.1f}  clock={hh:02d}:00{vpp_tag}\n"
                   f"zone_temp={temp:.1f}C  outdoor={out_t:.1f}C\n"
                   f"remaining_sim_hours={remaining_h:.0f}\n"
+                  f"[Appliance] {_washer.prompt_line(sim_h)}\n"
                   f"user_pref: {user_pref}{user_now_tag}{mem_tag}")
         if vpp_active:
             fb_sp, fb_nch = 26.5, None
@@ -372,8 +409,12 @@ Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, "reason": "..."}
                 if nch <= sim_h + 0.25 or nch > 72.0:
                     nch = None
             reason = str(data.get("reason", ""))[:100]
-            print(f"  [FamilyAgent h={sim_h:.1f} vpp={vpp_active}] sp={sp} next={nch} | {reason}")
-            return {"setpoint": sp, "next_check_hour": nch, "reason": reason}
+            sw = bool(data.get("start_washer", False))
+            if sw and _washer.can_start(sim_h):
+                if _washer.start(sim_h):
+                    print(f"  [Washer] Agent started at h={sim_h:.1f}")
+            print(f"  [FamilyAgent h={sim_h:.1f} vpp={vpp_active}] sp={sp} next={nch} washer={sw} | {reason}")
+            return {"setpoint": sp, "next_check_hour": nch, "start_washer": sw, "reason": reason}
         except Exception as e:
             print(f"  [FamilyAgent] LLM error at h={sim_h:.1f}: {e}")
             fallback["reason"] = ""
@@ -390,13 +431,21 @@ Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, "reason": "..."}
             mean_t = sum(wtemps)/max(1,len(wtemps)) if wtemps else loop_ref.temp_s/max(loop_ref.occ_h,1)
             pmv_ok = sum(wpmvs)/max(1,len(wpmvs)) if wpmvs else 0.5
             e_day  = (loop_ref.e_wh/1000) / max(1, sim_h/24)
+            _ev_vpp_start = ev.get("trigger_h", 0.0)
+            _ev_vpp_end   = ev.get("end_h", 1.0)
+            _w_completed  = _washer.state in ("RUNNING", "DONE")
+            _w_vpp        = _washer.is_running_during(_ev_vpp_start, _ev_vpp_end)
             r = score_user_preference(
                 building="family", method="agent",
                 mean_temp_c=mean_t, pmv_ok_fraction=pmv_ok,
                 energy_kwh_per_day=e_day, agent_setpoint_c=sp_w,
                 event_index=event_index,
                 user_preference_text=loop_ref.vpp_user_input,
-                agent_reason=loop_ref.vpp_last_reason)
+                agent_reason=loop_ref.vpp_last_reason,
+                persona=_persona,
+                washer_completed=_w_completed,
+                washer_during_vpp=_w_vpp,
+                log_path=_diag_log)
             sc  = r.get("score") or 3
             lbl = r.get("label", "neutral")
             cmt = r.get("comment", "")[:100]
@@ -457,7 +506,8 @@ Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, "reason": "..."}
                         loop.vpp_user_input = get_user_preference_input(
                             "family", ev_idx,
                             {"vpp_id": vid, "hour": sim_h, "duration_h": 1.0},
-                            loop.vpp_event_log)
+                            loop.vpp_event_log,
+                            persona=_persona, log_path=_diag_log)
                     except Exception as _e:
                         print(f"  [UserInput] {_e}")
                         loop.vpp_user_input = ""
@@ -537,6 +587,14 @@ Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, "reason": "..."}
     avg_sp = sum(d[1] for d in loop.decisions) / max(1, len(loop.decisions)) if loop.decisions else SP_DEFAULT
     pref_scores = [e["score"] for e in loop.vpp_event_log if e.get("score") is not None]
     # VPP compliance: family baseline 25.5C -> compliant if VPP setpoint >= 26.0C
+    # Finalise washer last-day record
+    _washer_completed_days.append(_washer.state in ("RUNNING", "DONE"))
+    _washer_vpp_days.append(any(
+        _washer.is_running_during(ev["trigger_h"], ev["end_h"])
+        for ev in VPP_EVENTS if ev["day"] - 1 == _washer_sim_day))
+    _washer_kwh_total += _washer.tick(72.0, 0.0)
+    print(f"  [Washer] total={_washer_kwh_total:.2f}kWh "
+          f"completed={_washer_completed_days} vpp_overlap={_washer_vpp_days}")
     _VPP_COMPLY_SP = 26.0
     n_comply = sum(1 for e in loop.vpp_event_log if e.get("setpoint", 0) >= _VPP_COMPLY_SP)
     vpp_comply_rate = n_comply / max(1, len(VPP_EVENTS))
@@ -547,9 +605,10 @@ Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, "reason": "..."}
     _non_vpp_rate = (kwh - _e_vpp_kwh) / max(1.0, 72.0 - _vpp_total_h)
     _vpp_reduction_kwh = round(_non_vpp_rate * _vpp_total_h - _e_vpp_kwh, 4)
 
-    return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
+    _total_kwh = kwh + _washer_kwh_total
+    return BenchmarkResult(scenario=f"family/{weather_label}/{persona_name}", building="family",
         weather=weather_label, method="agent", exit_code=ec,
-        energy_kwh_total=kwh, energy_kwh_per_day=kwh/3,
+        energy_kwh_total=_total_kwh, energy_kwh_per_day=_total_kwh/3,
         vpp_energy_reduction_kwh=_vpp_reduction_kwh,
         pmv_ok_fraction=loop.pmv_ok_h/occ, mean_pmv=loop.pmv_s/occ,
         mean_temp_c=loop.temp_s/occ, unmet_cooling_h=loop.unmet_h,
@@ -560,6 +619,10 @@ Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, "reason": "..."}
         user_energy_scores=[e.get("energy_score",3) for e in loop.vpp_event_log],
         user_vpp_scores=[e.get("vpp_score",3) for e in loop.vpp_event_log],
         vpp_compliance_rate=vpp_comply_rate,
+        persona_id=persona_name,
+        washer_energy_kwh=round(_washer_kwh_total, 3),
+        washer_completed_days=_washer_completed_days[:3],
+        washer_during_vpp_days=_washer_vpp_days[:3],
         control_decisions=loop.decisions[-50:], output_dir=str(output_dir))
 
 
