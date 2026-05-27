@@ -1,0 +1,6 @@
+# API Key Pool — one key per line; lines starting with # are comments
+# Copy this file to api_keys.txt and fill in your real keys
+
+sk-your-key-1-here
+sk-your-key-2-here
+sk-your-key-3-here
