@@ -74,6 +74,14 @@ def main() -> None:
         choices=["Tianjin", "Beijing", "Shanghai"],
         help="Weather city label (default: Tianjin).",
     )
+    parser.add_argument(
+        "--verbose", "-v", action="store_true",
+        help="Print full LLM prompt + raw JSON response for each agent call.",
+    )
+    parser.add_argument(
+        "--human", action="store_true",
+        help="Human-in-the-loop: show 3 VPP strategies and wait for terminal selection.",
+    )
     args = parser.parse_args()
 
     persona = _load_persona_json(args.persona)
@@ -94,6 +102,8 @@ def main() -> None:
         appliance_config = persona.get("appliances", {}),
         output_dir       = output_dir,
         weather_label    = args.city.lower(),
+        verbose          = args.verbose,
+        human_mode       = args.human,
     )
 
     print()

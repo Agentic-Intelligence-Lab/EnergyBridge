@@ -340,7 +340,9 @@ def _write_appliance_actuators(ex, s, loop, powers: dict, sim_h: float) -> None:
 def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
                      output_dir=None, weather_label="",
                      user_pref="我希望室内舒适，但也愿意在不影响舒适的前提下节约电力。",
-                     appliance_config: dict | None = None):
+                     appliance_config: dict | None = None,
+                     verbose: bool = False,
+                     human_mode: bool = False):
     """Event-driven LLM control: 3x VPP-1 events (Day1/2/3 18:00). Score after each."""
     if output_dir is None:
         output_dir = BENCHMARK_DIR / "results" / f"family_agent_{weather_label}"
@@ -490,6 +492,11 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
 
         try:
             from energybridge.llm.client import LLMClient
+            if verbose:
+                print(f"  ┌─[PROMPT | h={sim_h:.1f} sim / {int(hod%24):02d}:00]{'─'*40}")
+                for _line in prompt.splitlines():
+                    print(f"  │ {_line}")
+                print(f"  └{'─'*56}")
             _llm_r = LLMClient().chat_with_metrics(_LLM_SYS_FAM, prompt,
                                     max_retries=5, retry_base_delay=2.0,
                                     validate_fn=_validate_json)
@@ -514,6 +521,12 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
             vpp_tag = f" | VPP-{vpp_id}" if vpp_active else ""
             nch_str = f"{int(nch % 24):02d}:{int((nch % 1)*60):02d}" if nch is not None else "--:--"
             print(f"  [AC Agent | h={hh_mm} Day{day_num}{vpp_tag}] setpoint→{sp:.1f}°C  next_check={nch_str}  | {reason}")
+            if verbose:
+                import json as _jj
+                print(f"  ┌─[LLM JSON response]{'─'*47}")
+                for _line in _jj.dumps(data, ensure_ascii=False, indent=2).splitlines():
+                    print(f"  │ {_line}")
+                print(f"  └{'─'*56}")
             return {"setpoint": sp, "next_check_hour": nch, "reason": reason,
                     "appliance_actions": appl_actions if isinstance(appl_actions, dict) else {}}
         except Exception as e:
@@ -621,7 +634,8 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                             loop.vpp_user_input = get_user_preference_input(
                                 "family", ev_idx,
                                 {"vpp_id": vid, "hour": sim_h, "duration_h": 1.0},
-                                loop.vpp_event_log)
+                                loop.vpp_event_log,
+                                human_mode=human_mode)
                         except Exception as _e:
                             print(f"  [UserInput] {_e}")
                             loop.vpp_user_input = ""

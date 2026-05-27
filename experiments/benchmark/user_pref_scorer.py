@@ -160,91 +160,218 @@ def get_user_preference_input(
     past_events: list,
     persona: dict | None = None,
     log_path: Path | None = None,
+    human_mode: bool = False,
 ) -> str:
-    """Get roleplay user preference statement BEFORE agent acts on a VPP event.
+    """Get user preference statement BEFORE agent acts on a VPP event.
 
-    With persona-aware enhancement:
-    - Uses persona's roleplay_user_prompt as the LLM system guidance
-    - comfort_sensitive: 50% chance of injecting strong override language
-    - Returns English preference statement
+    Workflow:
+      1. LLM generates 3 candidate strategies (A=comfort, B=balanced, C=savings).
+      2. All 3 are printed to the log for visibility.
+      3. In automated mode: auto-selects based on persona comfort_priority.
+         In human_mode=True: prints choices and waits for terminal input (Feature 2).
+      4. Returns the selected strategy's 'user_pref' text, which is injected into
+         the AC agent's prompt for that event.
 
-    Returns user preference statement (str).
+    Falls back to hardcoded defaults if LLM strategy generation fails.
     """
     if persona is None:
         persona = OFFICE_PERSONA if building == "office" else FAMILY_PERSONA
 
-    # VPP override: comfort_sensitive may express strong resistance
+    # VPP override: comfort_sensitive persona may bypass strategy menu
     override_prob = persona.get("vpp_override_prob", 0.0)
     if override_prob > 0 and random.random() < override_prob:
         override_msg = (
-            f"I really don't want the temperature to go above 26°C during this VPP event. "
-            f"My comfort is the top priority — please keep it below 26°C if at all possible."
+            "I really don't want the temperature to go above 26°C during this VPP event. "
+            "My comfort is the top priority — please keep it below 26°C if at all possible."
         )
         _log_and_return(log_path, persona, event_index, "override_prefill", override_msg)
         return override_msg
 
-    # L3: summarize past event scores as learning context
-    learned_ctx = ""
-    if past_events:
-        summaries = [
-            {"event": e["id"], "score": e.get("score"),
-             "comfort": e.get("comfort_score"), "energy": e.get("energy_score"),
-             "vpp": e.get("vpp_score"), "comment": e.get("comment", "")[:60]}
-            for e in past_events
-        ]
-        learned_ctx = f"Past VPP experiences: {summaries}"
+    # Step 1: Generate 3 candidate strategies
+    candidates = generate_vpp_strategy_candidates(
+        building, event_index, vpp_context, past_events, persona
+    )
 
-    scenario = {
-        "event_type": "VPP demand response",
-        "event_index": event_index,
-        "vpp_context": vpp_context,
-        "learned_from_past": learned_ctx,
-        "question": "How do you feel about the upcoming demand response event? What matters most to you today?",
-    }
-    memory_snapshot = {"past_vpp_events": past_events[-2:]} if past_events else {}
-    history_summary = [
-        {"event": e["id"], "score": e.get("score"), "my_comment": e.get("comment", "")[:60]}
-        for e in (past_events or [])
-    ]
+    # Step 2: Display all strategies
+    print(f"  ┌─[Strategy Candidates | VPP event {event_index}]{'─'*30}")
+    for c in candidates:
+        print(f"  │  [{c['id']}] {c['label']}  —  {c['description']}  ({c['tradeoff']})")
+    print(f"  └{'─'*56}")
 
-    # Build a richer persona dict for the roleplay LLM
-    rp_persona = dict(persona)
-    if "roleplay_user_prompt" in persona:
-        rp_persona["summary"] = persona["roleplay_user_prompt"]
+    # Step 3: Select strategy
+    selected = _auto_select_strategy(candidates, persona)
+
+    if human_mode:
+        # --- Human-in-the-loop: prompt for selection ---
+        auto_id = selected["id"]
+        print(f"  ┌─[请选择策略 | VPP event {event_index}]{'─'*28}")
+        print(f"  │  输入 A / B / C 选择策略，或直接输入自定义偏好文字")
+        print(f"  │  直接回车 = 采用自动推荐 [{auto_id}] {selected['label']}")
+        print(f"  └{'─'*56}")
+        try:
+            raw_choice = input("  > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            raw_choice = ""
+
+        if raw_choice.upper() in ("A", "B", "C"):
+            override = next((c for c in candidates if c["id"] == raw_choice.upper()), None)
+            if override:
+                selected = override
+                print(f"  [Strategy Selected  | event={event_index}] → [{selected['id']}] {selected['label']} (human)")
+                pref = selected.get("user_pref", selected.get("description", ""))
+                _log_and_return(log_path, persona, event_index, "strategy_human",
+                                pref, extra={"selected_id": selected["id"], "human_input": raw_choice,
+                                             "candidates": [{k: c[k] for k in ("id","label","description")}
+                                                            for c in candidates]})
+                return pref
+        elif raw_choice:
+            # custom free-text preference
+            print(f"  [Strategy Selected  | event={event_index}] → [custom] (human)")
+            _log_and_return(log_path, persona, event_index, "strategy_human_custom",
+                            raw_choice, extra={"human_input": raw_choice,
+                                               "candidates": [{k: c[k] for k in ("id","label","description")}
+                                                              for c in candidates]})
+            return raw_choice
+        else:
+            print(f"  [Strategy Selected  | event={event_index}] → [{selected['id']}] {selected['label']} (human→auto)")
+
+    else:
+        print(f"  [Strategy Selected  | event={event_index}] → [{selected['id']}] {selected['label']} (auto)")
+
+    pref = selected.get("user_pref", selected.get("description", ""))
+    mode_tag = "human_auto" if human_mode else "auto"
+    _log_and_return(log_path, persona, event_index, f"strategy_{mode_tag}",
+                    pref, extra={"selected_id": selected["id"],
+                                 "candidates": [{k: c[k] for k in ("id","label","description")}
+                                                for c in candidates]})
+    return pref
+
+
+# ---------------------------------------------------------------------------
+# VPP Strategy Candidate Generation  (Feature 1)
+# ---------------------------------------------------------------------------
+_STRATEGY_DEFAULTS = [
+    {
+        "id": "A", "label": "舒适优先",
+        "description": "保持设定点25°C，接受较高电耗",
+        "tradeoff": "舒适度最高，电耗偏多",
+        "user_pref": (
+            "Comfort first: please keep the temperature at 25°C. "
+            "I'm willing to use more energy to stay comfortable during this VPP event."
+        ),
+    },
+    {
+        "id": "B", "label": "平衡策略",
+        "description": "升温至26°C，家电提前完成或延后",
+        "tradeoff": "轻微温漂，节电约15%",
+        "user_pref": (
+            "Balanced: I'm okay with a brief setpoint rise to 26°C and shifting "
+            "shiftable appliances away from the VPP window to reduce peak load."
+        ),
+    },
+    {
+        "id": "C", "label": "节能优先",
+        "description": "升温至27°C，所有可平移家电延迟至VPP后",
+        "tradeoff": "明显温漂，节电约30%",
+        "user_pref": (
+            "Energy saving first: please raise the setpoint to 27°C and delay all "
+            "shiftable appliances past the VPP window — I can tolerate the warmth."
+        ),
+    },
+]
+
+
+def generate_vpp_strategy_candidates(
+    building: str,
+    event_index: int,
+    vpp_context: dict,
+    past_events: list,
+    persona: dict | None = None,
+) -> list[dict]:
+    """Generate 3 VPP response strategy candidates (A=comfort, B=balanced, C=savings).
+
+    Tries LLM first; falls back to hardcoded defaults.
+    Each item: {id, label, description, tradeoff, user_pref}.
+    'user_pref' is the English preference statement injected into the AC agent prompt.
+    """
+    if persona is None:
+        persona = OFFICE_PERSONA if building == "office" else FAMILY_PERSONA
 
     try:
         from energybridge.utils.config import load_llm_config
         if not load_llm_config(use_key="USE_LLM").use_llm:
             raise RuntimeError("LLM off")
-        from energybridge.llm.roleplay_user import RoleplayUserSimulator
-        r = RoleplayUserSimulator().generate_user_input(
-            persona=rp_persona,
-            turn_index=event_index,
-            scenario=scenario,
-            memory_snapshot=memory_snapshot,
-            history_summary=history_summary,
+        from energybridge.llm.client import LLMClient
+
+        sp = persona.get("stable_preferences", {})
+        past_summary = [
+            {"event": e["id"], "score": e.get("score"), "comment": e.get("comment", "")[:50]}
+            for e in (past_events or [])
+        ]
+        sys_prompt = (
+            "You are an energy management strategy advisor for a smart home VPP demand-response system. "
+            "Generate 3 distinct response strategies for the upcoming peak-shaving event. "
+            "Strategy A = comfort-first, B = balanced, C = energy-saving. "
+            "Tailor them to the user persona. "
+            'Return ONLY a JSON array of exactly 3 objects, each with keys: '
+            '"id" ("A"/"B"/"C"), '
+            '"label" (Chinese label ≤6 chars), '
+            '"description" (Chinese action summary ≤40 chars), '
+            '"tradeoff" (Chinese tradeoff ≤25 chars), '
+            '"user_pref" (English preference statement ≤90 chars, will be injected into AC agent prompt).'
         )
-        pref = r.get("data", {}).get("user_input", "")
-        print(f"  [RoleplayUser event={event_index} persona={persona['id']}] {pref[:80]}")
-        _log_and_return(log_path, persona, event_index, "llm", pref)
-        return pref
+        user_msg = (
+            f"Building={building}. VPP event #{event_index}. "
+            f"Context: {json.dumps(vpp_context, ensure_ascii=False)}. "
+            f"Persona: comfort_priority={sp.get('comfort_priority', 0.5)}, "
+            f"preferred_range={sp.get('preferred_temp_min', 24)}-{sp.get('preferred_temp_max', 26)}°C. "
+            f"Past events: {json.dumps(past_summary, ensure_ascii=False)}."
+        )
+        resp = LLMClient().chat_with_metrics(
+            sys_prompt, user_msg, max_retries=3, retry_base_delay=1.0
+        )
+        raw = resp["text"].strip()
+        if raw.startswith("```"):
+            raw = "\n".join(ln for ln in raw.splitlines() if not ln.startswith("```"))
+        candidates = json.loads(raw)
+        if isinstance(candidates, list) and len(candidates) == 3:
+            required = ("id", "label", "description", "tradeoff", "user_pref")
+            for c in candidates:
+                if not all(k in c for k in required):
+                    raise ValueError(f"missing keys in candidate: {c}")
+            return candidates
+        raise ValueError(f"unexpected shape: {type(candidates)}")
     except Exception as e:
-        print(f"  [RoleplayUser] get_preference failed: {e}")
-        fallback = persona.get("roleplay_user_prompt", persona.get("summary", ""))[:100]
-        _log_and_return(log_path, persona, event_index, "fallback", fallback)
-        return fallback
+        print(f"  [StrategyGen] LLM failed ({e}), using defaults")
+        return list(_STRATEGY_DEFAULTS)  # copy so mutations don't affect template
 
 
-def _log_and_return(log_path, persona, event_index, source, text):
+def _auto_select_strategy(candidates: list[dict], persona: dict) -> dict:
+    """Select strategy based on persona comfort_priority (A≥0.65 / B 0.40-0.65 / C<0.40)."""
+    sp = persona.get("stable_preferences", {})
+    cp = float(sp.get("comfort_priority", 0.5))
+    if cp >= 0.65:
+        sel_id = "A"
+    elif cp >= 0.40:
+        sel_id = "B"
+    else:
+        sel_id = "C"
+    return next((c for c in candidates if c["id"] == sel_id), candidates[1])
+
+
+def _log_and_return(log_path, persona, event_index, source, text, extra: dict | None = None):
     if log_path:
-        _append_dialogue_log(log_path, {
+        entry = {
             "ts": datetime.datetime.utcnow().isoformat(),
             "persona": persona.get("id", "?"),
             "event_index": event_index,
             "type": "user_input",
             "source": source,
             "text": text,
-        })
+        }
+        if extra:
+            entry.update(extra)
+        _append_dialogue_log(log_path, entry)
 
 
 def score_user_preference(
