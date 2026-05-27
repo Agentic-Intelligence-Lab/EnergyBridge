@@ -23,6 +23,7 @@ class LLMConfig:
     model: str
     temperature: float
     max_tokens: int
+    api_key_pool: list  # ordered list of keys to rotate on retry; defaults to [api_key]
 
 
 def _env_with_fallback(primary_key: str, default: str, fallback_key: str | None = None) -> str:
@@ -51,6 +52,16 @@ def load_llm_config(
             return None
         return f"{fallback_prefix}_{name}"
 
+    primary_key = _env_with_fallback(
+        get_key("API_KEY"), "", get_fallback_key("API_KEY")
+    )
+    # Pool of keys to rotate through on retry: LLM_API_KEY_POOL=key1,key2,key3
+    raw_pool = os.getenv(f"{prefix}_API_KEY_POOL", "").strip()
+    if raw_pool:
+        api_key_pool = [k.strip() for k in raw_pool.split(",") if k.strip()]
+    else:
+        api_key_pool = [primary_key] if primary_key else []
+
     return LLMConfig(
         use_llm=_to_bool(os.getenv(use_key), default=False),
         provider=_env_with_fallback(
@@ -63,11 +74,7 @@ def load_llm_config(
             "https://api.openai.com/v1",
             get_fallback_key("BASE_URL"),
         ),
-        api_key=_env_with_fallback(
-            get_key("API_KEY"),
-            "",
-            get_fallback_key("API_KEY"),
-        ),
+        api_key=primary_key,
         model=_env_with_fallback(
             get_key("MODEL"),
             "gpt-4o-mini",
@@ -87,4 +94,5 @@ def load_llm_config(
                 get_fallback_key("MAX_TOKENS"),
             )
         ),
+        api_key_pool=api_key_pool,
     )
