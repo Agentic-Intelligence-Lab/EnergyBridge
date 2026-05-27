@@ -1,0 +1,130 @@
+{
+  "schema_version": "2.0",
+  "id": "derived_05_weekend_homebody_price_learner",
+  "archetype": false,
+  "basis_components": [
+    "alpha",
+    "theta"
+  ],
+  "display_name": "Weekend Homebody — TOU Price Learner",
+  "description": "A regular weekday commuter who is home most of the weekend and recently learned about time-of-use (TOU) pricing. They are motivated by savings and have started manually scheduling appliances around cheap windows. They are not yet fully automated but are becoming more price-signal-aware. During weekdays they behave like α; during weekends they are home all day and experiment with scheduling. A transitional archetype: moving from passive consumer to active optimizer.",
+  "demographics": {
+    "household_type": "couple_no_kids",
+    "household_size": 2,
+    "housing_type": "apartment",
+    "floor_area_m2": 85,
+    "city_archetype": "tier1_hot_summer",
+    "income_bracket": "middle",
+    "tech_literacy": "medium",
+    "employment_type": "office_commuter"
+  },
+  "tags": {
+    "schedule": "regular_commuter",
+    "comfort": "normal_comfort",
+    "task": "flexible",
+    "price": "price_sensitive",
+    "control": "suggestion_first",
+    "grid_value": "uncertain_flex"
+  },
+  "preferences": {
+    "temp_preferred_min": 23.0,
+    "temp_preferred_max": 26.5,
+    "scoring_weights": {
+      "comfort": 0.45,
+      "energy": 0.35,
+      "vpp": 0.2
+    },
+    "vpp_override_prob": 0.12,
+    "dr_fatigue_rate": 0.07,
+    "explanation_required": true,
+    "explanation_detail_level": "simple",
+    "tou_awareness_growing": true,
+    "benefit_threshold_rmb_per_event": 1.0,
+    "temp_tolerance_c": 1.0
+  },
+  "schedule": {
+    "wake_h": 7.0,
+    "leaves_home_h": 8.5,
+    "returns_home_h": 18.0,
+    "cook_dinner_h": 19.0,
+    "bath_shower_h": 21.5,
+    "sleep_h": 23.5,
+    "weekend_leaves_h": 11.0,
+    "weekend_returns_h": 16.5,
+    "work_from_home_days_per_week": 0,
+    "vulnerable_members": []
+  },
+  "appliances": {
+    "washer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 22.0,
+      "preferred_h": 10.0,
+      "duration_h": 1.5,
+      "power_kw": 1.5,
+      "shiftable": true
+    },
+    "dishwasher": {
+      "present": true,
+      "earliest_h": 20.0,
+      "latest_h": 7.0,
+      "preferred_h": 22.0,
+      "duration_h": 1.5,
+      "power_kw": 1.2,
+      "shiftable": true
+    },
+    "dryer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 24.0,
+      "preferred_h": 11.5,
+      "duration_h": 1.0,
+      "power_kw": 2.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 21.5,
+      "dr_adjustable": true
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "psychology": {
+    "trust_in_ai_automation": 0.6,
+    "environmental_motivation": 0.45,
+    "financial_stress": 0.5,
+    "autonomy_importance": 0.55,
+    "price_signal_literacy": 0.5
+  },
+  "grid_value": {
+    "coincident_peak_contribution": "medium",
+    "evening_peak_load_kw": 3.0,
+    "dr_response_reliability": 0.72,
+    "max_shed_kw": 1.5,
+    "typical_daily_kwh": 12.0,
+    "peak_shift_potential_kwh": 2.0
+  },
+  "llm_prompts": {
+    "system_prompt": "You're a regular commuter who recently learned about time-of-use electricity pricing and you're getting interested in optimizing your home energy use. You're not an expert yet — you sometimes get the cheap windows wrong — but you're engaged and asking the right questions. You cooperate with demand response suggestions but want to understand the pricing logic. When the agent proposes shifting an appliance, you want to know which price window it's targeting.",
+    "agent_context": "α×θ blend. TOU price learner, growing engagement. Washer/dishwasher shiftable. Weekend semi-homebody. Explains TOU reasoning increases cooperation rate.",
+    "example_responses": [
+      "Is that the valley pricing window? I've been trying to run the washer then.",
+      "How much cheaper is electricity at 23:00 versus 19:00?",
+      "I'll shift the dishwasher. Does that help avoid the peak rate?",
+      "I'm starting to get the hang of this. Keep the TOU tips coming."
+    ]
+  },
+  "meta": {
+    "source": "archetype_design_v2",
+    "basis_label": "alpha+theta blend",
+    "approved": true,
+    "created_at": "2026-05-26",
+    "replaces": [
+      "maya_irregular_temp_sensitive_short_peak_cutter"
+    ]
+  }
+}

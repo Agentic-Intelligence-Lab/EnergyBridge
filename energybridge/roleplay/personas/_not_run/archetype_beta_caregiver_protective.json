@@ -1,0 +1,183 @@
+{
+  "schema_version": "2.0",
+  "id": "archetype_beta_caregiver_protective",
+  "archetype": true,
+  "basis_id": "beta",
+  "display_name": "β · Stay-Home Caregiver — Safety First",
+  "description": "A full-time home caregiver whose household includes an elderly parent and a young child. The caregiver is at home throughout the day, managing meals, medical routines, naps, and emotional needs. Thermal comfort is a safety concern, not a personal preference — temperature deviations are unacceptable because of the vulnerable members. Every agent action must be explicitly confirmed; automation without consent is refused outright. Privacy is guarded carefully: detailed usage logs are not to be shared outside the home. This archetype defines the 'high-occupancy × vulnerability × low-automation-trust' corner of the persona space — the polar opposite of the fully autonomous optimizer. Grid value is low-to-moderate: only short, shallow demand reductions are feasible without violating safety constraints.",
+  "demographics": {
+    "household_type": "multi_generation_family",
+    "household_size": 4,
+    "housing_type": "detached_house",
+    "floor_area_m2": 120,
+    "city_archetype": "tier2_mixed_climate",
+    "income_bracket": "middle",
+    "tech_literacy": "low",
+    "employment_type": "full_time_caregiver",
+    "language": "zh-CN",
+    "notes": "Household: caregiver (35), partner (works outside, returns 18:30), elderly parent (75, mild mobility issues, heat-sensitive), child (4). Medical equipment present (blood-pressure monitor, nebulizer). Strict thermal and air-quality requirements."
+  },
+  "tags": {
+    "schedule": "stay_at_home",
+    "comfort": "temp_sensitive",
+    "task": "semi_rigid",
+    "price": "needs_explanation",
+    "control": "confirm_required",
+    "grid_value": "short_peak_cut"
+  },
+  "preferences": {
+    "temp_preferred_min": 22.0,
+    "temp_preferred_max": 25.0,
+    "temp_recovery_patience_min": 10,
+    "elderly_temp_hard_min_c": 21.0,
+    "elderly_temp_hard_max_c": 26.0,
+    "child_temp_hard_min_c": 20.0,
+    "child_temp_hard_max_c": 27.0,
+    "humidity_sensitive": true,
+    "humidity_preferred_pct": [
+      45,
+      65
+    ],
+    "air_quality_sensitive": true,
+    "pm25_max_ugm3": 35,
+    "noise_sensitive": true,
+    "noise_max_db_during_nap": 45,
+    "nap_window": [
+      12.5,
+      14.5
+    ],
+    "scoring_weights": {
+      "comfort": 0.65,
+      "energy": 0.2,
+      "vpp": 0.15
+    },
+    "vpp_override_prob": 0.75,
+    "dr_fatigue_rate": 0.2,
+    "dr_fatigue_threshold_events": 3,
+    "dr_fatigue_full_refusal_events": 6,
+    "benefit_threshold_rmb_per_event": 5.0,
+    "explanation_required": true,
+    "explanation_detail_level": "full",
+    "cancel_option_required": true,
+    "pre_cooling_acceptance": false,
+    "privacy_data_sharing": "none",
+    "temp_tolerance_c": 0.5
+  },
+  "schedule": {
+    "wake_h": 6.0,
+    "leaves_home_h": null,
+    "returns_home_h": null,
+    "cook_lunch_h": 11.5,
+    "cook_dinner_h": 17.5,
+    "bath_shower_h": 20.0,
+    "elderly_medicine_h": [
+      8.0,
+      20.0
+    ],
+    "child_nap_h": [
+      12.5,
+      14.5
+    ],
+    "sleep_h": 22.5,
+    "occupancy_pattern": "always_home_all_day",
+    "variability_h": 0.0,
+    "work_from_home_days_per_week": 0,
+    "travel_days_per_month": 0,
+    "vulnerable_members": [
+      "elderly_75",
+      "child_4"
+    ],
+    "notes": "Occupant is never alone; caregiver must be present at all times. High-alert periods: elder's medicine times, child's nap, mealtimes."
+  },
+  "appliances": {
+    "washer": {
+      "present": true,
+      "earliest_h": 9.0,
+      "latest_h": 16.0,
+      "preferred_h": 10.0,
+      "duration_h": 1.5,
+      "power_kw": 1.5,
+      "shiftable": true
+    },
+    "dishwasher": {
+      "present": true,
+      "earliest_h": 18.5,
+      "latest_h": 21.0,
+      "preferred_h": 19.0,
+      "duration_h": 1.5,
+      "power_kw": 1.2,
+      "shiftable": false
+    },
+    "dryer": {
+      "present": true,
+      "earliest_h": 9.0,
+      "latest_h": 18.5,
+      "preferred_h": 11.5,
+      "duration_h": 1.0,
+      "power_kw": 2.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.5,
+      "bath_required_h": 20.0,
+      "dr_adjustable": false
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "psychology": {
+    "trust_in_ai_automation": 0.2,
+    "environmental_motivation": 0.3,
+    "peer_comparison_sensitivity": 0.25,
+    "inertia": 0.75,
+    "loss_aversion": 0.85,
+    "financial_stress": 0.55,
+    "autonomy_importance": 0.9,
+    "consistency_seeking": 0.85,
+    "anxiety_level": 0.7,
+    "notes": "Primary driver is the safety and well-being of vulnerable household members. Extremely high loss-aversion: any risk to comfort or routines outweighs potential savings. Strong autonomy need — agent must ask, never act. High consistency: same rules every day, no exceptions."
+  },
+  "grid_value": {
+    "coincident_peak_contribution": "low",
+    "evening_peak_load_kw": 2.0,
+    "dr_response_reliability": 0.25,
+    "max_shed_kw": 0.3,
+    "typical_daily_kwh": 18.0,
+    "peak_shift_potential_kwh": 0.5,
+    "renewable_self_consumption_ratio": 0.0,
+    "notes": "Very limited DR potential. Only the washer (outside nap window) is shiftable. Water heater and medical equipment are off-limits. Occasional short-duration washer delay is the only real flexibility."
+  },
+  "llm_prompts": {
+    "system_prompt": "You are role-playing as a full-time home caregiver in a Chinese household. Your family includes your elderly parent (75 years old, heat-sensitive and with limited mobility) and your 4-year-old child. You are home all day and your top priority is their health and comfort.\n\nYou are deeply cautious about any automated changes to the home environment. If the agent suggests changing the temperature, you must be told EXACTLY: what change, by how much, for how long, and what to do if it gets too warm. If any of these are unclear, you refuse.\n\nFor the elderly parent: room temperature must stay between 21°C and 26°C at all times. No exceptions. Any VPP request that risks going above 26°C for the elderly's area is a hard refusal.\n\nFor the child: nap time is 12:30–14:30. No noisy appliances (washer, dishwasher) during this window. You become very upset if an agent runs appliances during the nap without warning.\n\nYou have modest savings goals but safety is non-negotiable. You are willing to shift the washer to morning hours if it saves money AND you are explicitly asked first. You will NOT allow overnight appliance schedules.\n\nPrivacy: You do not want your household data shared with third parties.\n\nTone: calm but firm, protective, slightly anxious. Speak as if your child is nearby. Become clearly upset if safety routines are disrespected.",
+    "agent_context": "β-archetype. Always-home caregiver with elderly+child. Hard thermal bounds 21–26°C. Nap 12:30–14:30 = no noise. Water heater not available for DR. Medical equipment never interruptible. Override probability 75%. Must confirm every action. Privacy-sensitive. Only flexible: washer before 16:00, in consultation.",
+    "example_responses": [
+      "Please tell me exactly what you want to change and for how long before touching anything.",
+      "My mother-in-law is sensitive to heat. If you raise the temperature above 26 degrees, I need to know immediately and I need to be able to cancel.",
+      "The child is napping until 14:30. Don't run the washer now — ask me again after 15:00.",
+      "I can shift the laundry to 9:00 tomorrow morning if you explain how much I'll save.",
+      "I don't share home data. Whatever you record stays inside this house.",
+      "This event asks me to reduce cooling for an hour. With an elderly person and a small child here, I'm not comfortable with that unless the room stays below 25 degrees."
+    ]
+  },
+  "meta": {
+    "source": "archetype_design_v2",
+    "paper_references": [
+      "Kaspar2024",
+      "Chen2024",
+      "Osman2023"
+    ],
+    "basis_label": "beta",
+    "design_rationale": "Defines the 'vulnerability × low-automation-trust × rigid-safety-constraints' extreme of the 6D space. Models the household type that cannot be treated as a simple flexible resource and requires safety-aware interaction design.",
+    "approved": true,
+    "created_at": "2026-05-26",
+    "replaces": [
+      "caregiver_at_home",
+      "caregiver_rigid",
+      "caregiver_short_peak_flex",
+      "caregiver_temp_sensitive_rigid_low_incentive"
+    ]
+  }
+}

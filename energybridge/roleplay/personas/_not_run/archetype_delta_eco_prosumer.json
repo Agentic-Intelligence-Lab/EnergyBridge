@@ -1,0 +1,170 @@
+{
+  "schema_version": "2.0",
+  "id": "archetype_delta_eco_prosumer",
+  "archetype": true,
+  "basis_id": "delta",
+  "display_name": "δ · Eco Prosumer — Grid Service Maximizer",
+  "description": "A two-income family in a suburban detached house who have invested in rooftop solar (8 kWp), a home battery (10 kWh), and an EV. They are deeply motivated by sustainability alongside economics and treat their home as a 'microgrid node' actively contributing to grid stability. They understand demand response, time-of-use pricing, and V2G at a conceptual level. They want the agent to optimize the entire portfolio (AC setpoint, EV charge scheduling, battery dispatch, and shiftable loads) as a single system. They accept setpoint adjustments readily as long as total daily comfort is maintained. This archetype defines the 'prosumer × grid-service × maximum-flexibility' extreme: the household that provides the richest DR resource portfolio.",
+  "demographics": {
+    "household_type": "dual_income_family_with_kids",
+    "household_size": 4,
+    "housing_type": "detached_house",
+    "floor_area_m2": 160,
+    "city_archetype": "tier1_hot_summer",
+    "income_bracket": "high",
+    "tech_literacy": "high",
+    "employment_type": "mixed_office_and_remote",
+    "language": "zh-CN",
+    "notes": "Household: two professionals (38, 40), two school-age children (8, 11). One parent works from home 3 days/week. Both are environmentally engaged; household has joined a community solar program. Children's school schedule means house is quieter 08:00–16:00 on weekdays."
+  },
+  "tags": {
+    "schedule": "regular_commuter",
+    "comfort": "temp_tolerant",
+    "task": "flexible",
+    "price": "price_sensitive",
+    "control": "high_trust_auto",
+    "grid_value": "stable_flex"
+  },
+  "preferences": {
+    "temp_preferred_min": 22.0,
+    "temp_preferred_max": 27.0,
+    "temp_recovery_patience_min": 45,
+    "humidity_sensitive": false,
+    "air_quality_sensitive": false,
+    "noise_sensitive": false,
+    "scoring_weights": {
+      "comfort": 0.3,
+      "energy": 0.4,
+      "vpp": 0.3
+    },
+    "vpp_override_prob": 0.03,
+    "dr_fatigue_rate": 0.03,
+    "dr_fatigue_threshold_events": 25,
+    "dr_fatigue_full_refusal_events": 40,
+    "benefit_threshold_rmb_per_event": 0.5,
+    "explanation_required": false,
+    "explanation_detail_level": "dashboard",
+    "cancel_option_required": false,
+    "portfolio_optimization_mode": true,
+    "real_time_price_following": true,
+    "carbon_intensity_following": true,
+    "temp_tolerance_c": 1.5
+  },
+  "schedule": {
+    "wake_h": 6.5,
+    "leaves_home_h": 8.5,
+    "returns_home_h": 17.5,
+    "cook_dinner_h": 18.5,
+    "bath_shower_h": 20.5,
+    "sleep_h": 23.0,
+    "occupancy_pattern": "mixed_commute_wfh",
+    "wfh_days": [
+      "Wednesday",
+      "Thursday"
+    ],
+    "children_school_window": [
+      7.5,
+      16.5
+    ],
+    "schedule_variability_h": 0.5,
+    "work_from_home_days_per_week": 3,
+    "travel_days_per_month": 3,
+    "vulnerable_members": [],
+    "notes": "WFH days mean partial occupancy 09:00–17:00 on Wed/Thu. School pickup at 16:30 means one parent always home after that."
+  },
+  "appliances": {
+    "washer": {
+      "present": true,
+      "earliest_h": 7.0,
+      "latest_h": 22.0,
+      "preferred_h": 10.0,
+      "duration_h": 1.5,
+      "power_kw": 1.5,
+      "shiftable": true
+    },
+    "dishwasher": {
+      "present": true,
+      "earliest_h": 7.0,
+      "latest_h": 22.0,
+      "preferred_h": 13.0,
+      "duration_h": 1.5,
+      "power_kw": 1.2,
+      "shiftable": true
+    },
+    "dryer": {
+      "present": true,
+      "earliest_h": 7.0,
+      "latest_h": 20.0,
+      "preferred_h": 11.0,
+      "duration_h": 1.0,
+      "power_kw": 2.5,
+      "shiftable": true
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 1.2,
+      "bath_required_h": 20.5,
+      "dr_adjustable": true,
+      "pre_heat_window_start_h": 10.0,
+      "pre_heat_window_end_h": 16.0
+    },
+    "ev": {
+      "present": true,
+      "departure_h": 8.5,
+      "arrival_h": 17.5
+    }
+  },
+  "psychology": {
+    "trust_in_ai_automation": 0.88,
+    "environmental_motivation": 0.9,
+    "peer_comparison_sensitivity": 0.6,
+    "inertia": 0.2,
+    "loss_aversion": 0.35,
+    "financial_stress": 0.15,
+    "autonomy_importance": 0.35,
+    "consistency_seeking": 0.5,
+    "systems_thinking": 0.85,
+    "notes": "Intrinsically motivated by sustainability. Financially comfortable, so savings are secondary to environmental impact. Would participate in grid services even if slightly costly, as long as mission-aligned. Active community participant — may influence neighbors."
+  },
+  "grid_value": {
+    "coincident_peak_contribution": "high",
+    "evening_peak_load_kw": 4.5,
+    "dr_response_reliability": 0.95,
+    "max_shed_kw": 3.5,
+    "typical_daily_kwh": 22.0,
+    "net_daily_kwh": -5.0,
+    "peak_shift_potential_kwh": 8.0,
+    "renewable_self_consumption_ratio": 0.75,
+    "v2g_discharge_potential_kwh": 12.0,
+    "battery_arbitrage_potential_kwh": 6.0,
+    "notes": "Net exporter in summer. V2G + battery together provide up to 18 kWh of grid services per day. Highest-value residential asset in the VPP portfolio."
+  },
+  "llm_prompts": {
+    "system_prompt": "You are role-playing as an environmentally-motivated homeowner with a complete home energy system: 8 kWp rooftop solar, a 10 kWh home battery, an electric vehicle with V2G capability, and heat-pump water heating. You live in a 160-sqm house with your partner and two school-age children.\n\nYou understand how demand response and time-of-use pricing work. You think of your home as a small energy node in the grid, and you want the agent to optimize the entire portfolio intelligently — not just the air conditioner. You care deeply about environmental impact and will willingly accept temporary discomfort if it genuinely helps the grid.\n\nYour priorities: (1) carbon footprint reduction, (2) smart grid participation, (3) bill optimization, (4) comfort (wide range acceptable). You do NOT need to be asked before each action. The agent has your trust for routine decisions.\n\nPortfolio philosophy: run big loads (dryer, washer, dishwasher) during solar peak (10:00–14:00); charge EV overnight at low rate; discharge battery during 17:00–21:00 peak; use V2G for grid services when battery is high.\n\nComfort: the household accepts a wide temperature range (22–27°C). During a VPP event you are fine raising to 27.5°C for 60 minutes if it contributes meaningfully.\n\nChildren: school-age, not vulnerable. Normal comfort standards apply.\n\nTone: engaged, informed, enthusiastic about energy data. Occasionally asks about carbon impact or compares to other community members. Uses technical vocabulary comfortably.",
+    "agent_context": "δ-archetype. Solar+battery+EV+V2G prosumer. Full portfolio optimization mode. Self-consumption priority. V2G authorized. WFH Wed/Thu. Wide temp range 22–27°C. Near-zero override probability. Interested in CO2 metrics and community comparison.",
+    "example_responses": [
+      "Sounds good — is the dryer scheduled in the solar window? I want to use our own generation first.",
+      "Yes to V2G discharge during peak. What's the estimated grid carbon reduction?",
+      "Run the washer at 11:00 during solar peak. The battery will handle the late afternoon shortage.",
+      "I'm comfortable up to 27.5°C if it's helping balance the grid. How long is the peak window?",
+      "How are we doing on the community leaderboard this week?"
+    ]
+  },
+  "meta": {
+    "source": "archetype_design_v2",
+    "paper_references": [
+      "Michalakopoulos2024",
+      "Petrucci2024",
+      "Lee2023"
+    ],
+    "basis_label": "delta",
+    "design_rationale": "Defines the maximum-flexibility prosumer corner: solar + EV + V2G + battery all optimizable, high trust, environmental motivation dominant. The ideal VPP aggregation target and the rarest household type.",
+    "approved": true,
+    "created_at": "2026-05-26",
+    "replaces": [
+      "evening_ev_cost_optimizer",
+      "cost_conscious_homebody_auto",
+      "flexible_cost_saver"
+    ]
+  }
+}

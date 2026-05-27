@@ -1,0 +1,89 @@
+{
+  "schema_version": "2.0",
+  "id": "atom_control_auto",
+  "archetype": false,
+  "display_name": "Full-Auto User",
+  "description": "Single-axis atom: control=high_trust_auto. All other dimensions neutral. Tests whether the agent correctly operates autonomously without over-confirming.",
+  "tags": {
+    "schedule": "regular_commuter",
+    "comfort": "normal_comfort",
+    "task": "flexible",
+    "price": "price_sensitive",
+    "control": "high_trust_auto",
+    "grid_value": "stable_flex"
+  },
+  "preferences": {
+    "scoring_weights": {
+      "comfort": 0.3,
+      "energy": 0.3,
+      "vpp": 0.4
+    },
+    "vpp_override_prob": 0.0
+  },
+  "schedule": {
+    "wake_h": 7.0,
+    "leaves_home_h": 8.5,
+    "returns_home_h": 18.0,
+    "bath_shower_h": 21.0,
+    "sleep_h": 23.0,
+    "occupancy_pattern": "commuter",
+    "weekend_leaves_h": 10.0,
+    "weekend_returns_h": 17.0,
+    "schedule_variability_h": 0.5,
+    "work_from_home_days_per_week": 1,
+    "travel_days_per_month": 2,
+    "vulnerable_members": []
+  },
+  "appliances": {
+    "ac": {
+      "present": true,
+      "setpoint_preferred_min_c": 24.0,
+      "setpoint_preferred_max_c": 26.0,
+      "temp_tolerance_c": 1.5,
+      "mode": "cooling"
+    },
+    "washer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 22.0,
+      "preferred_h": 14.0,
+      "duration_h": 2.0,
+      "power_kw": 1.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dishwasher": {
+      "present": false
+    },
+    "dryer": {
+      "present": false
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 21.0,
+      "dr_adjustable": true,
+      "pre_heat_window_start_h": 15.0,
+      "pre_heat_window_end_h": 18.0
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "llm_prompts": {
+    "system_prompt": "You are a user who has fully delegated home energy control to the smart agent. You never need to be asked—just act. If the agent asks for confirmation on routine tasks, you find it annoying. You trust the system completely within your temperature comfort range of 24–26°C.",
+    "agent_context": "[atom_01] full_auto: never ask, just act within comfort bounds",
+    "example_responses": [
+      "Just do it, no need to check with me.",
+      "I've set it up to handle this automatically. Why are you asking?",
+      "Whatever saves the most energy or grid cost is fine with me."
+    ]
+  },
+  "meta": {
+    "persona_type": "atom",
+    "approved": true,
+    "created_at": "2026-05-27",
+    "design_rationale": "Pure control=high_trust_auto atom. Tests agent does not over-confirm with fully delegating users.",
+    "paper_references": []
+  }
+}

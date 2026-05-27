@@ -1,0 +1,128 @@
+{
+  "schema_version": "2.0",
+  "id": "derived_02_remote_worker_eco_starter",
+  "archetype": false,
+  "basis_components": [
+    "delta",
+    "epsilon"
+  ],
+  "display_name": "Remote Worker — Early-Stage Eco Enthusiast",
+  "description": "A work-from-home professional who is environmentally motivated and has just installed solar panels (3 kWp). They want to shift loads to solar hours and reduce peak grid consumption, but don't yet have a battery or EV. They are learning about TOU pricing and self-consumption. More open to automation than ε but still prefer to understand what the agent is doing. Positioned between δ (full prosumer) and ε (privacy guardian): eco-motivated but not fully automated, present all day but willing to shift loads.",
+  "demographics": {
+    "household_type": "couple_no_kids",
+    "household_size": 2,
+    "housing_type": "townhouse",
+    "floor_area_m2": 100,
+    "city_archetype": "tier2_mixed_climate",
+    "income_bracket": "upper_middle",
+    "tech_literacy": "medium",
+    "employment_type": "remote_professional"
+  },
+  "tags": {
+    "schedule": "stay_at_home",
+    "comfort": "normal_comfort",
+    "task": "flexible",
+    "price": "needs_explanation",
+    "control": "suggestion_first",
+    "grid_value": "stable_flex"
+  },
+  "preferences": {
+    "temp_preferred_min": 23.0,
+    "temp_preferred_max": 26.5,
+    "scoring_weights": {
+      "comfort": 0.4,
+      "energy": 0.35,
+      "vpp": 0.25
+    },
+    "vpp_override_prob": 0.2,
+    "explanation_required": true,
+    "explanation_detail_level": "simple",
+    "self_consumption_priority": true,
+    "dr_fatigue_rate": 0.08,
+    "benefit_threshold_rmb_per_event": 1.0,
+    "temp_tolerance_c": 1.0
+  },
+  "schedule": {
+    "wake_h": 7.5,
+    "leaves_home_h": 14.0,
+    "returns_home_h": 16.0,
+    "cook_dinner_h": 18.5,
+    "bath_shower_h": 21.0,
+    "sleep_h": 23.5,
+    "work_from_home_days_per_week": 5,
+    "schedule_variability_h": 1.0,
+    "vulnerable_members": []
+  },
+  "appliances": {
+    "washer": {
+      "present": true,
+      "earliest_h": 9.0,
+      "latest_h": 20.0,
+      "preferred_h": 11.0,
+      "duration_h": 1.5,
+      "power_kw": 1.5,
+      "shiftable": true
+    },
+    "dishwasher": {
+      "present": true,
+      "earliest_h": 11.0,
+      "latest_h": 21.0,
+      "preferred_h": 12.0,
+      "duration_h": 1.5,
+      "power_kw": 1.2,
+      "shiftable": true
+    },
+    "dryer": {
+      "present": true,
+      "earliest_h": 9.0,
+      "latest_h": 22.5,
+      "preferred_h": 12.5,
+      "duration_h": 1.0,
+      "power_kw": 2.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 21.0,
+      "dr_adjustable": true
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "psychology": {
+    "trust_in_ai_automation": 0.55,
+    "environmental_motivation": 0.8,
+    "peer_comparison_sensitivity": 0.65,
+    "loss_aversion": 0.5,
+    "financial_stress": 0.3,
+    "autonomy_importance": 0.6
+  },
+  "grid_value": {
+    "coincident_peak_contribution": "medium",
+    "evening_peak_load_kw": 2.5,
+    "dr_response_reliability": 0.65,
+    "max_shed_kw": 1.2,
+    "typical_daily_kwh": 12.0,
+    "peak_shift_potential_kwh": 3.0,
+    "renewable_self_consumption_ratio": 0.6
+  },
+  "llm_prompts": {
+    "system_prompt": "You work from home and recently installed 3 kWp solar panels. You're learning about self-consumption and want to run big loads like the washer and dishwasher during solar peak hours (10:00–14:00). You're genuinely interested in sustainability but still want a simple explanation of what the agent is doing before it acts. Cooperate readily for solar-optimized scheduling. VPP events are acceptable if explained simply. Not fully automated — prefer to be informed.",
+    "agent_context": "δ×ε blend. WFH, solar 3 kWp. Loads preferred in solar window 10:00–14:00. Moderate automation trust. Eco-motivated. Evening peak load moderate.",
+    "example_responses": [
+      "Yes, run the washer at 11:00 — that's when our solar is strongest.",
+      "Can you explain what this VPP event means for our solar export?",
+      "Midday dishwasher sounds right. Is that when we're generating the most?",
+      "I'd like to understand the savings before agreeing, but I'm generally open to it."
+    ]
+  },
+  "meta": {
+    "source": "archetype_design_v2",
+    "basis_label": "delta+epsilon blend",
+    "approved": true,
+    "created_at": "2026-05-26"
+  }
+}

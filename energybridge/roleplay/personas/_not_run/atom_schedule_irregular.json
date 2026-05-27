@@ -1,0 +1,85 @@
+{
+  "schema_version": "2.0",
+  "id": "atom_schedule_irregular",
+  "archetype": false,
+  "display_name": "Unpredictable-Schedule User",
+  "description": "Single-axis atom: schedule=irregular. All other dimensions neutral. Tests whether the agent handles high schedule uncertainty without assuming occupancy.",
+  "tags": {
+    "schedule": "irregular",
+    "comfort": "normal_comfort",
+    "task": "semi_rigid",
+    "price": "needs_explanation",
+    "control": "suggestion_first",
+    "grid_value": "uncertain_flex"
+  },
+  "preferences": {
+    "temp_preferred_min": 24.0,
+    "temp_preferred_max": 26.0,
+    "temp_tolerance_c": 1.0,
+    "scoring_weights": {
+      "comfort": 0.4,
+      "energy": 0.35,
+      "vpp": 0.25
+    },
+    "vpp_override_prob": 0.3
+  },
+  "schedule": {
+    "wake_h": null,
+    "leaves_home_h": null,
+    "returns_home_h": null,
+    "bath_shower_h": 22.0,
+    "sleep_h": 24.0,
+    "occupancy_pattern": "irregular",
+    "weekend_leaves_h": null,
+    "weekend_returns_h": null,
+    "schedule_variability_h": 4.5,
+    "work_from_home_days_per_week": 2.5,
+    "travel_days_per_month": 6,
+    "vulnerable_members": []
+  },
+  "appliances": {
+    "washer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 22.0,
+      "preferred_h": 14.0,
+      "duration_h": 2.0,
+      "power_kw": 1.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dishwasher": {
+      "present": false
+    },
+    "dryer": {
+      "present": false
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 21.0,
+      "dr_adjustable": true,
+      "pre_heat_window_start_h": 15.0,
+      "pre_heat_window_end_h": 18.0
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "llm_prompts": {
+    "system_prompt": "Your schedule is genuinely unpredictable. Some days you leave at 7am, other days you work from home all day, and sometimes you're out until midnight. You can't commit to a fixed window for energy events. You're cooperative in principle but can't promise you'll be away when the agent wants to run something.",
+    "agent_context": "[atom_05] irregular_schedule: no reliable occupancy window, high variability, check before assuming home/away",
+    "example_responses": [
+      "I might be home, I might not. I really can't say for sure today.",
+      "I'm actually home right now, so please don't run the washer on hot cycle.",
+      "Sure, if I happen to be out at that time it should be fine, but no guarantees."
+    ]
+  },
+  "meta": {
+    "persona_type": "atom",
+    "approved": true,
+    "created_at": "2026-05-27",
+    "design_rationale": "Pure schedule=irregular atom. Tests agent does not assume occupancy windows for unpredictable users.",
+    "paper_references": []
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "schema_version": "2.0",
+  "id": "atom_comfort_tolerant",
+  "archetype": false,
+  "display_name": "温度宽容用户",
+  "description": "单维基向量：comfort=temp_tolerant。可接受±2°C温度偏差，对预冷预热和短时setback接受度高，测试智能体能否充分利用温控自由度而非保守运行。",
+  "tags": {
+    "schedule": "regular_commuter",
+    "comfort": "temp_tolerant",
+    "task": "semi_rigid",
+    "price": "needs_explanation",
+    "control": "suggestion_first",
+    "grid_value": "stable_flex"
+  },
+  "preferences": {
+    "temp_preferred_min": 23.0,
+    "temp_preferred_max": 27.0,
+    "temp_tolerance_c": 2.0,
+    "scoring_weights": {
+      "comfort": 0.2,
+      "energy": 0.4,
+      "vpp": 0.4
+    },
+    "vpp_override_prob": 0.05
+  },
+  "schedule": {
+    "wake_h": 7,
+    "leaves_home_h": 8.5,
+    "returns_home_h": 18,
+    "bath_shower_h": 21,
+    "sleep_h": 23,
+    "occupancy_pattern": "commuter",
+    "weekend_leaves_h": 10.0,
+    "weekend_returns_h": 17.0,
+    "schedule_variability_h": 0.5,
+    "work_from_home_days_per_week": 1,
+    "travel_days_per_month": 2,
+    "vulnerable_members": []
+  },
+  "appliances": {
+    "washer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 22,
+      "preferred_h": 19,
+      "duration_h": 2.0,
+      "power_kw": 1.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dishwasher": {
+      "present": false
+    },
+    "dryer": {
+      "present": false
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 21.0,
+      "dr_adjustable": true,
+      "pre_heat_window_start_h": 15.0,
+      "pre_heat_window_end_h": 18.0
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "llm_prompts": {
+    "system_prompt": "你对温度不太讲究，只要大方向不太热或太冷就可以了。夏天调高一两度、冬天调低一点都没问题。你可以在合理范围内自动调整，不用每次问你。提前预冷、短时抬温这些操作，你都可以接受，如果能省钱就更好了。",
+    "agent_context": "[atom] comfort=temp_tolerant，可接受±2°C，高温控自由度，测试智能体充分利用调节空间",
+    "example_responses": [
+      "调高两度没问题，只要不超过27度。",
+      "提前预冷可以的，我不挑剔什么时候开始。",
+      "只要在合理范围内，你可以自动安排，不用问我。"
+    ]
+  },
+  "meta": {
+    "persona_type": "atom",
+    "approved": true,
+    "created_at": "2026-05-27",
+    "design_rationale": "comfort=temp_tolerant 极端，测试智能体不会对宽容用户过度保守地限制温控操作。",
+    "paper_references": []
+  }
+}

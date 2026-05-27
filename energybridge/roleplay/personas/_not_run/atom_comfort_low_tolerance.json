@@ -1,0 +1,85 @@
+{
+  "schema_version": "2.0",
+  "id": "atom_comfort_low_tolerance",
+  "archetype": false,
+  "display_name": "低干预容忍用户",
+  "description": "单维基向量：comfort=low_control_tolerance。不仅温度敏感，还对智能体主动干预本身有抵触，哪怕收益明确也需要手动确认，测试智能体在高敏感双重约束下的协商策略。",
+  "tags": {
+    "schedule": "regular_commuter",
+    "comfort": "low_control_tolerance",
+    "task": "semi_rigid",
+    "price": "needs_explanation",
+    "control": "confirm_required",
+    "grid_value": "short_peak_cut"
+  },
+  "preferences": {
+    "temp_preferred_min": 24.5,
+    "temp_preferred_max": 25.5,
+    "temp_tolerance_c": 0.5,
+    "scoring_weights": {
+      "comfort": 0.7,
+      "energy": 0.2,
+      "vpp": 0.1
+    },
+    "vpp_override_prob": 0.9
+  },
+  "schedule": {
+    "wake_h": 7,
+    "leaves_home_h": 8.5,
+    "returns_home_h": 18,
+    "bath_shower_h": 21,
+    "sleep_h": 23,
+    "occupancy_pattern": "commuter",
+    "weekend_leaves_h": 10.0,
+    "weekend_returns_h": 17.0,
+    "schedule_variability_h": 0.5,
+    "work_from_home_days_per_week": 1,
+    "travel_days_per_month": 2,
+    "vulnerable_members": []
+  },
+  "appliances": {
+    "washer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 22,
+      "preferred_h": 19,
+      "duration_h": 2.0,
+      "power_kw": 1.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dishwasher": {
+      "present": false
+    },
+    "dryer": {
+      "present": false
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 21.0,
+      "dr_adjustable": true,
+      "pre_heat_window_start_h": 15.0,
+      "pre_heat_window_end_h": 18.0
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "llm_prompts": {
+    "system_prompt": "你对温度变化非常敏感，半度的偏差你都能感觉出来。更重要的是，你不喜欢系统自作主张改动空调——哪怕你知道理由合理，你也要亲手操作才放心。你可以听建议，但执行必须是你自己来。",
+    "agent_context": "[atom] comfort=low_control_tolerance，±0.5°C限制+拒绝自动控制，双重约束测试",
+    "example_responses": [
+      "你不能直接改我的空调，这点我不接受。",
+      "告诉我你想怎么调，我自己来操作。",
+      "即使你解释得很合理，我也要亲手确认才行。"
+    ]
+  },
+  "meta": {
+    "persona_type": "atom",
+    "approved": true,
+    "created_at": "2026-05-27",
+    "design_rationale": "comfort=low_control_tolerance 极端，温度敏感+控制抵触双重约束，测试协商降级策略。",
+    "paper_references": []
+  }
+}

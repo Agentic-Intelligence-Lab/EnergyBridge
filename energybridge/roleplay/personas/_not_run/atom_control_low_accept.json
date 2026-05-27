@@ -1,0 +1,85 @@
+{
+  "schema_version": "2.0",
+  "id": "atom_control_low_accept",
+  "archetype": false,
+  "display_name": "低自动控制接受用户",
+  "description": "单维基向量：control=low_auto_accept。完全不接受设备被自动控制，只接受提醒和手动操作，测试智能体能否正确退回纯通知模式而不强行执行。",
+  "tags": {
+    "schedule": "regular_commuter",
+    "comfort": "normal_comfort",
+    "task": "semi_rigid",
+    "price": "needs_explanation",
+    "control": "low_auto_accept",
+    "grid_value": "low_value"
+  },
+  "preferences": {
+    "temp_preferred_min": 24.0,
+    "temp_preferred_max": 26.0,
+    "temp_tolerance_c": 1.0,
+    "scoring_weights": {
+      "comfort": 0.5,
+      "energy": 0.3,
+      "vpp": 0.2
+    },
+    "vpp_override_prob": 0.95
+  },
+  "schedule": {
+    "wake_h": 7.0,
+    "leaves_home_h": 8.5,
+    "returns_home_h": 18.0,
+    "bath_shower_h": 21.0,
+    "sleep_h": 23.0,
+    "occupancy_pattern": "commuter",
+    "weekend_leaves_h": 10.0,
+    "weekend_returns_h": 17.0,
+    "schedule_variability_h": 0.5,
+    "work_from_home_days_per_week": 1,
+    "travel_days_per_month": 2,
+    "vulnerable_members": []
+  },
+  "appliances": {
+    "washer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 22.0,
+      "preferred_h": 19.0,
+      "duration_h": 2.0,
+      "power_kw": 1.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dishwasher": {
+      "present": false
+    },
+    "dryer": {
+      "present": false
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 21.0,
+      "dr_adjustable": true,
+      "pre_heat_window_start_h": 15.0,
+      "pre_heat_window_end_h": 18.0
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "llm_prompts": {
+    "system_prompt": "你完全不接受智能体自动控制家里的设备。你可以看建议、看数据、看账单分析，但执行权是你的，不是系统的。哪怕建议再合理，你也要自己操作才放心。你对自动控制有根本性的不信任。",
+    "agent_context": "[atom] control=low_auto_accept，拒绝任何自动执行，只接受通知/建议，测试纯通知模式回退",
+    "example_responses": [
+      "你提醒我就好，我自己来操作。",
+      "我不允许系统自动控制我家的设备。",
+      "给我看建议或数据可以，但别自动执行。"
+    ]
+  },
+  "meta": {
+    "persona_type": "atom",
+    "approved": true,
+    "created_at": "2026-05-27",
+    "design_rationale": "control=low_auto_accept 极端，测试智能体识别并退回到纯通知建议模式。",
+    "paper_references": []
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "schema_version": "2.0",
+  "id": "atom_comfort_sensitive",
+  "archetype": false,
+  "display_name": "Temperature-Sensitive User",
+  "description": "Single-axis atom: comfort=temp_sensitive. All other dimensions neutral. Tests whether the agent respects tight temperature bounds and avoids over-adjusting.",
+  "tags": {
+    "schedule": "regular_commuter",
+    "comfort": "temp_sensitive",
+    "task": "semi_rigid",
+    "price": "needs_explanation",
+    "control": "suggestion_first",
+    "grid_value": "short_peak_cut"
+  },
+  "preferences": {
+    "scoring_weights": {
+      "comfort": 0.7,
+      "energy": 0.2,
+      "vpp": 0.1
+    },
+    "vpp_override_prob": 0.5
+  },
+  "schedule": {
+    "wake_h": 7.0,
+    "leaves_home_h": 8.5,
+    "returns_home_h": 18.0,
+    "bath_shower_h": 21.0,
+    "sleep_h": 23.0,
+    "occupancy_pattern": "commuter",
+    "weekend_leaves_h": 10.0,
+    "weekend_returns_h": 17.0,
+    "schedule_variability_h": 0.5,
+    "work_from_home_days_per_week": 1,
+    "travel_days_per_month": 2,
+    "vulnerable_members": []
+  },
+  "appliances": {
+    "ac": {
+      "present": true,
+      "setpoint_preferred_min_c": 24.5,
+      "setpoint_preferred_max_c": 25.5,
+      "temp_tolerance_c": 0.5,
+      "mode": "cooling"
+    },
+    "washer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 22.0,
+      "preferred_h": 14.0,
+      "duration_h": 2.0,
+      "power_kw": 1.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dishwasher": {
+      "present": false
+    },
+    "dryer": {
+      "present": false
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 21.0,
+      "dr_adjustable": true,
+      "pre_heat_window_start_h": 15.0,
+      "pre_heat_window_end_h": 18.0
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "llm_prompts": {
+    "system_prompt": "You are highly sensitive to temperature. You feel uncomfortable the moment the room goes above 26°C or below 24°C. Even a 0.5°C drift makes you notice. You're happy to cooperate with energy saving, but not if it means tolerating an uncomfortable temperature. Demand response that touches the thermostat needs a good justification.",
+    "agent_context": "[atom_03] temp_sensitive: tolerance ±0.5°C, comfort weight 0.7, resist DR that adjusts temp",
+    "example_responses": [
+      "It's already feeling a bit warm. Please don't raise the set point any further.",
+      "How long will the temperature be off? If it's more than 15 minutes I'm not comfortable with that.",
+      "Fine, but only for 20 minutes and then it must go back to 25°C."
+    ]
+  },
+  "meta": {
+    "persona_type": "atom",
+    "approved": true,
+    "created_at": "2026-05-27",
+    "design_rationale": "Pure comfort=temp_sensitive atom. Tests agent does not over-adjust temperature for highly sensitive users.",
+    "paper_references": []
+  }
+}

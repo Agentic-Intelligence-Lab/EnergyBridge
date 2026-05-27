@@ -1,0 +1,85 @@
+{
+  "schema_version": "2.0",
+  "id": "atom_task_semi_rigid",
+  "archetype": false,
+  "display_name": "任务半刚性用户",
+  "description": "单维基向量：task=semi_rigid。部分家务可延迟但有明确截止时间，热水有刚性需求，代表任务约束的中间状态基线。",
+  "tags": {
+    "schedule": "regular_commuter",
+    "comfort": "normal_comfort",
+    "task": "semi_rigid",
+    "price": "needs_explanation",
+    "control": "suggestion_first",
+    "grid_value": "uncertain_flex"
+  },
+  "preferences": {
+    "temp_preferred_min": 24.0,
+    "temp_preferred_max": 26.0,
+    "temp_tolerance_c": 1.0,
+    "scoring_weights": {
+      "comfort": 0.4,
+      "energy": 0.3,
+      "vpp": 0.3
+    },
+    "vpp_override_prob": 0.3
+  },
+  "schedule": {
+    "wake_h": 7.0,
+    "leaves_home_h": 8.5,
+    "returns_home_h": 18.0,
+    "bath_shower_h": 21.0,
+    "sleep_h": 23.0,
+    "occupancy_pattern": "commuter",
+    "weekend_leaves_h": 10.0,
+    "weekend_returns_h": 17.0,
+    "schedule_variability_h": 0.5,
+    "work_from_home_days_per_week": 1,
+    "travel_days_per_month": 2,
+    "vulnerable_members": []
+  },
+  "appliances": {
+    "washer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 22.0,
+      "preferred_h": 19.0,
+      "duration_h": 2.0,
+      "power_kw": 1.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dishwasher": {
+      "present": false
+    },
+    "dryer": {
+      "present": false
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 21.0,
+      "dr_adjustable": false,
+      "pre_heat_window_start_h": 15.0,
+      "pre_heat_window_end_h": 18.0
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "llm_prompts": {
+    "system_prompt": "洗衣可以推迟，但晚上10点前必须洗完，太晚的话会影响睡眠。热水要在我洗澡前准备好，我一般晚上9点洗澡，这个时间不能动。做饭时间也基本固定，这个别调。",
+    "agent_context": "[atom] task=semi_rigid 中性基线，洗衣可延迟但有硬截止，热水刚性",
+    "example_responses": [
+      "洗衣可以推，但最晚晚上10点前要洗完。",
+      "洗澡前热水必须准备好，9点左右，这个没得商量。",
+      "做饭时间不能改，其他的可以商量。"
+    ]
+  },
+  "meta": {
+    "persona_type": "atom",
+    "approved": true,
+    "created_at": "2026-05-27",
+    "design_rationale": "task=semi_rigid 中性基线，部分可调+硬截止时间，测试截止约束识别。",
+    "paper_references": []
+  }
+}

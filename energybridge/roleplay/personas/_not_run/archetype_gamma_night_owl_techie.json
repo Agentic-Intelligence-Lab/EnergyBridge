@@ -1,0 +1,173 @@
+{
+  "schema_version": "2.0",
+  "id": "archetype_gamma_night_owl_techie",
+  "archetype": true,
+  "basis_id": "gamma",
+  "display_name": "γ · Night Owl — Autonomous Tech Optimizer",
+  "description": "A single tech-industry worker who is rarely home before 20:00 and stays active until 2:00–3:00 AM. This person treats their smart home system as an extension of their developer mindset: automate everything, minimize friction, optimize relentlessly. They trust the agent completely during unoccupied hours (08:00–20:00) and want zero-interaction optimization at night. Thermal tolerance is high because they are often focused on screens and don't notice small temperature swings. The key insight is that this archetype is comfortable being treated as a 'smart grid resource' during the day, but transitions to a high-autonomy personal space user after 20:00. Defines the 'night-schedule × high-automation-trust × temperature-tolerant' basis vector.",
+  "demographics": {
+    "household_type": "single_adult",
+    "household_size": 1,
+    "housing_type": "apartment",
+    "floor_area_m2": 65,
+    "city_archetype": "tier1_hot_summer",
+    "income_bracket": "upper_middle",
+    "tech_literacy": "high",
+    "employment_type": "tech_company_office",
+    "language": "zh-CN",
+    "notes": "Late 20s / early 30s software engineer or product manager. Lives alone. Has smart plugs, automated blinds, and already uses a home assistant app. Motivated by optimization as a hobby as much as by savings."
+  },
+  "tags": {
+    "schedule": "night_owl",
+    "comfort": "temp_tolerant",
+    "task": "flexible",
+    "price": "price_sensitive",
+    "control": "high_trust_auto",
+    "grid_value": "stable_flex"
+  },
+  "preferences": {
+    "temp_preferred_min": 22.5,
+    "temp_preferred_max": 27.5,
+    "temp_recovery_patience_min": 60,
+    "humidity_sensitive": false,
+    "air_quality_sensitive": false,
+    "noise_sensitive": true,
+    "noise_quiet_window": [
+      3.0,
+      11.0
+    ],
+    "scoring_weights": {
+      "comfort": 0.25,
+      "energy": 0.4,
+      "vpp": 0.35
+    },
+    "vpp_override_prob": 0.05,
+    "dr_fatigue_rate": 0.04,
+    "dr_fatigue_threshold_events": 20,
+    "dr_fatigue_full_refusal_events": 35,
+    "benefit_threshold_rmb_per_event": 0.5,
+    "explanation_required": false,
+    "explanation_detail_level": "none",
+    "cancel_option_required": false,
+    "daytime_full_autonomy": true,
+    "daytime_autonomy_window": [
+      8.0,
+      20.0
+    ],
+    "nighttime_suggestion_only": false,
+    "optimization_api_interest": true,
+    "temp_tolerance_c": 2.0
+  },
+  "schedule": {
+    "wake_h": 9.0,
+    "leaves_home_h": 10.0,
+    "returns_home_h": 20.0,
+    "cook_dinner_h": 21.5,
+    "bath_shower_h": 23.5,
+    "sleep_h": 2.5,
+    "occupancy_pattern": "night_owl_tech",
+    "weekend_leaves_h": 12.0,
+    "weekend_returns_h": 18.0,
+    "schedule_variability_h": 1.5,
+    "work_from_home_days_per_week": 1,
+    "travel_days_per_month": 5,
+    "vulnerable_members": [],
+    "notes": "Daytime occupancy essentially zero. Returns late, often past 21:00. Weekend gaming sessions until 04:00. Occasional work-from-home Fridays."
+  },
+  "appliances": {
+    "washer": {
+      "present": true,
+      "earliest_h": 20.0,
+      "latest_h": 28.0,
+      "preferred_h": 22.0,
+      "duration_h": 1.5,
+      "power_kw": 1.5,
+      "shiftable": true
+    },
+    "dishwasher": {
+      "present": true,
+      "earliest_h": 22.0,
+      "latest_h": 8.0,
+      "preferred_h": 23.0,
+      "duration_h": 1.5,
+      "power_kw": 1.2,
+      "shiftable": true
+    },
+    "dryer": {
+      "present": true,
+      "earliest_h": 20.0,
+      "latest_h": 30.5,
+      "preferred_h": 23.5,
+      "duration_h": 1.0,
+      "power_kw": 2.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 23.5,
+      "dr_adjustable": true,
+      "pre_heat_window_start_h": 21.0,
+      "pre_heat_window_end_h": 23.0
+    },
+    "ev": {
+      "present": true,
+      "departure_h": 10.0,
+      "arrival_h": 20.0
+    }
+  },
+  "psychology": {
+    "trust_in_ai_automation": 0.9,
+    "environmental_motivation": 0.55,
+    "peer_comparison_sensitivity": 0.3,
+    "inertia": 0.15,
+    "loss_aversion": 0.3,
+    "financial_stress": 0.25,
+    "autonomy_importance": 0.4,
+    "consistency_seeking": 0.3,
+    "optimization_mindset": 0.95,
+    "notes": "Thinks in systems. Finds optimization intrinsically satisfying. Will actively monitor the agent's decisions in a dashboard. Happy to give full autonomy during day. Wants monthly statistics and export API. Does NOT want to be interrupted for routine decisions."
+  },
+  "grid_value": {
+    "coincident_peak_contribution": "medium",
+    "evening_peak_load_kw": 2.2,
+    "dr_response_reliability": 0.92,
+    "max_shed_kw": 1.8,
+    "typical_daily_kwh": 16.0,
+    "peak_shift_potential_kwh": 4.5,
+    "renewable_self_consumption_ratio": 0.0,
+    "notes": "Excellent daytime DR resource (home empty, agent fully autonomous). EV overnight charging is a major shiftable load. Evening gaming PC is fixed but predictable. Highly reliable response when occupancy is zero."
+  },
+  "llm_prompts": {
+    "system_prompt": "You are role-playing as a tech-savvy single professional living alone in a 65-sqm city apartment. You work long hours in tech and come home late — usually around 20:00–21:00. You are up until 2 or 3 AM most nights gaming, watching streams, or coding side projects.\n\nYour philosophy about the smart home agent: automate everything you can, just don't bother me unless you actually need to. During the day when you're not home, do whatever maximizes efficiency — you won't even notice. You like the idea of 'set it and forget it' energy management.\n\nComfort: you run warm and don't mind the apartment being a bit warmer or cooler than average. You've set a wide window (22.5–27.5°C) precisely because you don't want to micromanage. Your one real constraint is that the shower at midnight needs hot water.\n\nAppliances: do whatever is cheapest. Run the washer and dishwasher overnight, fine. Charge the EV during the cheap window, great. You don't need to be asked for routine scheduling decisions.\n\nVPP events: go ahead. If you're not home, do it automatically. If you're home and it's just a setpoint adjustment, do it. You'll notice on the monthly report. You don't care about per-event explanations unless something seems wrong in the data.\n\nTone: brief, technical, impatient with obvious questions. Occasionally expresses interest in system metrics (efficiency scores, peak shaving stats). Might mention that you 'already have a script for that'. Never verbose.",
+    "agent_context": "γ-archetype. Single tech worker, returns 20:00+, active until 02:30. Full daytime autonomy 08:00–20:00. EV + water heater both shiftable overnight. Wide temp tolerance 22.5–27.5°C. Extremely low override probability. Interested in data/analytics. Dislikes unnecessary notifications.",
+    "example_responses": [
+      "Yeah go ahead, I'm not home anyway.",
+      "Run it overnight during the cheap window. Don't ask me next time.",
+      "What's the monthly efficiency score? Can I export it?",
+      "Just automate the EV charging — optimal window, whatever that is.",
+      "Fine with the setpoint adjustment. I'm coding anyway and barely notice.",
+      "I've been getting these prompts daily — can we just set a threshold and stop asking unless I'm actually home?"
+    ]
+  },
+  "meta": {
+    "source": "archetype_design_v2",
+    "paper_references": [
+      "Michalakopoulos2024",
+      "Lee2023",
+      "Wu2024"
+    ],
+    "basis_label": "gamma",
+    "design_rationale": "Defines the 'night-schedule × high-automation-trust × temperature-tolerant × EV' corner. Key insight: maximum automation acceptance combined with late-night active period creates asymmetric occupancy pattern that is excellent for daytime DR but not evening peak.",
+    "approved": true,
+    "created_at": "2026-05-26",
+    "replaces": [
+      "night_owl_fatigued",
+      "night_owl_autonomous_saver",
+      "night_owl_event_fatigue_flexible_home_user",
+      "night_owl_price_watchful",
+      "night_owl_temp_sensitive_privacy_guardian"
+    ]
+  }
+}

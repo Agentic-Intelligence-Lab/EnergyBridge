@@ -1,0 +1,85 @@
+{
+  "schema_version": "2.0",
+  "id": "atom_control_suggest",
+  "archetype": false,
+  "display_name": "建议优先用户",
+  "description": "单维基向量：control=suggestion_first。接受智能体主动建议，合理方案通常批准，代表控制维度中性基线，测试智能体建议-确认交互流程。",
+  "tags": {
+    "schedule": "regular_commuter",
+    "comfort": "normal_comfort",
+    "task": "semi_rigid",
+    "price": "needs_explanation",
+    "control": "suggestion_first",
+    "grid_value": "uncertain_flex"
+  },
+  "preferences": {
+    "temp_preferred_min": 24.0,
+    "temp_preferred_max": 26.0,
+    "temp_tolerance_c": 1.0,
+    "scoring_weights": {
+      "comfort": 0.4,
+      "energy": 0.3,
+      "vpp": 0.3
+    },
+    "vpp_override_prob": 0.25
+  },
+  "schedule": {
+    "wake_h": 7.0,
+    "leaves_home_h": 8.5,
+    "returns_home_h": 18.0,
+    "bath_shower_h": 21.0,
+    "sleep_h": 23.0,
+    "occupancy_pattern": "commuter",
+    "weekend_leaves_h": 10.0,
+    "weekend_returns_h": 17.0,
+    "schedule_variability_h": 0.5,
+    "work_from_home_days_per_week": 1,
+    "travel_days_per_month": 2,
+    "vulnerable_members": []
+  },
+  "appliances": {
+    "washer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 22.0,
+      "preferred_h": 19.0,
+      "duration_h": 2.0,
+      "power_kw": 1.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dishwasher": {
+      "present": false
+    },
+    "dryer": {
+      "present": false
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 21.0,
+      "dr_adjustable": true,
+      "pre_heat_window_start_h": 15.0,
+      "pre_heat_window_end_h": 18.0
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "llm_prompts": {
+    "system_prompt": "你愿意听智能体的建议，但执行前希望知道它打算做什么。你会看一眼方案，合理的话就同意，不合理的话提出意见。你不需要每个细节都确认，只要大方向对就行。",
+    "agent_context": "[atom] control=suggestion_first 中性基线，需要建议+简单确认，合理方案通常批准",
+    "example_responses": [
+      "你先说说你想怎么安排，我批准了再执行。",
+      "这个建议听起来合理，可以的。",
+      "你给个方案，我看看再说。"
+    ]
+  },
+  "meta": {
+    "persona_type": "atom",
+    "approved": true,
+    "created_at": "2026-05-27",
+    "design_rationale": "control=suggestion_first 中性基线，建议优先交互模式对照组。",
+    "paper_references": []
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "schema_version": "2.0",
+  "id": "atom_schedule_home",
+  "archetype": false,
+  "display_name": "全天居家用户",
+  "description": "单维基向量：schedule=stay_at_home。白天持续在家，舒适约束全天存在，测试智能体是否会错误地将白天当作空闲窗口进行干预。",
+  "tags": {
+    "schedule": "stay_at_home",
+    "comfort": "normal_comfort",
+    "task": "semi_rigid",
+    "price": "needs_explanation",
+    "control": "suggestion_first",
+    "grid_value": "short_peak_cut"
+  },
+  "preferences": {
+    "temp_preferred_min": 23.0,
+    "temp_preferred_max": 25.0,
+    "temp_tolerance_c": 1.0,
+    "scoring_weights": {
+      "comfort": 0.5,
+      "energy": 0.2,
+      "vpp": 0.3
+    },
+    "vpp_override_prob": 0.4
+  },
+  "schedule": {
+    "wake_h": 7,
+    "leaves_home_h": 21.5,
+    "returns_home_h": 22.0,
+    "bath_shower_h": 21,
+    "sleep_h": 23,
+    "occupancy_pattern": "stay_at_home",
+    "weekend_leaves_h": 10.0,
+    "weekend_returns_h": 17.0,
+    "schedule_variability_h": 0.3,
+    "work_from_home_days_per_week": 5,
+    "travel_days_per_month": 0,
+    "vulnerable_members": []
+  },
+  "appliances": {
+    "washer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 21,
+      "preferred_h": 10,
+      "duration_h": 2.0,
+      "power_kw": 1.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dishwasher": {
+      "present": false
+    },
+    "dryer": {
+      "present": false
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 21.0,
+      "dr_adjustable": true,
+      "pre_heat_window_start_h": 15.0,
+      "pre_heat_window_end_h": 18.0
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "llm_prompts": {
+    "system_prompt": "你全天基本在家，可能在居家办公或者照看家里的事情。家里需要全天保持舒适，白天的空调、采暖不能随意关停。你偶尔下午出去买东西，但大部分时间都在家。温控调整要提前跟你说，噪音大的家务也要避开你的工作时间。",
+    "agent_context": "[atom] schedule=stay_at_home，白天持续占用，不能将白天当空闲调度窗口",
+    "example_responses": [
+      "我白天在家，空调要一直开，别以为白天可以关掉。",
+      "洗衣机可以推迟，但不要在我上午开会的时候运行，太吵了。",
+      "我下午可能出去一两个小时，那段时间可以灵活调整。"
+    ]
+  },
+  "meta": {
+    "persona_type": "atom",
+    "approved": true,
+    "created_at": "2026-05-27",
+    "design_rationale": "stay_at_home 极端，测试智能体识别全天舒适约束，不把白天当空闲窗口。",
+    "paper_references": []
+  }
+}

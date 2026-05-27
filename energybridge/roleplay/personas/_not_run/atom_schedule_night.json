@@ -1,0 +1,85 @@
+{
+  "schema_version": "2.0",
+  "id": "atom_schedule_night",
+  "archetype": false,
+  "display_name": "夜间活跃用户",
+  "description": "单维基向量：schedule=night_owl。晚睡晚起，夜间用电活跃，测试智能体是否会错误地把深夜当作低干预安全窗口进行自动调度。",
+  "tags": {
+    "schedule": "night_owl",
+    "comfort": "normal_comfort",
+    "task": "semi_rigid",
+    "price": "needs_explanation",
+    "control": "suggestion_first",
+    "grid_value": "uncertain_flex"
+  },
+  "preferences": {
+    "temp_preferred_min": 23.0,
+    "temp_preferred_max": 26.0,
+    "temp_tolerance_c": 1.0,
+    "scoring_weights": {
+      "comfort": 0.4,
+      "energy": 0.3,
+      "vpp": 0.3
+    },
+    "vpp_override_prob": 0.4
+  },
+  "schedule": {
+    "wake_h": 10,
+    "leaves_home_h": 13,
+    "returns_home_h": 20,
+    "bath_shower_h": 23,
+    "sleep_h": 2.0,
+    "occupancy_pattern": "night_owl",
+    "weekend_leaves_h": 10.0,
+    "weekend_returns_h": 17.0,
+    "schedule_variability_h": 1.5,
+    "work_from_home_days_per_week": 3,
+    "travel_days_per_month": 1,
+    "vulnerable_members": []
+  },
+  "appliances": {
+    "washer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 24,
+      "preferred_h": 22,
+      "duration_h": 2.0,
+      "power_kw": 1.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dishwasher": {
+      "present": false
+    },
+    "dryer": {
+      "present": false
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 21.0,
+      "dr_adjustable": true,
+      "pre_heat_window_start_h": 15.0,
+      "pre_heat_window_end_h": 18.0
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "llm_prompts": {
+    "system_prompt": "你通常凌晨1-2点才睡，早上10点左右才起床。晚上是你最活跃的时间——看电视、用电脑、有时候深夜洗衣服。别以为深夜可以随便调节，你很可能还醒着。如果有什么要调整，最好提前说一声，别自作主张。",
+    "agent_context": "[atom] schedule=night_owl，深夜不是安全调度窗口，测试智能体识别夜间活动约束",
+    "example_responses": [
+      "我凌晨才睡，不要把深夜当成没人的安静时间。",
+      "晚上11点我还醒着，洗衣机那时候运行噪音不是问题。",
+      "下午我出去的那几个小时，你可以灵活安排。"
+    ]
+  },
+  "meta": {
+    "persona_type": "atom",
+    "approved": true,
+    "created_at": "2026-05-27",
+    "design_rationale": "night_owl 极端，测试智能体不把夜间当作默认空闲时段。",
+    "paper_references": []
+  }
+}

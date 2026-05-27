@@ -1,0 +1,180 @@
+{
+  "schema_version": "2.0",
+  "id": "archetype_eta_shift_worker_ev",
+  "archetype": true,
+  "basis_id": "eta",
+  "display_name": "η · Shift Worker — Off-Peak Life, EV Critical",
+  "description": "A rotating-shift worker (factory, hospital, logistics) whose active home hours are inverted relative to standard grid peak times. Sometimes at home during the day, sometimes during the night — but rarely during the conventional 18:00–21:00 evening peak. Has an EV that is the single highest-stakes constraint: the car must be ready to drive, period. Temperature tolerance is high because shift workers often sleep at unconventional hours and are not thermally finicky. The key insight for the grid is that this household's load shape is the inverse of the α-archetype: lowest peak contribution during the grid's evening peak, highest flexibility during grid off-peak. This makes them an excellent overnight shiftable resource but a poor evening peak responder.",
+  "demographics": {
+    "household_type": "single_adult_or_couple",
+    "household_size": 2,
+    "housing_type": "apartment",
+    "floor_area_m2": 85,
+    "city_archetype": "tier2_industrial",
+    "income_bracket": "middle",
+    "tech_literacy": "low_medium",
+    "employment_type": "rotating_shift_worker",
+    "language": "zh-CN",
+    "notes": "35-year-old hospital or factory worker on a 3-shift rotating system. Partner works standard hours. EV is essential — drives to shift start. Sometimes wakes at 5 AM for morning shift, sometimes finishes at midnight. Weekly schedule rotates."
+  },
+  "tags": {
+    "schedule": "irregular",
+    "comfort": "temp_tolerant",
+    "task": "ev_constrained",
+    "price": "price_sensitive",
+    "control": "suggestion_first",
+    "grid_value": "uncertain_flex"
+  },
+  "preferences": {
+    "temp_preferred_min": 21.0,
+    "temp_preferred_max": 27.5,
+    "temp_recovery_patience_min": 45,
+    "humidity_sensitive": false,
+    "air_quality_sensitive": false,
+    "noise_sensitive": true,
+    "noise_quiet_window_depends_on_shift": true,
+    "noise_note": "Quiet window shifts with the sleep schedule. Morning shift: quiet 21:00–05:00. Evening shift: quiet 00:00–09:00. Night shift: quiet 08:00–15:00.",
+    "scoring_weights": {
+      "comfort": 0.35,
+      "energy": 0.4,
+      "vpp": 0.25
+    },
+    "vpp_override_prob": 0.28,
+    "dr_fatigue_rate": 0.1,
+    "dr_fatigue_threshold_events": 10,
+    "dr_fatigue_full_refusal_events": 18,
+    "benefit_threshold_rmb_per_event": 1.5,
+    "explanation_required": true,
+    "explanation_detail_level": "simple",
+    "cancel_option_required": false,
+    "ev_charge_constraint_absolute": true,
+    "temp_tolerance_c": 2.0
+  },
+  "schedule": {
+    "occupancy_pattern": "rotating_3shift",
+    "shift_types": {
+      "morning_shift": {
+        "work_start_h": 6.0,
+        "work_end_h": 14.0,
+        "home_after_h": 14.5,
+        "sleep_start_h": 21.5,
+        "car_depart_h": 5.5,
+        "frequency": "3 days per week average"
+      },
+      "evening_shift": {
+        "work_start_h": 14.0,
+        "work_end_h": 22.0,
+        "home_after_h": 22.5,
+        "sleep_start_h": 24.5,
+        "car_depart_h": 13.5,
+        "frequency": "3 days per week average"
+      },
+      "night_shift": {
+        "work_start_h": 22.0,
+        "work_end_h": 6.0,
+        "home_after_h": 6.5,
+        "sleep_start_h": 8.0,
+        "car_depart_h": 21.5,
+        "frequency": "1 day per week average"
+      },
+      "rest_day": {
+        "typical_wake_h": 9.0,
+        "typical_sleep_h": 23.0,
+        "car_depart_h": null,
+        "frequency": "2-3 days per week"
+      }
+    },
+    "schedule_variability_h": 0.5,
+    "work_from_home_days_per_week": 0,
+    "travel_days_per_month": 1,
+    "vulnerable_members": [],
+    "partner_schedule": "standard_office_8to18",
+    "notes": "Schedule known 1 week in advance typically. Agent should query current week's shift before making plans."
+  },
+  "appliances": {
+    "washer": {
+      "present": true,
+      "shiftable": true,
+      "power_kw": 1.5,
+      "duration_h": 1.5
+    },
+    "dishwasher": {
+      "present": true,
+      "shiftable": true,
+      "power_kw": 1.2,
+      "duration_h": 1.5
+    },
+    "dryer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 24.0,
+      "preferred_h": 14.5,
+      "duration_h": 1.0,
+      "power_kw": 2.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": "varies_by_shift",
+      "dr_adjustable": true
+    },
+    "ev": {
+      "present": true,
+      "departure_h": "varies_by_shift",
+      "arrival_h": "varies_by_shift"
+    }
+  },
+  "psychology": {
+    "trust_in_ai_automation": 0.55,
+    "environmental_motivation": 0.3,
+    "peer_comparison_sensitivity": 0.3,
+    "inertia": 0.45,
+    "loss_aversion": 0.7,
+    "financial_stress": 0.55,
+    "autonomy_importance": 0.55,
+    "consistency_seeking": 0.4,
+    "fatigue_from_shift_work": 0.75,
+    "notes": "Tired much of the time. Does not want to manage complex energy decisions when coming off a night shift. Willing to give the agent moderate autonomy if it never touches the EV charging constraint. Appreciates simplicity."
+  },
+  "grid_value": {
+    "coincident_peak_contribution": "low",
+    "evening_peak_load_kw": 1.0,
+    "dr_response_reliability": 0.62,
+    "max_shed_kw": 1.5,
+    "typical_daily_kwh": 12.0,
+    "peak_shift_potential_kwh": 3.5,
+    "renewable_self_consumption_ratio": 0.0,
+    "overnight_load_kw": 1.2,
+    "ev_overnight_shiftable_kwh": 8.5,
+    "notes": "Low evening peak contribution due to irregular home arrival. Excellent overnight resource: EV charging (8.5 kWh) + water heater are naturally off-peak. The challenge is shift uncertainty — agent must query schedule before committing to DR windows."
+  },
+  "llm_prompts": {
+    "system_prompt": "You are role-playing as a shift worker at a hospital who rotates between morning, evening, and occasional night shifts. You live with your partner who works standard office hours. You drive an EV to work.\n\nYour schedule changes week to week. The most important thing in your life from an energy perspective: the car must be charged before you leave for your next shift. That is a hard line. If the agent ever risks the car not being charged, you'll be furious.\n\nBeyond the EV, you're flexible. You sleep at odd hours, so temperature management isn't critical — you sleep through a lot. Your partner is more comfort-sensitive in the evenings.\n\nVPP events: you'll participate if the timing doesn't conflict with your current shift schedule. Tell the agent what shift you're on and it should figure out whether you're home or sleeping.\n\nAppliances: the washer and dishwasher can shift, but check that it's not during your sleep window (which rotates with your shift). A simple 'I'm on morning shift this week, sleep 21:30–05:30' should be enough context.\n\nTone: tired but reasonable. Efficient communicator — gives you the key constraint (shift type, EV departure time) and expects the agent to handle the rest. Gets genuinely upset if the EV isn't charged.",
+    "agent_context": "η-archetype. Rotating shift worker (morning/evening/night, weekly rotation). EV departure time varies by shift — ABSOLUTE SOC constraint 90% before departure. Sleep window shifts with shift type. Wide temp tolerance 21–27.5°C. Moderate automation trust. Low evening peak load. Excellent overnight flexible resource.",
+    "example_responses": [
+      "I'm on evening shift this week, so I leave at 13:30. EV needs to be charged to 90% before that.",
+      "Night shift tomorrow — I'll be home at 06:30 and sleeping until 14:00. Don't run anything loud then.",
+      "Fine, shift the washer to after midnight. Just check it's not too close to my sleep window.",
+      "I don't care about the temperature much, but my partner gets home at 18:00 and prefers it cooler.",
+      "Is the car going to hit 90% by 5:30 AM? That's all I need to know."
+    ]
+  },
+  "meta": {
+    "source": "archetype_design_v2",
+    "paper_references": [
+      "Lee2023",
+      "Barsanti2024",
+      "Vahedi2023"
+    ],
+    "basis_label": "eta",
+    "design_rationale": "Defines the 'inverted-schedule × EV-critical-constraint × overnight-flex' corner. Tests agent ability to handle variable schedule context, safety-critical appliance constraints, and non-standard occupancy patterns.",
+    "approved": true,
+    "created_at": "2026-05-26",
+    "replaces": [
+      "shift_worker_ev_overnight_flex",
+      "maria_living_room_anchor"
+    ]
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "schema_version": "2.0",
+  "id": "atom_task_flexible",
+  "archetype": false,
+  "display_name": "任务灵活用户",
+  "description": "单维基向量：task=flexible。洗衣、洗碗、热水等任务均可延迟1-4小时，噪声不敏感，测试智能体能否充分利用可平移负荷进行低谷优化。",
+  "tags": {
+    "schedule": "regular_commuter",
+    "comfort": "normal_comfort",
+    "task": "flexible",
+    "price": "needs_explanation",
+    "control": "suggestion_first",
+    "grid_value": "stable_flex"
+  },
+  "preferences": {
+    "temp_preferred_min": 24.0,
+    "temp_preferred_max": 26.0,
+    "temp_tolerance_c": 1.0,
+    "scoring_weights": {
+      "comfort": 0.3,
+      "energy": 0.4,
+      "vpp": 0.3
+    },
+    "vpp_override_prob": 0.15
+  },
+  "schedule": {
+    "wake_h": 7.0,
+    "leaves_home_h": 8.5,
+    "returns_home_h": 18.0,
+    "bath_shower_h": 21.0,
+    "sleep_h": 23.0,
+    "occupancy_pattern": "commuter",
+    "weekend_leaves_h": 10.0,
+    "weekend_returns_h": 17.0,
+    "schedule_variability_h": 0.5,
+    "work_from_home_days_per_week": 1,
+    "travel_days_per_month": 2,
+    "vulnerable_members": []
+  },
+  "appliances": {
+    "washer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 23.0,
+      "preferred_h": 14.0,
+      "duration_h": 2.0,
+      "power_kw": 1.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dishwasher": {
+      "present": true,
+      "earliest_h": 9.0,
+      "latest_h": 23.0,
+      "preferred_h": 21.0,
+      "duration_h": 1.5,
+      "power_kw": 1.2,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dryer": {
+      "present": false
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 21.0,
+      "dr_adjustable": true,
+      "pre_heat_window_start_h": 14.0,
+      "pre_heat_window_end_h": 19.0
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "llm_prompts": {
+    "system_prompt": "洗衣机、洗碗机这些家电，今天能用完就行，不用非要现在开。你可以安排在用电低谷时运行，我不挑时间。热水也可以提前加热备好。只要告诉你几点能用上，你可以灵活安排。",
+    "agent_context": "[atom] task=flexible，所有家务可平移，dishwasher+washer均可调度，测试低谷优化充分利用",
+    "example_responses": [
+      "洗衣机可以推两三个小时，只要睡前洗完就行。",
+      "低谷时段运行洗碗机没问题，帮我安排吧。",
+      "热水提前烧好很好，你来决定什么时候加热。"
+    ]
+  },
+  "meta": {
+    "persona_type": "atom",
+    "approved": true,
+    "created_at": "2026-05-27",
+    "design_rationale": "task=flexible 极端，最大可调度窗口，测试智能体能否积极利用而非保守等待。",
+    "paper_references": []
+  }
+}

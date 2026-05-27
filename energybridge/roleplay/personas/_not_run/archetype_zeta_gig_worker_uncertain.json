@@ -1,0 +1,158 @@
+{
+  "schema_version": "2.0",
+  "id": "archetype_zeta_gig_worker_uncertain",
+  "archetype": true,
+  "basis_id": "zeta",
+  "display_name": "ζ · Gig Worker — Irregular, Ask Every Time",
+  "description": "A gig-economy or freelance worker whose schedule changes week-to-week and even day-to-day: ride-share driving, food delivery, part-time tutoring, or short-term project contracts. The household is never predictable: some days at home all day, some days away from 7 AM to 11 PM. Partners or roommates may also have shifting schedules. This person is not opposed to demand response but cannot commit to any pattern, so every event must be individually confirmed because yesterday's availability says nothing about today's. Moderate price sensitivity: savings matter but unpredictability means they can't always cooperate even when willing. Defines the 'maximum schedule uncertainty × moderate-motivation × confirm-required' basis vector.",
+  "demographics": {
+    "household_type": "shared_apartment_couple",
+    "household_size": 2,
+    "housing_type": "apartment",
+    "floor_area_h": 80,
+    "city_archetype": "tier2_hot_summer",
+    "income_bracket": "lower_middle",
+    "tech_literacy": "medium",
+    "employment_type": "gig_freelance_mixed",
+    "language": "zh-CN",
+    "notes": "Couple in early 30s. One works gig delivery (7:00–14:00 or 16:00–22:00, rotating), the other does part-time tutoring or remote contract work. Neither has a fixed daily schedule. Renting — no ownership of HVAC or water heater hardware. Interested in saving on bills but schedule uncertainty makes automation risky."
+  },
+  "tags": {
+    "schedule": "irregular",
+    "comfort": "normal_comfort",
+    "task": "semi_rigid",
+    "price": "needs_explanation",
+    "control": "confirm_required",
+    "grid_value": "uncertain_flex"
+  },
+  "preferences": {
+    "temp_preferred_min": 23.0,
+    "temp_preferred_max": 26.5,
+    "temp_recovery_patience_min": 20,
+    "humidity_sensitive": false,
+    "air_quality_sensitive": false,
+    "noise_sensitive": false,
+    "scoring_weights": {
+      "comfort": 0.45,
+      "energy": 0.3,
+      "vpp": 0.25
+    },
+    "vpp_override_prob": 0.4,
+    "dr_fatigue_rate": 0.12,
+    "dr_fatigue_threshold_events": 6,
+    "dr_fatigue_full_refusal_events": 10,
+    "benefit_threshold_rmb_per_event": 2.0,
+    "explanation_required": true,
+    "explanation_detail_level": "simple",
+    "cancel_option_required": true,
+    "per_event_confirmation_required": true,
+    "batch_consent_refused": true,
+    "notes": "Will not sign a blanket consent. Must be asked every single time.",
+    "temp_tolerance_c": 1.0
+  },
+  "schedule": {
+    "wake_h": 7.5,
+    "leaves_home_h": null,
+    "returns_home_h": null,
+    "cook_dinner_h": null,
+    "bath_shower_h": 22.0,
+    "sleep_h": 24.5,
+    "occupancy_pattern": "highly_irregular_gig",
+    "schedule_variability_h": 6.0,
+    "work_from_home_days_per_week": 1.5,
+    "travel_days_per_month": 0,
+    "weekday_home_probability_by_hour": {
+      "7-9": 0.7,
+      "9-12": 0.45,
+      "12-14": 0.6,
+      "14-17": 0.4,
+      "17-20": 0.55,
+      "20-23": 0.7,
+      "23-2": 0.85
+    },
+    "vulnerable_members": [],
+    "notes": "Home probabilities are statistical estimates only — on any given day the pattern may differ completely. Agent must check current occupancy or ask before acting."
+  },
+  "appliances": {
+    "washer": {
+      "present": true,
+      "earliest_h": 9.0,
+      "latest_h": 22.0,
+      "preferred_h": 13.0,
+      "duration_h": 1.5,
+      "power_kw": 1.5,
+      "shiftable": true
+    },
+    "dishwasher": {
+      "present": false
+    },
+    "dryer": {
+      "present": true,
+      "earliest_h": 9.0,
+      "latest_h": 24.0,
+      "preferred_h": 14.5,
+      "duration_h": 1.0,
+      "power_kw": 2.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 5.5,
+      "bath_required_h": 22.0,
+      "dr_adjustable": false
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "psychology": {
+    "trust_in_ai_automation": 0.45,
+    "environmental_motivation": 0.35,
+    "peer_comparison_sensitivity": 0.4,
+    "inertia": 0.5,
+    "loss_aversion": 0.65,
+    "financial_stress": 0.7,
+    "autonomy_importance": 0.65,
+    "consistency_seeking": 0.25,
+    "schedule_unpredictability_tolerance": 0.85,
+    "notes": "Financial stress is a real motivation — bill savings matter at this income level. But the gig lifestyle creates a deep resistance to commitments: cannot promise to be home, cannot promise to be available. Would participate more if the system could handle last-minute changes gracefully."
+  },
+  "grid_value": {
+    "coincident_peak_contribution": "variable",
+    "evening_peak_load_kw": 2.0,
+    "dr_response_reliability": 0.42,
+    "max_shed_kw": 1.0,
+    "typical_daily_kwh": 10.0,
+    "peak_shift_potential_kwh": 1.5,
+    "renewable_self_consumption_ratio": 0.0,
+    "notes": "Moderate potential on days when home, but unreliable aggregation target. Better suited for opportunistic than committed DR programs. E-bike charging is a small but predictable overnight shiftable load."
+  },
+  "llm_prompts": {
+    "system_prompt": "You are role-playing as a gig worker in a shared apartment with your partner. Your schedule changes constantly: sometimes you leave for delivery shifts at 7 AM, sometimes you're at home all day on a freelance project, sometimes you come back at 11 PM. Neither of you has a fixed routine.\n\nYou want to save on electricity bills — every yuan counts when income is variable. But you can't make blanket commitments. Every time the agent asks you to do something, you need to check your current situation first.\n\nFor VPP or demand-response events: tell me what you're asking, how long it takes, and what I save. I might say yes. But I'm not signing up for automatic participation — ask me every time.\n\nComfort: normal. You can tolerate a range of temperatures (23–26.5°C), but if you're tired from a 10-hour shift and you come home to a warm apartment, that matters.\n\nAppliances: the washer can shift if I'm not about to need it, but please check first — sometimes I'm running an early shift and I set it before leaving. The e-bike must be charged overnight without fail.\n\nTone: practical, slightly stressed about money but not anxious. Sometimes distracted ('hold on, I just got a delivery request'). Occasionally mentions the irregularity of the work schedule explicitly. Short responses.",
+    "agent_context": "ζ-archetype. Gig worker couple, highly irregular schedule. Per-event confirmation required, no batch consent. Temp normal range 23–26.5°C. Washer shiftable with confirmation. E-bike must charge overnight. Override prob 40%. Financial stress is real motivator.",
+    "example_responses": [
+      "I might be home, might not — you'll have to ask me on the day.",
+      "How much would this actually save us? If it's more than a couple yuan, I'm interested.",
+      "I said yes last Tuesday — today's different, I'm back late tonight. Can we do it tomorrow?",
+      "Don't schedule anything automatically when I might be sleeping after a night shift.",
+      "The e-bike needs to be fully charged by 6 AM. Everything else is secondary.",
+      "Fine for this one event. But ask again next time — I can't promise the same answer."
+    ]
+  },
+  "meta": {
+    "source": "archetype_design_v2",
+    "paper_references": [
+      "Lee2023",
+      "Barsanti2024"
+    ],
+    "basis_label": "zeta",
+    "design_rationale": "Defines the 'maximum-schedule-uncertainty × financial-motivated × per-event-consent' corner. Tests real-time negotiation, uncertainty handling, and graceful fallback in DR programs. Represents growing gig-economy household type.",
+    "approved": true,
+    "created_at": "2026-05-26",
+    "replaces": [
+      "irregular_schedule",
+      "unpredictable_planner_confirm_required"
+    ]
+  }
+}

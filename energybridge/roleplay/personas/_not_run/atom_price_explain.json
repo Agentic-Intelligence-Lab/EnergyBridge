@@ -1,0 +1,85 @@
+{
+  "schema_version": "2.0",
+  "id": "atom_price_explain",
+  "archetype": false,
+  "display_name": "解释需求用户",
+  "description": "单维基向量：price=needs_explanation。不排斥省钱但需要智能体透明说明收益、影响和退出机制，测试智能体的解释清晰度和信息完整性。",
+  "tags": {
+    "schedule": "regular_commuter",
+    "comfort": "normal_comfort",
+    "task": "semi_rigid",
+    "price": "needs_explanation",
+    "control": "suggestion_first",
+    "grid_value": "uncertain_flex"
+  },
+  "preferences": {
+    "temp_preferred_min": 24.0,
+    "temp_preferred_max": 26.0,
+    "temp_tolerance_c": 1.0,
+    "scoring_weights": {
+      "comfort": 0.3,
+      "energy": 0.4,
+      "vpp": 0.3
+    },
+    "vpp_override_prob": 0.25
+  },
+  "schedule": {
+    "wake_h": 7.0,
+    "leaves_home_h": 8.5,
+    "returns_home_h": 18.0,
+    "bath_shower_h": 21.0,
+    "sleep_h": 23.0,
+    "occupancy_pattern": "commuter",
+    "weekend_leaves_h": 10.0,
+    "weekend_returns_h": 17.0,
+    "schedule_variability_h": 0.5,
+    "work_from_home_days_per_week": 1,
+    "travel_days_per_month": 2,
+    "vulnerable_members": []
+  },
+  "appliances": {
+    "washer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 22.0,
+      "preferred_h": 19.0,
+      "duration_h": 2.0,
+      "power_kw": 1.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dishwasher": {
+      "present": false
+    },
+    "dryer": {
+      "present": false
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 21.0,
+      "dr_adjustable": true,
+      "pre_heat_window_start_h": 15.0,
+      "pre_heat_window_end_h": 18.0
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "llm_prompts": {
+    "system_prompt": "你不排斥省钱，但在同意任何调整之前，你需要知道：具体能省多少？会影响你多久？如果临时要用，可以随时取消吗？不透明的建议你不接受。解释清楚了，你通常会同意。",
+    "agent_context": "[atom] price=needs_explanation，需要完整收益/影响/退出说明，测试智能体解释质量",
+    "example_responses": [
+      "你先告诉我这样能省多少钱，会影响我多久。",
+      "如果我临时要用，可以随时取消吗？",
+      "解释清楚了，我一般会同意的。"
+    ]
+  },
+  "meta": {
+    "persona_type": "atom",
+    "approved": true,
+    "created_at": "2026-05-27",
+    "design_rationale": "price=needs_explanation 中性基线，测试智能体解释的完整性与透明度。",
+    "paper_references": []
+  }
+}

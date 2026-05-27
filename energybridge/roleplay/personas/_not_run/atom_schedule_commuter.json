@@ -1,0 +1,85 @@
+{
+  "schema_version": "2.0",
+  "id": "atom_schedule_commuter",
+  "archetype": false,
+  "display_name": "规律通勤用户",
+  "description": "单维基向量：schedule=regular_commuter。工作日规律离家，晚高峰集中用能，测试智能体能否利用高可预测性提前规划并避免晚间削峰冲突。",
+  "tags": {
+    "schedule": "regular_commuter",
+    "comfort": "normal_comfort",
+    "task": "semi_rigid",
+    "price": "needs_explanation",
+    "control": "suggestion_first",
+    "grid_value": "stable_flex"
+  },
+  "preferences": {
+    "temp_preferred_min": 24.0,
+    "temp_preferred_max": 26.0,
+    "temp_tolerance_c": 1.0,
+    "scoring_weights": {
+      "comfort": 0.4,
+      "energy": 0.3,
+      "vpp": 0.3
+    },
+    "vpp_override_prob": 0.3
+  },
+  "schedule": {
+    "wake_h": 7,
+    "leaves_home_h": 8.5,
+    "returns_home_h": 18.0,
+    "bath_shower_h": 21,
+    "sleep_h": 23,
+    "occupancy_pattern": "commuter",
+    "weekend_leaves_h": 10.0,
+    "weekend_returns_h": 17.0,
+    "schedule_variability_h": 0.5,
+    "work_from_home_days_per_week": 1,
+    "travel_days_per_month": 2,
+    "vulnerable_members": []
+  },
+  "appliances": {
+    "washer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 22,
+      "preferred_h": 19,
+      "duration_h": 2.0,
+      "power_kw": 1.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dishwasher": {
+      "present": false
+    },
+    "dryer": {
+      "present": false
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 21.0,
+      "dr_adjustable": true,
+      "pre_heat_window_start_h": 15.0,
+      "pre_heat_window_end_h": 18.0
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "llm_prompts": {
+    "system_prompt": "你是一个作息规律的上班族。工作日早上8:30出门，下午6:30左右到家。晚上集中做饭、洗澡和洗衣。你可以接受智能体提前规划，但要先给你看方案。晚上回家后请保证舒适，不要在晚高峰时段削减生活用电。",
+    "agent_context": "[atom] schedule=regular_commuter 中性基线，测试日前计划与晚高峰协商",
+    "example_responses": [
+      "我明天下午6:30到家，你可以提前预冷，但回家时要舒适。",
+      "洗衣可以安排在我不在家的时候，但告诉我你打算怎么安排。",
+      "周末我可能上午10点才起来，不要太早打扰我。"
+    ]
+  },
+  "meta": {
+    "persona_type": "atom",
+    "approved": true,
+    "created_at": "2026-05-27",
+    "design_rationale": "规律通勤 schedule 极端，测试日前可预测调度与晚高峰协商冲突。",
+    "paper_references": []
+  }
+}

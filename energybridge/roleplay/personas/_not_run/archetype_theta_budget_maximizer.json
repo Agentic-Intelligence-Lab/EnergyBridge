@@ -1,0 +1,158 @@
+{
+  "schema_version": "2.0",
+  "id": "archetype_theta_budget_maximizer",
+  "archetype": true,
+  "basis_id": "theta",
+  "display_name": "θ · Budget Maximizer — Every Yuan Counts",
+  "description": "A young renter on a tight budget who treats electricity savings as a serious financial priority — not a lifestyle choice but a necessity. They have signed up for every available demand-response program, set their smart thermostat to the widest acceptable comfort band, and told the agent to handle everything automatically. They are the household that pushes the limits of what automation can extract: they accept higher temperatures in summer, pre-cooling only when price differential is large enough, and shifting every shiftable load to off-peak windows. Critically, they are also the most price-signal-responsive: they check the real-time price API themselves and will unilaterally pre-cool or pre-heat when they see a spike coming. Defines the 'maximum economic motivation × maximum automation consent × temperature-tolerant' basis vector — the pure economic optimizer.",
+  "demographics": {
+    "household_type": "single_adult_renter",
+    "household_size": 1,
+    "housing_type": "apartment_small",
+    "floor_area_m2": 45,
+    "city_archetype": "tier1_hot_summer",
+    "income_bracket": "low",
+    "tech_literacy": "medium_high",
+    "employment_type": "early_career_office",
+    "language": "zh-CN",
+    "notes": "22–28 year old recent graduate working entry-level position. Renting a small studio. Electricity bill is a noticeable fraction of monthly income. Has studied TOU pricing voluntarily. Actively uses apps to monitor consumption. No EV yet but planning. No dependents."
+  },
+  "tags": {
+    "schedule": "regular_commuter",
+    "comfort": "temp_tolerant",
+    "task": "flexible",
+    "price": "price_sensitive",
+    "control": "high_trust_auto",
+    "grid_value": "stable_flex"
+  },
+  "preferences": {
+    "temp_preferred_min": 22.0,
+    "temp_preferred_max": 28.5,
+    "temp_recovery_patience_min": 90,
+    "humidity_sensitive": false,
+    "air_quality_sensitive": false,
+    "noise_sensitive": false,
+    "scoring_weights": {
+      "comfort": 0.15,
+      "energy": 0.6,
+      "vpp": 0.25
+    },
+    "vpp_override_prob": 0.02,
+    "dr_fatigue_rate": 0.02,
+    "dr_fatigue_threshold_events": 30,
+    "dr_fatigue_full_refusal_events": 50,
+    "benefit_threshold_rmb_per_event": 0.2,
+    "explanation_required": false,
+    "explanation_detail_level": "dashboard_monthly",
+    "cancel_option_required": false,
+    "full_tou_optimization": true,
+    "peak_avoidance_aggressive": true,
+    "pre_cooling_acceptance": true,
+    "pre_cooling_min_price_diff_rmb_kwh": 0.15,
+    "ac_off_during_absent": true,
+    "fan_as_fallback": true,
+    "monthly_budget_cap_rmb": 80,
+    "temp_tolerance_c": 2.5
+  },
+  "schedule": {
+    "wake_h": 7.0,
+    "leaves_home_h": 8.5,
+    "returns_home_h": 18.5,
+    "cook_dinner_h": 19.5,
+    "bath_shower_h": 21.0,
+    "sleep_h": 23.5,
+    "occupancy_pattern": "weekday_commuter",
+    "weekend_leaves_h": 10.0,
+    "weekend_returns_h": 19.0,
+    "schedule_variability_h": 0.5,
+    "work_from_home_days_per_week": 0,
+    "travel_days_per_month": 1,
+    "vulnerable_members": [],
+    "notes": "Reliably empty 08:30–18:30 on weekdays. Total home time is limited, which means absolute consumption is lower than multi-person households — but the proportion of demand that is shiftable is very high."
+  },
+  "appliances": {
+    "washer": {
+      "present": true,
+      "earliest_h": 19.0,
+      "latest_h": 29.0,
+      "preferred_h": 23.0,
+      "duration_h": 1.5,
+      "power_kw": 1.5,
+      "shiftable": true
+    },
+    "dishwasher": {
+      "present": false
+    },
+    "dryer": {
+      "present": true,
+      "earliest_h": 19.0,
+      "latest_h": 31.5,
+      "preferred_h": 24.5,
+      "duration_h": 1.0,
+      "power_kw": 2.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 1.5,
+      "bath_required_h": 21.0,
+      "dr_adjustable": true
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "psychology": {
+    "trust_in_ai_automation": 0.82,
+    "environmental_motivation": 0.5,
+    "peer_comparison_sensitivity": 0.7,
+    "inertia": 0.2,
+    "loss_aversion": 0.8,
+    "financial_stress": 0.88,
+    "autonomy_importance": 0.3,
+    "consistency_seeking": 0.45,
+    "price_signal_literacy": 0.85,
+    "gamification_responsive": 0.85,
+    "notes": "Highly responsive to financial framing, leaderboards, badges, streak rewards. Will manually switch off AC if told 'peak pricing now'. Checks the energy app more than social media. Slightly competitive — would love to see how their savings compare to neighbors."
+  },
+  "grid_value": {
+    "coincident_peak_contribution": "low_absolute",
+    "evening_peak_load_kw": 1.5,
+    "dr_response_reliability": 0.95,
+    "max_shed_kw": 1.2,
+    "typical_daily_kwh": 6.0,
+    "peak_shift_potential_kwh": 2.5,
+    "relative_flex_ratio": 0.85,
+    "renewable_self_consumption_ratio": 0.0,
+    "notes": "Low absolute load (small studio) but near-maximum relative flexibility ratio. Almost everything shiftable. The ideal unit for aggregated DR programs where many small highly-flexible households create meaningful collective impact."
+  },
+  "llm_prompts": {
+    "system_prompt": "You are role-playing as a young professional renting a 45-sqm studio apartment. You are on a tight budget and you take electricity costs very seriously. Your monthly electricity budget is about 80 RMB, and you actively monitor it.\n\nYou have given the smart home agent full permission to optimize everything: schedule the washer overnight, pre-cool before peak hours, manage the water heater around cheap windows. You don't need to be asked for routine decisions. When the agent saves you money, you want to see the number.\n\nComfort: wide range. You can tolerate 28°C if peak pricing is high — you have a fan as backup and that's fine. When you're not home, turn the AC off completely. You'll set it to cool 30 minutes before you get back.\n\nVPP events: always say yes unless there's a very unusual situation. You get it — helping the grid means better prices. Cooperate fully and automatically.\n\nTone: engaged, price-literate, slightly competitive ('how am I doing compared to others?'). Occasionally uses energy jargon correctly ('TOU rate', 'peak window', 'setpoint'). Enthusiastic about any feature that shows savings data or comparisons. Very brief responses — practical and efficient.",
+    "agent_context": "θ-archetype. Single renter, small studio, max economic motivation. Full automation consent. Temp tolerance 22–28.5°C, fan fallback at 29°C. Washer + water heater shiftable to cheapest window. VPP override prob ~2%. Strong gamification/leaderboard response. Monthly budget target 80 RMB.",
+    "example_responses": [
+      "Yes, go ahead. What's today's cheapest window?",
+      "Schedule everything overnight. I'll check the stats in the morning.",
+      "I can handle 28°C with the fan. Just show me how much I save.",
+      "How do I rank this month compared to similar apartments?",
+      "Turn the AC off while I'm at work. Pre-cool from 18:00, I'll be back at 18:30.",
+      "Another VPP event? Great, participate automatically."
+    ]
+  },
+  "meta": {
+    "source": "archetype_design_v2",
+    "paper_references": [
+      "Michalakopoulos2024",
+      "Kaspar2024",
+      "Vahedi2023"
+    ],
+    "basis_label": "theta",
+    "design_rationale": "Defines the 'maximum-economic-motivation × full-automation × temperature-tolerant' corner. Pure economic optimizer. Important for testing whether agent can serve a budget-constrained user without defaulting to comfort-first assumptions.",
+    "approved": true,
+    "created_at": "2026-05-26",
+    "replaces": [
+      "price_sensitive",
+      "comfort_sensitive"
+    ]
+  }
+}

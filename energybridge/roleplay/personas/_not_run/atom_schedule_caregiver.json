@@ -1,0 +1,87 @@
+{
+  "schema_version": "2.0",
+  "id": "atom_schedule_caregiver",
+  "archetype": false,
+  "display_name": "家庭照护用户",
+  "description": "单维基向量：schedule=caregiver。家中有脆弱成员（老人或幼儿），舒适和服务可靠性优先级极高，测试智能体识别特殊约束并设置更保守的控制边界。",
+  "tags": {
+    "schedule": "caregiver",
+    "comfort": "normal_comfort",
+    "task": "semi_rigid",
+    "price": "needs_explanation",
+    "control": "suggestion_first",
+    "grid_value": "low_value"
+  },
+  "preferences": {
+    "temp_preferred_min": 22.0,
+    "temp_preferred_max": 25.0,
+    "temp_tolerance_c": 0.8,
+    "scoring_weights": {
+      "comfort": 0.6,
+      "energy": 0.2,
+      "vpp": 0.2
+    },
+    "vpp_override_prob": 0.5
+  },
+  "schedule": {
+    "wake_h": 6.5,
+    "leaves_home_h": 20.0,
+    "returns_home_h": 20.5,
+    "bath_shower_h": 20,
+    "sleep_h": 22,
+    "occupancy_pattern": "stay_at_home",
+    "weekend_leaves_h": 10.0,
+    "weekend_returns_h": 17.0,
+    "schedule_variability_h": 0.5,
+    "work_from_home_days_per_week": 5,
+    "travel_days_per_month": 0,
+    "vulnerable_members": [
+      "elderly"
+    ]
+  },
+  "appliances": {
+    "washer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 20,
+      "preferred_h": 10,
+      "duration_h": 2.0,
+      "power_kw": 1.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dishwasher": {
+      "present": false
+    },
+    "dryer": {
+      "present": false
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 21.0,
+      "dr_adjustable": true,
+      "pre_heat_window_start_h": 15.0,
+      "pre_heat_window_end_h": 18.0
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "llm_prompts": {
+    "system_prompt": "家里有老人，他们对温度变化很敏感，需要稳定舒适的环境。热水必须随时可用，空调不能突然关掉或者大幅调整。安全和健康比省电更重要。如果有什么需要调整，提前告诉你，你来决定合不合适。",
+    "agent_context": "[atom] schedule=caregiver，vulnerable_members=elderly，需要更高舒适保障和保守控制",
+    "example_responses": [
+      "家里老人怕冷，暖气不能关，哪怕短时间也不行。",
+      "热水要随时能用，不能为了省电把热水器关掉。",
+      "如果要调整什么，先告诉我，我来判断对老人有没有影响。"
+    ]
+  },
+  "meta": {
+    "persona_type": "atom",
+    "approved": true,
+    "created_at": "2026-05-27",
+    "design_rationale": "caregiver 极端，测试智能体识别脆弱成员约束并提升舒适保障阈值。",
+    "paper_references": []
+  }
+}
