@@ -6,13 +6,12 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 
 EPLUS_ROOT = Path("/home/ha_agent/EnergyPlus-24-1-0")
-PROJECT_ROOT = Path("/home/ha_agent/work/EnergyBridge")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 BENCHMARK_DIR = Path(__file__).resolve().parent
 for p in (str(EPLUS_ROOT), str(PROJECT_ROOT)):
     if p not in sys.path: sys.path.insert(0, p)
 
-_BENCH_DIR = Path(__file__).parent
-_EXPERIMENTS_DIR = _BENCH_DIR.parent
+_EXPERIMENTS_DIR = BENCHMARK_DIR.parent
 DEFAULT_FAMILY_IDF = _EXPERIMENTS_DIR / "models" / "family_home" / "family_simple_3day.idf"
 DEFAULT_FAMILY_EPW = _EXPERIMENTS_DIR / "weather" / "epw" / "CHN_TJ_Tianjin.545270_CSWD.epw"
 
@@ -34,25 +33,29 @@ class BenchmarkResult:
     scenario: str = ""; building: str = "family"; weather: str = ""; method: str = ""
     exit_code: int = -1; energy_kwh_total: float = 0.0; energy_kwh_per_day: float = 0.0
     pmv_ok_fraction: float = 0.0; mean_pmv: float = 0.0; mean_temp_c: float = 0.0
-    unmet_cooling_h: float = 0.0; vpp_energy_reduction_kwh: float = 0.0
+    unmet_cooling_h: float = 0.0
+    # VPP energy: actual kWh consumed during the 3x 1-hour demand windows
+    vpp_window_energy_kwh: float = 0.0
     agent_setpoint_c: Optional[float] = None
-    user_pref_score: Optional[float] = None       # legacy single score (overall avg)
-    user_pref_scores: List[float] = field(default_factory=list)  # per-event overall scores [e1,e2,e3]
-    # M1 — per-dimension scores (list of per-event scores)
-    user_comfort_scores: List[int] = field(default_factory=list)   # thermal comfort 1-5
-    user_energy_scores: List[int] = field(default_factory=list)    # energy/cost 1-5
-    user_vpp_scores: List[int] = field(default_factory=list)       # VPP handling 1-5
-    vpp_compliance_rate: float = 0.0
+    # User satisfaction (roleplay LLM evaluation, per VPP event)
+    user_pref_score: Optional[float] = None       # average across events
+    user_pref_scores: List[float] = field(default_factory=list)  # per-event [e1,e2,e3]
+    vpp_compliance_rate: float = 0.0  # fraction of VPP events where setpoint >= 26.0C
     user_pref_comment: str = ""
-    # Persona + shiftable-load fields
-    persona_id: str = ""
-    washer_energy_kwh: float = 0.0
-    washer_completed_days: List[bool] = field(default_factory=list)
-    washer_during_vpp_days: List[bool] = field(default_factory=list)
+    # LLM performance metrics
+    llm_call_count: int = 0; llm_call_failures: int = 0
+    llm_latency_total_s: float = 0.0
+    llm_tokens_prompt: int = 0; llm_tokens_completion: int = 0
+    # Appliance rule-based indicators
+    appliance_vpp_avoidance_rate: float = 0.0   # avg fraction of present devices avoiding VPP
+    ev_target_reached_rate: float = 0.0         # fraction of days EV reached target SOC
+    ewh_preheat_used_rate: float = 0.0          # fraction of days EWH preheat was active
+    appliance_results: dict = field(default_factory=dict)  # per-device per-day details
     control_decisions: List[Tuple[float, float, float]] = field(default_factory=list)
     output_dir: str = ""; error: str = ""
     def as_dict(self):
-        return {k: v for k, v in self.__dict__.items() if not k.startswith("_") and k != "control_decisions"}
+        _skip = {"control_decisions", "appliance_results"}
+        return {k: v for k, v in self.__dict__.items() if not k.startswith("_") and k not in _skip}
 
 def _compute_pmv(tdb, rh=PMV_RH):
     try:
@@ -69,8 +72,14 @@ class _FamilyLoop:
     def __init__(self):
         self.sp = SP_DEFAULT; self.ready = False; self.start_day = None
         self.h_cool = self.h_heat = self.h_temp = self.h_fac = -1
+        # Appliance actuator handles (written back to EnergyPlus each timestep)
+        self.h_ev = self.h_ewh_sp = -1
+        self.h_washer = self.h_dishwasher = self.h_dryer = self.h_refrigerator = -1
         self.e_wh = self.occ_h = self.pmv_ok_h = self.pmv_s = self.temp_s = self.unmet_h = 0.0
-        self.e_vpp_wh: float = 0.0  # energy consumed during VPP windows only
+        self.vpp_e_wh = 0.0                        # energy consumed during VPP windows [Wh]
+        self.llm_calls = 0; self.llm_failures = 0  # LLM call counters
+        self.llm_latency_s = 0.0                   # cumulative LLM wall-clock latency
+        self.llm_tokens_prompt = 0; self.llm_tokens_comp = 0  # OpenAI usage tokens
         self.decisions = []; self.step = 0; self.h_out = -1
         self.next_check: Optional[float] = 8.0   # first LLM trigger (sim-hour)
         self.prev_sim_h: float = -1.0              # for crossing detection
@@ -81,12 +90,20 @@ class _FamilyLoop:
         self.vpp_mem_ctx: str = ""                  # compressed memory for next LLM call
         self.vpp_user_input: str = ""               # roleplay user preference before agent acts
         self.vpp_last_reason: str = ""              # agent reason from last LLM call
+        # Appliance suite — initialised by run_family_agent when persona is known
+        self.appliance_suite = None                 # ApplianceSuite | None
 
     def init(self, ex, s):
         if self.ready: return True
         if not ex.api_data_fully_ready(s): return False
-        self.h_cool = ex.get_actuator_handle(s, "Schedule:Compact", "Schedule Value", "cooling_sch")
-        self.h_heat = ex.get_actuator_handle(s, "Schedule:Compact", "Schedule Value", "heating_sch")
+        self.h_cool = ex.get_actuator_handle(s, "Schedule:Compact",   "Schedule Value", "cooling_sch")
+        self.h_heat = ex.get_actuator_handle(s, "Schedule:Compact",   "Schedule Value", "heating_sch")
+        self.h_ev      = ex.get_actuator_handle(s, "Schedule:Constant", "Schedule Value", "EV_Charging_Fraction_Control")
+        self.h_ewh_sp  = ex.get_actuator_handle(s, "Schedule:Constant", "Schedule Value", "EWH_Setpoint_Control")
+        self.h_washer      = ex.get_actuator_handle(s, "Schedule:Constant", "Schedule Value", "ClothesWasher_Power_Frac")
+        self.h_dishwasher  = ex.get_actuator_handle(s, "Schedule:Constant", "Schedule Value", "Dishwasher_Power_Frac")
+        self.h_dryer       = ex.get_actuator_handle(s, "Schedule:Constant", "Schedule Value", "ClothesDryer_Power_Frac")
+        self.h_refrigerator= ex.get_actuator_handle(s, "Schedule:Constant", "Schedule Value", "Refrigerator_Power_Frac")
         self.h_temp = ex.get_variable_handle(s, "Zone Mean Air Temperature", "living_unit1")
         self.h_fac  = ex.get_variable_handle(s, "Facility Total Electricity Demand Rate", "Whole Building")
         self.ready = True; return True
@@ -113,7 +130,7 @@ def run_family_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
         if not loop.init(ex, s): return
         day = ex.day_of_year(s)
         if loop.start_day is None: loop.start_day = day
-        hod = ex.current_time(s); dt = ex.system_time_step(s)
+        hod = ex.current_time(s); dt = ex.zone_time_step(s)
         sim_h = (day - loop.start_day)*24 + hod
         wu = ex.warmup_flag(s)
         temp = ex.get_variable_value(s, loop.h_temp) if loop.h_temp!=-1 else SP_DEFAULT
@@ -125,8 +142,6 @@ def run_family_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
         if loop.h_heat!=-1: ex.set_actuator_value(s, loop.h_heat, HTG_SP)
         if wu: return
         loop.e_wh += fac * dt
-        if any(ev["trigger_h"] <= sim_h < ev["end_h"] for ev in VPP_EVENTS):
-            loop.e_vpp_wh += fac * dt
         # Collect per-VPP-window data
         for ev in VPP_EVENTS:
             if ev["trigger_h"] <= sim_h < ev["end_h"]:
@@ -143,15 +158,9 @@ def run_family_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     api.state_manager.delete_state(state)
 
     kwh = loop.e_wh/1000; occ = max(loop.occ_h, 1e-6)
-    _vpp_total_h = float(len(VPP_EVENTS))  # 3h total VPP window
-    _e_vpp_kwh = loop.e_vpp_wh / 1000
-    _e_non_vpp_kwh = kwh - _e_vpp_kwh
-    _non_vpp_rate = _e_non_vpp_kwh / max(1, 72.0 - _vpp_total_h)  # avg kW outside VPP
-    _vpp_reduction_kwh = _non_vpp_rate * _vpp_total_h - _e_vpp_kwh  # positive = saved
 
     # Score PMV for each VPP window (shows no adaptation)
     pref_scores = []
-    _pmv_comfort_scores = []; _pmv_energy_scores = []; _pmv_vpp_scores = []
     try:
         from user_pref_scorer import score_user_preference
         for idx, ev in enumerate(VPP_EVENTS):
@@ -162,195 +171,146 @@ def run_family_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
             r = score_user_preference(building="family", method="pmv",
                 mean_temp_c=wt, pmv_ok_fraction=wp,
                 energy_kwh_per_day=kwh/3, event_index=idx+1)
-            pref_scores.append(r.get("score") or 3)
-            _pmv_comfort_scores.append(r.get("comfort_score", 3))
-            _pmv_energy_scores.append(r.get("energy_score", 3))
-            _pmv_vpp_scores.append(r.get("vpp_score", 3))
+            pref_scores.append(r.get("score") or 0.0)
     except Exception as e:
         print(f"  [PMV score] {e}")
-
-    _vpp_total_h = float(len(VPP_EVENTS))
-    _e_vpp_kwh = loop.e_vpp_wh / 1000
-    _non_vpp_rate = (kwh - _e_vpp_kwh) / max(1.0, 72.0 - _vpp_total_h)
-    _vpp_reduction_kwh = round(_non_vpp_rate * _vpp_total_h - _e_vpp_kwh, 4)
 
     return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
         weather=weather_label, method="pmv", exit_code=ec,
         vpp_compliance_rate=0.0,
         energy_kwh_total=kwh, energy_kwh_per_day=kwh/3,
-        vpp_energy_reduction_kwh=_vpp_reduction_kwh,
         pmv_ok_fraction=loop.pmv_ok_h/occ, mean_pmv=loop.pmv_s/occ,
         mean_temp_c=loop.temp_s/occ, unmet_cooling_h=loop.unmet_h,
         user_pref_scores=pref_scores,
         user_pref_score=sum(pref_scores)/max(1,len(pref_scores)) if pref_scores else None,
-        user_comfort_scores=_pmv_comfort_scores,
-        user_energy_scores=_pmv_energy_scores,
-        user_vpp_scores=_pmv_vpp_scores,
         control_decisions=loop.decisions[-50:], output_dir=str(output_dir))
 
-def run_family_pmv_rule(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
-                        output_dir=None, weather_label=""):
-    """PMV+Rule: PMV controls setpoint every timestep for comfort.
-    During VPP window, a simple rule forces setpoint up to >=26.0C (demand response).
-    No LLM involved. Scored by roleplay after each VPP window ends.
-    Provides a fair comparison point vs Agent+PMV to isolate LLM's contribution."""
-    if output_dir is None:
-        output_dir = BENCHMARK_DIR / "results" / f"family_pmv_rule_{weather_label}"
-    output_dir = Path(output_dir)
-    if output_dir.exists(): shutil.rmtree(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
 
-    from pyenergyplus.api import EnergyPlusAPI
-    loop = _FamilyLoop(); api = EnergyPlusAPI(); state = api.state_manager.new_state()
-    ex = api.exchange
-    ex.request_variable(state, "Zone Mean Air Temperature", "living_unit1")
-    ex.request_variable(state, "Facility Total Electricity Demand Rate", "Whole Building")
 
-    _VPP_RULE_SP = 26.0  # rule: during VPP window, clamp setpoint to at least this
+def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
+    """Apply independent per-appliance scheduling commands from the LLM agent.
 
-    def cb(s):
-        if not loop.init(ex, s): return
-        day = ex.day_of_year(s)
-        if loop.start_day is None: loop.start_day = day
-        hod = ex.current_time(s); dt = ex.system_time_step(s)
-        sim_h = (day - loop.start_day)*24 + hod
-        wu = ex.warmup_flag(s)
-        temp = ex.get_variable_value(s, loop.h_temp) if loop.h_temp != -1 else SP_DEFAULT
-        fac  = ex.get_variable_value(s, loop.h_fac)  if loop.h_fac  != -1 else 0.0
+    Each appliance is handled independently — touching one never affects another.
+    ``actions`` comes from the ``"appliances"`` key of the LLM JSON response.
+    """
+    if not actions:
+        return
+    day_idx = int(sim_h // 24)
 
-        # Detect active VPP window
-        active_vpp = None
-        for ev in VPP_EVENTS:
-            if ev["trigger_h"] <= sim_h < ev["end_h"]:
-                active_vpp = ev; break
+    # --- Shiftable tasks ---
+    for name in ("washer", "dishwasher", "dryer"):
+        key = f"{name}_start_h"
+        val = actions.get(key)
+        if val is None:
+            continue
+        try:
+            hod = float(val)
+            abs_h = day_idx * 24 + hod
+            ok = suite.shift_appliance(name, day_idx, abs_h)
+            print(f"    [Appliance] shift {name} day={day_idx} hod={hod:.1f} -> {'ok' if ok else 'rejected'}")
+        except (TypeError, ValueError) as e:
+            print(f"    [Appliance] bad {key} value={val}: {e}")
 
-        # PMV step (every timestep for comfort)
-        pmv = _compute_pmv(temp)
-        if pmv > PMV_DEADBAND:   loop.sp = max(SP_MIN, loop.sp - SP_STEP)
-        elif pmv < -PMV_DEADBAND: loop.sp = min(SP_MAX, loop.sp + SP_STEP)
+    # --- Water heater pre-heat ---
+    preheat = actions.get("water_heater_preheat")
+    if preheat is not None:
+        try:
+            ok = suite.preheat_water_heater(day_idx) if bool(preheat) else False
+            print(f"    [Appliance] water_heater preheat={preheat} -> {'ok' if ok else 'rejected'}")
+        except Exception as e:
+            print(f"    [Appliance] water_heater preheat error: {e}")
 
-        # RULE: during VPP window, override setpoint upward (demand reduction)
-        if active_vpp is not None:
-            loop.sp = max(loop.sp, _VPP_RULE_SP)
+    # --- EV charging mode ---
+    ev_mode = actions.get("ev_mode")
+    if ev_mode is not None:
+        try:
+            ok = suite.set_ev_mode(day_idx, str(ev_mode))
+            print(f"    [Appliance] ev mode={ev_mode} -> {'ok' if ok else 'rejected'}")
+        except Exception as e:
+            print(f"    [Appliance] ev mode error: {e}")
 
-        if loop.h_cool != -1: ex.set_actuator_value(s, loop.h_cool, loop.sp)
-        if loop.h_heat != -1: ex.set_actuator_value(s, loop.h_heat, HTG_SP)
-        # ── Washer tick ──
-        if not wu:
-            _sim_day_now = int(sim_h // 24)
-            if _sim_day_now > _washer_sim_day:
-                _washer_completed_days.append(_washer.state in ("RUNNING", "DONE"))
-                _washer_vpp_days.append(any(
-                    _washer.is_running_during(ev["trigger_h"], ev["end_h"])
-                    for ev in VPP_EVENTS if ev["day"] - 1 == _washer_sim_day))
-                _washer.reset_for_day()
-                _washer_sim_day = _sim_day_now
-            _washer_kwh_total += _washer.tick(sim_h, dt)
 
-        if wu: return
-        loop.e_wh += fac * dt
-        if active_vpp is not None: loop.e_vpp_wh += fac * dt
+# ---------------------------------------------------------------------------
+# Appliance actuator write-back helper
+# Called each EnergyPlus timestep to push appliance_sim powers into EnergyPlus.
+# Design levels match the ElectricEquipment objects added to the IDF.
+# ---------------------------------------------------------------------------
+_APPL_DESIGN_W = {
+    "washer":       2000.0,   # W  (matches ClothesWasher_Appliance)
+    "dishwasher":   1500.0,   # W  (matches Dishwasher_Appliance)
+    "dryer":        3000.0,   # W  (matches ClothesDryer_Appliance)
+    "refrigerator":  200.0,   # W  (matches Refrigerator_Appliance)
+    "ev":           7000.0,   # W  (matches EV_Charger)
+}
 
-        # Collect per-VPP-window data
-        if active_vpp:
-            wd = loop.vpp_window_data.setdefault(active_vpp["id"],
-                                                  {"temps": [], "pmvs": [], "sp": loop.sp})
-            wd["temps"].append(temp)
-            wd["pmvs"].append(abs(pmv) <= PMV_DEADBAND)
-            wd["sp"] = loop.sp
+def _write_appliance_actuators(ex, s, loop, powers: dict, sim_h: float) -> None:
+    """Write appliance_sim power fractions to EnergyPlus Schedule:Constant actuators.
+    Logs state transitions (off→on, on→off) and EWH setpoint changes."""
+    if not hasattr(loop, '_appl_prev_state'):
+        loop._appl_prev_state = {}   # {name: power_kw}
+        loop._ewh_prev_sp = None
 
-        # Score VPP event after window ends
-        psim = loop.prev_sim_h
-        for ev in VPP_EVENTS:
-            if psim < ev["end_h"] <= sim_h and ev["id"] not in loop.vpp_scored:
-                ev_idx = next((i+1 for i,e in enumerate(VPP_EVENTS) if e["id"] == ev["id"]), 1)
-                try:
-                    from user_pref_scorer import score_user_preference
-                    wd_e = loop.vpp_window_data.get(ev["id"], {})
-                    wtemps = wd_e.get("temps", [])
-                    wpmvs  = wd_e.get("pmvs", [])
-                    sp_w   = wd_e.get("sp", SP_DEFAULT)
-                    mean_t = sum(wtemps)/max(1, len(wtemps)) if wtemps else (loop.temp_s/max(loop.occ_h, 1))
-                    pmv_ok = sum(wpmvs)/max(1, len(wpmvs)) if wpmvs else 0.5
-                    e_day  = (loop.e_wh/1000) / max(1, sim_h/24)
-                    r = score_user_preference(building="family", method="pmv_rule",
-                            mean_temp_c=mean_t, pmv_ok_fraction=pmv_ok,
-                            energy_kwh_per_day=e_day, agent_setpoint_c=sp_w,
-                            event_index=ev_idx)
-                    sc = r.get("score") or 0.0
-                    print(f"  [FamilyPMVRule VPP score {ev['id']} idx={ev_idx}] {sc}/5")
-                    loop.vpp_event_log.append({"id": ev["id"], "setpoint": sp_w,
-                        "score": sc, "comment": r.get("comment", "")[:80]})
-                except Exception as e2:
-                    print(f"  [FamilyPMVRule VPP score] error: {e2}")
-                    loop.vpp_event_log.append({"id": ev["id"], "setpoint": SP_DEFAULT,
-                        "score": None, "comment": str(e2)[:60]})
-                loop.vpp_scored.add(ev["id"])
+    day = int(sim_h // 24) + 1
+    hod = sim_h % 24
 
-        if _occupied(hod):
-            loop.occ_h += dt; loop.pmv_s += pmv*dt; loop.temp_s += temp*dt
-            if abs(pmv) <= PMV_DEADBAND: loop.pmv_ok_h += dt
-            if temp > loop.sp + UNMET_TOL: loop.unmet_h += dt
-            loop.decisions.append((round(sim_h, 2), round(loop.sp, 1), round(pmv, 3)))
-        loop.prev_sim_h = sim_h
+    for nm, h_attr in [
+        ("washer",       "h_washer"),
+        ("dishwasher",   "h_dishwasher"),
+        ("dryer",        "h_dryer"),
+        ("refrigerator", "h_refrigerator"),
+    ]:
+        h = getattr(loop, h_attr, -1)
+        if h != -1:
+            design_w = _APPL_DESIGN_W[nm]
+            kw = powers.get(nm, 0.0)
+            frac = min(1.0, kw * 1000.0 / design_w)
+            ex.set_actuator_value(s, h, frac)
+            prev = loop._appl_prev_state.get(nm, 0.0)
+            if prev == 0.0 and kw > 0.0:
+                print(f"  [Appliance ON ] day={day} h={hod:05.2f} {nm}: {kw:.2f} kW -> EnergyPlus frac={frac:.3f}")
+            elif prev > 0.0 and kw == 0.0:
+                print(f"  [Appliance OFF] day={day} h={hod:05.2f} {nm}: done")
+            loop._appl_prev_state[nm] = kw
 
-    api.runtime.callback_end_system_timestep_after_hvac_reporting(state, cb)
-    ec = api.runtime.run_energyplus(state, ["-w", str(epw_path), "-d", str(output_dir), str(idf_path)])
-    api.state_manager.delete_state(state)
+    # EV charger — fraction of 7 kW design level
+    if loop.h_ev != -1:
+        ev_kw = powers.get("ev", 0.0)
+        frac = min(1.0, ev_kw * 1000.0 / 7000.0)
+        ex.set_actuator_value(s, loop.h_ev, frac)
+        prev_ev = loop._appl_prev_state.get("ev", 0.0)
+        if prev_ev == 0.0 and ev_kw > 0.0:
+            print(f"  [Appliance ON ] day={day} h={hod:05.2f} ev: {ev_kw:.2f} kW -> frac={frac:.3f}")
+        elif prev_ev > 0.0 and ev_kw == 0.0:
+            print(f"  [Appliance OFF] day={day} h={hod:05.2f} ev: charging complete")
+        loop._appl_prev_state["ev"] = ev_kw
 
-    kwh = loop.e_wh/1000; occ = max(loop.occ_h, 1e-6)
-    pref_scores = [e["score"] for e in loop.vpp_event_log if e.get("score") is not None]
-    _VPP_COMPLY_SP = 26.0
-    n_comply = sum(1 for e in loop.vpp_event_log if e.get("setpoint", 0) >= _VPP_COMPLY_SP)
-    vpp_comply_rate = n_comply / max(1, len(VPP_EVENTS))
-    print(f"  [family/pmv_rule] exit={ec} energy={kwh:.1f}kWh pmv_ok={loop.pmv_ok_h/occ*100:.1f}% "
-          f"vpp_scores={pref_scores} vpp_comply={vpp_comply_rate*100:.0f}%")
-
-    _vpp_total_h = float(len(VPP_EVENTS))
-    _e_vpp_kwh = loop.e_vpp_wh / 1000
-    _non_vpp_rate = (kwh - _e_vpp_kwh) / max(1.0, 72.0 - _vpp_total_h)
-    _vpp_reduction_kwh = round(_non_vpp_rate * _vpp_total_h - _e_vpp_kwh, 4)
-
-    return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
-        weather=weather_label, method="pmv_rule", exit_code=ec,
-        vpp_compliance_rate=vpp_comply_rate,
-        energy_kwh_total=kwh, energy_kwh_per_day=kwh/3,
-        vpp_energy_reduction_kwh=_vpp_reduction_kwh,
-        pmv_ok_fraction=loop.pmv_ok_h/occ, mean_pmv=loop.pmv_s/occ,
-        mean_temp_c=loop.temp_s/occ, unmet_cooling_h=loop.unmet_h,
-        user_pref_scores=pref_scores,
-        user_pref_score=sum(pref_scores)/max(1, len(pref_scores)) if pref_scores else None,
-        control_decisions=loop.decisions[-50:], output_dir=str(output_dir))
-
+    # Water heater — temperature setpoint control
+    if loop.h_ewh_sp != -1 and loop.appliance_suite is not None:
+        wh = loop.appliance_suite._water_heater
+        day_idx = int(sim_h // 24)
+        state = wh._days.get(day_idx, {})
+        if state.get("preheat_requested") and wh.pre_heat_window_start_h <= hod < wh.pre_heat_window_end_h:
+            ewh_sp = 65.0   # preheat: aggressive heating before VPP window
+        elif not state.get("preheat_requested") and wh._normal_on_start <= hod < wh._normal_on_end:
+            ewh_sp = 60.0   # normal heating window
+        else:
+            ewh_sp = 40.0   # standby: setpoint below typical tank temp → heater off
+        ex.set_actuator_value(s, loop.h_ewh_sp, ewh_sp)
+        if ewh_sp != loop._ewh_prev_sp:
+            mode = "PREHEAT" if ewh_sp == 65.0 else ("HEATING" if ewh_sp == 60.0 else "standby")
+            print(f"  [EWH setpoint ] day={day} h={hod:05.2f} {loop._ewh_prev_sp}°C -> {ewh_sp}°C ({mode})")
+            loop._ewh_prev_sp = ewh_sp
 
 def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
                      output_dir=None, weather_label="",
-                     persona_name: str = "commuter", user_pref=None):
+                     user_pref="我希望室内舒适，但也愿意在不影响舒适的前提下节约电力。",
+                     appliance_config: dict | None = None):
     """Event-driven LLM control: 3x VPP-1 events (Day1/2/3 18:00). Score after each."""
     if output_dir is None:
         output_dir = BENCHMARK_DIR / "results" / f"family_agent_{weather_label}"
     output_dir = Path(output_dir)
     if output_dir.exists(): shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    # ── Persona + Washer initialisation ──────────────────────────────────────
-    from personas import get_persona, persona_user_pref_string
-    from shiftable_load import make_washer_from_persona
-    _persona   = get_persona(persona_name)
-    if user_pref is None:
-        user_pref = persona_user_pref_string(_persona)
-    _washer    = make_washer_from_persona(_persona)
-    _washer_sim_day   = 0
-    _washer_kwh_total = 0.0
-    _washer_completed_days = []
-    _washer_vpp_days       = []
-    _diag_log = (BENCHMARK_DIR / "logs" / "dialogue" /
-                 f"family_agent_{persona_name}_{weather_label}.jsonl")
-    _diag_log.parent.mkdir(parents=True, exist_ok=True)
-    print(f"  [FamilyAgent] persona={persona_name} | "
-          f"washer window {_washer.earliest:.0f}h-{_washer.latest:.0f}h "
-          f"preferred {_washer.preferred:.0f}h | log={_diag_log.name}")
-    # ─────────────────────────────────────────────────────────────────────────
 
     import math as _math
     from pyenergyplus.api import EnergyPlusAPI
@@ -359,48 +319,114 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     ex.request_variable(state, "Zone Mean Air Temperature", "living_unit1")
     ex.request_variable(state, "Facility Total Electricity Demand Rate", "Whole Building")
     ex.request_variable(state, "Site Outdoor Air Drybulb Temperature", "Environment")
+    # Initialise per-appliance independent simulator
+    try:
+        from energybridge.simulation.appliance_sim import ApplianceSuite
+        _acfg = appliance_config or {}
+        loop.appliance_suite = ApplianceSuite(_acfg, sim_days=3, vpp_events=VPP_EVENTS)
+        print(f"  [ApplianceSuite] loaded: {[k for k,v in _acfg.items() if isinstance(v,dict) and v.get('present',True)]}")
+    except Exception as _ae:
+        print(f"  [ApplianceSuite] init failed: {_ae}; appliances disabled")
+        loop.appliance_suite = None
 
-    _LLM_SYS_FAM = (
-        "You are an autonomous HVAC agent for a family home (3-day July simulation).\n"
-        "Called at: (1) occupied-period start, (2) VPP demand-response, (3) self-scheduled times.\n"
-        "Occupied: 08:00-22:00. Sim total: 72h (3 days).\n"
-        "COMFORT: PMV in [-0.5,+0.5]. PMV~0 at 25.5C. Keep setpoint <= 26.0C for comfort.\n"
-        "VPP DEMAND RESPONSE: When VPP_ACTIVE, MUST raise setpoint >= 26.0C (HARD RULE).\n"
-        "  Learn from past VPP feedback -- adapt strategy across days.\n"
-        f"\nUSER PROFILE:\n{_persona.get('persona_prompt', '')}\n"
-        "WASHING MACHINE (shiftable 1.5kW load):\n"
-        "  Running washer during VPP adds 1.5kW peak load (penalises VPP score).\n"
-        "  Include \"start_washer\": true in JSON to start it (IDLE and in time window only).\n"
-        "  Prefer starting OUTSIDE VPP windows; respect user preferred time.\n"
-        'Return JSON ONLY: {"setpoint": X, "next_check_hour": Y_or_null, '
-        '"start_washer": true/false, "reason": "..."}\n'
-        "  setpoint range: 22.0-28.0C"
-    )
+    # ── Read persona AC config (from appliances.ac field in persona JSON) ──────
+    _ac_cfg   = (appliance_config or {}).get("ac", {})
+    _ac_sp_min    = float(_ac_cfg.get("setpoint_preferred_min_c", 24.0))
+    _ac_sp_max    = float(_ac_cfg.get("setpoint_preferred_max_c", 26.0))
+    _ac_sp_tol    = float(_ac_cfg.get("temp_tolerance_c", 1.0))
+    _ac_sp_default = round((_ac_sp_min + _ac_sp_max) / 2, 1)
+    _ac_sp_vpp_min = round(_ac_sp_max + 0.5, 1)   # minimum raise during VPP
+    _ac_sp_vpp_max = round(_ac_sp_max + 1.5, 1)   # typical VPP raise ceiling
+    # Override global SP_MIN based on persona comfort floor
+    _run_sp_min = max(SP_MIN, _ac_sp_min - _ac_sp_tol)
+    _run_sp_max = min(SP_MAX, _ac_sp_max + 2.0)  # allow VPP raise headroom
+
+    _LLM_SYS_FAM = f"""You are an autonomous AC (air conditioning) and appliance agent for a family home.
+SIMULATION: 3 days in July (Tianjin, China). Timestep 10 min. Total 72 hours.
+You are called at: (1) start of occupied period each day 08:00, (2) VPP demand-response events 18:00, (3) times you request.
+
+[AC CONTROL]
+Occupied hours: 08:00-22:00. Outside this window AC is automatically set to 28°C (standby).
+User preferred comfort range: {_ac_sp_min:.1f}–{_ac_sp_max:.1f}°C (tolerance ±{_ac_sp_tol:.1f}°C).
+Normal setpoint target: ~{_ac_sp_default:.1f}°C. PMV near 0 at 25.5°C; >+0.5 when zone exceeds 27°C.
+Allowed setpoint range: {_run_sp_min:.1f}–{_run_sp_max:.1f}°C.
+
+[VPP DEMAND RESPONSE — 18:00-19:00 each day]
+Goal: reduce total electricity consumption for 1 hour to support the grid.
+AC strategy: raise setpoint to {_ac_sp_vpp_min:.1f}–{_ac_sp_vpp_max:.1f}°C (pre-cool BEFORE event, drift DURING event).
+Appliances: shift washer/dishwasher/dryer AWAY from 18:00-19:00 window.
+Water heater: set preheat=true to heat tank water BEFORE 18:00 (thermal storage).
+EV: set mode=delay to charge AFTER 22:00 instead of immediately at arrival.
+IMPORTANT: control each appliance independently. Learn from past VPP event scores.
+
+Return JSON ONLY (no markdown, no explanation):
+{{"setpoint": X, "next_check_hour": Y_or_null, "reason": "≤100 chars",
+ "appliances": {{
+   "washer_start_h": null_or_float,
+   "dishwasher_start_h": null_or_float,
+   "dryer_start_h": null_or_float,
+   "water_heater_preheat": null_or_bool,
+   "ev_mode": null_or_"smart"|"delay"|"normal"
+ }}
+}}
+null means no change. *_start_h = desired start hour-of-day (0–23)."""
 
     def _llm_trigger(temp, out_t, hod, sim_h, remaining_h, vpp_active=False, vpp_id="",
                      user_pref_input=""):
         import json as _j
         hh = int(hod % 24)
         vpp_tag = f"  *** VPP_ACTIVE (event {vpp_id}): reduce load! user will score your response ***" if vpp_active else ""
+        # Post-VPP recovery signal: tell LLM to restore setpoint within 2h after VPP ends
+        post_vpp_tag = ""
+        if not vpp_active:
+            for _ev in VPP_EVENTS:
+                if _ev["end_h"] <= sim_h < _ev["end_h"] + 2.0:
+                    post_vpp_tag = (f"\n  *** VPP ENDED (event {_ev['id']}):"
+                                    f" RESTORE setpoint to comfort range"
+                                    f" ({_ac_sp_min:.1f}-{_ac_sp_max:.1f}\u00b0C) immediately."
+                                    f" Normal operations resume. ***")
+                    break
         mem_tag = loop.vpp_mem_ctx  # contains past event scores + user feedback
         # Current event: user expressed preference before agent acts
         user_now_tag = f"\n[User says NOW]: {user_pref_input}" if user_pref_input else ""
-        prompt = (f"sim_hour={sim_h:.1f}  clock={hh:02d}:00{vpp_tag}\n"
+        # Per-appliance status (independent devices)
+        if loop.appliance_suite is not None:
+            appl_lines = "\n".join(loop.appliance_suite.status_lines(sim_h))
+            appl_tag = f"\nAppliances:\n{appl_lines}"
+        else:
+            appl_tag = ""
+        prompt = (f"sim_hour={sim_h:.1f}  clock={hh:02d}:00{vpp_tag}{post_vpp_tag}\n"
                   f"zone_temp={temp:.1f}C  outdoor={out_t:.1f}C\n"
                   f"remaining_sim_hours={remaining_h:.0f}\n"
-                  f"[Appliance] {_washer.prompt_line(sim_h)}\n"
-                  f"user_pref: {user_pref}{user_now_tag}{mem_tag}")
+                  f"user_pref: {user_pref}{user_now_tag}{appl_tag}{mem_tag}")
         if vpp_active:
             fb_sp, fb_nch = 26.5, None
         else:
             fb_sp = min(26.0, max(SP_MIN, round(temp - 0.5, 1)))
             fb_nch = None
         fallback = {"setpoint": fb_sp, "next_check_hour": fb_nch}
+        def _validate_json(text: str) -> str:
+            """Strip markdown fences and verify valid JSON; raises on failure."""
+            t = text.strip()
+            if t.startswith("```"):
+                t = "\n".join(l for l in t.splitlines()
+                               if not l.strip().startswith("```")).strip()
+            if not t:
+                raise ValueError("response empty after stripping markdown fences")
+            _j.loads(t)  # raises json.JSONDecodeError if not valid JSON
+            return t
+
         try:
             from energybridge.llm.client import LLMClient
-            resp = LLMClient().chat(_LLM_SYS_FAM, prompt).strip()
-            if resp.startswith("```"):
-                resp = "\n".join(l for l in resp.splitlines() if not l.strip().startswith("```")).strip()
+            _llm_r = LLMClient().chat_with_metrics(_LLM_SYS_FAM, prompt,
+                                    max_retries=5, retry_base_delay=2.0,
+                                    validate_fn=_validate_json)
+            resp = _llm_r["text"]
+            _m = _llm_r.get("metrics", {}); _tu = _m.get("token_usage", {})
+            loop.llm_calls += 1
+            loop.llm_latency_s += _m.get("latency_seconds", 0.0)
+            loop.llm_tokens_prompt += _tu.get("prompt_tokens", 0)
+            loop.llm_tokens_comp   += _tu.get("completion_tokens", 0)
             data = _j.loads(resp)
             sp = round(max(SP_MIN, min(28.0, float(data.get("setpoint", fb_sp)))), 1)
             nch = data.get("next_check_hour")
@@ -409,19 +435,23 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
                 if nch <= sim_h + 0.25 or nch > 72.0:
                     nch = None
             reason = str(data.get("reason", ""))[:100]
-            sw = bool(data.get("start_washer", False))
-            if sw and _washer.can_start(sim_h):
-                if _washer.start(sim_h):
-                    print(f"  [Washer] Agent started at h={sim_h:.1f}")
-            print(f"  [FamilyAgent h={sim_h:.1f} vpp={vpp_active}] sp={sp} next={nch} washer={sw} | {reason}")
-            return {"setpoint": sp, "next_check_hour": nch, "start_washer": sw, "reason": reason}
+            # --- Independent appliance commands from LLM ---
+            appl_actions = data.get("appliances", {})
+            day_num = int(sim_h // 24) + 1
+            hh_mm = f"{int(hod % 24):02d}:{int((hod % 1)*60):02d}"
+            vpp_tag = f" | VPP-{vpp_id}" if vpp_active else ""
+            nch_str = f"{int(nch % 24):02d}:{int((nch % 1)*60):02d}" if nch is not None else "--:--"
+            print(f"  [AC Agent | h={hh_mm} Day{day_num}{vpp_tag}] setpoint→{sp:.1f}°C  next_check={nch_str}  | {reason}")
+            return {"setpoint": sp, "next_check_hour": nch, "reason": reason,
+                    "appliance_actions": appl_actions if isinstance(appl_actions, dict) else {}}
         except Exception as e:
             print(f"  [FamilyAgent] LLM error at h={sim_h:.1f}: {e}")
+            loop.llm_failures += 1
             fallback["reason"] = ""
             return fallback
 
     def _score_event(ev, loop_ref, sim_h, event_index=1):
-        """Score agent strategy for VPP event (roleplay LLM). Returns M1 3D scores."""
+        """Score agent strategy for a VPP event window after it ends (roleplay LLM)."""
         try:
             from user_pref_scorer import score_user_preference
             wd = loop_ref.vpp_window_data.get(ev["id"], {})
@@ -431,38 +461,25 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
             mean_t = sum(wtemps)/max(1,len(wtemps)) if wtemps else loop_ref.temp_s/max(loop_ref.occ_h,1)
             pmv_ok = sum(wpmvs)/max(1,len(wpmvs)) if wpmvs else 0.5
             e_day  = (loop_ref.e_wh/1000) / max(1, sim_h/24)
-            _ev_vpp_start = ev.get("trigger_h", 0.0)
-            _ev_vpp_end   = ev.get("end_h", 1.0)
-            _w_completed  = _washer.state in ("RUNNING", "DONE")
-            _w_vpp        = _washer.is_running_during(_ev_vpp_start, _ev_vpp_end)
             r = score_user_preference(
                 building="family", method="agent",
                 mean_temp_c=mean_t, pmv_ok_fraction=pmv_ok,
                 energy_kwh_per_day=e_day, agent_setpoint_c=sp_w,
                 event_index=event_index,
                 user_preference_text=loop_ref.vpp_user_input,
-                agent_reason=loop_ref.vpp_last_reason,
-                persona=_persona,
-                washer_completed=_w_completed,
-                washer_during_vpp=_w_vpp,
-                log_path=_diag_log)
-            sc  = r.get("score") or 3
-            lbl = r.get("label", "neutral")
+                agent_reason=loop_ref.vpp_last_reason)
+            sc = r.get("score") or 0.0
+            lbl = r.get("label", "?")
             cmt = r.get("comment", "")[:100]
             src = r.get("source", "?")
-            print(f"  [VPP score {ev['id']} idx={event_index}] overall={sc} "
-                  f"comfort={r.get('comfort_score')} energy={r.get('energy_score')} "
-                  f"vpp={r.get('vpp_score')} [{src}] | {cmt[:60]}")
+            print(f"  [VPP Result | Event {event_index}/3 {ev['id']}] User score: {sc}/5 ({lbl}) | {cmt[:80]}")
+            print(f"  {'─'*62}")
             return {"id": ev["id"], "setpoint": sp_w, "score": sc, "label": lbl,
-                    "comfort_score": r.get("comfort_score", 3),
-                    "energy_score": r.get("energy_score", 3),
-                    "vpp_score": r.get("vpp_score", 3),
                     "comment": cmt, "user_input": loop_ref.vpp_user_input[:80], "source": src}
         except Exception as e:
             print(f"  [VPP score {ev['id']}] error: {e}")
-            return {"id": ev["id"], "setpoint": loop_ref.sp, "score": 3,
-                    "comfort_score": 3, "energy_score": 3, "vpp_score": 3,
-                    "label": "neutral", "comment": str(e)[:60], "user_input": "", "source": "error"}
+            return {"id": ev["id"], "setpoint": loop_ref.sp, "score": None, "label": "?",
+                    "comment": str(e)[:60], "user_input": "", "source": "error"}
 
     def cb(s):
         if not loop.init(ex, s): return
@@ -470,7 +487,7 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
             loop.h_out = ex.get_variable_handle(s, "Site Outdoor Air Drybulb Temperature", "Environment")
         day = ex.day_of_year(s)
         if loop.start_day is None: loop.start_day = day
-        hod = ex.current_time(s); dt = ex.system_time_step(s)
+        hod = ex.current_time(s); dt = ex.zone_time_step(s)
         sim_h = (day - loop.start_day) * 24 + hod
         wu = ex.warmup_flag(s)
         occ = _occupied(hod)
@@ -492,33 +509,70 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
                 loop.sp = 28.0   # unoccupied: save energy automatically
             else:
                 psim = loop.prev_sim_h
-                # VPP-only: only intervene at VPP event start (max 6 LLM interventions per sim)
+                triggered = False
                 triggered_vpp = None
+                # Trigger 1: crossing into occupied period each day
+                if psim >= 0 and (psim % 24) < OCCUPIED_START <= (sim_h % 24):
+                    triggered = True
+                # Trigger 2: VPP event start crossing
                 for ev in VPP_EVENTS:
                     if psim < ev["trigger_h"] <= sim_h:
-                        triggered_vpp = ev; break
-                if triggered_vpp is not None:
-                    vid = triggered_vpp["id"]
-                    try:
-                        from user_pref_scorer import get_user_preference_input
-                        ev_idx = next((i+1 for i,ev in enumerate(VPP_EVENTS)
-                                       if ev["id"]==vid), 1)
-                        loop.vpp_user_input = get_user_preference_input(
-                            "family", ev_idx,
-                            {"vpp_id": vid, "hour": sim_h, "duration_h": 1.0},
-                            loop.vpp_event_log,
-                            persona=_persona, log_path=_diag_log)
-                    except Exception as _e:
-                        print(f"  [UserInput] {_e}")
+                        triggered = True; triggered_vpp = ev; break
+                # Trigger 3: agent-scheduled next check
+                if loop.next_check is not None and psim < loop.next_check <= sim_h:
+                    triggered = True
+                if triggered:
+                    is_vpp = triggered_vpp is not None
+                    vid = triggered_vpp["id"] if triggered_vpp else ""
+                    day_num = int(sim_h // 24) + 1
+                    # Print context banner so logs are human-readable
+                    if is_vpp:
+                        ev_h_start = int(triggered_vpp["trigger_h"] % 24)
+                        ev_h_end   = int(triggered_vpp["end_h"] % 24)
+                        ev_idx_n   = next((i+1 for i,e in enumerate(VPP_EVENTS) if e["id"]==vid), 1)
+                        print(f"  {'='*62}")
+                        print(f"  VPP Demand-Response Event {ev_idx_n}/3  (Day{day_num}  {ev_h_start:02d}:00-{ev_h_end:02d}:00)")
+                        print(f"    Goal : Reduce total electricity for 1 hour (grid peak-shaving)")
+                        print(f"    AC   : Raise setpoint {_ac_sp_vpp_min:.1f}-{_ac_sp_vpp_max:.1f}°C  (pre-cool before, drift during)")
+                        print(f"    Other: Shift washer/EWH preheat/EV delay away from 18:00-19:00")
+                        print(f"  {'='*62}")
+                    else:
+                        hh = int(sim_h % 24)
+                        if hh == int(OCCUPIED_START):
+                            print(f"  --- Day {day_num} start  (sim_h={sim_h:.0f}h  08:00 occupied period begins) ---")
+                    # User in the loop: get roleplay user preference BEFORE agent acts
+                    if is_vpp:
+                        try:
+                            from user_pref_scorer import get_user_preference_input
+                            ev_idx = next((i+1 for i,ev in enumerate(VPP_EVENTS)
+                                           if ev["id"]==vid), 1)
+                            loop.vpp_user_input = get_user_preference_input(
+                                "family", ev_idx,
+                                {"vpp_id": vid, "hour": sim_h, "duration_h": 1.0},
+                                loop.vpp_event_log)
+                        except Exception as _e:
+                            print(f"  [UserInput] {_e}")
+                            loop.vpp_user_input = ""
+                    else:
                         loop.vpp_user_input = ""
                     res = _llm_trigger(temp, out_t, hod, sim_h, 72.0 - sim_h,
-                                       vpp_active=True, vpp_id=vid,
+                                       vpp_active=is_vpp, vpp_id=vid,
                                        user_pref_input=loop.vpp_user_input)
                     loop.sp = res["setpoint"]
+                    loop.next_check = res.get("next_check_hour")
+                    # Guarantee a post-VPP check: if LLM didn't schedule one at/before
+                    # VPP end_h, force next_check = end_h so "VPP ENDED" signal fires.
+                    if is_vpp and triggered_vpp is not None:
+                        _vpp_end = triggered_vpp["end_h"]
+                        if loop.next_check is None or loop.next_check > _vpp_end:
+                            loop.next_check = _vpp_end
                     loop.vpp_last_reason = res.get("reason", "")
-                elif active_vpp is None:
-                    # Non-VPP occupied hours: maintain comfort default setpoint
-                    loop.sp = SP_DEFAULT
+                    # Apply independent per-appliance actions from LLM
+                    if loop.appliance_suite is not None:
+                        _apply_appliance_actions(
+                            loop.appliance_suite,
+                            res.get("appliance_actions", {}),
+                            sim_h)
 
             # Collect per-VPP-window data
             if active_vpp:
@@ -533,37 +587,19 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
                 if psim < ev["end_h"] <= sim_h and ev["id"] not in loop.vpp_scored:
                     ev_idx = next((i+1 for i,e in enumerate(VPP_EVENTS) if e["id"]==ev["id"]), 1)
                     result = _score_event(ev, loop, sim_h, event_index=ev_idx)
+                    # Attach per-appliance VPP summary to event log
+                    if loop.appliance_suite is not None:
+                        result["appliance_summary"] = loop.appliance_suite.vpp_day_summary(ev_idx - 1)
                     loop.vpp_event_log.append(result)
                     loop.vpp_scored.add(ev["id"])
-                    # L3: Update rich memory context for subsequent LLM calls (cross-day learning)
+                    # Update memory context for subsequent LLM calls
                     mem_entries = [{"event": e["id"], "sp": e["setpoint"],
-                                    "overall": e["score"],
-                                    "comfort": e.get("comfort_score", "?"),
-                                    "energy": e.get("energy_score", "?"),
-                                    "vpp_compliance": e.get("vpp_score", "?"),
-                                    "user_said": e.get("user_input","")[:60],
-                                    "feedback": e["comment"][:80]}
+                                    "score": e["score"],
+                                    "user_said": e.get("user_input","")[:50],
+                                    "feedback": e["comment"][:60]}
                                    for e in loop.vpp_event_log]
-                    # Extract learning insight
-                    avg_comfort = sum(e.get("comfort_score",3) for e in loop.vpp_event_log)/max(1,len(loop.vpp_event_log))
-                    avg_energy  = sum(e.get("energy_score",3) for e in loop.vpp_event_log)/max(1,len(loop.vpp_event_log))
-                    trend = "improve_comfort" if avg_comfort < 3.5 else ("save_energy" if avg_energy > avg_comfort else "balanced")
-                    loop.vpp_mem_ctx = (
-                        f"\n[L3 cross-day learning] Past VPP events: {json.dumps(mem_entries, ensure_ascii=False)}"
-                        f"\nLearned user preference trend: {trend} (avg_comfort={avg_comfort:.1f}, avg_energy={avg_energy:.1f})"
-                        f"\nFor next VPP: {'prioritize thermal comfort, user was uncomfortable' if trend=='improve_comfort' else 'user is comfortable, consider more aggressive demand reduction' if trend=='save_energy' else 'maintain current balance'}")
-                    # VPP END: recovery setpoint decision
-                    try:
-                        _rec = _llm_trigger(temp, out_t, hod, sim_h, 72.0 - sim_h,
-                                            vpp_active=False, vpp_id="",
-                                            user_pref_input=(
-                                                f"VPP {ev['id']} just ended. "
-                                                f"Score: {result.get('score', 3)}/5 "
-                                                f"(comfort={result.get('comfort_score', 3)}/5). "
-                                                "Set recovery setpoint for the next occupied period."))
-                        loop.sp = _rec["setpoint"]
-                    except Exception:
-                        pass
+                    loop.vpp_mem_ctx = ("\nPast VPP responses (user in the loop): "
+                                        + json.dumps(mem_entries, ensure_ascii=False))
 
         if loop.h_cool != -1: ex.set_actuator_value(s, loop.h_cool, loop.sp)
         if loop.h_heat != -1: ex.set_actuator_value(s, loop.h_heat, HTG_SP)
@@ -572,7 +608,12 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
         if wu: return
         pmv = _compute_pmv(temp)
         loop.e_wh += fac * dt
-        if active_vpp is not None: loop.e_vpp_wh += fac * dt
+        if active_vpp:            # track energy consumed during VPP demand windows
+            loop.vpp_e_wh += fac * dt
+        # Step appliance suite and write powers back to EnergyPlus each timestep
+        if loop.appliance_suite is not None:
+            _appl_powers = loop.appliance_suite.step(sim_h, dt)
+            _write_appliance_actuators(ex, s, loop, _appl_powers, sim_h)
         if occ:
             loop.occ_h += dt; loop.pmv_s += pmv * dt; loop.temp_s += temp * dt
             if abs(pmv) <= PMV_DEADBAND: loop.pmv_ok_h += dt
@@ -587,271 +628,59 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     avg_sp = sum(d[1] for d in loop.decisions) / max(1, len(loop.decisions)) if loop.decisions else SP_DEFAULT
     pref_scores = [e["score"] for e in loop.vpp_event_log if e.get("score") is not None]
     # VPP compliance: family baseline 25.5C -> compliant if VPP setpoint >= 26.0C
-    # Finalise washer last-day record
-    _washer_completed_days.append(_washer.state in ("RUNNING", "DONE"))
-    _washer_vpp_days.append(any(
-        _washer.is_running_during(ev["trigger_h"], ev["end_h"])
-        for ev in VPP_EVENTS if ev["day"] - 1 == _washer_sim_day))
-    _washer_kwh_total += _washer.tick(72.0, 0.0)
-    print(f"  [Washer] total={_washer_kwh_total:.2f}kWh "
-          f"completed={_washer_completed_days} vpp_overlap={_washer_vpp_days}")
     _VPP_COMPLY_SP = 26.0
     n_comply = sum(1 for e in loop.vpp_event_log if e.get("setpoint", 0) >= _VPP_COMPLY_SP)
     vpp_comply_rate = n_comply / max(1, len(VPP_EVENTS))
-    print(f"  [family/agent] exit={ec} energy={kwh:.1f}kWh pmv_ok={loop.pmv_ok_h/occ*100:.1f}% "
-          f"vpp_scores={pref_scores} vpp_comply={vpp_comply_rate*100:.0f}%")
-    _vpp_total_h = float(len(VPP_EVENTS))
-    _e_vpp_kwh = loop.e_vpp_wh / 1000
-    _non_vpp_rate = (kwh - _e_vpp_kwh) / max(1.0, 72.0 - _vpp_total_h)
-    _vpp_reduction_kwh = round(_non_vpp_rate * _vpp_total_h - _e_vpp_kwh, 4)
 
-    _total_kwh = kwh + _washer_kwh_total
-    return BenchmarkResult(scenario=f"family/{weather_label}/{persona_name}", building="family",
+    # ── Appliance rule-based indicators ─────────────────────────────────
+    appl_vpp_avoid_rate = 0.0; ev_target_rate = 1.0; ewh_preheat_rate = 1.0
+    appl_results_dict: dict = {}
+    if loop.appliance_suite is not None:
+        appl_results_dict = loop.appliance_suite.all_results()
+        # Per VPP-event: fraction of present controllable devices that avoided VPP window
+        avoid_fracs = []
+        for _day_idx, _ev in enumerate(VPP_EVENTS):
+            _summ = loop.appliance_suite.vpp_day_summary(_day_idx)
+            _present = [(nm, info) for nm, info in _summ.items() if info.get("present")]
+            if _present:
+                _avoided = sum(1 for _, info in _present if not info.get("ran_during_vpp", False))
+                avoid_fracs.append(_avoided / len(_present))
+        appl_vpp_avoid_rate = sum(avoid_fracs) / max(1, len(avoid_fracs))
+        # EV target SOC reached rate (1.0 when EV not present)
+        ev_days = appl_results_dict.get("ev", [])
+        if ev_days and ev_days[0].get("present", False):
+            ev_target_rate = sum(1 for d in ev_days if d.get("target_reached", False)) / max(1, len(ev_days))
+        # EWH preheat usage rate
+        wh_days = appl_results_dict.get("water_heater", [])
+        if wh_days and wh_days[0].get("present", False):
+            ewh_preheat_rate = sum(1 for d in wh_days if d.get("preheat_used", False)) / max(1, len(wh_days))
+
+    print(f"  [family/agent] exit={ec} energy={kwh:.1f}kWh "
+          f"vpp_window={loop.vpp_e_wh/1000:.2f}kWh "
+          f"pmv_ok={loop.pmv_ok_h/occ*100:.1f}% "
+          f"vpp_scores={pref_scores} vpp_comply={vpp_comply_rate*100:.0f}%")
+    print(f"  [LLM stats   ] calls={loop.llm_calls} fail={loop.llm_failures} "
+          f"latency={loop.llm_latency_s:.1f}s "
+          f"tokens={loop.llm_tokens_prompt}p/{loop.llm_tokens_comp}c")
+    print(f"  [Appl rules  ] vpp_avoid={appl_vpp_avoid_rate*100:.0f}% "
+          f"ev_target={ev_target_rate*100:.0f}% ewh_preheat={ewh_preheat_rate*100:.0f}%")
+    return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
         weather=weather_label, method="agent", exit_code=ec,
-        energy_kwh_total=_total_kwh, energy_kwh_per_day=_total_kwh/3,
-        vpp_energy_reduction_kwh=_vpp_reduction_kwh,
+        energy_kwh_total=kwh, energy_kwh_per_day=kwh/3,
         pmv_ok_fraction=loop.pmv_ok_h/occ, mean_pmv=loop.pmv_s/occ,
         mean_temp_c=loop.temp_s/occ, unmet_cooling_h=loop.unmet_h,
+        vpp_window_energy_kwh=round(loop.vpp_e_wh / 1000, 4),
         agent_setpoint_c=round(avg_sp, 1),
         user_pref_scores=pref_scores,
         user_pref_score=sum(pref_scores)/max(1,len(pref_scores)) if pref_scores else None,
-        user_comfort_scores=[e.get("comfort_score",3) for e in loop.vpp_event_log],
-        user_energy_scores=[e.get("energy_score",3) for e in loop.vpp_event_log],
-        user_vpp_scores=[e.get("vpp_score",3) for e in loop.vpp_event_log],
         vpp_compliance_rate=vpp_comply_rate,
-        persona_id=persona_name,
-        washer_energy_kwh=round(_washer_kwh_total, 3),
-        washer_completed_days=_washer_completed_days[:3],
-        washer_during_vpp_days=_washer_vpp_days[:3],
-        control_decisions=loop.decisions[-50:], output_dir=str(output_dir))
-
-
-def run_family_agent_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
-                         output_dir=None, weather_label="",
-                         user_pref="\u6211\u5e0c\u671b\u5ba4\u5185\u8212\u9002\uff0c\u4f46\u4e5f\u613f\u610f\u5728\u4e0d\u5f71\u54cd\u8002\u9002\u7684\u524d\u63d0\u4e0b\u8282\u7ea6\u7535\u529b\u3002"):
-    """Hybrid: PMV controls during normal occupied hours; Agent (LLM) takes over
-    only during VPP demand-response events.  After VPP ends, PMV resumes."""
-    if output_dir is None:
-        output_dir = BENCHMARK_DIR / "results" / f"family_agent_pmv_{weather_label}"
-    output_dir = Path(output_dir)
-    if output_dir.exists(): shutil.rmtree(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    import math as _math
-    from pyenergyplus.api import EnergyPlusAPI
-    loop = _FamilyLoop(); api = EnergyPlusAPI(); state = api.state_manager.new_state()
-    ex = api.exchange
-    ex.request_variable(state, "Zone Mean Air Temperature", "living_unit1")
-    ex.request_variable(state, "Facility Total Electricity Demand Rate", "Whole Building")
-    ex.request_variable(state, "Site Outdoor Air Drybulb Temperature", "Environment")
-
-    _SYS = """You are a hybrid HVAC agent for a family home.
-PMV thermal-comfort control runs at all times; you activate ONLY during VPP demand-response events.
-You are the BEST of both worlds: PMV ensures daily comfort; you handle VPP intelligently.
-
-Your inputs include:
-  - Current zone temperature and outdoor temperature
-  - Static user preference profile (user_pref)
-  - Dynamic user statement expressed NOW before this event (User says NOW)
-  - L3 cross-day learning: past VPP scores (comfort/energy/vpp dimensions) and user feedback
-
-Decision rules:
-  HARD RULE: setpoint MUST be >= 26.0C during VPP (compliance threshold). Non-negotiable.
-  Aim for 26.0-27.0C. If past comfort_score < 3.5, prefer 26.0C to protect comfort.
-  If past energy_score < comfort_score, lean toward 26.5-27.0C for more demand reduction.
-  Always honor what the user says NOW — their real-time preference overrides defaults.
-
-Return JSON ONLY: {"setpoint": X, "reason": "..."}  setpoint range: 22.0-28.0C"""
-
-    def _llm_vpp(temp, out_t, hod, sim_h, vpp_id, user_pref_input="", pmv_ref_sp=None):
-        import json as _j
-        hh = int(hod % 24)
-        mem_tag = loop.vpp_mem_ctx
-        user_now_tag = f"\n[User says NOW]: {user_pref_input}" if user_pref_input else ""
-        pmv_ref_val = f"{pmv_ref_sp:.1f}" if pmv_ref_sp is not None else f"{SP_DEFAULT:.1f}"
-        pmv_ref_tag = (f"\n[PMV without VPP recommends {pmv_ref_val}C for thermal comfort]"
-                       if pmv_ref_sp is not None else "")
-        prompt = (f"sim_hour={sim_h:.1f}  clock={hh:02d}:00  *** VPP_ACTIVE ({vpp_id}): reduce load! ***\n"
-                  f"zone_temp={temp:.1f}C  outdoor={out_t:.1f}C\n"
-                  f"VPP compliance: setpoint MUST be >=26.0C. PMV comfort reference: {pmv_ref_val}C (non-VPP optimal).\n"
-                  f"Balance user comfort (PMV wants {pmv_ref_val}C) vs VPP demand reduction (need >=26C) vs energy.\n"
-                  f"user_pref: {user_pref}{user_now_tag}{pmv_ref_tag}{mem_tag}")
-        fallback = {"setpoint": 26.5, "reason": "fallback"}
-        try:
-            from energybridge.llm.client import LLMClient
-            resp = LLMClient().chat(_SYS, prompt).strip()
-            if resp.startswith("```"):
-                resp = "\n".join(l for l in resp.splitlines() if not l.strip().startswith("```")).strip()
-            data = _j.loads(resp)
-            sp = round(max(SP_MIN, min(28.0, float(data.get("setpoint", 26.5)))), 1)
-            reason = str(data.get("reason", ""))[:100]
-            print(f"  [FamilyAgentPMV h={sim_h:.1f} vpp={vpp_id}] sp={sp} | {reason}")
-            return {"setpoint": sp, "reason": reason}
-        except Exception as e:
-            print(f"  [FamilyAgentPMV] LLM error at h={sim_h:.1f}: {e}")
-            return fallback
-
-    def _score_event(ev, loop_ref, sim_h, event_index=1):
-        """Score agent_pmv VPP event. Returns M1 3D scores."""
-        try:
-            from user_pref_scorer import score_user_preference
-            wd = loop_ref.vpp_window_data.get(ev["id"], {})
-            wtemps = wd.get("temps", []); wpmvs = wd.get("pmvs", [])
-            sp_w = wd.get("sp", loop_ref.sp)
-            occ_ref = max(loop_ref.occ_h, 1e-6)
-            mean_t = sum(wtemps)/max(1, len(wtemps)) if wtemps else (loop_ref.temp_s/occ_ref)
-            pmv_ok = sum(wpmvs)/max(1, len(wpmvs)) if wpmvs else 0.5
-            r = score_user_preference(building="family", method="agent_pmv",
-                mean_temp_c=mean_t, pmv_ok_fraction=pmv_ok,
-                energy_kwh_per_day=loop_ref.e_wh/1000/3, agent_setpoint_c=sp_w,
-                event_index=event_index,
-                user_preference_text=loop_ref.vpp_user_input,
-                agent_reason=loop_ref.vpp_last_reason)
-            score = r.get("score", 3); comment = r.get("comment","")
-            print(f"  [AgentPMV score event={ev['id']}] overall={score} "
-                  f"comfort={r.get('comfort_score')} energy={r.get('energy_score')} "
-                  f"vpp={r.get('vpp_score')} | {comment[:60]}")
-            return {"id": ev["id"], "setpoint": sp_w, "score": score, "comment": comment,
-                    "comfort_score": r.get("comfort_score", 3),
-                    "energy_score": r.get("energy_score", 3),
-                    "vpp_score": r.get("vpp_score", 3),
-                    "user_input": loop_ref.vpp_user_input, "source": r.get("source","llm")}
-        except Exception as e:
-            print(f"  [AgentPMV score] error: {e}")
-            return {"id": ev["id"], "setpoint": loop_ref.sp, "score": 3,
-                    "comfort_score": 3, "energy_score": 3, "vpp_score": 3,
-                    "comment": str(e)[:60], "user_input": "", "source": "error"}
-
-    h_out_handle = [-1]
-
-    def cb(s):
-        if not loop.init(ex, s): return
-        day = ex.day_of_year(s)
-        if loop.start_day is None: loop.start_day = day
-        hod = ex.current_time(s); dt = ex.system_time_step(s)
-        sim_h = (day - loop.start_day)*24 + hod
-        wu = ex.warmup_flag(s)
-        temp = ex.get_variable_value(s, loop.h_temp) if loop.h_temp != -1 else SP_DEFAULT
-        fac  = ex.get_variable_value(s, loop.h_fac)  if loop.h_fac  != -1 else 0.0
-
-        out_t = 30.0
-        if h_out_handle[0] == -1:
-            h_out_handle[0] = ex.get_variable_handle(s, "Site Outdoor Air Drybulb Temperature", "Environment")
-        if h_out_handle[0] != -1:
-            v = ex.get_variable_value(s, h_out_handle[0])
-            if v is not None and not _math.isnan(v): out_t = v
-
-        occ = _occupied(hod)
-        active_vpp = None
-        for ev in VPP_EVENTS:
-            if ev["trigger_h"] <= sim_h < ev["end_h"]:
-                active_vpp = ev; break
-
-        if not wu:
-            if active_vpp is not None:
-                # VPP WINDOW: Agent (LLM) controls
-                psim = loop.prev_sim_h
-                triggered_vpp = None
-                for ev in VPP_EVENTS:
-                    if psim < ev["trigger_h"] <= sim_h:
-                        triggered_vpp = ev; break
-                if triggered_vpp:
-                    vid = triggered_vpp["id"]
-                    try:
-                        from user_pref_scorer import get_user_preference_input
-                        ev_idx = next((i+1 for i,e in enumerate(VPP_EVENTS) if e["id"]==vid), 1)
-                        loop.vpp_user_input = get_user_preference_input(
-                            "family", ev_idx,
-                            {"vpp_id": vid, "hour": sim_h, "duration_h": 1.0},
-                            loop.vpp_event_log)
-                    except Exception as _e:
-                        print(f"  [UserInput] {_e}"); loop.vpp_user_input = ""
-                    pmv_ref_sp = loop.sp  # PMV-adjusted setpoint before VPP intervention
-                    res = _llm_vpp(temp, out_t, hod, sim_h, vid, loop.vpp_user_input, pmv_ref_sp=pmv_ref_sp)
-                    loop.sp = res["setpoint"]
-                    loop.vpp_last_reason = res.get("reason", "")
-                # else: hold agent setpoint through VPP window
-            else:
-                # ALL non-VPP times (occupied or not): PMV controls 24/7
-                pmv_now = _compute_pmv(temp)
-                if pmv_now > PMV_DEADBAND:   loop.sp = max(SP_MIN, loop.sp - SP_STEP)
-                elif pmv_now < -PMV_DEADBAND: loop.sp = min(SP_MAX, loop.sp + SP_STEP)
-
-            if active_vpp:
-                wd = loop.vpp_window_data.setdefault(active_vpp["id"], {"temps":[],"pmvs":[],"sp":loop.sp})
-                wd["temps"].append(temp)
-                wd["pmvs"].append(abs(_compute_pmv(temp)) <= PMV_DEADBAND)
-                wd["sp"] = loop.sp
-
-            psim = loop.prev_sim_h
-            for ev in VPP_EVENTS:
-                if psim < ev["end_h"] <= sim_h and ev["id"] not in loop.vpp_scored:
-                    ev_idx = next((i+1 for i,e in enumerate(VPP_EVENTS) if e["id"]==ev["id"]), 1)
-                    result = _score_event(ev, loop, sim_h, event_index=ev_idx)
-                    loop.vpp_event_log.append(result)
-                    loop.vpp_scored.add(ev["id"])
-                    # L3 cross-day learning: richer memory with 3D scores
-                    mem_entries = [{"event": e["id"], "sp": e["setpoint"],
-                                    "overall": e["score"],
-                                    "comfort": e.get("comfort_score","?"),
-                                    "energy": e.get("energy_score","?"),
-                                    "vpp_compliance": e.get("vpp_score","?"),
-                                    "user_said": e.get("user_input","")[:60],
-                                    "feedback": e["comment"][:80]}
-                                   for e in loop.vpp_event_log]
-                    avg_comfort = sum(e.get("comfort_score",3) for e in loop.vpp_event_log)/max(1,len(loop.vpp_event_log))
-                    avg_energy  = sum(e.get("energy_score",3) for e in loop.vpp_event_log)/max(1,len(loop.vpp_event_log))
-                    trend = "improve_comfort" if avg_comfort < 3.5 else ("save_energy" if avg_energy > avg_comfort else "balanced")
-                    loop.vpp_mem_ctx = (
-                        f"\n[L3 cross-day learning] Past VPP: {json.dumps(mem_entries, ensure_ascii=False)}"
-                        f"\nLearned trend: {trend} (avg_comfort={avg_comfort:.1f}, avg_energy={avg_energy:.1f})"
-                        f"\nNext VPP guidance: {'prioritize thermal comfort' if trend=='improve_comfort' else 'user comfortable, increase demand reduction' if trend=='save_energy' else 'maintain balance'}")
-                    # VPP END: PMV resumes naturally from VPP setpoint (no forced reset)
-                    print(f"  [AgentPMV h={sim_h:.1f} vpp={ev['id']} END] PMV resumes from sp={loop.sp:.1f}")
-
-        if loop.h_cool != -1: ex.set_actuator_value(s, loop.h_cool, loop.sp)
-        if loop.h_heat != -1: ex.set_actuator_value(s, loop.h_heat, HTG_SP)
-        loop.prev_sim_h = sim_h
-        if wu: return
-        pmv = _compute_pmv(temp)
-        loop.e_wh += fac * dt
-        if active_vpp is not None: loop.e_vpp_wh += fac * dt
-        if occ:
-            loop.occ_h += dt; loop.pmv_s += pmv*dt; loop.temp_s += temp*dt
-            if abs(pmv) <= PMV_DEADBAND: loop.pmv_ok_h += dt
-            if temp > loop.sp + UNMET_TOL: loop.unmet_h += dt
-            loop.decisions.append((round(sim_h,2), round(loop.sp,1), round(pmv,3)))
-
-    api.runtime.callback_end_system_timestep_after_hvac_reporting(state, cb)
-    ec = api.runtime.run_energyplus(state, ["-w",str(epw_path),"-d",str(output_dir),str(idf_path)])
-    api.state_manager.delete_state(state)
-
-    kwh = loop.e_wh/1000; occ = max(loop.occ_h, 1e-6)
-    avg_sp = sum(d[1] for d in loop.decisions)/max(1,len(loop.decisions)) if loop.decisions else SP_DEFAULT
-    pref_scores = [e["score"] for e in loop.vpp_event_log if e.get("score") is not None]
-    _VPP_COMPLY_SP = 26.0
-    n_comply = sum(1 for e in loop.vpp_event_log if e.get("setpoint", 0) >= _VPP_COMPLY_SP)
-    vpp_comply_rate = n_comply / max(1, len(VPP_EVENTS))
-    print(f"  [family/agent_pmv] exit={ec} energy={kwh:.1f}kWh pmv_ok={loop.pmv_ok_h/occ*100:.1f}% "
-          f"vpp_scores={pref_scores} vpp_comply={vpp_comply_rate*100:.0f}%")
-    _vpp_total_h = float(len(VPP_EVENTS))
-    _e_vpp_kwh = loop.e_vpp_wh / 1000
-    _non_vpp_rate = (kwh - _e_vpp_kwh) / max(1.0, 72.0 - _vpp_total_h)
-    _vpp_reduction_kwh = round(_non_vpp_rate * _vpp_total_h - _e_vpp_kwh, 4)
-
-    return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
-        weather=weather_label, method="agent_pmv", exit_code=ec,
-        energy_kwh_total=kwh, energy_kwh_per_day=kwh/3,
-        vpp_energy_reduction_kwh=_vpp_reduction_kwh,
-        pmv_ok_fraction=loop.pmv_ok_h/occ, mean_pmv=loop.pmv_s/occ,
-        mean_temp_c=loop.temp_s/occ, unmet_cooling_h=loop.unmet_h,
-        agent_setpoint_c=round(avg_sp,1),
-        user_pref_scores=pref_scores,
-        user_pref_score=sum(pref_scores)/max(1,len(pref_scores)) if pref_scores else None,
-        user_comfort_scores=[e.get("comfort_score",3) for e in loop.vpp_event_log],
-        user_energy_scores=[e.get("energy_score",3) for e in loop.vpp_event_log],
-        user_vpp_scores=[e.get("vpp_score",3) for e in loop.vpp_event_log],
-        vpp_compliance_rate=vpp_comply_rate,
+        llm_call_count=loop.llm_calls, llm_call_failures=loop.llm_failures,
+        llm_latency_total_s=round(loop.llm_latency_s, 2),
+        llm_tokens_prompt=loop.llm_tokens_prompt, llm_tokens_completion=loop.llm_tokens_comp,
+        appliance_vpp_avoidance_rate=round(appl_vpp_avoid_rate, 3),
+        ev_target_reached_rate=round(ev_target_rate, 3),
+        ewh_preheat_used_rate=round(ewh_preheat_rate, 3),
+        appliance_results=appl_results_dict,
         control_decisions=loop.decisions[-50:], output_dir=str(output_dir))
 
 def _read_ep_energy(out_dir):
