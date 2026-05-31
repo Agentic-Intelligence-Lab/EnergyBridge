@@ -36,10 +36,14 @@ class BenchmarkResult:
     unmet_cooling_h: float = 0.0
     # VPP energy: actual kWh consumed during the 3x 1-hour demand windows
     vpp_window_energy_kwh: float = 0.0
+    vpp_energy_reduction_kwh: float = 0.0
     agent_setpoint_c: Optional[float] = None
     # User satisfaction (roleplay LLM evaluation, per VPP event)
     user_pref_score: Optional[float] = None       # average across events
     user_pref_scores: List[float] = field(default_factory=list)  # per-event [e1,e2,e3]
+    user_comfort_scores: List[float] = field(default_factory=list)
+    user_energy_scores: List[float] = field(default_factory=list)
+    user_vpp_scores: List[float] = field(default_factory=list)
     vpp_compliance_rate: float = 0.0  # fraction of VPP events where setpoint >= 26.0C
     user_pref_comment: str = ""
     # LLM performance metrics
@@ -768,6 +772,10 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
         ewh_preheat_used_rate=round(ewh_preheat_rate, 3),
         appliance_results=appl_results_dict,
         control_decisions=loop.decisions[-50:], output_dir=str(output_dir))
+
+# Compatibility aliases for benchmark scripts that still reference older method names.
+run_family_pmv_rule = run_family_pmv
+run_family_agent_pmv = run_family_agent
 
 def _read_ep_energy(out_dir):
     """Read total electricity [kWh] from eplustbl.csv (GJ col) or fallback."""
