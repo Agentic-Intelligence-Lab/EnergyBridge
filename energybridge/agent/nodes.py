@@ -47,10 +47,13 @@ def node_parse_preference(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def node_translate_grid(state: dict[str, Any]) -> dict[str, Any]:
-    translated = translate_vpp_context_to_grid_demand(state.get("vpp_context", state.get("grid_demand", {})))
+    grid_demand = dict(state.get("grid_demand", {}) or {})
+    if not grid_demand:
+        grid_demand = translate_vpp_context_to_grid_demand(state.get("vpp_context", {}))
+
     return {
-        "translated_grid_signal": translated,
-        "trajectory": _append_trajectory(state, "translate_grid", translated),
+        "grid_demand": grid_demand,
+        "trajectory": _append_trajectory(state, "translate_grid", grid_demand),
     }
 
 
@@ -63,10 +66,12 @@ def node_generate_strategy(state: dict[str, Any]) -> dict[str, Any]:
             "trajectory": _append_trajectory(state, "generate_strategy", selected_strategy),
         }
 
+    grid_demand = state.get("grid_demand", {})
+
     # Rule-based fallback strategy (always computed as baseline)
     strategy = generate_candidate_strategy(
         user_preferences=state.get("user_preferences", {}),
-        translated_grid_signal=state.get("translated_grid_signal", {}),
+        grid_demand=grid_demand,
         home_state=state.get("home_state", {}),
         memory=state.get("memory", {}),
     )
@@ -88,7 +93,7 @@ def node_generate_strategy(state: dict[str, Any]) -> dict[str, Any]:
             context = {
                 "user_input": state.get("user_input", ""),
                 "user_preferences": state.get("user_preferences", {}),
-                "translated_grid_signal": state.get("translated_grid_signal", {}),
+                "grid_demand": grid_demand,
                 "home_state": home_state,
                 "vpp_context": state.get("vpp_context", {}),
                 "fallback_strategy": strategy,
@@ -102,9 +107,7 @@ def node_generate_strategy(state: dict[str, Any]) -> dict[str, Any]:
             )
             if options:
                 # Auto-select: prefer the option whose mode best matches grid intent
-                grid_intent = state.get("translated_grid_signal", {}).get(
-                    "control_intent", "normal_operation"
-                )
+                grid_intent = grid_demand.get("control_intent", "normal_operation")
                 mode_pref = {
                     "reduce_load": "grid_support",
                     "cost_saving": "cost_saving",
@@ -138,7 +141,7 @@ def node_control(state: dict[str, Any]) -> dict[str, Any]:
     control_plan = build_ep_control_plan(
         candidate_strategy=state.get("candidate_strategy", {}),
         home_state=state.get("home_state", {}),
-        translated_grid_signal=state.get("translated_grid_signal", {}),
+        grid_demand=state.get("grid_demand", {}),
     )
     return {
         "control_plan": control_plan,

@@ -296,28 +296,18 @@ class EplusEnv:
         # Import here to avoid circular imports and to keep the module
         # importable even without langgraph installed.
         from energybridge.agent.graph import build_energybridge_graph
-        from energybridge.skills.grid_signal_translator import (
-            translate_vpp_context_to_grid_demand,
-        )
 
         # 1. Read current building state from EnergyPlus
         home_state = self._state_reader.read(api.exchange, state)
         # Reflect the last written setpoint so mock_mpc has a baseline
         home_state["hvac_setpoint"] = self._actuator_writer.last_cooling_setpoint
 
-        # 2. Translate VPP context to internal grid demand format
-        translated_grid_signal = translate_vpp_context_to_grid_demand(
-            event.vpp_context
-        )
-
-        # 3. Build initial agent state
+        # 2. Build initial agent state. Grid demand is translated inside the graph.
         initial_state: dict[str, Any] = {
             "user_input": event.user_input,
-            "grid_demand": translated_grid_signal,
             "grid_demand_source": "eplus_env_injection",
             "vpp_context": event.vpp_context,
             "home_state": home_state,
-            "translated_grid_signal": translated_grid_signal,
             "memory_path": self.memory_path,
             "log_dir": self.log_dir,
             "trajectory": [],

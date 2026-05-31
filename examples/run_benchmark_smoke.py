@@ -149,8 +149,8 @@ def _run_llm_agent(scenario: dict):
     from dotenv import load_dotenv
     load_dotenv()
     from energybridge.agent.graph import build_energybridge_graph
+    from energybridge.agent.nodes import node_translate_grid
     from energybridge.llm.strategy_advisor import generate_strategy_options
-    from energybridge.skills.grid_signal_translator import translate_vpp_context_to_grid_demand
     from energybridge.skills.preference_parser import parse_user_preference
     from energybridge.skills.strategy_generator import generate_candidate_strategy
     from energybridge.utils.config import load_llm_config
@@ -163,11 +163,11 @@ def _run_llm_agent(scenario: dict):
         "hvac_setpoint": 25.0, "occupancy": True,
     }
 
-    translated_grid_signal = translate_vpp_context_to_grid_demand(vpp_context)
+    grid_demand = node_translate_grid({"vpp_context": vpp_context})["grid_demand"]
     user_preferences = parse_user_preference(user_input)
     base_strategy = generate_candidate_strategy(
         user_preferences=user_preferences,
-        translated_grid_signal=translated_grid_signal,
+        grid_demand=grid_demand,
         home_state=home,
     )
 
@@ -186,9 +186,8 @@ def _run_llm_agent(scenario: dict):
                 context={
                     "user_input": user_input,
                     "user_preferences": user_preferences,
-                    "grid_demand": translated_grid_signal,
                     "vpp_context": vpp_context,
-                    "translated_grid_signal": translated_grid_signal,
+                    "grid_demand": grid_demand,
                     "home_state": home,
                     "fallback_strategy": base_strategy,
                 },
@@ -209,12 +208,11 @@ def _run_llm_agent(scenario: dict):
 
     initial_state = {
         "user_input": user_input,
-        "grid_demand": translated_grid_signal,
+        "grid_demand": grid_demand,
         "grid_demand_source": "llm_agent_benchmark",
         "vpp_context": vpp_context,
         "home_state": home,
         "user_preferences": user_preferences,
-        "translated_grid_signal": translated_grid_signal,
         "strategy_options": strategy_options,
         "candidate_strategy": selected,
         "llm_metrics": llm_metrics,

@@ -67,9 +67,9 @@ def _enforce_load_reduction_guardrails(
     context: dict,
 ) -> dict:
     home_state = context.get("home_state", {})
-    translated_grid_signal = context.get("translated_grid_signal", {})
+    grid_demand = context.get("grid_demand", {})
     current_setpoint = float(home_state.get("hvac_setpoint", 25.0) or 25.0)
-    control_intent = str(translated_grid_signal.get("control_intent", "normal_operation"))
+    control_intent = str(grid_demand.get("control_intent", "normal_operation"))
 
     if control_intent in {"reduce_load", "cost_saving"}:
         recommended_setpoint = float(normalized_option.get("recommended_setpoint", current_setpoint))

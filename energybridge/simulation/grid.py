@@ -10,7 +10,6 @@ from __future__ import annotations
 from copy import deepcopy
 
 from energybridge.grid.vpp_1.adapter import extract_vpp_context_from_result, load_vpp1_dispatch
-from energybridge.skills.grid_signal_translator import translate_vpp_context_to_grid_demand
 
 
 class GridSimulator:
@@ -20,11 +19,9 @@ class GridSimulator:
         vpp_mode = mode or ("invitation" if turn_index % 2 == 1 else "emergency")
         vpp_result = load_vpp1_dispatch(mode=vpp_mode)
         vpp_context = extract_vpp_context_from_result(vpp_result)
-        grid_demand = translate_vpp_context_to_grid_demand(vpp_context)
         return {
             "vpp_mode": vpp_mode,
             "grid_demand_source": f"vpp_1:{vpp_mode}",
             "vpp_context": vpp_context,
-            "grid_demand": grid_demand,
             "home_state": deepcopy(home_state),
         }

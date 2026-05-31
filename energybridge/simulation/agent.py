@@ -9,7 +9,7 @@ from energybridge.control.fallback_controller import fallback_control_plan
 from energybridge.control.mock_mpc import run_mock_mpc
 from energybridge.control.safety_checker import validate_safety
 from energybridge.llm.strategy_advisor import generate_strategy_options
-from energybridge.skills.grid_signal_translator import translate_vpp_context_to_grid_demand
+from energybridge.agent.nodes import node_translate_grid
 from energybridge.skills.preference_parser import merge_preferences_with_memory, parse_user_preference
 from energybridge.skills.strategy_generator import generate_candidate_strategy
 from energybridge.utils.config import load_llm_config
@@ -73,10 +73,10 @@ class AgentSimulator:
         scenario: dict,
     ) -> dict:
         user_preferences = self.parse_preferences(user_input, memory_snapshot)
-        translated_grid_signal = translate_vpp_context_to_grid_demand(scenario["vpp_context"])
+        grid_demand = node_translate_grid({"vpp_context": scenario["vpp_context"]})["grid_demand"]
         base_strategy = generate_candidate_strategy(
             user_preferences=user_preferences,
-            translated_grid_signal=translated_grid_signal,
+            grid_demand=grid_demand,
             home_state=scenario["home_state"],
         )
 
@@ -97,9 +97,8 @@ class AgentSimulator:
                         "turn_index": turn_index,
                         "user_input": user_input,
                         "user_preferences": user_preferences,
-                        "grid_demand": scenario["grid_demand"],
                         "vpp_context": scenario.get("vpp_context", {}),
-                        "translated_grid_signal": translated_grid_signal,
+                        "grid_demand": grid_demand,
                         "home_state": scenario["home_state"],
                         "fallback_strategy": base_strategy,
                         "memory_snapshot": memory_snapshot,
@@ -118,7 +117,7 @@ class AgentSimulator:
 
         return {
             "user_preferences": user_preferences,
-            "translated_grid_signal": translated_grid_signal,
+            "grid_demand": grid_demand,
             "base_strategy": base_strategy,
             "strategy_options": strategy_options,
             "llm_metrics": llm_metrics,
@@ -129,12 +128,12 @@ class AgentSimulator:
         selected_strategy: dict,
         user_preferences: dict,
         home_state: dict,
-        translated_grid_signal: dict,
+        grid_demand: dict,
     ) -> tuple[dict, dict]:
         control_plan = run_mock_mpc(
             candidate_strategy=selected_strategy,
             home_state=home_state,
-            translated_grid_signal=translated_grid_signal,
+            grid_demand=grid_demand,
         )
         safety_report = validate_safety(control_plan, user_preferences, home_state)
         if safety_report.get("safe", False):
@@ -167,12 +166,11 @@ class AgentSimulator:
             "memory_path": memory_path,
             "log_dir": log_dir,
             "user_input": user_input,
-            "grid_demand": scenario["grid_demand"],
+            "grid_demand": prepared["grid_demand"],
             "grid_demand_source": scenario["grid_demand_source"],
             "vpp_context": scenario.get("vpp_context", {}),
             "home_state": deepcopy(scenario["home_state"]),
             "user_preferences": prepared["user_preferences"],
-            "translated_grid_signal": prepared["translated_grid_signal"],
             "strategy_options": prepared["strategy_options"],
             "candidate_strategy": selected_strategy,
             "user_choice": user_choice,

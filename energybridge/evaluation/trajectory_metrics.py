@@ -223,11 +223,11 @@ def extract_metrics_from_trajectory(path: str | Path) -> dict[str, Any]:
 
     # ── VPP / grid ────────────────────────────────────────────────────────
     vpp = t.get("vpp_context") or t.get("vpp_task") or {}
-    tgs = t.get("translated_grid_signal") or {}
+    grid_demand = t.get("grid_demand") or {}
     m["vpp_task_type"] = vpp.get("vpp_task_type")
     m["requested_reduction_kw"] = (
         vpp.get("vpp_required_capacity_kw") or
-        tgs.get("total_required_capacity_kw")
+        grid_demand.get("total_required_capacity_kw")
     )
     m["estimated_reduction_kw"] = (
         cp.get("estimated_reduction_kw") or

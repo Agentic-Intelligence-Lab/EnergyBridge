@@ -130,7 +130,7 @@ def run_roleplay_simulation(
             selected_strategy=selected_strategy,
             user_preferences=prepared["user_preferences"],
             home_state=scenario["home_state"],
-            translated_grid_signal=prepared["translated_grid_signal"],
+            grid_demand=prepared["grid_demand"],
         )
         feedback_trace = user.give_feedback(
             turn_index=turn_index,

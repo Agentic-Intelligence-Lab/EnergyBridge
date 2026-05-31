@@ -11,9 +11,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from energybridge.agent.graph import build_energybridge_graph, build_feedback_graph
+from energybridge.agent.nodes import node_translate_grid
 from energybridge.grid.vpp_1.adapter import extract_vpp_context_from_result, load_vpp1_dispatch
 from energybridge.llm.strategy_advisor import generate_strategy_options
-from energybridge.skills.grid_signal_translator import translate_vpp_context_to_grid_demand
 from energybridge.skills.preference_parser import parse_user_preference
 from energybridge.skills.strategy_generator import generate_candidate_strategy
 from energybridge.utils.config import load_llm_config
@@ -145,9 +145,9 @@ def main() -> None:
     }
 
     vpp_context, grid_demand_source = get_demo_vpp_context(home_state)
-    translated_grid_signal = translate_vpp_context_to_grid_demand(vpp_context)
+    grid_demand = node_translate_grid({"vpp_context": vpp_context})["grid_demand"]
     print("Translated VPP-1 signal:")
-    print(json.dumps(translated_grid_signal, ensure_ascii=False, indent=2))
+    print(json.dumps(grid_demand, ensure_ascii=False, indent=2))
 
     print()
     user_input = prompt_with_default(
@@ -158,7 +158,7 @@ def main() -> None:
     user_preferences = parse_user_preference(user_input)
     base_strategy = generate_candidate_strategy(
         user_preferences=user_preferences,
-        translated_grid_signal=translated_grid_signal,
+        grid_demand=grid_demand,
         home_state=home_state,
     )
 
@@ -177,9 +177,8 @@ def main() -> None:
                 context={
                     "user_input": user_input,
                     "user_preferences": user_preferences,
-                    "grid_demand": translated_grid_signal,
                     "vpp_context": vpp_context,
-                    "translated_grid_signal": translated_grid_signal,
+                    "grid_demand": grid_demand,
                     "home_state": home_state,
                     "fallback_strategy": base_strategy,
                 },
@@ -193,12 +192,11 @@ def main() -> None:
 
     initial_state = {
         "user_input": user_input,
-        "grid_demand": translated_grid_signal,
+        "grid_demand": grid_demand,
         "grid_demand_source": grid_demand_source,
         "vpp_context": vpp_context,
         "home_state": home_state,
         "user_preferences": user_preferences,
-        "translated_grid_signal": translated_grid_signal,
         "strategy_options": strategy_options,
         "candidate_strategy": selected_strategy,
         "user_choice": user_choice,

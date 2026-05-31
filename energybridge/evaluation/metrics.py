@@ -21,7 +21,7 @@ def summarize_run(state: dict) -> dict:
     )
     user_feedback = state.get("user_feedback", {})
     control_plan = state.get("control_plan", {})
-    translated_grid_signal = state.get("translated_grid_signal", {})
+    grid_demand = state.get("grid_demand", {})
     vpp_context = state.get("vpp_context", {})
     safety_report = state.get("safety_report", {})
     duration_hours = float(control_plan.get("duration_minutes", 0) or 0) / 60.0
@@ -31,9 +31,9 @@ def summarize_run(state: dict) -> dict:
     baseline_power_kw = float(state.get("home_state", {}).get("hvac_power_kw", 0.0) or 0.0)
     baseline_energy_kwh = round(baseline_power_kw * duration_hours, 3)
     expected_reduction_kw = float(control_plan.get("estimated_reduction_kw", 0.0) or 0.0)
-    total_required_capacity_kw = float(translated_grid_signal.get("total_required_capacity_kw", 0.0) or 0.0)
-    capacity_scope = str(translated_grid_signal.get("capacity_scope", "upstream_total_capacity"))
-    control_intent = str(translated_grid_signal.get("control_intent", "normal_operation"))
+    total_required_capacity_kw = float(grid_demand.get("total_required_capacity_kw", 0.0) or 0.0)
+    capacity_scope = str(grid_demand.get("capacity_scope", "upstream_total_capacity"))
+    control_intent = str(grid_demand.get("control_intent", "normal_operation"))
     response_alignment = control_intent in {"reduce_load", "cost_saving"} and expected_reduction_kw > 0.0
 
     return {

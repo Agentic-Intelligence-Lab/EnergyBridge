@@ -14,7 +14,6 @@ class EnergyBridgeState(TypedDict, total=False):
     vpp_context: dict[str, Any]
 
     user_preferences: dict[str, Any]
-    translated_grid_signal: dict[str, Any]
     strategy_options: list[dict[str, Any]]
     candidate_strategy: dict[str, Any]
     user_choice: dict[str, Any]

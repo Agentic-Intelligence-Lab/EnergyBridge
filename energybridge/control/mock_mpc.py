@@ -4,13 +4,13 @@
 def run_mock_mpc(
     candidate_strategy: dict,
     home_state: dict,
-    translated_grid_signal: dict,
+    grid_demand: dict,
 ) -> dict:
     setpoint = float(candidate_strategy.get("recommended_setpoint", home_state.get("hvac_setpoint", 25.0)))
     base_power = float(home_state.get("hvac_power_kw", 2.0))
 
-    control_intent = translated_grid_signal.get("control_intent", "normal_operation")
-    duration_minutes = int(translated_grid_signal.get("duration_minutes", 0) or 0)
+    control_intent = grid_demand.get("control_intent", "normal_operation")
+    duration_minutes = int(grid_demand.get("duration_minutes", 0) or 0)
     if duration_minutes <= 0:
         duration_minutes = 60 if control_intent in {"reduce_load", "cost_saving"} else 30
 

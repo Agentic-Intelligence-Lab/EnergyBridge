@@ -12,7 +12,7 @@ def _get_session_summary(memory: dict | None) -> dict:
 
 def generate_candidate_strategy(
     user_preferences: dict,
-    translated_grid_signal: dict,
+    grid_demand: dict,
     home_state: dict,
     memory: dict | None = None,
 ) -> dict:
@@ -51,8 +51,8 @@ def generate_candidate_strategy(
     if "preferred_temp_max" in recent_preferences and comfort_max == 26.0:
         comfort_max = float(recent_preferences["preferred_temp_max"])
 
-    control_intent = translated_grid_signal.get("control_intent", "normal_operation")
-    price_level = translated_grid_signal.get("price_level", "normal")
+    control_intent = grid_demand.get("control_intent", "normal_operation")
+    price_level = grid_demand.get("price_level", "normal")
 
     mode = "comfort"
     pre_cooling = False
