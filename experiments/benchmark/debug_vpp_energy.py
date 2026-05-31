@@ -1,15 +1,23 @@
 """Debug script: run family PMV vs Agent+PMV for Beijing, print timestep energy during VPP."""
 import sys, os
-sys.path.insert(0, '/home/ha_agent/work/EnergyBridge/experiments/benchmark')
-sys.path.insert(0, '/home/ha_agent/work/EnergyBridge')
-sys.path.insert(0, '/home/ha_agent/EnergyPlus-24-1-0')
-os.environ['ENERGYPLUS_DIR'] = '/home/ha_agent/EnergyPlus-24-1-0'
+from pathlib import Path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+try:
+    from dotenv import load_dotenv
+    load_dotenv(PROJECT_ROOT / '.env')
+except Exception:
+    pass
+EPLUS_ROOT = Path(os.getenv('EPLUS_ROOT', '/home/ha_agent/EnergyPlus-24-1-0'))
+sys.path.insert(0, str(PROJECT_ROOT / 'experiments' / 'benchmark'))
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(EPLUS_ROOT))
+os.environ['ENERGYPLUS_DIR'] = str(EPLUS_ROOT)
 
 from pathlib import Path
 import shutil, math
 
-IDF = Path('/home/ha_agent/work/EnergyBridge/experiments/models/family_home/family_simple_3day.idf')
-EPW = Path('/home/ha_agent/work/EnergyBridge/experiments/weather/epw/CHN_BJ_Beijing.545110_CSWD.epw')
+IDF = PROJECT_ROOT / 'experiments' / 'models' / 'family_home' / 'family_simple_3day.idf'
+EPW = PROJECT_ROOT / 'experiments' / 'weather' / 'epw' / 'CHN_BJ_Beijing.545110_CSWD.epw'
 OUT = Path('/tmp/dbg_vpp')
 
 VPP_EVENTS = [

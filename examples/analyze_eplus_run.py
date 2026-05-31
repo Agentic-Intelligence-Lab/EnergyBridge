@@ -17,6 +17,7 @@ Generates
 from __future__ import annotations
 
 import argparse
+import os
 import csv
 import json
 import os
@@ -25,6 +26,14 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+try:
+    from dotenv import load_dotenv
+    load_dotenv(PROJECT_ROOT / ".env")
+except Exception:
+    pass
+EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/home/ha_agent/EnergyPlus-24-1-0"))
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -304,7 +313,7 @@ def try_readvarseso(output_dir: Path, binary: str | None) -> dict:
 
     candidates = [
         binary,
-        "/home/ha_agent/EnergyPlus-24-1-0/PostProcess/ReadVarsESO",
+        str(EPLUS_ROOT / "PostProcess" / "ReadVarsESO"),
         "/usr/local/EnergyPlus/PostProcess/ReadVarsESO",
     ]
     binary_path = next((c for c in candidates if c and Path(c).exists()), None)

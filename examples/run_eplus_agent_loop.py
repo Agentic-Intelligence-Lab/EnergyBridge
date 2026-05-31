@@ -7,7 +7,7 @@ make a decision, and write the HVAC setpoint back to EnergyPlus.
 
 Prerequisites
 -------------
-- EnergyPlus 24.1.0 installed at /home/ha_agent/EnergyPlus-24-1-0
+- EnergyPlus 24.1.0 installed at EPLUS_ROOT or /home/ha_agent/EnergyPlus-24-1-0
 - Tianjin EPW weather file at Family_Model/../Weather/Tianjin/...
 - conda environment: energybridge
 
@@ -32,11 +32,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+try:
+    from dotenv import load_dotenv
+    load_dotenv(PROJECT_ROOT / ".env")
+except Exception:
+    pass
+EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/home/ha_agent/EnergyPlus-24-1-0"))
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -63,8 +70,8 @@ def _find_epw() -> Path:
         Path("/home/ha_agent/work/Family_Model/Weather/Tianjin/CHN_Tianjin.Tianjin.545270_CSWD.epw"),
         Path("/jupyterfile/Building_Model/Weather/Tianjin/CHN_Tianjin.Tianjin.545270_CSWD.epw"),
         # Fallback: EnergyPlus bundled EPW files for functional testing
-        Path("/home/ha_agent/EnergyPlus-24-1-0/WeatherData/USA_IL_Chicago-OHare.Intl.AP.725300_TMY3.epw"),
-        Path("/home/ha_agent/EnergyPlus-24-1-0/WeatherData/USA_CA_San.Francisco.Intl.AP.724940_TMY3.epw"),
+        EPLUS_ROOT / "WeatherData" / "USA_IL_Chicago-OHare.Intl.AP.725300_TMY3.epw",
+        EPLUS_ROOT / "WeatherData" / "USA_CA_San.Francisco.Intl.AP.724940_TMY3.epw",
     ]
     for p in candidates:
         if p.exists():

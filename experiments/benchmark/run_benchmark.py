@@ -3,7 +3,7 @@
 
 Usage:
   conda activate energybridge
-  cd /home/ha_agent/work/EnergyBridge/experiments/benchmark
+  cd experiments/benchmark
   python run_benchmark.py                              # full 18-run benchmark (3 methods)
   python run_benchmark.py --scenario family/tianjin/pmv   # single run
   python run_benchmark.py --building family            # only family home
@@ -17,15 +17,20 @@ Self-checks:
   5) Agent vs PMV comparison with auto-improvement suggestions
 """
 from __future__ import annotations
-import argparse, json, sys, time
+import argparse, json, os, sys, time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 BENCHMARK_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = BENCHMARK_DIR / "results"
-EPLUS_ROOT = Path("/home/ha_agent/EnergyPlus-24-1-0")
-PROJECT_ROOT = Path("/home/ha_agent/work/EnergyBridge")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+try:
+    from dotenv import load_dotenv
+    load_dotenv(PROJECT_ROOT / ".env")
+except Exception:
+    pass
+EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/home/ha_agent/EnergyPlus-24-1-0"))
 _BENCH_DIR = Path(__file__).parent
 _EXPERIMENTS_DIR = _BENCH_DIR.parent
 EPW_DIR = _EXPERIMENTS_DIR / "weather" / "epw"

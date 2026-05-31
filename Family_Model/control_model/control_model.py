@@ -16,13 +16,19 @@ from __future__ import annotations
 import argparse
 import csv
 import math
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
 
-EPLUS_ROOT = Path("/home/ha_agent/EnergyPlus-24-1-0")
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+except Exception:
+    pass
+EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/home/ha_agent/EnergyPlus-24-1-0"))
 if str(EPLUS_ROOT) not in sys.path:
     sys.path.insert(0, str(EPLUS_ROOT))
 

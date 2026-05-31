@@ -1,12 +1,17 @@
 """Medium office 15-zone benchmark runner (PMV or LLM Agent mode) — 3x VPP-1 per 3-day sim."""
 from __future__ import annotations
-import json, math, shutil, sys
+import json, math, os, shutil, sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-EPLUS_ROOT = Path("/home/ha_agent/EnergyPlus-24-1-0")
-PROJECT_ROOT = Path("/home/ha_agent/work/EnergyBridge")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+try:
+    from dotenv import load_dotenv
+    load_dotenv(PROJECT_ROOT / ".env")
+except Exception:
+    pass
+EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/home/ha_agent/EnergyPlus-24-1-0"))
 BENCHMARK_DIR = Path(__file__).resolve().parent
 for p in (str(EPLUS_ROOT), str(PROJECT_ROOT)):
     if p not in sys.path: sys.path.insert(0, p)

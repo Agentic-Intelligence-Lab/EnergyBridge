@@ -25,7 +25,12 @@ from typing import Dict, List, Optional, Tuple, Any
 
 BENCH_DIR    = Path(__file__).resolve().parent
 PROJECT_ROOT = BENCH_DIR.parent.parent
-EPLUS_ROOT   = Path("/home/ha_agent/EnergyPlus-24-1-0")
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
+except Exception:
+    pass
+EPLUS_ROOT   = Path(os.getenv("EPLUS_ROOT", "/home/ha_agent/EnergyPlus-24-1-0"))
 
 for p in (str(EPLUS_ROOT), str(PROJECT_ROOT), str(BENCH_DIR)):
     if p not in sys.path:

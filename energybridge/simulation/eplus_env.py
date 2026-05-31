@@ -23,7 +23,7 @@ Usage
         idf_path="Family_Model/Family_Simple.idf",
         epw_path="Family_Model/Weather/Tianjin/CHN_Tianjin...epw",
         output_dir="logs/eplus_run",
-        eplus_root="/home/ha_agent/EnergyPlus-24-1-0",
+        eplus_root="/path/to/EnergyPlus-24-1-0",
     )
     env.inject_vpp_event(vpp_context, user_input="配合削峰")
     env.run()                          # blocks until EnergyPlus finishes
@@ -32,6 +32,7 @@ Usage
 
 from __future__ import annotations
 
+import os
 import queue
 import sys
 import threading
@@ -46,7 +47,13 @@ from energybridge.simulation.appliance_controller import ApplianceController
 # EnergyPlus path bootstrap (mirrors control_model.py convention)
 # ---------------------------------------------------------------------------
 
-_DEFAULT_EPLUS_ROOT = Path("/home/ha_agent/EnergyPlus-24-1-0")
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+try:
+    from dotenv import load_dotenv
+    load_dotenv(_PROJECT_ROOT / ".env")
+except Exception:
+    pass
+_DEFAULT_EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/home/ha_agent/EnergyPlus-24-1-0"))
 
 
 def _ensure_eplus_on_path(eplus_root: Path) -> None:
