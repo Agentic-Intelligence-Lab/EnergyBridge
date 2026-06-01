@@ -403,6 +403,8 @@ def main() -> None:
     parser.add_argument("--output", "-o", default=None,
                         help="Override output directory.")
     parser.add_argument("--verbose", "-v", action="store_true")
+    parser.add_argument("--max-rounds", "-r", type=int, default=3,
+                        help="Max discussion rounds per VPP event (default: 3)")
     args = parser.parse_args()
 
     if len(args.personas) < 2:
@@ -415,7 +417,7 @@ def main() -> None:
         persona_data.append(p)
 
     agents = [PersonaAgent(p) for p in persona_data]
-    pool   = DiscussionPool(agents, rounds=2)
+    pool   = DiscussionPool(agents, max_rounds=args.max_rounds)
 
     # Output dir: join first 4 ID tokens from each persona with __
     id_parts = ["_".join(p["id"].split("_")[:4]) for p in persona_data]

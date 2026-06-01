@@ -92,11 +92,11 @@ class DiscussionPool:
          Returns a consensus score (1.0-5.0) + reason.
     """
 
-    def __init__(self, agents: List[PersonaAgent], rounds: int = 2) -> None:
+    def __init__(self, agents: List[PersonaAgent], max_rounds: int = 3) -> None:
         if not agents:
             raise ValueError("At least one PersonaAgent required.")
         self.agents = agents
-        self.rounds = rounds
+        self.max_rounds = max_rounds
 
     # -- Public API -----------------------------------------------------------
 
@@ -180,9 +180,14 @@ class DiscussionPool:
     # -- Internal helpers -----------------------------------------------------
 
     def _run_rounds(self, topic: str, context: str, label_prefix: str = "讨论") -> list:
-        """Run self.rounds discussion rounds; return full transcript."""
+        """Run up to self.max_rounds discussion rounds with consensus check after each round.
+
+        After each round (except the last), a neutral synthesis LLM judges whether
+        the household has reached sufficient consensus.  If yes, break early.
+        If max_rounds is exhausted without consensus, force-summarize anyway.
+        """
         history: list[dict] = []
-        for round_i in range(self.rounds):
+        for round_i in range(self.max_rounds):
             label = "初始意见" if round_i == 0 else f"第{round_i + 1}轮"
             print(f"  ┌─[多用户{label_prefix} {label}]{'─'*28}")
             for agent in self.agents:
@@ -190,7 +195,64 @@ class DiscussionPool:
                 print(f"  │  [{agent.name}] {text}")
                 history.append({"name": agent.name, "text": text})
             print(f"  └{'─'*56}")
+
+            # After the last round: skip check, force-summarize
+            if round_i == self.max_rounds - 1:
+                print(f"  [合成LLM裁定] 已达最大轮次({self.max_rounds})，强行总结")
+                break
+
+            # Consensus check — synthesis LLM observes, does NOT participate
+            reached, reason = self._check_consensus(history, context, round_i + 1)
+            if reached:
+                print(f"  [合成LLM裁定] 第{round_i + 1}轮后达成共识 → {reason}")
+                break
+            else:
+                print(f"  [合成LLM裁定] 第{round_i + 1}轮尚存分歧，进入下一轮 → {reason}")
+
         return history
+
+    def _check_consensus(self, history: list, context: str, round_num: int) -> tuple:
+        """Neutral synthesis LLM judges if the family reached sufficient consensus.
+
+        The LLM is explicitly told NOT to add opinions — only to observe and judge.
+        Returns: (consensus_reached: bool, reason: str)
+        Fail-safe: on any error, returns (True, "判断失败") to avoid infinite loops.
+        """
+        from energybridge.llm.client import LLMClient
+
+        sys_prompt = (
+            "You are a neutral household facilitator observing (NOT participating in) "
+            "a family discussion. Your ONLY job: judge whether the family members have "
+            "reached sufficient consensus to make a collective decision. "
+            "Do NOT add your own opinions, suggestions, or solutions. "
+            'Return JSON only, no markdown: {"consensus_reached": true, "reason": "<max 40 chars>"} '
+            'or {"consensus_reached": false, "reason": "<max 40 chars>"}'
+        )
+        discussion_text = "\n".join(f"{h['name']}: {h['text']}" for h in history)
+        user_msg = (
+            f"Round {round_num} just completed.\n"
+            f"Context: {context}\n\n"
+            f"Discussion so far:\n{discussion_text}\n\n"
+            "Has the family reached sufficient consensus (general agreement on direction) "
+            "to make a household energy decision? "
+            'JSON only: {"consensus_reached": true/false, "reason": "..."}'
+        )
+        try:
+            r = LLMClient().chat_with_metrics(
+                sys_prompt, user_msg, max_retries=2, retry_base_delay=1.0
+            )
+            text = r["text"].strip()
+            if text.startswith("```"):
+                text = "\n".join(
+                    l for l in text.splitlines()
+                    if not l.strip().startswith("```")
+                ).strip()
+            data = json.loads(text)
+            reached = bool(data.get("consensus_reached", False))
+            reason  = str(data.get("reason", ""))[:40]
+            return reached, reason
+        except Exception as e:
+            return True, f"判断失败({str(e)[:20]})"
 
     def _synthesize_strategy(self, transcript: list, context: str, event_index: int) -> str:
         """Synthesize discussion transcript -> one user_pref string for AC agent."""
