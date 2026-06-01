@@ -814,7 +814,7 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
             for ev in VPP_EVENTS:
                 if psim < ev["end_h"] <= sim_h and ev["id"] not in loop.vpp_scored:
                     ev_idx = next((i+1 for i,e in enumerate(VPP_EVENTS) if e["id"]==ev["id"]), 1)
-                    result = _score_event(ev, loop, sim_h, event_index=ev_idx)
+                    result = _score_event(ev, loop, sim_h, event_index=ev_idx, human_mode=human_mode)
                     # Attach actual energy and demand target to event log
                     result["actual_kwh"] = round(loop.vpp_event_energy_wh.get(ev["id"], 0.0) / 1000.0, 4)
                     result["demand_target_kwh"] = loop.vpp_demand_by_id.get(ev["id"], {}).get("target_kwh", None)

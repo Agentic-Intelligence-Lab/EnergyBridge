@@ -389,6 +389,7 @@ def score_user_preference(
     washer_completed: bool = True,
     washer_during_vpp: bool = False,
     log_path: Path | None = None,
+    human_mode: bool = False,
 ):
     """Score user satisfaction using roleplay LLM (fallback: rule-based).
 
@@ -399,6 +400,32 @@ def score_user_preference(
     """
     if persona is None:
         persona = OFFICE_PERSONA if building == "office" else FAMILY_PERSONA
+
+    # Human-in-the-loop scoring: print event summary and ask for terminal input
+    if human_mode:
+        sp_str = f"{agent_setpoint_c:.1f}°C" if agent_setpoint_c else f"{mean_temp_c:.1f}°C"
+        print(f"  ╔═[VPP事件{event_index} 满意度评分]{'═'*36}")
+        print(f"  ║  VPP期间室内均温: {mean_temp_c:.1f}°C   设定点: {sp_str}")
+        print(f"  ║  今日用电: {energy_kwh_per_day:.2f} kWh   舒适达标率: {pmv_ok_fraction*100:.0f}%")
+        if agent_reason:
+            print(f"  ║  Agent理由: {agent_reason[:100]}")
+        print(f"  ╚{'═'*52}")
+        print("  请对本次VPP处理结果评分（1=非常不满 / 5=非常满意），直接回车=3：")
+        try:
+            raw_score = input("  > ").strip()
+            score = max(1, min(5, int(raw_score))) if raw_score.isdigit() else 3
+        except (EOFError, KeyboardInterrupt):
+            score = 3
+        print("  可选：留下简短反馈（直接回车跳过）：")
+        try:
+            comment = input("  > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            comment = ""
+        return {
+            "score": score, "comfort_score": score, "energy_score": score,
+            "vpp_score": score, "label": "human", "comment": comment or "—",
+            "zone_comfort_scores": None, "source": "human",
+        }
 
     home_state = {
         "indoor_temp": round(mean_temp_c, 1),

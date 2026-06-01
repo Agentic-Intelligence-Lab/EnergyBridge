@@ -212,7 +212,7 @@ VPP Demand Agent          →     AC Thermostat Agent
 4. Returns `{"target_kwh": <float>, "reason": "<brief>"}` as JSON.
 5. Falls back to a rule-based value if the LLM call fails.
 
-**Building-side AC Agent** (`_FamilyLoop` in `family_runner.py`):
+**EnergyBridge Agent** (`_FamilyLoop` in `family_runner.py`):
 
 1. Receives the VPP demand target and the user preference string (single-user)
    or the household consensus string (multi-agent mode).
@@ -278,10 +278,50 @@ python3 run_benchmark.py --building family --skip-existing
 
 ## Interactive Agent Demo
 
+### Human-in-the-loop mode (`run_agent_loop.py`)
+
+Runs the **identical** 3-day EnergyPlus + VPP co-simulation as
+`run_persona_json.py`, but replaces the LLM-simulated user with **real human
+terminal input**.
+
+```bash
+cd experiments/benchmark
+conda activate energybridge
+python3 run_agent_loop.py
+python3 run_agent_loop.py --city Tianjin
+python3 run_agent_loop.py --output /tmp/my_run
+```
+
+Before each VPP event (18:00-19:00, Days 1–3) you will see:
+
+```
+  ┌─[Strategy Candidates | VPP event 1]──────────────────────────
+  │  [A] 舒适优先  —  保持设定点25°C，接受较高电耗  (舒适度最高，电耗偏多)
+  │  [B] 平衡策略  —  升温至26°C，家电提前完成或延后  (轻微温漂，节电约15%)
+  │  [C] 节能优先  —  升温至27°C，所有可平移家电延迟  (明显温漂，节电约30%)
+  └──────────────────────────────────────────────────────────────
+  > A          ← type A / B / C, free text, or Enter for auto
+```
+
+After each event ends you rate your satisfaction (1–5) and leave a comment.
+
+Output goes to `benchmark_results/human_<YYYYMMDD_HHMMSS>/` — same layout as
+single-persona runs (`run_summary.txt` + `benchmark_result.json`).
+
+| Mode | User input | EnergyPlus | VPP agent |
+|------|-----------|-----------|-----------|
+| `run_persona_json.py` | LLM roleplay | ✓ | ✓ |
+| `run_multi_persona_json.py` | LLM household discussion | ✓ | ✓ |
+| `run_agent_loop.py` | **Real human** | ✓ | ✓ |
+
+### Automated roleplay evaluation (`run_roleplay_evaluation.py`)
+
+Runs a **fully automated** multi-turn evaluation loop (no EnergyPlus, no VPP)
+to test the agent's learning behavior across turns.  No human input needed.
+
 ```bash
 conda activate energybridge
-python examples/run_agent_loop.py
-python examples/run_roleplay_evaluation.py
+python examples/run_roleplay_evaluation.py --turns 5
 ```
 
 ---
