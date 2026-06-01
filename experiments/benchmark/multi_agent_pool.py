@@ -17,6 +17,20 @@ class PersonaAgent:
 
     def __init__(self, persona: dict) -> None:
         self.persona = persona
+        # Persistent cross-event memory: list of {"label": str, "text": str}
+        self.memory: list[dict] = []
+
+    def update_memory(self, label: str, text: str) -> None:
+        """Record a past-event summary into this agent's long-term memory.
+
+        Context kept: consensus strategy text and event outcome (setpoint + score).
+        Context NOT kept: raw round-by-round dialogue — only the synthesized
+        summary is stored, keeping the prompt short and signal-dense.
+        """
+        self.memory.append({"label": label, "text": text})
+        # Keep last 10 entries to avoid context overflow
+        if len(self.memory) > 10:
+            self.memory = self.memory[-10:]
 
     @property
     def name(self) -> str:
@@ -60,6 +74,10 @@ class PersonaAgent:
             f"请用中文回答（1-3句话）。直接表达你的意见，不要重复别人说的话。"
         )
         parts: list[str] = []
+        if self.memory:
+            parts.append("【你的历史记忆（真实经历过的事件）】")
+            for m in self.memory:
+                parts.append(f"  {m['label']}：{m['text']}")
         if context:
             parts.append(f"【当前情况】{context}")
         if history:
@@ -139,6 +157,10 @@ class DiscussionPool:
 
         transcript = self._run_rounds(topic, context, label_prefix=f"策略讨论·事件{event_index}")
         consensus  = self._synthesize_strategy(transcript, context, event_index)
+        # Store synthesized consensus (not raw dialogue) in each agent's memory
+        mem_text = f"共识策略：{consensus[:80]}"
+        for agent in self.agents:
+            agent.update_memory(label=f"事件{event_index}策略讨论", text=mem_text)
         return consensus, transcript
 
     def discuss_score(
@@ -175,6 +197,10 @@ class DiscussionPool:
 
         transcript = self._run_rounds(topic, context, label_prefix=f"评分讨论·事件{event_index}")
         score, reason = self._synthesize_score(transcript, context, event_index)
+        # Store event outcome (setpoint + consensus score) in each agent's memory
+        mem_text = f"空调{sp:.1f}°C，共识评分{score:.1f}分：{reason}"
+        for agent in self.agents:
+            agent.update_memory(label=f"事件{event_index}结果", text=mem_text)
         return score, reason, transcript
 
     # -- Internal helpers -----------------------------------------------------
