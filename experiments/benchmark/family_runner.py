@@ -56,11 +56,16 @@ class BenchmarkResult:
     llm_latency_total_s: float = 0.0
     llm_tokens_prompt: int = 0; llm_tokens_completion: int = 0
     # Appliance rule-based indicators
-    appliance_vpp_avoidance_rate: float = 0.0   # avg fraction of present devices avoiding VPP
+    appliance_vpp_avoidance_rate: float = 0.0   # fraction of completed shiftable tasks that ran outside VPP
+    appliance_task_completion_rate: float = 1.0  # fraction of present shiftable tasks that actually completed
+    task_completion_per_day: List[float] = field(default_factory=list)  # per-day shiftable completion [day1,day2,day3]
+    vpp_demand_targets: List[float] = field(default_factory=list)       # per-event energy targets from VPP demand agent
+    vpp_demand_achievement_ratio: float = 0.0  # sum(actual_kwh) / sum(target_kwh) across all VPP events
     ev_target_reached_rate: float = 0.0         # fraction of days EV reached target SOC
     ewh_preheat_used_rate: float = 0.0          # fraction of days EWH preheat was active
     appliance_results: dict = field(default_factory=dict)  # per-device per-day details
     control_decisions: List[Tuple[float, float, float]] = field(default_factory=list)
+    vpp_event_log: List[dict] = field(default_factory=list)  # scored VPP events with reason
     output_dir: str = ""; error: str = ""
     def as_dict(self):
         _skip = {"control_decisions", "appliance_results"}
@@ -99,6 +104,13 @@ class _FamilyLoop:
         self.vpp_mem_ctx: str = ""                  # compressed memory for next LLM call
         self.vpp_user_input: str = ""               # roleplay user preference before agent acts
         self.vpp_last_reason: str = ""              # agent reason from last LLM call
+        # Per-event VPP energy tracking and demand-agent outputs
+        self.vpp_event_energy_wh: Dict[str, float] = {}   # {event_id: Wh} accumulated per event
+        self.vpp_demand_by_id: Dict[str, dict] = {}        # {event_id: {target_kwh, reason}}
+        self.current_vpp_demand_kwh: float = 0.0           # demand target for active VPP event
+        self.days_evaluated: set = set()                    # prevent double-printing daily eval
+        self.vpp_trigger_actions: Dict[str, dict] = {}      # {event_id: appliance_actions at VPP trigger}
+        self.day_agent_decisions: List[List[dict]] = [[], [], []]  # per day: list of {h, sp, actions}
         # Appliance suite — initialised by run_family_agent when persona is known
         self.appliance_suite = None                 # ApplianceSuite | None
 
@@ -194,6 +206,97 @@ def run_family_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
         user_pref_score=sum(pref_scores)/max(1,len(pref_scores)) if pref_scores else None,
         control_decisions=loop.decisions[-50:], output_dir=str(output_dir))
 
+
+
+def _print_prev_day_completion(suite, day_idx: int, day_num: int) -> None:
+    """Print appliance task completion for day_num at next morning check."""
+    results = suite.all_results()
+    print(f"  [Day {day_num} 任务完成评估]")
+    any_shown = False
+    for nm in ("washer", "dishwasher", "dryer"):
+        days_list = results.get(nm, [])
+        if not days_list or day_idx >= len(days_list):
+            continue
+        dr = days_list[day_idx]
+        if not dr.get("present", False):
+            continue   # not in household — skip entirely
+        any_shown = True
+        sched_hod = int(dr.get("scheduled_abs_h", 0) % 24)
+        if dr.get("skipped"):
+            status = "✗ 跳过任务 [agent issued skip — task NOT done]"
+        elif not dr.get("completed"):
+            status = "✗ 未完成 [scheduled but never ran]"
+        elif dr.get("ran_during_vpp"):
+            status = f"⚠  完成@{sched_hod:02d}:00 [在VPP窗口内运行, 未错峰]"
+        else:
+            status = f"✓  完成@{sched_hod:02d}:00 [错峰完成]"
+        print(f"    {nm:<14}: {status}")
+    wh_days = results.get("water_heater", [])
+    if wh_days and day_idx < len(wh_days) and wh_days[day_idx].get("present", False):
+        wh = wh_days[day_idx]
+        any_shown = True
+        ph   = "预热✓" if wh.get("preheat_used") else "预热✗"
+        rb   = "浴前就绪✓" if wh.get("ready_at_bath", True) else "浴前就绪✗"
+        vfl  = " ⚠VPP中加热" if wh.get("ran_during_vpp") else ""
+        print(f"    {'water_heater':<14}: {ph}  {rb}{vfl}  ({wh.get('energy_kwh', 0):.1f}kWh)")
+    ev_days = results.get("ev", [])
+    if ev_days and day_idx < len(ev_days) and ev_days[day_idx].get("present", False):
+        ev = ev_days[day_idx]
+        any_shown = True
+        tgt  = "SOC达标✓" if ev.get("target_reached") else "SOC未达标✗"
+        soc  = ev.get("soc_end", 0)
+        vfl  = " ⚠VPP中充电" if ev.get("ran_during_vpp") else ""
+        print(f"    {'ev':<14}: {tgt}  SOC={soc:.0%}{vfl}  ({ev.get('energy_kwh', 0):.1f}kWh)")
+    if not any_shown:
+        print(f"    (no controllable appliances in this household)")
+
+
+def _call_vpp_demand_agent(event_id: str, prev_vpp_kwh: list) -> dict:
+    """Grid-side VPP demand agent — issues an energy consumption LIMIT for the
+    upcoming 1-hour VPP window based on historical household VPP energy data.
+
+    Context is completely SEPARATE from the household agent (no shared history).
+    Returns: {"target_kwh": float, "reason": str, "source": "llm"|"rule"}
+    """
+    import json as _j
+
+    # ── Code-generated VPP energy log (no LLM) ───────────────────────
+    if prev_vpp_kwh:
+        log_lines = "\n".join(f"  Event {i+1}: {kwh:.3f} kWh"
+                               for i, kwh in enumerate(prev_vpp_kwh))
+        avg_kwh = sum(prev_vpp_kwh) / len(prev_vpp_kwh)
+        rule_target = round(avg_kwh, 3)   # use historical average directly
+    else:
+        log_lines = "  (no previous VPP data — first event)"
+        rule_target = 2.0  # baseline: ~2 kW avg for 1h in a family home
+
+    _sys = (
+        "You are a grid-side VPP (Virtual Power Plant) coordinator managing a "
+        "residential demand-response program. Your ONLY role: issue an energy "
+        "consumption LIMIT (kWh) for the upcoming 1-hour VPP demand-response "
+        "window for one household. This is NOT the household perspective. "
+        'Output JSON only: {"target_kwh": <float>, "reason": "<max 80 chars>"}'
+    )
+    _usr = (
+        f"Household VPP window consumption history (each entry = 1-hour window):\n"
+        f"{log_lines}\n\n"
+        "Rules:\n"
+        "  - No history: target = 2.0 kWh (family baseline)\n"
+        "  - Has history: target = historical average (no reduction applied)\n"
+        "Set target_kwh for the NEXT 1-hour VPP window.\n"
+        'Respond with JSON only: {"target_kwh": <number>, "reason": "<brief>"}'
+    )
+    try:
+        from energybridge.llm.client import LLMClient
+        _r = LLMClient().chat_with_metrics(_sys, _usr, max_retries=2, retry_base_delay=1.0)
+        data = _j.loads(_r["text"].strip())
+        target = round(max(0.1, float(data["target_kwh"])), 3)
+        reason = str(data.get("reason", ""))[:80]
+        return {"target_kwh": target, "reason": reason, "source": "llm"}
+    except Exception as _e:
+        return {"target_kwh": rule_target,
+                "reason": f"rule-based fallback (hist avg): {str(_e)[:40]}",
+                "source": "rule"}
 
 
 def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
@@ -458,7 +561,12 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                      user_pref_input=""):
         import json as _j
         hh = int(hod % 24)
-        vpp_tag = f"  *** VPP_ACTIVE (event {vpp_id}): reduce load! user will score your response ***" if vpp_active else ""
+        if vpp_active:
+            _dkwh = getattr(loop, "current_vpp_demand_kwh", None)
+            _dtag = f"  Grid target ≤{_dkwh:.2f}kWh this 1h window." if _dkwh else ""
+            vpp_tag = f"  *** VPP_ACTIVE (event {vpp_id}): reduce load!{_dtag}  User will score your response ***"
+        else:
+            vpp_tag = ""
         # Post-VPP recovery signal: tell LLM to restore setpoint within 2h after VPP ends
         post_vpp_tag = ""
         if not vpp_active:
@@ -569,7 +677,8 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
             print(f"  [VPP Result | Event {event_index}/3 {ev['id']}] User score: {sc}/5 ({lbl}) | {cmt[:80]}")
             print(f"  {'─'*62}")
             return {"id": ev["id"], "setpoint": sp_w, "score": sc, "label": lbl,
-                    "comment": cmt, "user_input": loop_ref.vpp_user_input[:80], "source": src}
+                    "comment": cmt, "user_input": loop_ref.vpp_user_input[:80],
+                    "reason": loop_ref.vpp_last_reason[:120], "source": src}
         except Exception as e:
             print(f"  [VPP score {ev['id']}] error: {e}")
             return {"id": ev["id"], "setpoint": loop_ref.sp, "score": None, "label": "?",
@@ -601,6 +710,13 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
         if not wu:
             if not occ:
                 loop.sp = 28.0   # unoccupied: save energy automatically
+                # End-of-day completion check at midnight (24h/48h)
+                for _eod_h in (24.0, 48.0):
+                    if loop.prev_sim_h < _eod_h <= sim_h and loop.appliance_suite is not None:
+                        _day_idx = int(_eod_h / 24) - 1
+                        if _day_idx not in loop.days_evaluated:
+                            loop.days_evaluated.add(_day_idx)
+                            _print_prev_day_completion(loop.appliance_suite, _day_idx, _day_idx + 1)
             else:
                 psim = loop.prev_sim_h
                 triggered = False
@@ -624,9 +740,17 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                         ev_h_start = int(triggered_vpp["trigger_h"] % 24)
                         ev_h_end   = int(triggered_vpp["end_h"] % 24)
                         ev_idx_n   = next((i+1 for i,e in enumerate(VPP_EVENTS) if e["id"]==vid), 1)
+                        # Grid-side VPP demand agent (separate context — no shared history)
+                        _prev_vpp_kwh = [loop.vpp_event_energy_wh.get(e["id"], 0.0) / 1000.0
+                                         for e in VPP_EVENTS if e["trigger_h"] < triggered_vpp["trigger_h"]]
+                        print(f"  [VPP Energy Log] code-generated, no LLM: {[round(k,3) for k in _prev_vpp_kwh] or '(none)'}")
+                        _vpp_demand = _call_vpp_demand_agent(vid, _prev_vpp_kwh)
+                        loop.vpp_demand_by_id[vid] = _vpp_demand
+                        loop.current_vpp_demand_kwh = _vpp_demand["target_kwh"]
+                        print(f"  [VPP Grid Agent] {vid} demand_target={_vpp_demand['target_kwh']:.3f}kWh  [{_vpp_demand['reason']}]")
                         print(f"  {'='*62}")
                         print(f"  VPP Demand-Response Event {ev_idx_n}/3  (Day{day_num}  {ev_h_start:02d}:00-{ev_h_end:02d}:00)")
-                        print(f"    Goal : Reduce total electricity for 1 hour (grid peak-shaving)")
+                        print(f"    Goal : Reduce household electricity to ≤{_vpp_demand['target_kwh']:.2f} kWh for this 1-hour window")
                         print(f"    AC   : Raise setpoint {_ac_sp_vpp_min:.1f}-{_ac_sp_vpp_max:.1f}°C  (pre-cool before, drift during)")
                         print(f"    Other: Shift washer/EWH preheat/EV delay away from 18:00-19:00")
                         print(f"  {'='*62}")
@@ -634,6 +758,7 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                         hh = int(sim_h % 24)
                         if hh == int(OCCUPIED_START):
                             print(f"  --- Day {day_num} start  (sim_h={sim_h:.0f}h  08:00 occupied period begins) ---")
+
                     # User in the loop: get roleplay user preference BEFORE agent acts
                     if is_vpp:
                         try:
@@ -662,6 +787,14 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                         if loop.next_check is None or loop.next_check > _vpp_end:
                             loop.next_check = _vpp_end
                     loop.vpp_last_reason = res.get("reason", "")
+                    # Record this LLM decision for daily log
+                    _day_i = min(2, int(sim_h // 24))
+                    _non_null = {k: v for k, v in res.get("appliance_actions", {}).items() if v is not None}
+                    loop.day_agent_decisions[_day_i].append(
+                        {"h": sim_h, "sp": res["setpoint"], "actions": _non_null})
+                    # Store VPP-trigger actions separately
+                    if is_vpp and triggered_vpp is not None:
+                        loop.vpp_trigger_actions[vid] = res.get("appliance_actions", {})
                     # Apply independent per-appliance actions from LLM
                     if loop.appliance_suite is not None:
                         _apply_appliance_actions(
@@ -682,6 +815,12 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                 if psim < ev["end_h"] <= sim_h and ev["id"] not in loop.vpp_scored:
                     ev_idx = next((i+1 for i,e in enumerate(VPP_EVENTS) if e["id"]==ev["id"]), 1)
                     result = _score_event(ev, loop, sim_h, event_index=ev_idx)
+                    # Attach actual energy and demand target to event log
+                    result["actual_kwh"] = round(loop.vpp_event_energy_wh.get(ev["id"], 0.0) / 1000.0, 4)
+                    result["demand_target_kwh"] = loop.vpp_demand_by_id.get(ev["id"], {}).get("target_kwh", None)
+                    # Store all agent decisions for this day
+                    result["vpp_trigger_actions"] = loop.vpp_trigger_actions.get(ev["id"], {})
+                    result["day_decisions"] = loop.day_agent_decisions[ev_idx - 1]
                     # Attach per-appliance VPP summary to event log
                     if loop.appliance_suite is not None:
                         result["appliance_summary"] = loop.appliance_suite.vpp_day_summary(ev_idx - 1)
@@ -705,6 +844,8 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
         loop.e_wh += fac * dt
         if active_vpp:            # track energy consumed during VPP demand windows
             loop.vpp_e_wh += fac * dt
+            loop.vpp_event_energy_wh[active_vpp["id"]] = (
+                loop.vpp_event_energy_wh.get(active_vpp["id"], 0.0) + fac * dt)
         # Step appliance suite and write powers back to EnergyPlus each timestep
         if loop.appliance_suite is not None:
             _appl_powers = loop.appliance_suite.step(sim_h, dt)
@@ -733,14 +874,40 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
     if loop.appliance_suite is not None:
         appl_results_dict = loop.appliance_suite.all_results()
         # Per VPP-event: fraction of present controllable devices that avoided VPP window
-        avoid_fracs = []
+        # avoidance_rate: only count completed-and-not-VPP as true avoidance.
+        # skip != avoidance; skipping tasks to dodge VPP must NOT be rewarded.
+        avoid_fracs = []; complete_fracs = []
         for _day_idx, _ev in enumerate(VPP_EVENTS):
             _summ = loop.appliance_suite.vpp_day_summary(_day_idx)
-            _present = [(nm, info) for nm, info in _summ.items() if info.get("present")]
-            if _present:
-                _avoided = sum(1 for _, info in _present if not info.get("ran_during_vpp", False))
-                avoid_fracs.append(_avoided / len(_present))
+            _shift = {nm: info for nm, info in _summ.items()
+                      if nm not in ("water_heater", "ev") and info.get("present")}
+            if _shift:
+                _completed_n = sum(1 for info in _shift.values()
+                                   if info.get("completed") and not info.get("skipped"))
+                _true_avoided = sum(1 for info in _shift.values()
+                                    if info.get("completed") and not info.get("skipped")
+                                    and not info.get("ran_during_vpp"))
+                complete_fracs.append(_completed_n / len(_shift))
+                avoid_fracs.append(_true_avoided / max(1, _completed_n))
         appl_vpp_avoid_rate = sum(avoid_fracs) / max(1, len(avoid_fracs))
+        appl_task_complete_rate = sum(complete_fracs) / max(1, len(complete_fracs))
+        # Per-event VPP demand targets from grid-side agent
+        _vpp_targets = [loop.vpp_demand_by_id.get(e["id"], {}).get("target_kwh", 0.0)
+                        for e in VPP_EVENTS]
+        # VPP demand achievement ratio: actual / target (summed across all events)
+        _vpp_actual_total = sum(loop.vpp_event_energy_wh.get(e["id"], 0.0) / 1000.0 for e in VPP_EVENTS)
+        _vpp_target_total = sum(v for v in _vpp_targets if v > 0)
+        _vpp_achieve_ratio = round(_vpp_actual_total / _vpp_target_total, 4) if _vpp_target_total > 0 else 0.0
+        # Per-day completion list (for JSON export and final summary)
+        _task_per_day = []
+        for _d in range(3):
+            _dr = loop.appliance_suite.all_results()
+            _sh = {nm: _dr[nm][_d] for nm in ("washer","dishwasher","dryer")
+                   if nm in _dr and _d < len(_dr[nm]) and _dr[nm][_d].get("present")}
+            if _sh:
+                _task_per_day.append(round(sum(1 for v in _sh.values() if v.get("completed") and not v.get("skipped")) / len(_sh), 2))
+            else:
+                _task_per_day.append(1.0)
         # EV target SOC reached rate (1.0 when EV not present)
         ev_days = appl_results_dict.get("ev", [])
         if ev_days and ev_days[0].get("present", False):
@@ -757,7 +924,10 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
     print(f"  [LLM stats   ] calls={loop.llm_calls} fail={loop.llm_failures} "
           f"latency={loop.llm_latency_s:.1f}s "
           f"tokens={loop.llm_tokens_prompt}p/{loop.llm_tokens_comp}c")
-    print(f"  [Appl rules  ] vpp_avoid={appl_vpp_avoid_rate*100:.0f}% "
+    if loop.appliance_suite is not None:
+        _print_prev_day_completion(loop.appliance_suite, 2, 3)
+    print(f"  [Appl rules  ] task_complete={appl_task_complete_rate*100:.0f}% "
+          f"vpp_avoid(of_completed)={appl_vpp_avoid_rate*100:.0f}% "
           f"ev_target={ev_target_rate*100:.0f}% ewh_preheat={ewh_preheat_rate*100:.0f}%")
     return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
         weather=weather_label, method="agent", exit_code=ec,
@@ -773,9 +943,14 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
         llm_latency_total_s=round(loop.llm_latency_s, 2),
         llm_tokens_prompt=loop.llm_tokens_prompt, llm_tokens_completion=loop.llm_tokens_comp,
         appliance_vpp_avoidance_rate=round(appl_vpp_avoid_rate, 3),
+        appliance_task_completion_rate=round(appl_task_complete_rate, 3),
+        task_completion_per_day=_task_per_day if loop.appliance_suite is not None else [],
+        vpp_demand_targets=_vpp_targets,
+        vpp_demand_achievement_ratio=_vpp_achieve_ratio,
         ev_target_reached_rate=round(ev_target_rate, 3),
         ewh_preheat_used_rate=round(ewh_preheat_rate, 3),
         appliance_results=appl_results_dict,
+        vpp_event_log=loop.vpp_event_log,
         control_decisions=loop.decisions[-50:], output_dir=str(output_dir))
 
 # Compatibility aliases for benchmark scripts that still reference older method names.

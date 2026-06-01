@@ -494,7 +494,8 @@ class ApplianceSuite:
         for nm, app in self._shiftable.items():
             r = app.day_result(day_idx)
             summary[nm] = {"present": r["present"], "completed": r["completed"],
-                           "ran_during_vpp": r["ran_during_vpp"]}
+                           "ran_during_vpp": r["ran_during_vpp"],
+                           "skipped": r["skipped"]}
         wh = self._water_heater.day_result(day_idx)
         summary["water_heater"] = {"present": wh["present"],
                                    "ready_at_bath": wh["ready_at_bath"],

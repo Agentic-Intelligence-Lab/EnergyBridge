@@ -72,7 +72,35 @@ python3 run_persona_json.py atom_comfort_sensitive --city Tianjin --output /tmp/
 #   basic_role_e_caregiver_low_dr, basic_role_f_commuter_ev_optimizer
 ```
 
-Results go to `experiments/benchmark/results/<persona_id>/` by default.
+### Run a multi-persona household (multi-agent mode)
+
+Multiple personas become household members who **discuss** VPP strategy before
+each event and **score** the outcome together afterward. The LLM-synthesized
+consensus is injected as the AC agent's `user_pref` for that event.
+
+```bash
+cd experiments/benchmark
+
+# Two household members
+python3 run_multi_persona_json.py basic_role_a_commuter_price_cooperative \
+                                   basic_role_b_home_comfort_gated --city Tianjin
+
+# Three members
+python3 run_multi_persona_json.py basic_role_a_commuter_price_cooperative \
+                                   basic_role_b_home_comfort_gated \
+                                   basic_role_c_irregular_cautious
+
+# With explicit output directory
+python3 run_multi_persona_json.py persona_a persona_b --city Tianjin --output /tmp/household_run
+
+# Verbose (prints full LLM dialogue)
+python3 run_multi_persona_json.py persona_a persona_b --verbose
+```
+
+Discussion structure per VPP event: 2 rounds × N members → LLM synthesis →
+consensus preference string → injected to building agent.  
+When N = 1 this degrades naturally to a single-user instruction (the one
+member's opinion becomes the consensus directly).
 
 ### Run all 10 personas (batch)
 
@@ -85,19 +113,64 @@ python3 run_all_personas.py --results-dir /path/to/output --city Tianjin
 python3 run_all_personas.py --no-skip       # re-run even if log exists
 ```
 
-Output layout:
-
-```
-logs/results_<YYYYMMDD>/
-├── summary_<YYYYMMDD>.json                       <- per-persona metrics
-├── atom_comfort_sensitive/
-│   ├── atom_comfort_sensitive_log_<YYYYMMDD>.log  <- full run log
-│   └── eplus/                                     <- EnergyPlus raw files
-└── ...
-```
-
 The batch script resumes automatically: skips personas whose log already
 contains `[family/agent]`.
+
+---
+
+## Output & Run Summary
+
+> **All run results are saved to `benchmark_results/` at the project root.**
+> The most important file in every run directory is **`run_summary.txt`** —
+> a human-readable digest that does not require any tools to read.
+
+### Single-persona run output
+
+```
+benchmark_results/<persona_id>/
+├── run_summary.txt          ← ★ human-readable summary (always check this first)
+├── benchmark_result.json    ← raw metrics in JSON
+└── <eplus files>            ← EnergyPlus simulation outputs
+```
+
+### Multi-persona household run output
+
+```
+benchmark_results/multi__<id_a>__<id_b>/
+├── run_summary.txt          ← ★ full dialogue + strategy + scores per VPP event
+├── benchmark_result.json    ← raw metrics
+└── household_meta.json      ← member profiles + complete discussion transcripts
+```
+
+### What `run_summary.txt` contains
+
+```
+══════════════════════════════════════════════════════════════
+  EnergyBridge 运行摘要  (run_summary.txt)
+══════════════════════════════════════════════════════════════
+  用户档案   : Name · 舒适30% 节能40% VPP30%
+  本户电器   : ✓ 洗衣机 | 热水器   ✗ 未配置: 烘干机 | EV充电桩
+──────────────────────────────────────────────────────────────
+  [事件1] Day1 18:00-19:00  目标：需求侧削峰1小时
+
+  ┌─ 策略讨论 (2轮 · 2人) ──────────────────────────────────
+  │  [初始意见]
+  │    [成员A]  各自发言（自动换行）
+  │    [成员B]  ...
+  │  [第2轮]   收敛后意见
+  └→ 共识偏好: For the 18:00–19:00 VPP event, keep AC ...  ← 注入 AC agent
+
+    执行策略 ↓  AC 设定点 + 家电排程
+    VPP需求    : 目标 ≤ 2.00 kWh  实际 0.68 kWh  比率 0.34 ✓达标
+    Agent理由  : ...
+
+  ┌─ 满意度讨论 (2轮 · 2人) ───────────────────────────────
+  └→ 共识评分: 4.0/5 — 舒适度基本无影响
+──────────────────────────────────────────────────────────────
+  需求达成比率  : vpp1:1.30✗  vpp2:0.34✓  vpp3:1.01✗  (总体0.83)
+  共识满意度均值: 4.17/5  [事件1:4.0  事件2:4.0  事件3:4.5]
+══════════════════════════════════════════════════════════════
+```
 
 ### Result metrics
 
@@ -108,6 +181,57 @@ contains `[family/agent]`.
 | `user_pref_score` | LLM-evaluated user satisfaction (1-5), averaged over events |
 | `energy_kwh_total` | Total electricity consumption over 3 days |
 | `llm_call_failures` | LLM API errors (0 = clean run) |
+
+---
+
+## VPP Demand-Response Agent
+
+### How the building agent gives peak-shaving decisions
+
+Each VPP demand-response window (18:00–19:00 daily) involves **two separate
+LLM agents** with no shared context:
+
+```
+Grid side                       Building side
+─────────────────────           ─────────────────────────────────────────
+VPP Demand Agent          →     AC Thermostat Agent
+  • Role: grid coordinator        • Role: household comfort manager
+  • Input: household's past        • Input: user preference (or household
+    VPP window kWh history           consensus from discussion pool)
+  • Output: energy cap (kWh)       • Input: VPP demand target (kWh)
+    for the next 1-hour window     • Output: per-timestep setpoint (°C)
+                                     + appliance schedule commands
+```
+
+**Grid-side VPP Demand Agent** (`_call_vpp_demand_agent` in `family_runner.py`):
+
+1. Receives the household's historical VPP-window energy consumption list.
+2. For the **first event** (no history): issues a baseline target of **2.0 kWh**.
+3. For **subsequent events**: sets target = historical average — letting the
+   agent track the household's actual baseline without artificial reduction.
+4. Returns `{"target_kwh": <float>, "reason": "<brief>"}` as JSON.
+5. Falls back to a rule-based value if the LLM call fails.
+
+**Building-side AC Agent** (`_FamilyLoop` in `family_runner.py`):
+
+1. Receives the VPP demand target and the user preference string (single-user)
+   or the household consensus string (multi-agent mode).
+2. Makes an LLM decision every simulation timestep during the VPP window:
+   - Setpoint strategy: pre-cool before the event, then raise setpoint during
+     the window (configurable range in system prompt).
+   - Appliance scheduling: defer or skip shiftable loads (washer, dishwasher,
+     dryer) to keep in-window consumption below the cap.
+3. The agent's reasoning is stored in `reason` field of `vpp_event_log`.
+
+**Multi-agent household discussion** (`multi_agent_pool.py`):
+
+1. Before each VPP event, all household members (N personas) discuss in
+   **2 rounds** × N speakers.
+2. A synthesis LLM call converts the dialogue into a single English preference
+   string and injects it as the AC agent's `user_pref`.
+3. After the event, members discuss satisfaction and vote on a consensus score.
+4. Full transcripts are saved in `household_meta.json` and displayed in
+   `run_summary.txt`.
 
 ---
 

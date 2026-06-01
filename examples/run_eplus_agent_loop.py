@@ -65,10 +65,10 @@ _DEFAULT_EPW = (
 # Resolve a more reliable default by searching common locations
 def _find_epw() -> Path:
     candidates = [
-        # Tianjin EPW (preferred)
+        # Tianjin EPW in repo (preferred)
+        PROJECT_ROOT / "experiments" / "weather" / "epw" / "CHN_TJ_Tianjin.545270_CSWD.epw",
         PROJECT_ROOT / "Family_Model" / "Weather" / "Tianjin" / "CHN_Tianjin.Tianjin.545270_CSWD.epw",
         Path("/home/ha_agent/work/Family_Model/Weather/Tianjin/CHN_Tianjin.Tianjin.545270_CSWD.epw"),
-        Path("/jupyterfile/Building_Model/Weather/Tianjin/CHN_Tianjin.Tianjin.545270_CSWD.epw"),
         # Fallback: EnergyPlus bundled EPW files for functional testing
         EPLUS_ROOT / "WeatherData" / "USA_IL_Chicago-OHare.Intl.AP.725300_TMY3.epw",
         EPLUS_ROOT / "WeatherData" / "USA_CA_San.Francisco.Intl.AP.724940_TMY3.epw",
@@ -117,6 +117,8 @@ def parse_args() -> argparse.Namespace:
                         help="User preference string")
     parser.add_argument("--analyze-output", action="store_true",
                         help="Auto-run analyze_eplus_run.py after EP finishes")
+    parser.add_argument("--eplus-root", default="/home/hku_user/EnergyPlus-24-1-0",
+                        help="Path to EnergyPlus installation root")
     return parser.parse_args()
 
 
@@ -202,6 +204,7 @@ def main() -> None:
     args = parse_args()
 
     idf_path = Path(args.idf)
+    eplus_root = Path(args.eplus_root)
     epw_path = Path(args.epw) if args.epw else _find_epw()
     # Generate timestamped output dir when not explicitly specified
     if args.output is None:
@@ -240,6 +243,7 @@ def main() -> None:
         output_dir=output_dir,
         memory_path=str(PROJECT_ROOT / "logs" / "memory.json"),
         log_dir=str(PROJECT_ROOT / "logs"),
+        eplus_root=eplus_root,
     )
 
     # Inject the synthetic VPP event
