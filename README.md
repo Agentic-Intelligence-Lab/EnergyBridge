@@ -310,7 +310,5 @@ EnergyBridge/
 
 ## Reference
 
-This project references the HEMA open-source framework (MIT License) as a
-conceptual reference for multi-agent home energy management. See `references/HEMA/`.
 EnergyBridge is an independent implementation; all code in `energybridge/` is
 original unless otherwise noted.
