@@ -379,9 +379,13 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
 
     # Per-day shiftable completion rate (from metrics)
     per_day = d.get("task_completion_per_day", [])
+    per_day_shift = d.get("task_shift_success_per_day", [])
     if has_shiftable and per_day:
         day_strs = "  ".join(f"Day{i+1}:{int(v*100)}%" for i, v in enumerate(per_day))
         lines.append(f"  {'完成率(逐天)':<14}: {day_strs}")
+    if has_shiftable and per_day_shift:
+        day_strs_shift = "  ".join(f"Day{i+1}:{int(v*100)}%" for i, v in enumerate(per_day_shift))
+        lines.append(f"  {'平移成功率(逐天)':<14}: {day_strs_shift}")
 
     # Water heater (only if present)
     wh_days = appl.get("water_heater", [])
@@ -419,8 +423,10 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
         ("      需求达成比率 : " + _vpp_ratio_str(result)),
         f"      任务完成率   : {d.get('appliance_task_completion_rate', 1.0)*100:.0f}%"
         f"  (✓=错峰完成 ✗=跳过任务/未完成)",
+        f"      平移成功率   : {d.get('appliance_shift_success_rate', 0)*100:.0f}%"
+        f"  (分母=全部在户可平移电器任务；分子=完成且不在VPP运行)",
         f"      错峰率       : {d.get('appliance_vpp_avoidance_rate', 0)*100:.0f}%"
-        f"  (仅统计已完成任务中未在VPP窗口内运行的比例)",
+        f"  (分母=已完成任务；用于衡量完成后是否避开VPP)",
         f"  ▸ 用电量",
         f"      总能耗       : {d.get('energy_kwh_total', 0):.2f} kWh (3天)",
         f"      日均          : {d.get('energy_kwh_per_day', 0):.2f} kWh/天",

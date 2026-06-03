@@ -369,13 +369,25 @@ def _write_multi_run_summary(
 
     # ── Overall metrics ────────────────────────────────────────────────────
     lines += ["  总体指标", SEP]
-    vpp_e  = rd.get("vpp_energy_kwh_total")
+    vpp_e  = rd.get("vpp_window_energy_kwh", rd.get("vpp_energy_kwh_total"))
     scores = rd.get("user_pref_scores", [])
     avg_sc = rd.get("user_pref_score")
+    per_day = rd.get("task_completion_per_day", [])
+    per_day_shift = rd.get("task_shift_success_per_day", [])
     scores_str = "  ".join(f"事件{i+1}:{s:.1f}" for i, s in enumerate(scores))
+    per_day_str = "  ".join(f"Day{i+1}:{int(v*100)}%" for i, v in enumerate(per_day)) if per_day else "N/A"
+    per_day_shift_str = "  ".join(f"Day{i+1}:{int(v*100)}%" for i, v in enumerate(per_day_shift)) if per_day_shift else "N/A"
     lines += [
-        f"  VPP时段用电量   : {f'{vpp_e:.3f} kWh (3事件合计)' if vpp_e else 'N/A'}",
+        f"  VPP时段用电量   : {f'{vpp_e:.3f} kWh (3事件合计)' if isinstance(vpp_e, (int, float)) else 'N/A'}",
         f"  需求达成比率    : {_vpp_ratio_simple(rd)}",
+        f"  完成率(逐天)    : {per_day_str}",
+        f"  平移成功率(逐天): {per_day_shift_str}",
+        f"  任务完成率      : {rd.get('appliance_task_completion_rate', 1.0)*100:.0f}%"
+        f"  (✓=错峰完成 ✗=跳过任务/未完成)",
+        f"  平移成功率      : {rd.get('appliance_shift_success_rate', 0.0)*100:.0f}%"
+        f"  (分母=全部在户可平移电器任务；分子=完成且不在VPP运行)",
+        f"  错峰率          : {rd.get('appliance_vpp_avoidance_rate', 0.0)*100:.0f}%"
+        f"  (分母=已完成任务；用于衡量完成后是否避开VPP)",
         f"  总用电量        : {rd.get('energy_kwh_total', 0):.3f} kWh",
         f"  日均用电量      : {rd.get('energy_kwh_per_day', 0):.3f} kWh/day",
         f"  PMV舒适达标率   : {rd.get('pmv_ok_fraction', 0):.1%}",
