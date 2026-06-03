@@ -153,6 +153,76 @@ def _rule_score(persona: dict, mean_temp_c: float, pmv_ok_fraction: float,
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+_APPLIANCE_KEYS = ("washer", "dishwasher", "dryer", "water_heater", "ev")
+
+
+def _get_appliance_presence(vpp_context: dict) -> dict:
+    raw = (vpp_context or {}).get("appliances", {}) if isinstance(vpp_context, dict) else {}
+    return {k: bool((raw.get(k, False) if isinstance(raw, dict) else False)) for k in _APPLIANCE_KEYS}
+
+
+def _strategy_appliance_plan_cn(strategy_id: str, presence: dict) -> str:
+    if not presence:
+        return ""
+    parts = []
+    if presence.get("washer"):
+        parts.append("洗衣机错峰")
+    if presence.get("dishwasher"):
+        parts.append("洗碗机错峰")
+    if presence.get("dryer"):
+        parts.append("烘干机错峰")
+    if presence.get("water_heater"):
+        parts.append("热水器18:00前预热")
+    if presence.get("ev"):
+        parts.append("EV避开18:00-19:00")
+    if not parts:
+        return ""
+
+    if strategy_id == "A":
+        head = "尽量保舒适，电器以温和错峰为主"
+    elif strategy_id == "B":
+        head = "舒适与削峰平衡，电器主动错峰"
+    else:
+        head = "优先削峰，电器尽量后移"
+    return f"{head}：" + "，".join(parts)
+
+
+def _strategy_appliance_pref_en(strategy_id: str, presence: dict) -> str:
+    if not presence:
+        return ""
+    actions = []
+    if presence.get("washer"):
+        actions.append("shift washer away from 18:00-19:00")
+    if presence.get("dishwasher"):
+        actions.append("shift dishwasher away from 18:00-19:00")
+    if presence.get("dryer"):
+        actions.append("shift dryer away from 18:00-19:00")
+    if presence.get("water_heater"):
+        actions.append("finish water-heater preheat before 18:00")
+    if presence.get("ev"):
+        actions.append("keep EV charging out of 18:00-19:00")
+    if not actions:
+        return ""
+
+    if strategy_id == "A":
+        prefix = "Keep comfort as priority while"
+    elif strategy_id == "B":
+        prefix = "Balance comfort and demand response by"
+    else:
+        prefix = "Prioritize peak reduction by"
+    return f"{prefix} " + ", ".join(actions) + "."
+
+
+def _compose_pref_with_appliances(selected: dict, presence: dict) -> str:
+    base = selected.get("user_pref", selected.get("description", "")).strip()
+    sid = str(selected.get("id", "")).upper()
+    tail = _strategy_appliance_pref_en(sid, presence).strip()
+    if not tail:
+        return base
+    if not base:
+        return tail
+    return f"{base} {tail}"
+
 def get_user_preference_input(
     building: str,
     event_index: int,
@@ -193,9 +263,13 @@ def get_user_preference_input(
     )
 
     # Step 2: Display all strategies
+    appliance_presence = _get_appliance_presence(vpp_context)
     print(f"  ┌─[Strategy Candidates | VPP event {event_index}]{'─'*30}")
     for c in candidates:
         print(f"  │  [{c['id']}] {c['label']}  —  {c['description']}  ({c['tradeoff']})")
+        plan_cn = _strategy_appliance_plan_cn(str(c.get('id', '')).upper(), appliance_presence)
+        if plan_cn:
+            print(f"  │      电器控制: {plan_cn}")
     print(f"  └{'─'*56}")
 
     # Step 3: Select strategy
@@ -218,7 +292,7 @@ def get_user_preference_input(
             if override:
                 selected = override
                 print(f"  [Strategy Selected  | event={event_index}] → [{selected['id']}] {selected['label']} (human)")
-                pref = selected.get("user_pref", selected.get("description", ""))
+                pref = _compose_pref_with_appliances(selected, appliance_presence)
                 _log_and_return(log_path, persona, event_index, "strategy_human",
                                 pref, extra={"selected_id": selected["id"], "human_input": raw_choice,
                                              "candidates": [{k: c[k] for k in ("id","label","description")}
@@ -238,7 +312,7 @@ def get_user_preference_input(
     else:
         print(f"  [Strategy Selected  | event={event_index}] → [{selected['id']}] {selected['label']} (auto)")
 
-    pref = selected.get("user_pref", selected.get("description", ""))
+    pref = _compose_pref_with_appliances(selected, appliance_presence)
     mode_tag = "human_auto" if human_mode else "auto"
     _log_and_return(log_path, persona, event_index, f"strategy_{mode_tag}",
                     pref, extra={"selected_id": selected["id"],
@@ -308,21 +382,27 @@ def generate_vpp_strategy_candidates(
             {"event": e["id"], "score": e.get("score"), "comment": e.get("comment", "")[:50]}
             for e in (past_events or [])
         ]
+        _ap = _get_appliance_presence(vpp_context)
+        _active_appliances = [k for k, v in _ap.items() if v]
+        _active_appliances_text = ",".join(_active_appliances) if _active_appliances else "none"
+
         sys_prompt = (
             "You are an energy management strategy advisor for a smart home VPP demand-response system. "
             "Generate 3 distinct response strategies for the upcoming peak-shaving event. "
             "Strategy A = comfort-first, B = balanced, C = energy-saving. "
-            "Tailor them to the user persona. "
+            "Tailor them to the user persona and explicitly include appliance control. "
+            "If appliances are available, mention how to handle washer, dishwasher, dryer, water heater, and EV in strategy text. "
             'Return ONLY a JSON array of exactly 3 objects, each with keys: '
             '"id" ("A"/"B"/"C"), '
             '"label" (Chinese label ≤6 chars), '
-            '"description" (Chinese action summary ≤40 chars), '
-            '"tradeoff" (Chinese tradeoff ≤25 chars), '
-            '"user_pref" (English preference statement ≤90 chars, will be injected into AC agent prompt).'
+            '"description" (Chinese action summary ≤64 chars), '
+            '"tradeoff" (Chinese tradeoff ≤30 chars), '
+            '"user_pref" (English preference statement ≤140 chars, will be injected into AC agent prompt).'
         )
         user_msg = (
             f"Building={building}. VPP event #{event_index}. "
             f"Context: {json.dumps(vpp_context, ensure_ascii=False)}. "
+            f"Active appliances: {_active_appliances_text}. "
             f"Persona: comfort_priority={sp.get('comfort_priority', 0.5)}, "
             f"preferred_range={sp.get('preferred_temp_min', 24)}-{sp.get('preferred_temp_max', 26)}°C. "
             f"Past events: {json.dumps(past_summary, ensure_ascii=False)}."

@@ -58,7 +58,9 @@ class BenchmarkResult:
     # Appliance rule-based indicators
     appliance_vpp_avoidance_rate: float = 0.0   # fraction of completed shiftable tasks that ran outside VPP
     appliance_task_completion_rate: float = 1.0  # fraction of present shiftable tasks that actually completed
+    appliance_shift_success_rate: float = 0.0  # fraction of present shiftable tasks completed and shifted outside VPP
     task_completion_per_day: List[float] = field(default_factory=list)  # per-day shiftable completion [day1,day2,day3]
+    task_shift_success_per_day: List[float] = field(default_factory=list)  # per-day shift success [day1,day2,day3]
     vpp_demand_targets: List[float] = field(default_factory=list)       # per-event energy targets from VPP demand agent
     vpp_demand_achievement_ratio: float = 0.0  # sum(actual_kwh) / sum(target_kwh) across all VPP events
     ev_target_reached_rate: float = 0.0         # fraction of days EV reached target SOC
@@ -669,7 +671,8 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                 energy_kwh_per_day=e_day, agent_setpoint_c=sp_w,
                 event_index=event_index,
                 user_preference_text=loop_ref.vpp_user_input,
-                agent_reason=loop_ref.vpp_last_reason)
+                agent_reason=loop_ref.vpp_last_reason,
+                human_mode=human_mode)
             sc = r.get("score") or 0.0
             lbl = r.get("label", "?")
             cmt = r.get("comment", "")[:100]
@@ -765,9 +768,18 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                             from user_pref_scorer import get_user_preference_input
                             ev_idx = next((i+1 for i,ev in enumerate(VPP_EVENTS)
                                            if ev["id"]==vid), 1)
+                            _acfg = appliance_config or {}
+                            _appl_ctx = {
+                                "washer": bool((_acfg.get("washer", {}) or {}).get("present", False)),
+                                "dishwasher": bool((_acfg.get("dishwasher", {}) or {}).get("present", False)),
+                                "dryer": bool((_acfg.get("dryer", {}) or {}).get("present", False)),
+                                "water_heater": bool((_acfg.get("water_heater", {}) or {}).get("present", False)),
+                                "ev": bool((_acfg.get("ev", {}) or {}).get("present", False)),
+                            }
                             loop.vpp_user_input = get_user_preference_input(
                                 "family", ev_idx,
-                                {"vpp_id": vid, "hour": sim_h, "duration_h": 1.0},
+                                {"vpp_id": vid, "hour": sim_h, "duration_h": 1.0,
+                                 "appliances": _appl_ctx},
                                 loop.vpp_event_log,
                                 human_mode=human_mode)
                         except Exception as _e:
@@ -869,14 +881,14 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
     vpp_comply_rate = n_comply / max(1, len(VPP_EVENTS))
 
     # ── Appliance rule-based indicators ─────────────────────────────────
-    appl_vpp_avoid_rate = 0.0; ev_target_rate = 1.0; ewh_preheat_rate = 1.0
+    appl_vpp_avoid_rate = 0.0; appl_shift_success_rate = 0.0; ev_target_rate = 1.0; ewh_preheat_rate = 1.0
     appl_results_dict: dict = {}
     if loop.appliance_suite is not None:
         appl_results_dict = loop.appliance_suite.all_results()
         # Per VPP-event: fraction of present controllable devices that avoided VPP window
         # avoidance_rate: only count completed-and-not-VPP as true avoidance.
         # skip != avoidance; skipping tasks to dodge VPP must NOT be rewarded.
-        avoid_fracs = []; complete_fracs = []
+        avoid_fracs = []; complete_fracs = []; shift_success_fracs = []
         for _day_idx, _ev in enumerate(VPP_EVENTS):
             _summ = loop.appliance_suite.vpp_day_summary(_day_idx)
             _shift = {nm: info for nm, info in _summ.items()
@@ -888,9 +900,11 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                                     if info.get("completed") and not info.get("skipped")
                                     and not info.get("ran_during_vpp"))
                 complete_fracs.append(_completed_n / len(_shift))
+                shift_success_fracs.append(_true_avoided / len(_shift))
                 avoid_fracs.append(_true_avoided / max(1, _completed_n))
         appl_vpp_avoid_rate = sum(avoid_fracs) / max(1, len(avoid_fracs))
         appl_task_complete_rate = sum(complete_fracs) / max(1, len(complete_fracs))
+        appl_shift_success_rate = sum(shift_success_fracs) / max(1, len(shift_success_fracs))
         # Per-event VPP demand targets from grid-side agent
         _vpp_targets = [loop.vpp_demand_by_id.get(e["id"], {}).get("target_kwh", 0.0)
                         for e in VPP_EVENTS]
@@ -900,14 +914,19 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
         _vpp_achieve_ratio = round(_vpp_actual_total / _vpp_target_total, 4) if _vpp_target_total > 0 else 0.0
         # Per-day completion list (for JSON export and final summary)
         _task_per_day = []
+        _shift_success_per_day = []
         for _d in range(3):
             _dr = loop.appliance_suite.all_results()
             _sh = {nm: _dr[nm][_d] for nm in ("washer","dishwasher","dryer")
                    if nm in _dr and _d < len(_dr[nm]) and _dr[nm][_d].get("present")}
             if _sh:
-                _task_per_day.append(round(sum(1 for v in _sh.values() if v.get("completed") and not v.get("skipped")) / len(_sh), 2))
+                _completed = sum(1 for v in _sh.values() if v.get("completed") and not v.get("skipped"))
+                _shift_ok = sum(1 for v in _sh.values() if v.get("completed") and not v.get("skipped") and not v.get("ran_during_vpp"))
+                _task_per_day.append(round(_completed / len(_sh), 2))
+                _shift_success_per_day.append(round(_shift_ok / len(_sh), 2))
             else:
                 _task_per_day.append(1.0)
+                _shift_success_per_day.append(1.0)
         # EV target SOC reached rate (1.0 when EV not present)
         ev_days = appl_results_dict.get("ev", [])
         if ev_days and ev_days[0].get("present", False):
@@ -927,6 +946,7 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
     if loop.appliance_suite is not None:
         _print_prev_day_completion(loop.appliance_suite, 2, 3)
     print(f"  [Appl rules  ] task_complete={appl_task_complete_rate*100:.0f}% "
+          f"shift_success={appl_shift_success_rate*100:.0f}% "
           f"vpp_avoid(of_completed)={appl_vpp_avoid_rate*100:.0f}% "
           f"ev_target={ev_target_rate*100:.0f}% ewh_preheat={ewh_preheat_rate*100:.0f}%")
     return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
@@ -944,7 +964,9 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
         llm_tokens_prompt=loop.llm_tokens_prompt, llm_tokens_completion=loop.llm_tokens_comp,
         appliance_vpp_avoidance_rate=round(appl_vpp_avoid_rate, 3),
         appliance_task_completion_rate=round(appl_task_complete_rate, 3),
+        appliance_shift_success_rate=round(appl_shift_success_rate, 3),
         task_completion_per_day=_task_per_day if loop.appliance_suite is not None else [],
+        task_shift_success_per_day=_shift_success_per_day if loop.appliance_suite is not None else [],
         vpp_demand_targets=_vpp_targets,
         vpp_demand_achievement_ratio=_vpp_achieve_ratio,
         ev_target_reached_rate=round(ev_target_rate, 3),
