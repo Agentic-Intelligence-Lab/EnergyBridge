@@ -285,11 +285,11 @@ Runs the **identical** 3-day EnergyPlus + VPP co-simulation as
 terminal input**.
 
 ```bash
-cd experiments/benchmark
+cd /path/to/EnergyBridge
 conda activate energybridge
-python3 run_agent_loop.py
-python3 run_agent_loop.py --city Tianjin
-python3 run_agent_loop.py --output /tmp/my_run
+python3 examples/run_agent_loop.py
+python3 examples/run_agent_loop.py --city Tianjin
+python3 examples/run_agent_loop.py --output /tmp/my_run
 ```
 
 Before each VPP event (18:00-19:00, Days 1–3) you will see:
@@ -320,6 +320,7 @@ Runs a **fully automated** multi-turn evaluation loop (no EnergyPlus, no VPP)
 to test the agent's learning behavior across turns.  No human input needed.
 
 ```bash
+cd /path/to/EnergyBridge
 conda activate energybridge
 python examples/run_roleplay_evaluation.py --turns 5
 ```
