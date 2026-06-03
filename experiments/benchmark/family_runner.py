@@ -652,7 +652,7 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
             fallback["reason"] = ""
             return fallback
 
-    def _score_event(ev, loop_ref, sim_h, event_index=1):
+    def _score_event(ev, loop_ref, sim_h, event_index=1, human_mode: bool = False):
         """Score agent strategy for a VPP event window after it ends (roleplay LLM)."""
         try:
             from user_pref_scorer import score_user_preference
