@@ -424,7 +424,7 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
     if ev_days and ev_days[0].get("present", False):
         parts = []
         for day_d in ev_days:
-            tgt = "SOC达标✓" if day_d.get("target_reached") else "SOC未达标✗"
+            tgt = "SOC达标✓" if day_d.get("target_reached") and not day_d.get("ran_during_vpp") else "SOC未达标✗"
             vpp_flag = "⚠VPP中充电" if day_d.get("ran_during_vpp") else ""
             ekwh = day_d.get("energy_kwh", 0)
             soc = day_d.get("soc_end", 0)

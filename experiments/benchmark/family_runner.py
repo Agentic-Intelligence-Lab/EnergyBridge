@@ -246,7 +246,7 @@ def _print_prev_day_completion(suite, day_idx: int, day_num: int) -> None:
     if ev_days and day_idx < len(ev_days) and ev_days[day_idx].get("present", False):
         ev = ev_days[day_idx]
         any_shown = True
-        tgt  = "SOC达标✓" if ev.get("target_reached") else "SOC未达标✗"
+        tgt  = "SOC达标✓" if ev.get("target_reached") and not ev.get("ran_during_vpp", False) else "SOC未达标✗"
         soc  = ev.get("soc_end", 0)
         vfl  = " ⚠VPP中充电" if ev.get("ran_during_vpp") else ""
         print(f"    {'ev':<14}: {tgt}  SOC={soc:.0%}{vfl}  ({ev.get('energy_kwh', 0):.1f}kWh)")
