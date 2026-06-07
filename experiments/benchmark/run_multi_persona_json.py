@@ -195,6 +195,23 @@ def _vpp_ratio_simple(rd: dict) -> str:
     return ("  ".join(parts) + agg_str) if parts else "N/A"
 
 
+
+def _appliance_goal_lines(rd: dict) -> list[str]:
+    labels = {
+        "washer": "洗衣机达标",
+        "dishwasher": "洗碗机达标",
+        "dryer": "烘干机达标",
+        "water_heater": "热水器达标",
+        "ev": "EV充电达标",
+    }
+    rates = rd.get("appliance_goal_attainment_rates") or {}
+    lines: list[str] = []
+    for key in ("washer", "dishwasher", "dryer", "water_heater", "ev"):
+        if key in rates:
+            lines.append(f"  {labels[key]:<12}: {rates[key]*100:.0f}%")
+    return lines
+
+
 def _fmt_discussion_block(transcript: list, n_members: int,
                            block_type: str, consensus_line: str) -> list:
     """Render one discussion block (strategy or score) as lines.
@@ -392,6 +409,9 @@ def _write_multi_run_summary(
         f"  日均用电量      : {rd.get('energy_kwh_per_day', 0):.3f} kWh/day",
         f"  PMV舒适达标率   : {rd.get('pmv_ok_fraction', 0):.1%}",
         f"  平均室温        : {rd.get('mean_temp_c', 0):.2f}°C",
+    ]
+    lines += _appliance_goal_lines(rd)
+    lines += [
         f"  共识满意度均值  : {f'{avg_sc:.2f}/5' if avg_sc else 'N/A'}  [{scores_str}]",
         SEP2,
         "",

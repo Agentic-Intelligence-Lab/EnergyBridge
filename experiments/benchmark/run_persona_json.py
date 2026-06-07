@@ -253,6 +253,26 @@ def _vpp_ratio_str(result) -> str:
     ok = "✓达标" if ratio <= 1.0 else "✗超标"
     return f"{total_a:.3f}/{total_t:.3f}kWh = {ratio:.2f} {ok}  [{per_ev}]"
 
+
+_APPLIANCE_LABELS = {
+    "washer": "洗衣机达标",
+    "dishwasher": "洗碗机达标",
+    "dryer": "烘干机达标",
+    "water_heater": "热水器达标",
+    "ev": "EV充电达标",
+}
+
+
+def _appliance_goal_metric_lines(metrics: dict) -> list[str]:
+    rates = metrics.get("appliance_goal_attainment_rates") or {}
+    lines: list[str] = []
+    for key in ("washer", "dishwasher", "dryer", "water_heater", "ev"):
+        if key not in rates:
+            continue
+        label = _APPLIANCE_LABELS.get(key, key)
+        lines.append(f"      {label:<10}: {rates[key]*100:.0f}%")
+    return lines
+
 def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Path:
     """Write a human-readable run_summary.txt (no LLM, pure algorithm)."""
     from datetime import datetime
@@ -437,8 +457,9 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
         f"      PMV达标率    : {d.get('pmv_ok_fraction', 0)*100:.1f}%",
         f"      未满足制冷   : {d.get('unmet_cooling_h', 0):.1f} h",
         f"  ▸ 电器目标达成",
-        f"      EV充电达标   : {d.get('ev_target_reached_rate', 0)*100:.0f}%",
-        f"      热水器预热   : {d.get('ewh_preheat_used_rate', 0)*100:.0f}%",
+    ]
+    lines += _appliance_goal_metric_lines(d) or ["      (无可控电器目标 metrics)"]
+    lines += [
         f"  ▸ Token消耗",
         f"      LLM调用      : {d.get('llm_call_count', 0)} 次 (失败 {d.get('llm_call_failures', 0)})",
         f"      平均延迟     : {llm_avg_lat:.2f} s/次",

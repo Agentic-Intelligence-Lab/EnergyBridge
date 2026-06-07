@@ -66,6 +66,7 @@ class BenchmarkResult:
     ev_target_reached_rate: float = 0.0         # fraction of days EV reached target SOC
     ewh_preheat_used_rate: float = 0.0          # fraction of days EWH preheat was active
     appliance_results: dict = field(default_factory=dict)  # per-device per-day details
+    appliance_goal_attainment_rates: dict = field(default_factory=dict)  # per-device aggregate goal attainment
     control_decisions: List[Tuple[float, float, float]] = field(default_factory=list)
     vpp_event_log: List[dict] = field(default_factory=list)  # scored VPP events with reason
     output_dir: str = ""; error: str = ""
@@ -486,7 +487,8 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     _ac_sp_min    = float(_ac_cfg.get("setpoint_preferred_min_c", 24.0))
     _ac_sp_max    = float(_ac_cfg.get("setpoint_preferred_max_c", 26.0))
     _ac_sp_tol    = float(_ac_cfg.get("temp_tolerance_c", 1.0))
-    _ac_sp_default = round((_ac_sp_min + _ac_sp_max) / 2, 1)
+    # Keep the household agent anchored at 26C by default, then adjust from there.
+    _ac_sp_default = 26.0
     _ac_sp_vpp_min = round(_ac_sp_max + 0.5, 1)   # minimum raise during VPP
     _ac_sp_vpp_max = round(_ac_sp_max + 1.5, 1)   # typical VPP raise ceiling
     # Override global SP_MIN based on persona comfort floor
@@ -883,6 +885,7 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
     # ── Appliance rule-based indicators ─────────────────────────────────
     appl_vpp_avoid_rate = 0.0; appl_shift_success_rate = 0.0; ev_target_rate = 1.0; ewh_preheat_rate = 1.0
     appl_results_dict: dict = {}
+    appliance_goal_attainment_rates: dict[str, float] = {}
     if loop.appliance_suite is not None:
         appl_results_dict = loop.appliance_suite.all_results()
         # Per VPP-event: fraction of present controllable devices that avoided VPP window
@@ -927,14 +930,30 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
             else:
                 _task_per_day.append(1.0)
                 _shift_success_per_day.append(1.0)
+        # Aggregate goal-attainment metrics for every appliance that exists in this household.
+        for _dev in ("washer", "dishwasher", "dryer"):
+            _days = appl_results_dict.get(_dev, [])
+            if _days and _days[0].get("present", False):
+                _ok = sum(1 for d in _days
+                          if d.get("completed") and not d.get("skipped") and not d.get("ran_during_vpp"))
+                appliance_goal_attainment_rates[_dev] = round(_ok / max(1, len(_days)), 3)
+
         # EV target SOC reached rate (1.0 when EV not present)
         ev_days = appl_results_dict.get("ev", [])
         if ev_days and ev_days[0].get("present", False):
-            ev_target_rate = sum(1 for d in ev_days if d.get("target_reached", False)) / max(1, len(ev_days))
-        # EWH preheat usage rate
+            _ev_ok = sum(1 for d in ev_days
+                         if d.get("target_reached", False) and not d.get("ran_during_vpp", False))
+            ev_target_rate = _ev_ok / max(1, len(ev_days))
+            appliance_goal_attainment_rates["ev"] = round(ev_target_rate, 3)
+        # EWH goal attainment: preheated, bath-ready, and avoided the VPP window.
         wh_days = appl_results_dict.get("water_heater", [])
         if wh_days and wh_days[0].get("present", False):
-            ewh_preheat_rate = sum(1 for d in wh_days if d.get("preheat_used", False)) / max(1, len(wh_days))
+            _wh_ok = sum(1 for d in wh_days
+                         if d.get("preheat_used", False)
+                         and d.get("ready_at_bath", True)
+                         and not d.get("ran_during_vpp", False))
+            ewh_preheat_rate = _wh_ok / max(1, len(wh_days))
+            appliance_goal_attainment_rates["water_heater"] = round(ewh_preheat_rate, 3)
 
     print(f"  [family/agent] exit={ec} energy={kwh:.1f}kWh "
           f"vpp_window={loop.vpp_e_wh/1000:.2f}kWh "
@@ -972,6 +991,7 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
         ev_target_reached_rate=round(ev_target_rate, 3),
         ewh_preheat_used_rate=round(ewh_preheat_rate, 3),
         appliance_results=appl_results_dict,
+        appliance_goal_attainment_rates=appliance_goal_attainment_rates,
         vpp_event_log=loop.vpp_event_log,
         control_decisions=loop.decisions[-50:], output_dir=str(output_dir))
 
