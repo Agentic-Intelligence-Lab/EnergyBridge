@@ -10,6 +10,7 @@ from energybridge.agent.nodes import (
     node_generate_strategy,
     node_load_memory,
     node_logging,
+    node_memory_update,
     node_metrics,
     node_parse_preference,
     node_safety,
@@ -30,6 +31,7 @@ def build_energybridge_graph():
     graph.add_node("actuate", node_actuate)
     graph.add_node("explanation", node_explanation)
     graph.add_node("metrics", node_metrics)
+    graph.add_node("memory_update", node_memory_update)
     graph.add_node("logging", node_logging)
 
     graph.add_edge(START, "load_memory")
@@ -41,7 +43,8 @@ def build_energybridge_graph():
     graph.add_edge("safety", "actuate")
     graph.add_edge("actuate", "explanation")
     graph.add_edge("explanation", "metrics")
-    graph.add_edge("metrics", "logging")
+    graph.add_edge("metrics", "memory_update")
+    graph.add_edge("memory_update", "logging")
     graph.add_edge("logging", END)
 
     return graph.compile()

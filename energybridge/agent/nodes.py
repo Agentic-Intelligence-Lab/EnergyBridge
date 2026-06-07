@@ -10,7 +10,7 @@ from energybridge.control.fallback_controller import fallback_control_plan
 from energybridge.evaluation.metrics import summarize_run
 from energybridge.control.safety_checker import validate_safety
 from energybridge.evaluation.logger import build_trajectory_log_path, save_trajectory
-from energybridge.memory.store import load_memory, save_memory
+from energybridge.memory.store import load_memory, save_memory, update_memory
 from energybridge.skills.explanation_generator import generate_explanation
 from energybridge.skills.grid_signal_translator import translate_vpp_context_to_grid_demand
 from energybridge.skills.preference_parser import merge_preferences_with_memory, parse_user_preference
@@ -242,6 +242,40 @@ def node_feedback(state: dict[str, Any]) -> dict[str, Any]:
     return {
         "memory": memory,
         "trajectory": _append_trajectory(state, "feedback", output),
+    }
+
+
+def node_memory_update(state: dict[str, Any]) -> dict[str, Any]:
+    memory_path = state.get("memory_path", "logs/memory.json")
+    memory = state.get("memory", load_memory(memory_path))
+    episode = {
+        "user_input": state.get("user_input", ""),
+        "user_preferences": dict(state.get("user_preferences", {}) or {}),
+        "grid_demand": dict(state.get("grid_demand", {}) or {}),
+        "control_plan": dict(state.get("control_plan", {}) or {}),
+        "safety_report": dict(state.get("safety_report", {}) or {}),
+        "execution_result": dict(state.get("execution_result", {}) or {}),
+        "user_feedback": dict(state.get("user_feedback", {}) or {}),
+        "final_response": state.get("final_response", ""),
+    }
+    updated_memory = update_memory(memory, episode)
+
+    feedback_history = list(updated_memory.get("feedback_history", []) or [])
+    user_feedback = dict(state.get("user_feedback", {}) or {})
+    if user_feedback:
+        feedback_history.append(user_feedback)
+        updated_memory["feedback_history"] = feedback_history[-50:]
+        updated_memory["latest_user_feedback"] = user_feedback
+
+    save_memory(updated_memory, memory_path)
+    output = {
+        "memory_updated": True,
+        "episodic_count": len(updated_memory.get("episodic_logs", [])),
+        "session_summary_preview": updated_memory.get("session_summary", {}).get("summary_text", ""),
+    }
+    return {
+        "memory": updated_memory,
+        "trajectory": _append_trajectory(state, "memory_update", output),
     }
 
 
