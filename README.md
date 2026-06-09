@@ -15,7 +15,7 @@ LLM backend: OpenAI-compatible API (configured via `.env`).
 | Requirement | Version |
 |-------------|---------|
 | Python | 3.10+ |
-| EnergyPlus | 24.1.0 (default path: `/home/ha_agent/EnergyPlus-24-1-0`; change `EPLUS_ROOT` in `experiments/benchmark/family_runner.py` if needed) |
+| EnergyPlus | 24.1.0 (default path: `/home/hku_user/EnergyPlus-24-1-0`; change `EPLUS_ROOT` in `experiments/benchmark/family_runner.py` if needed) |
 | conda env | `energybridge` |
 
 ```bash

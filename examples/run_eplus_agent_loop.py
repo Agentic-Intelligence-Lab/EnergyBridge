@@ -7,7 +7,7 @@ make a decision, and write the HVAC setpoint back to EnergyPlus.
 
 Prerequisites
 -------------
-- EnergyPlus 24.1.0 installed at EPLUS_ROOT or /home/ha_agent/EnergyPlus-24-1-0
+- EnergyPlus 24.1.0 installed at EPLUS_ROOT or /home/hku_user/EnergyPlus-24-1-0
 - Tianjin EPW weather file at Family_Model/../Weather/Tianjin/...
 - conda environment: energybridge
 
@@ -43,7 +43,7 @@ try:
     load_dotenv(PROJECT_ROOT / ".env")
 except Exception:
     pass
-EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/home/ha_agent/EnergyPlus-24-1-0"))
+EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/home/hku_user/EnergyPlus-24-1-0"))
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 

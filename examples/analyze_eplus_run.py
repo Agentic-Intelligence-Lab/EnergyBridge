@@ -33,7 +33,7 @@ try:
     load_dotenv(PROJECT_ROOT / ".env")
 except Exception:
     pass
-EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/home/ha_agent/EnergyPlus-24-1-0"))
+EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/home/hku_user/EnergyPlus-24-1-0"))
 from typing import Any
 
 # ---------------------------------------------------------------------------

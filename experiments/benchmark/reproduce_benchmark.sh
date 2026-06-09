@@ -8,7 +8,7 @@
 #
 # 依赖:
 #   conda activate energybridge
-#   EnergyPlus-24-1-0 at /home/ha_agent/EnergyPlus-24-1-0/
+#   EnergyPlus-24-1-0 at /home/hku_user/EnergyPlus-24-1-0/
 #   EPW files at /home/ha_agent/work/supporting/weather/epw/
 #   IDF files at /home/ha_agent/work/supporting/models/
 
