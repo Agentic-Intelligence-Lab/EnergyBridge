@@ -81,6 +81,36 @@ def _int_score(val, default=3) -> int:
         return default
 
 
+def normalize_persona(persona: dict) -> dict:
+    """Accept both legacy scorer personas and current roleplay JSON personas."""
+    normalized = dict(persona)
+    preferences = persona.get("preferences", {})
+    if "scoring_weights" not in normalized:
+        normalized["scoring_weights"] = dict(preferences.get("scoring_weights", {}))
+    if "vpp_override_prob" not in normalized:
+        normalized["vpp_override_prob"] = float(preferences.get("vpp_override_prob", 0.0))
+    if "stable_preferences" not in normalized:
+        ac = persona.get("appliances", {}).get("ac", {})
+        weights = normalized.get("scoring_weights", {})
+        normalized["stable_preferences"] = {
+            "comfort_priority": float(weights.get("comfort", 0.5)),
+            "cost_priority": float(weights.get("energy", 0.3)),
+            "grid_priority": float(weights.get("vpp", 0.2)),
+            "preferred_temp_min": float(ac.get("setpoint_preferred_min_c", 24.0)),
+            "preferred_temp_max": float(ac.get("setpoint_preferred_max_c", 26.0)),
+            "allow_pre_cooling": True,
+            "allow_temp_drift": float(ac.get("temp_tolerance_c", 1.0)) > 0.0,
+        }
+    normalized.setdefault(
+        "temp_tolerance",
+        float(persona.get("appliances", {}).get("ac", {}).get("temp_tolerance_c", 1.5)),
+    )
+    prompts = persona.get("llm_prompts", {})
+    normalized.setdefault("roleplay_user_prompt", prompts.get("system_prompt", ""))
+    normalized.setdefault("summary", persona.get("description", ""))
+    return normalized
+
+
 def _rule_score(persona: dict, mean_temp_c: float, pmv_ok_fraction: float,
                 energy_kwh_per_day: float,
                 zone_group_temps: dict | None = None,
@@ -246,6 +276,8 @@ def get_user_preference_input(
     """
     if persona is None:
         persona = OFFICE_PERSONA if building == "office" else FAMILY_PERSONA
+    else:
+        persona = normalize_persona(persona)
 
     # VPP override: comfort_sensitive persona may bypass strategy menu
     override_prob = persona.get("vpp_override_prob", 0.0)
@@ -370,6 +402,8 @@ def generate_vpp_strategy_candidates(
     """
     if persona is None:
         persona = OFFICE_PERSONA if building == "office" else FAMILY_PERSONA
+    else:
+        persona = normalize_persona(persona)
 
     try:
         from energybridge.utils.config import load_llm_config
@@ -480,6 +514,8 @@ def score_user_preference(
     """
     if persona is None:
         persona = OFFICE_PERSONA if building == "office" else FAMILY_PERSONA
+    else:
+        persona = normalize_persona(persona)
 
     # Human-in-the-loop scoring: print event summary and ask for terminal input
     if human_mode:
@@ -514,10 +550,11 @@ def score_user_preference(
         "washer_completed": washer_completed,
         "washer_during_vpp": washer_during_vpp,
     }
-    if method in ("agent", "agent_pmv") and agent_setpoint_c:
+    if method in ("agent", "agent_pmv", "rl") and agent_setpoint_c:
+        controller = "RL baseline" if method == "rl" else "LLM agent"
         rationale = (
-            f"LLM agent set cooling setpoint to {agent_setpoint_c}°C during VPP DR event. "
-            f"Agent reason: {agent_reason[:100]}"
+            f"{controller} set cooling setpoint to {agent_setpoint_c}°C during VPP DR event. "
+            f"Controller explanation: {agent_reason[:100]}"
         )
         if user_preference_text:
             rationale += f" | User had expressed: {user_preference_text[:80]}"

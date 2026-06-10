@@ -6,6 +6,11 @@ execution, and memory logging.
 
 LLM backend: OpenAI-compatible API (configured via `.env`).
 
+Reference-derived DR capacity quantification and the independent Typical Human
+RL baseline are documented in `REFERENCE_CAPACITY_RL_INTEGRATION.md`.
+For comparable three-day PPO training, continuation, metrics, known issues, and
+handoff guidance, see `baselines/rl_energyplus_3day/README.md`.
+
 ---
 
 ## Setup
