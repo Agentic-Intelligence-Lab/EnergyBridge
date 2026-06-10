@@ -79,16 +79,34 @@ high enough that the wall-clock callback normally stops formal training first.
 
 One episode covers the same 72 hours as the agent benchmark.
 
-Observation space: 14 continuous values:
+Observation space: 44 continuous values designed to match the context exposed
+to the Agent LLM as closely as a numeric PPO observation can:
 
-1. Sine and cosine of hour-of-day.
-2. Fraction of the three-day episode elapsed.
-3. Indoor temperature, outdoor temperature, and facility power.
-4. Current cooling setpoint and VPP-active flag.
-5. Washer state and water-heater power.
-6. Current-state capacity: committable kW, recommended bid kW, and success
-   probability.
-7. Distance below the upper comfort boundary.
+1. Hour-of-day and remaining simulation time.
+2. Indoor and outdoor temperature.
+3. VPP-active state, analogous VPP target, committable capacity, recommended
+   bid, and per-device capacity-constraint flags. Capacity context is zeroed
+   outside VPP windows because the Agent only receives it during VPP events.
+4. Presence, task state, scheduled time, and allowed window for washer,
+   dishwasher, and dryer.
+5. Water-heater presence, preheat state/window, and bath-required time.
+6. EV presence, SOC, target SOC, at-home state, charging mode/window, and
+   arrival time.
+7. Refrigerator presence and configured uncontrollable power.
+
+Optional or currently unscheduled appliance times use `-1` as a numeric
+sentinel.
+
+Facility power, current cooling setpoint, capacity success probability, and
+engineered comfort-distance features are deliberately excluded because the
+Agent prompt does not expose them. The Agent receives user-preference and
+historical-feedback text; these cannot be represented losslessly as fixed
+numeric PPO features, so they remain implicit in the selected persona and
+reward rather than being replaced with arbitrary encodings.
+
+The 44-value schema replaces the earlier 14-value RL observation. Models
+trained with the old schema are not compatible and must be retrained rather
+than passed through `--resume`.
 
 Action space: three normalized PPO outputs in `[-1, 1]`:
 
