@@ -37,7 +37,8 @@ VPP_EVENTS = [
 class BenchmarkResult:
     scenario: str = ""; building: str = "family"; weather: str = ""; method: str = ""
     exit_code: int = -1; energy_kwh_total: float = 0.0; energy_kwh_per_day: float = 0.0
-    pmv_ok_fraction: float = 0.0; mean_pmv: float = 0.0; mean_temp_c: float = 0.0
+    pmv_ok_fraction: float = 0.0; comfort_ok_fraction: float = 0.0
+    mean_pmv: float = 0.0; mean_temp_c: float = 0.0
     unmet_cooling_h: float = 0.0
     # VPP energy: actual kWh consumed during the 3x 1-hour demand windows
     vpp_window_energy_kwh: float = 0.0
@@ -92,7 +93,8 @@ class _FamilyLoop:
         # Appliance actuator handles (written back to EnergyPlus each timestep)
         self.h_ev = self.h_ewh_sp = -1
         self.h_washer = self.h_dishwasher = self.h_dryer = self.h_refrigerator = -1
-        self.e_wh = self.occ_h = self.pmv_ok_h = self.pmv_s = self.temp_s = self.unmet_h = 0.0
+        self.e_wh = self.occ_h = self.pmv_ok_h = self.comfort_ok_h = 0.0
+        self.pmv_s = self.temp_s = self.unmet_h = 0.0
         self.vpp_e_wh = 0.0                        # energy consumed during VPP windows [Wh]
         self.llm_calls = 0; self.llm_failures = 0  # LLM call counters
         self.llm_latency_s = 0.0                   # cumulative LLM wall-clock latency
@@ -110,7 +112,11 @@ class _FamilyLoop:
         # Per-event VPP energy tracking and demand-agent outputs
         self.vpp_event_energy_wh: Dict[str, float] = {}   # {event_id: Wh} accumulated per event
         self.vpp_demand_by_id: Dict[str, dict] = {}        # {event_id: {target_kwh, reason}}
+        self.vpp_capacity_by_id: Dict[str, dict] = {}      # household capacity assessment sent to VPP
+        self.vpp_capacity_window_by_id: Dict[str, List[dict]] = {}  # per-timestep physical capacity
+        self.total_quantification_by_id: Dict[str, dict] = {}  # reference A3 90% event capacity
         self.current_vpp_demand_kwh: float = 0.0           # demand target for active VPP event
+        self.current_vpp_capacity: Dict[str, Any] = {}
         self.days_evaluated: set = set()                    # prevent double-printing daily eval
         self.vpp_trigger_actions: Dict[str, dict] = {}      # {event_id: appliance_actions at VPP trigger}
         self.day_agent_decisions: List[List[dict]] = [[], [], []]  # per day: list of {h, sp, actions}
@@ -254,7 +260,8 @@ def _print_prev_day_completion(suite, day_idx: int, day_num: int) -> None:
         print(f"    (no controllable appliances in this household)")
 
 
-def _call_vpp_demand_agent(event_id: str, prev_vpp_kwh: list) -> dict:
+def _call_vpp_demand_agent(event_id: str, prev_vpp_kwh: list,
+                           capacity_assessment: dict | None = None) -> dict:
     """Grid-side VPP demand agent — issues an energy consumption LIMIT for the
     upcoming 1-hour VPP window based on historical household VPP energy data.
 
@@ -268,11 +275,17 @@ def _call_vpp_demand_agent(event_id: str, prev_vpp_kwh: list) -> dict:
         log_lines = "\n".join(f"  Event {i+1}: {kwh:.3f} kWh"
                                for i, kwh in enumerate(prev_vpp_kwh))
         avg_kwh = sum(prev_vpp_kwh) / len(prev_vpp_kwh)
-        rule_target = round(avg_kwh, 3)   # use historical average directly
+        baseline_kwh = avg_kwh
     else:
         log_lines = "  (no previous VPP data — first event)"
-        rule_target = 2.0  # baseline: ~2 kW avg for 1h in a family home
+        baseline_kwh = 2.0  # fallback until this household has event history
 
+    assessment = (capacity_assessment or {}).get("assessment", {})
+    recommended_bid_kw = max(0.0, float(assessment.get("recommended_bid_kw", 0.0) or 0.0))
+    committable_kw = max(0.0, float(assessment.get("committable_kw", 0.0) or 0.0))
+    success_probability = float(assessment.get("success_probability", 0.0) or 0.0)
+    constraints = assessment.get("main_constraints", [])
+    rule_target = round(max(0.1, baseline_kwh - recommended_bid_kw), 3)
     _sys = (
         "You are a grid-side VPP (Virtual Power Plant) coordinator managing a "
         "residential demand-response program. Your ONLY role: issue an energy "
@@ -283,9 +296,15 @@ def _call_vpp_demand_agent(event_id: str, prev_vpp_kwh: list) -> dict:
     _usr = (
         f"Household VPP window consumption history (each entry = 1-hour window):\n"
         f"{log_lines}\n\n"
+        f"Household physical capacity assessment:\n"
+        f"  committable={committable_kw:.3f} kW\n"
+        f"  recommended_bid={recommended_bid_kw:.3f} kW\n"
+        f"  success_probability={success_probability:.3f}\n"
+        f"  constraints={constraints}\n\n"
         "Rules:\n"
-        "  - No history: target = 2.0 kWh (family baseline)\n"
-        "  - Has history: target = historical average (no reduction applied)\n"
+        f"  - Counterfactual baseline for this 1-hour window = {baseline_kwh:.3f} kWh\n"
+        "  - Respect the household recommended bid; do not request a larger reduction\n"
+        "  - target_kwh = baseline_kwh - accepted reduction kW * 1 hour\n"
         "Set target_kwh for the NEXT 1-hour VPP window.\n"
         'Respond with JSON only: {"target_kwh": <number>, "reason": "<brief>"}'
     )
@@ -293,13 +312,18 @@ def _call_vpp_demand_agent(event_id: str, prev_vpp_kwh: list) -> dict:
         from energybridge.llm.client import LLMClient
         _r = LLMClient().chat_with_metrics(_sys, _usr, max_retries=2, retry_base_delay=1.0)
         data = _j.loads(_r["text"].strip())
-        target = round(max(0.1, float(data["target_kwh"])), 3)
+        raw_target = float(data["target_kwh"])
+        minimum_target = max(0.1, baseline_kwh - recommended_bid_kw)
+        target = round(max(minimum_target, min(baseline_kwh, raw_target)), 3)
         reason = str(data.get("reason", ""))[:80]
-        return {"target_kwh": target, "reason": reason, "source": "llm"}
+        return {"target_kwh": target, "reason": reason, "source": "llm",
+                "baseline_kwh": round(baseline_kwh, 3),
+                "accepted_capacity_kw": round(max(0.0, baseline_kwh - target), 3)}
     except Exception as _e:
         return {"target_kwh": rule_target,
-                "reason": f"rule-based fallback (hist avg): {str(_e)[:40]}",
-                "source": "rule"}
+                "reason": f"capacity-aware rule fallback: {str(_e)[:32]}",
+                "source": "rule", "baseline_kwh": round(baseline_kwh, 3),
+                "accepted_capacity_kw": round(max(0.0, baseline_kwh - rule_target), 3)}
 
 
 def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
@@ -456,6 +480,7 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
                      output_dir=None, weather_label="",
                      user_pref="我希望室内舒适，但也愿意在不影响舒适的前提下节约电力。",
                      appliance_config: dict | None = None,
+                     persona_config: dict | None = None,
                      verbose: bool = False,
                      human_mode: bool = False):
     """Event-driven LLM control: 3x VPP-1 events (Day1/2/3 18:00). Score after each."""
@@ -481,6 +506,13 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     except Exception as _ae:
         print(f"  [ApplianceSuite] init failed: {_ae}; appliances disabled")
         loop.appliance_suite = None
+    try:
+        from energybridge.quantification import quantify_agent_vpp_events
+        loop.total_quantification_by_id = quantify_agent_vpp_events(VPP_EVENTS)
+        print("  [Total Quantification] reference A3 90% event capacities loaded")
+    except Exception as _tqe:
+        print(f"  [Total Quantification] failed: {_tqe}")
+        loop.total_quantification_by_id = {}
 
     # ── Read persona AC config (from appliances.ac field in persona JSON) ──────
     _ac_cfg   = (appliance_config or {}).get("ac", {})
@@ -568,7 +600,13 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
         if vpp_active:
             _dkwh = getattr(loop, "current_vpp_demand_kwh", None)
             _dtag = f"  Grid target ≤{_dkwh:.2f}kWh this 1h window." if _dkwh else ""
-            vpp_tag = f"  *** VPP_ACTIVE (event {vpp_id}): reduce load!{_dtag}  User will score your response ***"
+            _cap = getattr(loop, "current_vpp_capacity", {}).get("assessment", {})
+            _ctag = (
+                f" Household capacity assessment: committable={float(_cap.get('committable_kw', 0.0)):.2f}kW,"
+                f" recommended_bid={float(_cap.get('recommended_bid_kw', 0.0)):.2f}kW,"
+                f" constraints={_cap.get('main_constraints', [])}."
+            )
+            vpp_tag = f"  *** VPP_ACTIVE (event {vpp_id}): reduce load!{_dtag}{_ctag}  User will score your response ***"
         else:
             vpp_tag = ""
         # Post-VPP recovery signal: tell LLM to restore setpoint within 2h after VPP ends
@@ -674,7 +712,10 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                 event_index=event_index,
                 user_preference_text=loop_ref.vpp_user_input,
                 agent_reason=loop_ref.vpp_last_reason,
+                persona=persona_config,
                 human_mode=human_mode)
+            if r.get("source") != "roleplay_llm":
+                raise RuntimeError(f"role-play LLM required, got {r.get('source')}")
             sc = r.get("score") or 0.0
             lbl = r.get("label", "?")
             cmt = r.get("comment", "")[:100]
@@ -749,7 +790,26 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                         _prev_vpp_kwh = [loop.vpp_event_energy_wh.get(e["id"], 0.0) / 1000.0
                                          for e in VPP_EVENTS if e["trigger_h"] < triggered_vpp["trigger_h"]]
                         print(f"  [VPP Energy Log] code-generated, no LLM: {[round(k,3) for k in _prev_vpp_kwh] or '(none)'}")
-                        _vpp_demand = _call_vpp_demand_agent(vid, _prev_vpp_kwh)
+                        _capacity = {}
+                        if loop.appliance_suite is not None:
+                            try:
+                                from energybridge.quantification import assess_suite_vpp_request
+                                _capacity = assess_suite_vpp_request(
+                                    loop.appliance_suite, sim_h,
+                                    target_kw=2.0, duration_minutes=60.0,
+                                )
+                            except Exception as _ce:
+                                print(f"  [Capacity Assessment] failed: {_ce}")
+                        loop.vpp_capacity_by_id[vid] = _capacity
+                        loop.current_vpp_capacity = _capacity
+                        _assessment = _capacity.get("assessment", {})
+                        print(
+                            "  [Household Capacity] "
+                            f"committable={float(_assessment.get('committable_kw', 0.0)):.3f}kW "
+                            f"bid={float(_assessment.get('recommended_bid_kw', 0.0)):.3f}kW "
+                            f"success={float(_assessment.get('success_probability', 0.0)):.1%}"
+                        )
+                        _vpp_demand = _call_vpp_demand_agent(vid, _prev_vpp_kwh, _capacity)
                         loop.vpp_demand_by_id[vid] = _vpp_demand
                         loop.current_vpp_demand_kwh = _vpp_demand["target_kwh"]
                         print(f"  [VPP Grid Agent] {vid} demand_target={_vpp_demand['target_kwh']:.3f}kWh  [{_vpp_demand['reason']}]")
@@ -783,6 +843,7 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                                 {"vpp_id": vid, "hour": sim_h, "duration_h": 1.0,
                                  "appliances": _appl_ctx},
                                 loop.vpp_event_log,
+                                persona=persona_config,
                                 human_mode=human_mode)
                         except Exception as _e:
                             print(f"  [UserInput] {_e}")
@@ -822,6 +883,23 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                 wd["temps"].append(temp)
                 wd["pmvs"].append(abs(_compute_pmv(temp)) <= PMV_DEADBAND)
                 wd["sp"] = loop.sp
+                if loop.appliance_suite is not None:
+                    try:
+                        from energybridge.quantification import assess_suite_vpp_request
+                        _step_capacity = assess_suite_vpp_request(
+                            loop.appliance_suite, sim_h,
+                            target_kw=2.0, duration_minutes=60.0,
+                        )
+                        _step_assessment = _step_capacity.get("assessment", {})
+                        loop.vpp_capacity_window_by_id.setdefault(active_vpp["id"], []).append({
+                            "sim_h": sim_h,
+                            "dt_h": dt,
+                            "committable_kw": float(_step_assessment.get("committable_kw", 0.0)),
+                            "recommended_bid_kw": float(_step_assessment.get("recommended_bid_kw", 0.0)),
+                            "success_probability": float(_step_assessment.get("success_probability", 0.0)),
+                        })
+                    except Exception as _ce:
+                        print(f"  [Capacity Window] failed: {_ce}")
 
             # Score VPP event after its window ends
             psim = loop.prev_sim_h
@@ -832,6 +910,32 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                     # Attach actual energy and demand target to event log
                     result["actual_kwh"] = round(loop.vpp_event_energy_wh.get(ev["id"], 0.0) / 1000.0, 4)
                     result["demand_target_kwh"] = loop.vpp_demand_by_id.get(ev["id"], {}).get("target_kwh", None)
+                    result["capacity_assessment"] = loop.vpp_capacity_by_id.get(ev["id"], {})
+                    _cap_rows = loop.vpp_capacity_window_by_id.get(ev["id"], [])
+                    if _cap_rows:
+                        _ncap = len(_cap_rows)
+                        result["capacity_window_summary"] = {
+                            "method": "state_physical_with_optional_baseline",
+                            "steps": _ncap,
+                            "avg_committable_kw": round(
+                                sum(r["committable_kw"] for r in _cap_rows) / _ncap, 6),
+                            "firm_min_committable_kw": round(
+                                min(r["committable_kw"] for r in _cap_rows), 6),
+                            "committable_energy_kwh": round(
+                                sum(r["committable_kw"] * r["dt_h"] for r in _cap_rows), 6),
+                            "avg_recommended_bid_kw": round(
+                                sum(r["recommended_bid_kw"] for r in _cap_rows) / _ncap, 6),
+                            "firm_min_recommended_bid_kw": round(
+                                min(r["recommended_bid_kw"] for r in _cap_rows), 6),
+                            "recommended_bid_energy_kwh": round(
+                                sum(r["recommended_bid_kw"] * r["dt_h"] for r in _cap_rows), 6),
+                            "avg_success_probability": round(
+                                sum(r["success_probability"] for r in _cap_rows) / _ncap, 6),
+                        }
+                    result["total_quantification_90"] = loop.total_quantification_by_id.get(
+                        ev["id"],
+                        {"status": "not_computed", "reason": "Reference A3 quantification unavailable"},
+                    )
                     # Store all agent decisions for this day
                     result["vpp_trigger_actions"] = loop.vpp_trigger_actions.get(ev["id"], {})
                     result["day_decisions"] = loop.day_agent_decisions[ev_idx - 1]
@@ -867,6 +971,7 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
         if occ:
             loop.occ_h += dt; loop.pmv_s += pmv * dt; loop.temp_s += temp * dt
             if abs(pmv) <= PMV_DEADBAND: loop.pmv_ok_h += dt
+            if 23.0 <= temp <= 26.0: loop.comfort_ok_h += dt
             if temp > loop.sp + UNMET_TOL: loop.unmet_h += dt
             loop.decisions.append((round(sim_h, 2), round(loop.sp, 1), round(pmv, 3)))
 
@@ -971,7 +1076,8 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
     return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
         weather=weather_label, method="agent", exit_code=ec,
         energy_kwh_total=kwh, energy_kwh_per_day=kwh/3,
-        pmv_ok_fraction=loop.pmv_ok_h/occ, mean_pmv=loop.pmv_s/occ,
+        pmv_ok_fraction=loop.pmv_ok_h/occ, comfort_ok_fraction=loop.comfort_ok_h/occ,
+        mean_pmv=loop.pmv_s/occ,
         mean_temp_c=loop.temp_s/occ, unmet_cooling_h=loop.unmet_h,
         vpp_window_energy_kwh=round(loop.vpp_e_wh / 1000, 4),
         agent_setpoint_c=round(avg_sp, 1),

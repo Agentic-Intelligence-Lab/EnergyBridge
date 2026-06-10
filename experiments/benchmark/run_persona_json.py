@@ -100,6 +100,7 @@ def main() -> None:
     result = fr.run_family_agent(
         user_pref        = persona["llm_prompts"]["system_prompt"],
         appliance_config = persona.get("appliances", {}),
+        persona_config   = persona,
         output_dir       = output_dir,
         weather_label    = args.city.lower(),
         verbose          = args.verbose,
@@ -354,6 +355,41 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
                 else:
                     appl_avoid_parts.append(f"{nm}:✓错峰完成")
         appl_avoid_str = "  ".join(appl_avoid_parts) if appl_avoid_parts else "无可控电器"
+        capacity = e.get("capacity_assessment", {}).get("assessment", {})
+        if capacity:
+            constraints = ", ".join(capacity.get("main_constraints", [])) or "无"
+            capacity_str = (
+                f"可承诺{capacity.get('committable_kw', 0):.3f}kW  "
+                f"建议上报{capacity.get('recommended_bid_kw', 0):.3f}kW  "
+                f"成功率{capacity.get('success_probability', 0)*100:.1f}%  "
+                f"约束: {constraints}"
+            )
+        else:
+            capacity_str = "(capacity assessment not run)"
+        capacity_window = e.get("capacity_window_summary", {})
+        if capacity_window:
+            capacity_window_str = (
+                f"平均可承诺{capacity_window.get('avg_committable_kw', 0):.3f}kW  "
+                f"最小持续{capacity_window.get('firm_min_committable_kw', 0):.3f}kW  "
+                f"可承诺电量{capacity_window.get('committable_energy_kwh', 0):.3f}kWh  "
+                f"建议上报电量{capacity_window.get('recommended_bid_energy_kwh', 0):.3f}kWh"
+            )
+        else:
+            capacity_window_str = "(capacity window assessment not run)"
+        total_q90 = e.get("total_quantification_90", {})
+        if total_q90.get("status") == "computed":
+            total_q90_str = (
+                f"avg_expected_shed_kw={total_q90.get('avg_expected_shed_kw', 0):.3f}kW  "
+                f"avg_reported_capacity_90_kw={total_q90.get('avg_reported_capacity_90_kw', 0):.3f}kW  "
+                f"firm_min_capacity_90_kw={total_q90.get('firm_min_capacity_90_kw', 0):.3f}kW  "
+                f"expected_shed_energy_kwh={total_q90.get('expected_shed_energy_kwh', 0):.3f}kWh  "
+                f"reported_shed_90_energy_kwh={total_q90.get('reported_shed_90_energy_kwh', 0):.3f}kWh"
+            )
+        else:
+            total_q90_str = (
+                "N/A（未运行Total_Quantification；"
+                + total_q90.get("reason", "缺少A3 conformal P_base输入") + "）"
+            )
         trigger_actions = e.get("vpp_trigger_actions", {})
         day_decisions   = e.get("day_decisions", [])
         _pdev = {k for k, v in e.get("appliance_summary", {}).items() if v.get("present")}
@@ -364,6 +400,9 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
             f"    执行策略 ↓ (全天{len(day_decisions)}次LLM决策):",
         ] + strat_lines + [
             f"    VPP需求    : {demand_str}",
+            f"    触发时容量 : {capacity_str}",
+            f"    窗口容量   : {capacity_window_str}",
+            f"    90%可信容量: {total_q90_str}",
             f"    Agent理由  : {reason}" if reason else "",
             f"    电器避峰   : {appl_avoid_str}",
             f"    用户评分   : {score_str}",
@@ -455,6 +494,7 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
         f"      逐事件       : {score_per_event}",
         f"      区域均温     : {d.get('mean_temp_c', 0):.2f} °C",
         f"      PMV达标率    : {d.get('pmv_ok_fraction', 0)*100:.1f}%",
+        f"      舒适区达标率 : {d.get('comfort_ok_fraction', 0)*100:.1f}% (23-26°C)",
         f"      未满足制冷   : {d.get('unmet_cooling_h', 0):.1f} h",
         f"  ▸ 电器目标达成",
     ]

@@ -197,7 +197,11 @@ class WaterHeater:
         hod = sim_h % 24
         heating = False
         if state["preheat_requested"] and self.dr_adjustable:
-            if self.pre_heat_window_start_h <= hod < self.pre_heat_window_end_h:
+            ph_start = state.get("preheat_start_h")
+            ph_end = state.get("preheat_end_h")
+            start = self.pre_heat_window_start_h if ph_start is None else float(ph_start)
+            end = self.pre_heat_window_end_h if ph_end is None else float(ph_end)
+            if start <= hod < end:
                 heating = True
         else:
             if self._normal_on_start <= hod < self._normal_on_end:
@@ -420,6 +424,7 @@ class ApplianceSuite:
         self._ev = EVCharger(ev_cfg if isinstance(ev_cfg, dict) else {}, sim_days)
         rf_cfg = appliance_config.get("refrigerator", {})
         self._refrigerator = Refrigerator(rf_cfg if isinstance(rf_cfg, dict) else {"present": True})
+        self._last_powers: Dict[str, float] = {}
         # Auto-request preheat for all VPP-event days (default=on; agent can override)
         for _ev in self._vpp_events:
             self._water_heater.request_preheat(int(_ev["trigger_h"] // 24))
@@ -469,6 +474,7 @@ class ApplianceSuite:
         powers["water_heater"] = self._water_heater.step(sim_h, dt_h, vpp)
         powers["ev"] = self._ev.step(sim_h, dt_h, vpp)
         powers["refrigerator"] = self._refrigerator.step(sim_h, dt_h, vpp)
+        self._last_powers = dict(powers)
         return powers
 
     def status_lines(self, sim_h: float) -> List[str]:
