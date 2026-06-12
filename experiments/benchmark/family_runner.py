@@ -1,6 +1,13 @@
 """Family home benchmark runner (PMV or Agent mode) — 3x VPP-1 events per 3-day sim."""
 from __future__ import annotations
 import os, sys, json, shutil
+
+# Fix Windows GBK encoding for Unicode characters (✓ ✗ ⚠)
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
@@ -67,7 +74,6 @@ class BenchmarkResult:
     ev_target_reached_rate: float = 0.0         # fraction of days EV reached target SOC
     ewh_preheat_used_rate: float = 0.0          # fraction of days EWH preheat was active
     appliance_results: dict = field(default_factory=dict)  # per-device per-day details
-    appliance_goal_attainment_rates: dict = field(default_factory=dict)  # per-device aggregate goal attainment
     control_decisions: List[Tuple[float, float, float]] = field(default_factory=list)
     vpp_event_log: List[dict] = field(default_factory=list)  # scored VPP events with reason
     output_dir: str = ""; error: str = ""
@@ -252,7 +258,7 @@ def _print_prev_day_completion(suite, day_idx: int, day_num: int) -> None:
     if ev_days and day_idx < len(ev_days) and ev_days[day_idx].get("present", False):
         ev = ev_days[day_idx]
         any_shown = True
-        tgt  = "SOC达标✓" if ev.get("target_reached") and not ev.get("ran_during_vpp", False) else "SOC未达标✗"
+        tgt  = "SOC达标✓" if ev.get("target_reached") else "SOC未达标✗"
         soc  = ev.get("soc_end", 0)
         vfl  = " ⚠VPP中充电" if ev.get("ran_during_vpp") else ""
         print(f"    {'ev':<14}: {tgt}  SOC={soc:.0%}{vfl}  ({ev.get('energy_kwh', 0):.1f}kWh)")
@@ -401,6 +407,81 @@ def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
             print(f"    [Appliance] ev charge_window error: {e}")
 
 
+def _build_decision_time_state(
+    loop,
+    *,
+    sim_h: float,
+    hod: float,
+    temp: float | None,
+    out_t: float | None,
+    vpp_event: dict | None,
+    vpp_target_kwh: float | None,
+    appliance_config: dict | None,
+) -> dict:
+    """Build the Protocol A decision-time state shared by MPC and Agent logs."""
+    from experiments.benchmark.baselines.state_adapter import build_mpc_state
+
+    return build_mpc_state(
+        sim_h=sim_h,
+        hod=hod,
+        day_idx=int(sim_h // 24),
+        temp_c=temp,
+        outdoor_temp_c=out_t,
+        current_setpoint_c=getattr(loop, "sp", None),
+        vpp_event=vpp_event,
+        vpp_target_kwh=vpp_target_kwh,
+        appliance_config=appliance_config or {},
+        appliance_suite=getattr(loop, "appliance_suite", None),
+        history={
+            "vpp_event_log": getattr(loop, "vpp_event_log", []),
+            "previous_setpoint_c": getattr(loop, "sp", None),
+        },
+    )
+
+
+def _compute_posthoc_decision_objective(
+    loop,
+    *,
+    action_result: dict,
+    sim_h: float,
+    hod: float,
+    temp: float | None,
+    out_t: float | None,
+    vpp_event: dict | None,
+    vpp_target_kwh: float | None,
+    appliance_config: dict | None,
+) -> dict:
+    """Compute PDF v1.5 objective for an already-produced Agent action.
+
+    This is a post-hoc Protocol A diagnostic only. It copies appliance actions
+    so the raw Agent command is never modified by objective evaluation.
+    """
+    from experiments.benchmark.baselines.home_objective_v15 import compute_home_objective_v15
+    from experiments.benchmark.baselines.weights import pdf_v15_weights
+
+    decision_state = _build_decision_time_state(
+        loop,
+        sim_h=sim_h,
+        hod=hod,
+        temp=temp,
+        out_t=out_t,
+        vpp_event=vpp_event,
+        vpp_target_kwh=vpp_target_kwh,
+        appliance_config=appliance_config,
+    )
+    action = {
+        "setpoint": action_result.get("setpoint", getattr(loop, "sp", None)),
+        "next_check_hour": action_result.get("next_check_hour"),
+        "reason": action_result.get("reason", ""),
+        "appliances": dict(action_result.get("appliance_actions") or {}),
+    }
+    return compute_home_objective_v15(
+        action=action,
+        state=decision_state,
+        weights=pdf_v15_weights(dr_event=bool(vpp_event)),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Appliance actuator write-back helper
 # Called each EnergyPlus timestep to push appliance_sim powers into EnergyPlus.
@@ -482,10 +563,14 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
                      appliance_config: dict | None = None,
                      persona_config: dict | None = None,
                      verbose: bool = False,
-                     human_mode: bool = False):
+                     human_mode: bool = False,
+                     method: str = "agent"):
     """Event-driven LLM control: 3x VPP-1 events (Day1/2/3 18:00). Score after each."""
+    method = (method or "agent").lower()
+    if method not in ("agent", "mpc"):
+        raise ValueError(f"Unsupported family control method: {method}")
     if output_dir is None:
-        output_dir = BENCHMARK_DIR / "results" / f"family_agent_{weather_label}"
+        output_dir = BENCHMARK_DIR / "results" / f"family_{method}_{weather_label}"
     output_dir = Path(output_dir)
     if output_dir.exists(): shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -519,8 +604,7 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     _ac_sp_min    = float(_ac_cfg.get("setpoint_preferred_min_c", 24.0))
     _ac_sp_max    = float(_ac_cfg.get("setpoint_preferred_max_c", 26.0))
     _ac_sp_tol    = float(_ac_cfg.get("temp_tolerance_c", 1.0))
-    # Keep the household agent anchored at 26C by default, then adjust from there.
-    _ac_sp_default = 26.0
+    _ac_sp_default = round((_ac_sp_min + _ac_sp_max) / 2, 1)
     _ac_sp_vpp_min = round(_ac_sp_max + 0.5, 1)   # minimum raise during VPP
     _ac_sp_vpp_max = round(_ac_sp_max + 1.5, 1)   # typical VPP raise ceiling
     # Override global SP_MIN based on persona comfort floor
@@ -694,6 +778,43 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
             fallback["reason"] = ""
             return fallback
 
+    def _mpc_trigger(temp, out_t, hod, sim_h, vpp_event=None):
+        from experiments.benchmark.baselines.mpc_shiftable import plan_mpc_action
+
+        state_dict = _build_decision_time_state(
+            loop,
+            sim_h=sim_h,
+            hod=hod,
+            temp=temp,
+            out_t=out_t,
+            vpp_event=vpp_event,
+            vpp_target_kwh=(
+                loop.current_vpp_demand_kwh if vpp_event is not None else None
+            ),
+            appliance_config=appliance_config or {},
+        )
+        decision = plan_mpc_action(state=state_dict)
+        sp = round(max(SP_MIN, min(28.0, float(decision.get("setpoint", loop.sp)))), 1)
+        objective_terms = decision.get("objective_terms", {})
+        total = objective_terms.get("total")
+        total_str = f"{float(total):.3f}" if total is not None else "n/a"
+        day_num = int(sim_h // 24) + 1
+        hh_mm = f"{int(hod % 24):02d}:{int((hod % 1)*60):02d}"
+        vpp_tag = f" | VPP-{vpp_event.get('id')}" if isinstance(vpp_event, dict) else ""
+        print(
+            f"  [MPC Agent | h={hh_mm} Day{day_num}{vpp_tag}] "
+            f"setpoint->{sp:.1f}C  objective={total_str}  | "
+            f"{decision.get('reason', '')}"
+        )
+        return {
+            "setpoint": sp,
+            "next_check_hour": decision.get("next_check_hour"),
+            "reason": decision.get("reason", ""),
+            "appliance_actions": decision.get("appliances", {}),
+            "objective_terms": objective_terms,
+            "objective_source": "mpc_candidate_scoring_pdf_v15",
+        }
+
     def _score_event(ev, loop_ref, sim_h, event_index=1, human_mode: bool = False):
         """Score agent strategy for a VPP event window after it ends (roleplay LLM)."""
         try:
@@ -825,7 +946,7 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                             print(f"  --- Day {day_num} start  (sim_h={sim_h:.0f}h  08:00 occupied period begins) ---")
 
                     # User in the loop: get roleplay user preference BEFORE agent acts
-                    if is_vpp:
+                    if is_vpp and method == "agent":
                         try:
                             from user_pref_scorer import get_user_preference_input
                             ev_idx = next((i+1 for i,ev in enumerate(VPP_EVENTS)
@@ -850,9 +971,31 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                             loop.vpp_user_input = ""
                     else:
                         loop.vpp_user_input = ""
-                    res = _llm_trigger(temp, out_t, hod, sim_h, 72.0 - sim_h,
-                                       vpp_active=is_vpp, vpp_id=vid,
-                                       user_pref_input=loop.vpp_user_input)
+                    if method == "mpc":
+                        res = _mpc_trigger(
+                            temp, out_t, hod, sim_h,
+                            vpp_event=triggered_vpp if is_vpp else None)
+                    else:
+                        res = _llm_trigger(temp, out_t, hod, sim_h, 72.0 - sim_h,
+                                           vpp_active=is_vpp, vpp_id=vid,
+                                           user_pref_input=loop.vpp_user_input)
+                        try:
+                            res["objective_terms_posthoc"] = _compute_posthoc_decision_objective(
+                                loop,
+                                action_result=res,
+                                sim_h=sim_h,
+                                hod=hod,
+                                temp=temp,
+                                out_t=out_t,
+                                vpp_event=triggered_vpp if is_vpp else None,
+                                vpp_target_kwh=(
+                                    loop.current_vpp_demand_kwh if is_vpp else None
+                                ),
+                                appliance_config=appliance_config or {},
+                            )
+                            res["objective_source"] = "posthoc_agent_decision_time_pdf_v15"
+                        except Exception as _oe:
+                            print(f"  [Agent Objective] posthoc objective error: {_oe}")
                     loop.sp = res["setpoint"]
                     loop.next_check = res.get("next_check_hour")
                     # Guarantee a post-VPP check: if LLM didn't schedule one at/before
@@ -862,15 +1005,27 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                         if loop.next_check is None or loop.next_check > _vpp_end:
                             loop.next_check = _vpp_end
                     loop.vpp_last_reason = res.get("reason", "")
-                    # Record this LLM decision for daily log
+                    # Record this controller decision for daily/event logs.
                     _day_i = min(2, int(sim_h // 24))
                     _non_null = {k: v for k, v in res.get("appliance_actions", {}).items() if v is not None}
-                    loop.day_agent_decisions[_day_i].append(
-                        {"h": sim_h, "sp": res["setpoint"], "actions": _non_null})
+                    _decision_log = {
+                        "h": sim_h,
+                        "sp": res["setpoint"],
+                        "reason": res.get("reason", ""),
+                        "actions": _non_null,
+                        "raw_appliance_actions": res.get("appliance_actions", {}),
+                    }
+                    if res.get("objective_source"):
+                        _decision_log["objective_source"] = res.get("objective_source")
+                    if res.get("objective_terms"):
+                        _decision_log["objective_terms"] = res.get("objective_terms", {})
+                    if res.get("objective_terms_posthoc"):
+                        _decision_log["objective_terms_posthoc"] = res.get("objective_terms_posthoc", {})
+                    loop.day_agent_decisions[_day_i].append(_decision_log)
                     # Store VPP-trigger actions separately
                     if is_vpp and triggered_vpp is not None:
                         loop.vpp_trigger_actions[vid] = res.get("appliance_actions", {})
-                    # Apply independent per-appliance actions from LLM
+                    # Apply independent per-appliance actions through existing path.
                     if loop.appliance_suite is not None:
                         _apply_appliance_actions(
                             loop.appliance_suite,
@@ -990,7 +1145,6 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
     # ── Appliance rule-based indicators ─────────────────────────────────
     appl_vpp_avoid_rate = 0.0; appl_shift_success_rate = 0.0; ev_target_rate = 1.0; ewh_preheat_rate = 1.0
     appl_results_dict: dict = {}
-    appliance_goal_attainment_rates: dict[str, float] = {}
     if loop.appliance_suite is not None:
         appl_results_dict = loop.appliance_suite.all_results()
         # Per VPP-event: fraction of present controllable devices that avoided VPP window
@@ -1035,32 +1189,16 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
             else:
                 _task_per_day.append(1.0)
                 _shift_success_per_day.append(1.0)
-        # Aggregate goal-attainment metrics for every appliance that exists in this household.
-        for _dev in ("washer", "dishwasher", "dryer"):
-            _days = appl_results_dict.get(_dev, [])
-            if _days and _days[0].get("present", False):
-                _ok = sum(1 for d in _days
-                          if d.get("completed") and not d.get("skipped") and not d.get("ran_during_vpp"))
-                appliance_goal_attainment_rates[_dev] = round(_ok / max(1, len(_days)), 3)
-
         # EV target SOC reached rate (1.0 when EV not present)
         ev_days = appl_results_dict.get("ev", [])
         if ev_days and ev_days[0].get("present", False):
-            _ev_ok = sum(1 for d in ev_days
-                         if d.get("target_reached", False) and not d.get("ran_during_vpp", False))
-            ev_target_rate = _ev_ok / max(1, len(ev_days))
-            appliance_goal_attainment_rates["ev"] = round(ev_target_rate, 3)
-        # EWH goal attainment: preheated, bath-ready, and avoided the VPP window.
+            ev_target_rate = sum(1 for d in ev_days if d.get("target_reached", False)) / max(1, len(ev_days))
+        # EWH preheat usage rate
         wh_days = appl_results_dict.get("water_heater", [])
         if wh_days and wh_days[0].get("present", False):
-            _wh_ok = sum(1 for d in wh_days
-                         if d.get("preheat_used", False)
-                         and d.get("ready_at_bath", True)
-                         and not d.get("ran_during_vpp", False))
-            ewh_preheat_rate = _wh_ok / max(1, len(wh_days))
-            appliance_goal_attainment_rates["water_heater"] = round(ewh_preheat_rate, 3)
+            ewh_preheat_rate = sum(1 for d in wh_days if d.get("preheat_used", False)) / max(1, len(wh_days))
 
-    print(f"  [family/agent] exit={ec} energy={kwh:.1f}kWh "
+    print(f"  [family/{method}] exit={ec} energy={kwh:.1f}kWh "
           f"vpp_window={loop.vpp_e_wh/1000:.2f}kWh "
           f"pmv_ok={loop.pmv_ok_h/occ*100:.1f}% "
           f"vpp_scores={pref_scores} vpp_comply={vpp_comply_rate*100:.0f}%")
@@ -1074,7 +1212,7 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
           f"vpp_avoid(of_completed)={appl_vpp_avoid_rate*100:.0f}% "
           f"ev_target={ev_target_rate*100:.0f}% ewh_preheat={ewh_preheat_rate*100:.0f}%")
     return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
-        weather=weather_label, method="agent", exit_code=ec,
+        weather=weather_label, method=method, exit_code=ec,
         energy_kwh_total=kwh, energy_kwh_per_day=kwh/3,
         pmv_ok_fraction=loop.pmv_ok_h/occ, comfort_ok_fraction=loop.comfort_ok_h/occ,
         mean_pmv=loop.pmv_s/occ,
@@ -1097,7 +1235,6 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
         ev_target_reached_rate=round(ev_target_rate, 3),
         ewh_preheat_used_rate=round(ewh_preheat_rate, 3),
         appliance_results=appl_results_dict,
-        appliance_goal_attainment_rates=appliance_goal_attainment_rates,
         vpp_event_log=loop.vpp_event_log,
         control_decisions=loop.decisions[-50:], output_dir=str(output_dir))
 

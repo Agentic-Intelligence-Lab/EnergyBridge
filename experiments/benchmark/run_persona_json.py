@@ -3,13 +3,14 @@
 
 Usage
 -----
-  python3 run_persona_json.py <persona_id_or_json_path> [--output <dir>] [--city <Tianjin|Beijing|Shanghai>]
+  python3 run_persona_json.py <persona_id_or_json_path> [--output <dir>] [--city <Tianjin|Beijing|Shanghai>] [--method <agent|mpc>]
 
 Examples
 --------
   python3 run_persona_json.py atom_comfort_sensitive
   python3 run_persona_json.py ../../energybridge/roleplay/personas/atom_comfort_sensitive.json
   python3 run_persona_json.py basic_role_f_commuter_ev_optimizer --city Shanghai --output /tmp/out
+  python3 run_persona_json.py atom_comfort_sensitive --city Tianjin --method mpc
 
 Output
 ------
@@ -82,6 +83,10 @@ def main() -> None:
         "--human", action="store_true",
         help="Human-in-the-loop: show 3 VPP strategies and wait for terminal selection.",
     )
+    parser.add_argument(
+        "--method", choices=["agent", "mpc"], default="agent",
+        help="Controller method for family_runner (default: agent).",
+    )
     args = parser.parse_args()
 
     persona = _load_persona_json(args.persona)
@@ -94,6 +99,7 @@ def main() -> None:
     print("=" * 70)
     print(f"PERSONA : {pid}")
     print(f"CITY    : {args.city}")
+    print(f"METHOD  : {args.method}")
     print(f"OUTPUT  : {output_dir}")
     print("=" * 70)
 
@@ -105,6 +111,7 @@ def main() -> None:
         weather_label    = args.city.lower(),
         verbose          = args.verbose,
         human_mode       = args.human,
+        method           = args.method,
     )
 
     print()
@@ -253,26 +260,6 @@ def _vpp_ratio_str(result) -> str:
     per_ev = "  ".join(f"VPP{i+1}:{a:.3f}/{t:.2f}" for i, (a, t) in enumerate(zip(actuals, targets)))
     ok = "✓达标" if ratio <= 1.0 else "✗超标"
     return f"{total_a:.3f}/{total_t:.3f}kWh = {ratio:.2f} {ok}  [{per_ev}]"
-
-
-_APPLIANCE_LABELS = {
-    "washer": "洗衣机达标",
-    "dishwasher": "洗碗机达标",
-    "dryer": "烘干机达标",
-    "water_heater": "热水器达标",
-    "ev": "EV充电达标",
-}
-
-
-def _appliance_goal_metric_lines(metrics: dict) -> list[str]:
-    rates = metrics.get("appliance_goal_attainment_rates") or {}
-    lines: list[str] = []
-    for key in ("washer", "dishwasher", "dryer", "water_heater", "ev"):
-        if key not in rates:
-            continue
-        label = _APPLIANCE_LABELS.get(key, key)
-        lines.append(f"      {label:<10}: {rates[key]*100:.0f}%")
-    return lines
 
 def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Path:
     """Write a human-readable run_summary.txt (no LLM, pure algorithm)."""
@@ -463,7 +450,7 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
     if ev_days and ev_days[0].get("present", False):
         parts = []
         for day_d in ev_days:
-            tgt = "SOC达标✓" if day_d.get("target_reached") and not day_d.get("ran_during_vpp") else "SOC未达标✗"
+            tgt = "SOC达标✓" if day_d.get("target_reached") else "SOC未达标✗"
             vpp_flag = "⚠VPP中充电" if day_d.get("ran_during_vpp") else ""
             ekwh = day_d.get("energy_kwh", 0)
             soc = day_d.get("soc_end", 0)
@@ -497,9 +484,8 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
         f"      舒适区达标率 : {d.get('comfort_ok_fraction', 0)*100:.1f}% (23-26°C)",
         f"      未满足制冷   : {d.get('unmet_cooling_h', 0):.1f} h",
         f"  ▸ 电器目标达成",
-    ]
-    lines += _appliance_goal_metric_lines(d) or ["      (无可控电器目标 metrics)"]
-    lines += [
+        f"      EV充电达标   : {d.get('ev_target_reached_rate', 0)*100:.0f}%",
+        f"      热水器预热   : {d.get('ewh_preheat_used_rate', 0)*100:.0f}%",
         f"  ▸ Token消耗",
         f"      LLM调用      : {d.get('llm_call_count', 0)} 次 (失败 {d.get('llm_call_failures', 0)})",
         f"      平均延迟     : {llm_avg_lat:.2f} s/次",
