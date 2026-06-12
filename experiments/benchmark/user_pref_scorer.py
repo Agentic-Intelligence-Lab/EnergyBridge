@@ -550,8 +550,13 @@ def score_user_preference(
         "washer_completed": washer_completed,
         "washer_during_vpp": washer_during_vpp,
     }
-    if method in ("agent", "agent_pmv", "rl") and agent_setpoint_c:
-        controller = "RL baseline" if method == "rl" else "LLM agent"
+    if method in ("agent", "agent_pmv", "rl", "mpc", "mpc_dynamic", "mpc_ep") and agent_setpoint_c:
+        if method == "rl":
+            controller = "RL baseline"
+        elif method in ("mpc", "mpc_dynamic", "mpc_ep"):
+            controller = "MPC baseline"
+        else:
+            controller = "LLM agent"
         rationale = (
             f"{controller} set cooling setpoint to {agent_setpoint_c}°C during VPP DR event. "
             f"Controller explanation: {agent_reason[:100]}"

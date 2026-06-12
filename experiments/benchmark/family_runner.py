@@ -407,6 +407,15 @@ def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
             print(f"    [Appliance] ev charge_window error: {e}")
 
 
+def _service_completed(name: str, info: dict) -> bool:
+    """Whether a controllable appliance met its user-facing service goal."""
+    if name == "water_heater":
+        return bool(info.get("ready_at_bath", True))
+    if name == "ev":
+        return bool(info.get("target_reached", False))
+    return bool(info.get("completed", False)) and not bool(info.get("skipped", False))
+
+
 def _build_decision_time_state(
     loop,
     *,
@@ -564,10 +573,14 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
                      persona_config: dict | None = None,
                      verbose: bool = False,
                      human_mode: bool = False,
-                     method: str = "agent"):
+                     method: str = "agent",
+                     mpc_horizon_steps: int = 6):
     """Event-driven LLM control: 3x VPP-1 events (Day1/2/3 18:00). Score after each."""
     method = (method or "agent").lower()
-    if method not in ("agent", "mpc"):
+    if method == "mpc":
+        method = "mpc_dynamic"
+    mpc_horizon_steps = max(1, int(mpc_horizon_steps))
+    if method not in ("agent", "mpc_dynamic", "mpc_ep"):
         raise ValueError(f"Unsupported family control method: {method}")
     if output_dir is None:
         output_dir = BENCHMARK_DIR / "results" / f"family_{method}_{weather_label}"
@@ -779,8 +792,9 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
             return fallback
 
     def _mpc_trigger(temp, out_t, hod, sim_h, vpp_event=None):
-        from experiments.benchmark.baselines.mpc_shiftable import plan_mpc_action
+        from experiments.benchmark.baselines.mpc import plan_mpc_action
 
+        predictor = "energyplus" if method == "mpc_ep" else "dynamic"
         state_dict = _build_decision_time_state(
             loop,
             sim_h=sim_h,
@@ -793,6 +807,17 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
             ),
             appliance_config=appliance_config or {},
         )
+        state_dict["mpc_predictor"] = predictor
+        state_dict["mpc_horizon_steps"] = mpc_horizon_steps
+        state_dict["idf_path"] = str(idf_path)
+        state_dict["epw_path"] = str(epw_path)
+        state_dict["mpc_ep_output_dir"] = str(output_dir / "_mpc_ep_predictor")
+        state_dict["mpc_decision_history"] = [
+            item
+            for day_items in loop.day_agent_decisions
+            for item in day_items
+            if item.get("h", 10**9) < sim_h
+        ]
         decision = plan_mpc_action(state=state_dict)
         sp = round(max(SP_MIN, min(28.0, float(decision.get("setpoint", loop.sp)))), 1)
         objective_terms = decision.get("objective_terms", {})
@@ -827,7 +852,7 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
             pmv_ok = sum(wpmvs)/max(1,len(wpmvs)) if wpmvs else 0.5
             e_day  = (loop_ref.e_wh/1000) / max(1, sim_h/24)
             r = score_user_preference(
-                building="family", method="agent",
+                building="family", method=method,
                 mean_temp_c=mean_t, pmv_ok_fraction=pmv_ok,
                 energy_kwh_per_day=e_day, agent_setpoint_c=sp_w,
                 event_index=event_index,
@@ -876,7 +901,8 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
 
         if not wu:
             if not occ:
-                loop.sp = 28.0   # unoccupied: save energy automatically
+                if method not in ("mpc_dynamic", "mpc_ep"):
+                    loop.sp = 28.0   # unoccupied: save energy automatically
                 # End-of-day completion check at midnight (24h/48h)
                 for _eod_h in (24.0, 48.0):
                     if loop.prev_sim_h < _eod_h <= sim_h and loop.appliance_suite is not None:
@@ -971,7 +997,7 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                             loop.vpp_user_input = ""
                     else:
                         loop.vpp_user_input = ""
-                    if method == "mpc":
+                    if method in ("mpc_dynamic", "mpc_ep"):
                         res = _mpc_trigger(
                             temp, out_t, hod, sim_h,
                             vpp_event=triggered_vpp if is_vpp else None)
@@ -1147,22 +1173,25 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
     appl_results_dict: dict = {}
     if loop.appliance_suite is not None:
         appl_results_dict = loop.appliance_suite.all_results()
-        # Per VPP-event: fraction of present controllable devices that avoided VPP window
-        # avoidance_rate: only count completed-and-not-VPP as true avoidance.
-        # skip != avoidance; skipping tasks to dodge VPP must NOT be rewarded.
+        # Per VPP-event: include all present controllable devices, not just
+        # laundry-style shiftable loads. Water heater and EV can satisfy their
+        # service goal while still failing VPP avoidance, so they must affect
+        # shift_success / vpp_avoid metrics.
         avoid_fracs = []; complete_fracs = []; shift_success_fracs = []
         for _day_idx, _ev in enumerate(VPP_EVENTS):
             _summ = loop.appliance_suite.vpp_day_summary(_day_idx)
-            _shift = {nm: info for nm, info in _summ.items()
-                      if nm not in ("water_heater", "ev") and info.get("present")}
-            if _shift:
-                _completed_n = sum(1 for info in _shift.values()
-                                   if info.get("completed") and not info.get("skipped"))
-                _true_avoided = sum(1 for info in _shift.values()
-                                    if info.get("completed") and not info.get("skipped")
-                                    and not info.get("ran_during_vpp"))
-                complete_fracs.append(_completed_n / len(_shift))
-                shift_success_fracs.append(_true_avoided / len(_shift))
+            _controllable = {nm: info for nm, info in _summ.items() if info.get("present")}
+            if _controllable:
+                _completed_n = sum(
+                    1 for nm, info in _controllable.items()
+                    if _service_completed(nm, info)
+                )
+                _true_avoided = sum(
+                    1 for nm, info in _controllable.items()
+                    if _service_completed(nm, info) and not info.get("ran_during_vpp")
+                )
+                complete_fracs.append(_completed_n / len(_controllable))
+                shift_success_fracs.append(_true_avoided / len(_controllable))
                 avoid_fracs.append(_true_avoided / max(1, _completed_n))
         appl_vpp_avoid_rate = sum(avoid_fracs) / max(1, len(avoid_fracs))
         appl_task_complete_rate = sum(complete_fracs) / max(1, len(complete_fracs))
@@ -1178,14 +1207,19 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
         _task_per_day = []
         _shift_success_per_day = []
         for _d in range(3):
-            _dr = loop.appliance_suite.all_results()
-            _sh = {nm: _dr[nm][_d] for nm in ("washer","dishwasher","dryer")
-                   if nm in _dr and _d < len(_dr[nm]) and _dr[nm][_d].get("present")}
-            if _sh:
-                _completed = sum(1 for v in _sh.values() if v.get("completed") and not v.get("skipped"))
-                _shift_ok = sum(1 for v in _sh.values() if v.get("completed") and not v.get("skipped") and not v.get("ran_during_vpp"))
-                _task_per_day.append(round(_completed / len(_sh), 2))
-                _shift_success_per_day.append(round(_shift_ok / len(_sh), 2))
+            _summ = loop.appliance_suite.vpp_day_summary(_d)
+            _controllable = {nm: info for nm, info in _summ.items() if info.get("present")}
+            if _controllable:
+                _completed = sum(
+                    1 for nm, info in _controllable.items()
+                    if _service_completed(nm, info)
+                )
+                _shift_ok = sum(
+                    1 for nm, info in _controllable.items()
+                    if _service_completed(nm, info) and not info.get("ran_during_vpp")
+                )
+                _task_per_day.append(round(_completed / len(_controllable), 2))
+                _shift_success_per_day.append(round(_shift_ok / max(1, _completed), 2))
             else:
                 _task_per_day.append(1.0)
                 _shift_success_per_day.append(1.0)
@@ -1207,9 +1241,8 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
           f"tokens={loop.llm_tokens_prompt}p/{loop.llm_tokens_comp}c")
     if loop.appliance_suite is not None:
         _print_prev_day_completion(loop.appliance_suite, 2, 3)
-    print(f"  [Appl rules  ] task_complete={appl_task_complete_rate*100:.0f}% "
-          f"shift_success={appl_shift_success_rate*100:.0f}% "
-          f"vpp_avoid(of_completed)={appl_vpp_avoid_rate*100:.0f}% "
+    print(f"  [Appl rules  ] service_complete={appl_task_complete_rate*100:.0f}% "
+          f"completed_vpp_avoid={appl_vpp_avoid_rate*100:.0f}% "
           f"ev_target={ev_target_rate*100:.0f}% ewh_preheat={ewh_preheat_rate*100:.0f}%")
     return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
         weather=weather_label, method=method, exit_code=ec,
