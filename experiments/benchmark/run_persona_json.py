@@ -30,6 +30,7 @@ from dotenv import load_dotenv
 
 _BENCH_DIR    = Path(__file__).resolve().parent
 _PROJECT_ROOT = _BENCH_DIR.parent.parent
+DEFAULT_BENCHMARK_RESULTS_DIR = _PROJECT_ROOT / "benchmark_results"
 load_dotenv(_PROJECT_ROOT / ".env")
 
 if str(_PROJECT_ROOT) not in sys.path:
@@ -68,7 +69,7 @@ def main() -> None:
     parser.add_argument(
         "--output", "-o", default=None,
         help="Directory for EnergyPlus output files. "
-             "Defaults to experiments/benchmark/results/<persona_id>/",
+             "Defaults to benchmark_results/<persona_id>/ under the repo root.",
     )
     parser.add_argument(
         "--city", "-c", default="Tianjin",
@@ -93,7 +94,7 @@ def main() -> None:
     pid     = persona["id"]
     output_dir = (
         Path(args.output) if args.output
-        else _PROJECT_ROOT / "benchmark_results" / pid
+        else DEFAULT_BENCHMARK_RESULTS_DIR / pid
     )
 
     print("=" * 70)

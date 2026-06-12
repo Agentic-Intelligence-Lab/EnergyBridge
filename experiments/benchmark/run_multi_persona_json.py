@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 
 _BENCH_DIR    = Path(__file__).resolve().parent
 _PROJECT_ROOT = _BENCH_DIR.parent.parent
+DEFAULT_BENCHMARK_RESULTS_DIR = _PROJECT_ROOT / "benchmark_results"
 load_dotenv(_PROJECT_ROOT / ".env")
 
 if str(_PROJECT_ROOT) not in sys.path:
@@ -433,7 +434,7 @@ def main() -> None:
     parser.add_argument("--city", "-c", default="Tianjin",
                         choices=["Tianjin", "Beijing", "Shanghai"])
     parser.add_argument("--output", "-o", default=None,
-                        help="Override output directory.")
+                        help="Override output directory; defaults to benchmark_results/multi__<ids>.")
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("--max-rounds", "-r", type=int, default=3,
                         help="Max discussion rounds per VPP event (default: 3)")
@@ -456,7 +457,7 @@ def main() -> None:
     run_id   = "__".join(id_parts)
     output_dir = (
         Path(args.output) if args.output
-        else _PROJECT_ROOT / "benchmark_results" / f"multi__{run_id}"
+        else DEFAULT_BENCHMARK_RESULTS_DIR / f"multi__{run_id}"
     )
 
     member_list = [p.get("display_name", p["id"]) for p in persona_data]
