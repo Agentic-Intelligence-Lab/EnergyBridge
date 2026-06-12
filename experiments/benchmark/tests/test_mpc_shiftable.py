@@ -7,7 +7,8 @@ from experiments.benchmark.family_runner import (
     _apply_appliance_actions,
     _compute_posthoc_decision_objective,
 )
-from experiments.benchmark.baselines.mpc_shiftable import plan_mpc_action
+from experiments.benchmark.baselines.mpc import plan_mpc_action
+from energybridge.simulation.appliance_sim import ApplianceSuite
 
 
 def _sample_state() -> dict:
@@ -207,3 +208,30 @@ def test_completed_shiftable_task_gets_no_new_start_or_skip() -> None:
     assert action["appliances"]["washer_start_h"] is None
     assert action["appliances"]["washer_skip"] is None
 
+
+def test_water_heater_vpp_boundary_uses_half_open_window() -> None:
+    config = {
+        "washer": {"present": False},
+        "dishwasher": {"present": False},
+        "dryer": {"present": False},
+        "water_heater": {
+            "present": True,
+            "dr_adjustable": True,
+            "pre_heat_window_start_h": 14.0,
+            "pre_heat_window_end_h": 18.0,
+            "rated_kw": 2.0,
+        },
+        "ev": {"present": False},
+        "refrigerator": {"present": False},
+    }
+    events = [{"id": "vpp1", "trigger_h": 18.0, "end_h": 19.0, "day": 1}]
+
+    avoided = ApplianceSuite(config, sim_days=1, vpp_events=events)
+    avoided.set_ewh_preheat_schedule(0, start_h=14.0, end_h=18.0, temp_c=65.0)
+    assert avoided.step(18.0, 1.0 / 6.0)["water_heater"] == 0.0
+    assert avoided.vpp_day_summary(0)["water_heater"]["ran_during_vpp"] is False
+
+    overlapping = ApplianceSuite(config, sim_days=1, vpp_events=events)
+    overlapping.set_ewh_preheat_schedule(0, start_h=17.0, end_h=19.0, temp_c=65.0)
+    assert overlapping.step(18.0, 1.0 / 6.0)["water_heater"] > 0.0
+    assert overlapping.vpp_day_summary(0)["water_heater"]["ran_during_vpp"] is True
