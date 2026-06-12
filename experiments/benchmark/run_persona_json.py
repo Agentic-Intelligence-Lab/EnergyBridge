@@ -3,14 +3,15 @@
 
 Usage
 -----
-  python3 run_persona_json.py <persona_id_or_json_path> [--output <dir>] [--city <Tianjin|Beijing|Shanghai>] [--method <agent|mpc>]
+  python3 run_persona_json.py <persona_id_or_json_path> [--output <dir>] [--city <Tianjin|Beijing|Shanghai>] [--method <agent|mpc_dynamic|mpc_ep>]
 
 Examples
 --------
   python3 run_persona_json.py atom_comfort_sensitive
   python3 run_persona_json.py ../../energybridge/roleplay/personas/atom_comfort_sensitive.json
   python3 run_persona_json.py basic_role_f_commuter_ev_optimizer --city Shanghai --output /tmp/out
-  python3 run_persona_json.py atom_comfort_sensitive --city Tianjin --method mpc
+  python3 run_persona_json.py atom_comfort_sensitive --city Tianjin --method mpc_dynamic
+  python3 run_persona_json.py atom_comfort_sensitive --city Tianjin --method mpc_ep
 
 Output
 ------
@@ -24,7 +25,8 @@ Prerequisites
   pip install -r requirements.txt
 """
 from __future__ import annotations
-import argparse, json, sys
+import argparse, json, re, shutil, sys
+from datetime import date
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -58,6 +60,76 @@ def _load_persona_json(persona_arg: str) -> dict:
     )
 
 
+def _persona_run_label(persona_id: str) -> str:
+    match = re.match(r"^basic_role_([a-z])(?:_|$)", persona_id)
+    if match:
+        return f"role_{match.group(1)}"
+    return re.sub(r"[^a-zA-Z0-9]+", "_", persona_id).strip("_").lower()
+
+
+def _method_run_token(method: str, mpc_horizon: int = 6) -> str:
+    method = _canonical_method(method)
+    if method in ("mpc_dynamic", "mpc_ep"):
+        return f"{method}_H{int(mpc_horizon)}"
+    return method
+
+
+def _default_output_dir(
+    persona_id: str,
+    method: str,
+    city: str,
+    days: int = 3,
+    mpc_horizon: int = 6,
+) -> Path:
+    run_name = (
+        f"{_persona_run_label(persona_id)}_"
+        f"{_method_run_token(method, mpc_horizon)}_"
+        f"{city.lower()}_{days}days"
+    )
+    return DEFAULT_BENCHMARK_RESULTS_DIR / date.today().isoformat() / run_name
+
+
+def _prepare_default_output_dir(
+    persona_id: str,
+    method: str,
+    city: str,
+    days: int = 3,
+    mpc_horizon: int = 6,
+) -> Path:
+    """Return the default run directory, replacing only that exact run."""
+    method = _canonical_method(method)
+    output_dir = _default_output_dir(persona_id, method, city, days=days, mpc_horizon=mpc_horizon)
+    expected_parent = DEFAULT_BENCHMARK_RESULTS_DIR / date.today().isoformat()
+    expected_name = (
+        f"{_persona_run_label(persona_id)}_"
+        f"{_method_run_token(method, mpc_horizon)}_"
+        f"{city.lower()}_{days}days"
+    )
+    if output_dir.exists():
+        if output_dir.parent != expected_parent or output_dir.name != expected_name:
+            raise RuntimeError(f"Refusing to overwrite unexpected output path: {output_dir}")
+        shutil.rmtree(output_dir)
+    return output_dir
+
+
+def _canonical_method(method: str) -> str:
+    aliases = {
+        "mpc": "mpc_dynamic",
+    }
+    return aliases.get((method or "agent").lower(), (method or "agent").lower())
+
+
+def _method_label(method: str) -> str:
+    method = _canonical_method(method)
+    labels = {
+        "agent": "EnergyBridge Agent",
+        "mpc_dynamic": "MPC-Dynamic baseline",
+        "mpc_ep": "MPC-EnergyPlus baseline",
+        "rl": "RL baseline",
+    }
+    return labels.get(method, method or "unknown")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run family home benchmark for a single persona."
@@ -69,7 +141,7 @@ def main() -> None:
     parser.add_argument(
         "--output", "-o", default=None,
         help="Directory for EnergyPlus output files. "
-             "Defaults to benchmark_results/<persona_id>/ under the repo root.",
+             "Defaults to benchmark_results/<YYYY-MM-DD>/<role>_<method>[_Hn]_<city>_3days.",
     )
     parser.add_argument(
         "--city", "-c", default="Tianjin",
@@ -85,22 +157,28 @@ def main() -> None:
         help="Human-in-the-loop: show 3 VPP strategies and wait for terminal selection.",
     )
     parser.add_argument(
-        "--method", choices=["agent", "mpc"], default="agent",
+        "--method", choices=["agent", "mpc_dynamic", "mpc_ep", "mpc"], default="agent",
         help="Controller method for family_runner (default: agent).",
+    )
+    parser.add_argument(
+        "--mpc-horizon", type=int, default=6,
+        help="MPC prediction horizon in 10-minute steps; used by mpc_dynamic/mpc_ep (default: 6).",
     )
     args = parser.parse_args()
 
     persona = _load_persona_json(args.persona)
     pid     = persona["id"]
+    method = _canonical_method(args.method)
+    mpc_horizon = max(1, int(args.mpc_horizon))
     output_dir = (
         Path(args.output) if args.output
-        else DEFAULT_BENCHMARK_RESULTS_DIR / pid
+        else _prepare_default_output_dir(pid, method, args.city, mpc_horizon=mpc_horizon)
     )
 
     print("=" * 70)
     print(f"PERSONA : {pid}")
     print(f"CITY    : {args.city}")
-    print(f"METHOD  : {args.method}")
+    print(f"METHOD  : {method}")
     print(f"OUTPUT  : {output_dir}")
     print("=" * 70)
 
@@ -112,7 +190,8 @@ def main() -> None:
         weather_label    = args.city.lower(),
         verbose          = args.verbose,
         human_mode       = args.human,
-        method           = args.method,
+        method           = method,
+        mpc_horizon_steps= mpc_horizon,
     )
 
     print()
@@ -170,15 +249,10 @@ def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
             continue  # skip appliances not installed in this household
         start_k = f"{dev}_start_h"
         skip_k  = f"{dev}_skip"
-        # aggregate across all day decisions (last non-null wins)
+        # Show the VPP-trigger command. Later recovery commands belong to the
+        # day timeline, but should not overwrite the event strategy display.
         start_h = ta.get(start_k)
         skip    = ta.get(skip_k)
-        for d in day_decisions:
-            a = d.get("actions", {})
-            if a.get(start_k) is not None:
-                start_h = a[start_k]
-            if a.get(skip_k) is not None:
-                skip = a[skip_k]
         if skip:
             lines.append(f"    ├ {label:<5}: 跳过 (agent指令skip)")
         elif start_h is not None:
@@ -192,16 +266,6 @@ def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
         wh_start      = ta.get("water_heater_preheat_start_h")
         wh_end        = ta.get("water_heater_preheat_end_h")
         wh_temp       = ta.get("water_heater_preheat_temp_c")
-        for d in day_decisions:
-            a = d.get("actions", {})
-            if a.get("water_heater_preheat") is not None:
-                wh_preheat = a["water_heater_preheat"]
-            if a.get("water_heater_preheat_start_h") is not None:
-                wh_start = a["water_heater_preheat_start_h"]
-            if a.get("water_heater_preheat_end_h") is not None:
-                wh_end = a["water_heater_preheat_end_h"]
-            if a.get("water_heater_preheat_temp_c") is not None:
-                wh_temp = a["water_heater_preheat_temp_c"]
         if wh_preheat is False:
             wh_str = "关闭预热"
         elif wh_start is not None and wh_end is not None:
@@ -218,14 +282,6 @@ def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
         ev_mode  = ta.get("ev_mode")
         ev_start = ta.get("ev_charge_start_h")
         ev_end   = ta.get("ev_charge_end_h")
-        for d in day_decisions:
-            a = d.get("actions", {})
-            if a.get("ev_mode") is not None:
-                ev_mode = a["ev_mode"]
-            if a.get("ev_charge_start_h") is not None:
-                ev_start = a["ev_charge_start_h"]
-            if a.get("ev_charge_end_h") is not None:
-                ev_end = a["ev_charge_end_h"]
         if ev_mode == "delay":
             ev_str = f"delay模式 (22:00后充电)"
         elif ev_mode == "smart":
@@ -282,6 +338,7 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
         "=" * 62,
         f"  Persona    : {persona.get('id', '?')}",
         f"  名称       : {persona.get('name', '')}",
+        f"  方法       : {_method_label(d.get('method', ''))}  ({d.get('method', 'unknown')})",
         f"  城市       : {city}",
         f"  生成时间   : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"  输出目录   : {output_dir}",
@@ -427,12 +484,12 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
     # Per-day shiftable completion rate (from metrics)
     per_day = d.get("task_completion_per_day", [])
     per_day_shift = d.get("task_shift_success_per_day", [])
-    if has_shiftable and per_day:
+    if per_day:
         day_strs = "  ".join(f"Day{i+1}:{int(v*100)}%" for i, v in enumerate(per_day))
-        lines.append(f"  {'完成率(逐天)':<14}: {day_strs}")
-    if has_shiftable and per_day_shift:
+        lines.append(f"  {'服务完成率(逐天)':<14}: {day_strs}")
+    if per_day_shift:
         day_strs_shift = "  ".join(f"Day{i+1}:{int(v*100)}%" for i, v in enumerate(per_day_shift))
-        lines.append(f"  {'平移成功率(逐天)':<14}: {day_strs_shift}")
+        lines.append(f"  {'完成后避峰率(逐天)':<14}: {day_strs_shift}")
 
     # Water heater (only if present)
     wh_days = appl.get("water_heater", [])
@@ -468,12 +525,10 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
         f"  ▸ VPP削峰",
         f"      VPP时段用电量: {d.get('vpp_window_energy_kwh', 0):.3f} kWh (3个事件×1h合计)",
         ("      需求达成比率 : " + _vpp_ratio_str(result)),
-        f"      任务完成率   : {d.get('appliance_task_completion_rate', 1.0)*100:.0f}%"
-        f"  (✓=错峰完成 ✗=跳过任务/未完成)",
-        f"      平移成功率   : {d.get('appliance_shift_success_rate', 0)*100:.0f}%"
-        f"  (分母=全部在户可平移电器任务；分子=完成且不在VPP运行)",
-        f"      错峰率       : {d.get('appliance_vpp_avoidance_rate', 0)*100:.0f}%"
-        f"  (分母=已完成任务；用于衡量完成后是否避开VPP)",
+        f"      服务完成率   : {d.get('appliance_task_completion_rate', 1.0)*100:.0f}%"
+        f"  (分母=在户可控电器；热水器=浴前就绪，EV=SOC达标)",
+        f"      完成后避峰率 : {d.get('appliance_vpp_avoidance_rate', 0)*100:.0f}%"
+        f"  (分母=已完成服务的可控电器；分子=未在VPP运行)",
         f"  ▸ 用电量",
         f"      总能耗       : {d.get('energy_kwh_total', 0):.2f} kWh (3天)",
         f"      日均          : {d.get('energy_kwh_per_day', 0):.2f} kWh/天",
