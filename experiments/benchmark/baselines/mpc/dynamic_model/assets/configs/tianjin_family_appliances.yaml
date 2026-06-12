@@ -1,0 +1,67 @@
+simulation:
+  start_datetime: '2026-04-01 00:00:00'
+  time_step_minutes: 10
+  validation_steps: 144
+devices:
+  ev_charger:
+    enabled: true
+    type: ev_charger
+    action: ev_charge_request
+    rated_power_kw: 7.0
+    battery_capacity_kwh: 60.0
+    initial_soc: 0.35
+    target_soc: 0.8
+    max_soc: 1.0
+    charging_efficiency: 0.9
+    arrival_hour: 18.0
+    departure_hour: 7.0
+    stop_at_target: true
+  electric_water_heater:
+    enabled: true
+    type: electric_water_heater
+    action: ewh_on
+    rated_power_kw: 3.0
+    tank_volume_l: 120.0
+    initial_temperature_c: 50.0
+    setpoint_c: 55.0
+    minimum_temperature_c: 10.0
+    maximum_temperature_c: 65.0
+    ambient_temperature_c: 20.0
+    inlet_temperature_c: 15.0
+    thermal_efficiency: 1.0
+    loss_coefficient_per_hour: 0.02
+    draw_events:
+    - time: 07:00
+      volume_l: 40.0
+    - time: '21:00'
+      volume_l: 30.0
+  dishwasher:
+    enabled: true
+    type: task_appliance
+    action: dishwasher_start
+    rated_power_kw: 1.2
+    cycle_duration_minutes: 90
+    earliest_start_hour: 18.0
+    latest_finish_hour: 23.0
+    initial_task_waiting: true
+    interruptible: false
+  clothes_washer:
+    enabled: true
+    type: task_appliance
+    action: clothes_washer_start
+    rated_power_kw: 0.5
+    cycle_duration_minutes: 60
+    earliest_start_hour: 18.0
+    latest_finish_hour: 22.0
+    initial_task_waiting: true
+    interruptible: false
+  clothes_dryer:
+    enabled: true
+    type: task_appliance
+    action: clothes_dryer_start
+    rated_power_kw: 3.0
+    cycle_duration_minutes: 60
+    earliest_start_hour: 19.0
+    latest_finish_hour: 23.5
+    initial_task_waiting: true
+    interruptible: false

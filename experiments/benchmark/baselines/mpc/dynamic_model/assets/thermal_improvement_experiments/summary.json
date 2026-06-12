@@ -1,0 +1,161 @@
+{
+  "experiment_name": "thermal_improvement_experiments_v1",
+  "horizon_steps": 18,
+  "horizon_hours": 3.0,
+  "rows": {
+    "all": 11232,
+    "train": 10800,
+    "test": 432
+  },
+  "source_paths": {
+    "epjson": "/workspace/examples/custom_env/models/family_long_2026_04_01_to_06_17.epJSON",
+    "trajectory": "/workspace/examples/Dynamic_Model/data/complete_sinergym_long/sinergym_long_2026_04_01_to_06_17.csv"
+  },
+  "envelope_audit": {
+    "living_volume_m3": 572.2414,
+    "living_floor_area_m2": 110.4089,
+    "opaque_outdoor_area_m2": 317.0958,
+    "ground_area_m2": 110.4089,
+    "window_area_m2": 33.0146,
+    "adiabatic_area_m2": 110.4089,
+    "opaque_ua_kw_per_k": 0.408565,
+    "ground_ua_kw_per_k": 0.46587,
+    "window_ua_kw_per_k": 0.052823,
+    "infiltration_ua_kw_per_k": 0.067162,
+    "total_ua_kw_per_k": 0.994421,
+    "air_heat_capacity_kwh_per_k": 0.191892,
+    "envelope_heat_capacity_kwh_per_k": 28.145067,
+    "effective_mass_heat_capacity_kwh_per_k": 14.072534,
+    "window_shgc_area_m2": 13.866125,
+    "assumed_ach": 0.35
+  },
+  "hvac_audit": {
+    "cooling_cop": 4.06853,
+    "heating_cop": 3.693081,
+    "supplemental_cop": 1.0
+  },
+  "method_metrics": {
+    "01_envelope_calibrated_3r2c_baseline": {
+      "train_one_step": {
+        "n": 10800,
+        "mae_c": 0.0670419240780004,
+        "rmse_c": 0.16931077558842159,
+        "bias_c": -0.000791830529677958,
+        "p95_abs_error_c": 0.22848405908434813
+      },
+      "test_one_step": {
+        "n": 432,
+        "mae_c": 0.19898285266681856,
+        "rmse_c": 0.3758785215897597,
+        "bias_c": -0.03402602819807109,
+        "p95_abs_error_c": 0.8666097139420887
+      },
+      "test_3h_rollout": {
+        "n": 432,
+        "mae_c": 0.7389299648583789,
+        "rmse_c": 0.9495130028080299,
+        "bias_c": -0.07878678849244658,
+        "p95_abs_error_c": 1.7918261547012668
+      }
+    },
+    "02_physical_solar_3r2c": {
+      "train_one_step": {
+        "n": 10800,
+        "mae_c": 0.0676682001576544,
+        "rmse_c": 0.16889247756160247,
+        "bias_c": 0.0012875519077937703,
+        "p95_abs_error_c": 0.22753206993940345
+      },
+      "test_one_step": {
+        "n": 432,
+        "mae_c": 0.19762033374356794,
+        "rmse_c": 0.3739325226066905,
+        "bias_c": -0.03281176157255019,
+        "p95_abs_error_c": 0.8594653773334743
+      },
+      "test_3h_rollout": {
+        "n": 432,
+        "mae_c": 0.7440587248718755,
+        "rmse_c": 0.957661086665343,
+        "bias_c": -0.16355744141328865,
+        "p95_abs_error_c": 1.849693098369973
+      }
+    },
+    "03_hvac_enhanced_3r2c": {
+      "train_one_step": {
+        "n": 10800,
+        "mae_c": 0.0674223584189977,
+        "rmse_c": 0.16423140646694367,
+        "bias_c": 0.0012656155097292667,
+        "p95_abs_error_c": 0.21907342047501988
+      },
+      "test_one_step": {
+        "n": 432,
+        "mae_c": 0.1871779001530756,
+        "rmse_c": 0.35606064505430846,
+        "bias_c": -0.01980992932303233,
+        "p95_abs_error_c": 0.8847436812643201
+      },
+      "test_3h_rollout": {
+        "n": 432,
+        "mae_c": 0.7079256628642754,
+        "rmse_c": 0.9110313930868363,
+        "bias_c": -0.10175916842272359,
+        "p95_abs_error_c": 1.7552770647143545
+      }
+    },
+    "04_5r3c_hvac_solar": {
+      "train_one_step": {
+        "n": 10800,
+        "mae_c": 0.06524104967186836,
+        "rmse_c": 0.15985526523708857,
+        "bias_c": 0.000995911125936107,
+        "p95_abs_error_c": 0.22098280707248003
+      },
+      "test_one_step": {
+        "n": 432,
+        "mae_c": 0.18134223856128986,
+        "rmse_c": 0.34052555034964227,
+        "bias_c": -0.007014459222802256,
+        "p95_abs_error_c": 0.8867914392233182
+      },
+      "test_3h_rollout": {
+        "n": 432,
+        "mae_c": 0.6750625779124193,
+        "rmse_c": 0.8672254681667697,
+        "bias_c": -0.07396416332001733,
+        "p95_abs_error_c": 1.6969030259019857
+      }
+    },
+    "05_hvac3r2c_linear_residual": {
+      "train_one_step": {
+        "n": 10800,
+        "mae_c": 0.07253564024198544,
+        "rmse_c": 0.1606237713550059,
+        "bias_c": -3.3836308240872177e-15,
+        "p95_abs_error_c": 0.23213071716760342
+      },
+      "test_one_step": {
+        "n": 432,
+        "mae_c": 0.2065641911101397,
+        "rmse_c": 0.3458413388324756,
+        "bias_c": -0.059806929932219956,
+        "p95_abs_error_c": 0.8678117813984174
+      },
+      "test_3h_rollout": {
+        "n": 432,
+        "mae_c": 0.7415718152270393,
+        "rmse_c": 0.953511429176451,
+        "bias_c": -0.32329506937996233,
+        "p95_abs_error_c": 1.8498901050380663
+      }
+    }
+  },
+  "method_folders": {
+    "01_envelope_calibrated_3r2c_baseline": "/workspace/examples/Dynamic_Model/outputs/thermal_improvement_experiments/01_envelope_calibrated_3r2c_baseline",
+    "02_physical_solar_3r2c": "/workspace/examples/Dynamic_Model/outputs/thermal_improvement_experiments/02_physical_solar_3r2c",
+    "03_hvac_enhanced_3r2c": "/workspace/examples/Dynamic_Model/outputs/thermal_improvement_experiments/03_hvac_enhanced_3r2c",
+    "04_5r3c_hvac_solar": "/workspace/examples/Dynamic_Model/outputs/thermal_improvement_experiments/04_5r3c_hvac_solar",
+    "05_hvac3r2c_linear_residual": "/workspace/examples/Dynamic_Model/outputs/thermal_improvement_experiments/05_hvac3r2c_linear_residual"
+  }
+}
