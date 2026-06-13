@@ -75,6 +75,13 @@ python3 run_persona_json.py basic_role_a_commuter_price_cooperative --method age
 python3 run_persona_json.py basic_role_a_commuter_price_cooperative --method mpc_dynamic --mpc-horizon 6
 python3 run_persona_json.py basic_role_a_commuter_price_cooperative --method mpc_ep --mpc-horizon 6
 
+# User category defaults to role-play LLM. Human mode keeps the same controller
+# methods, but replaces the role-play LLM user with real human input.
+python3 run_persona_json.py basic_role_a_commuter_price_cooperative \
+  --user-mode human --human-name alice --method agent
+python3 run_persona_json.py basic_role_a_commuter_price_cooperative \
+  --user-mode human --human-name alice --method mpc_dynamic --mpc-horizon 6
+
 # Available persona IDs:
 #   atom_comfort_sensitive, atom_control_auto, atom_price_indifferent, atom_task_rigid
 #   basic_role_a_commuter_price_cooperative, basic_role_b_home_comfort_gated
@@ -100,11 +107,21 @@ http://127.0.0.1:8787
 http://<server-ip>:8787
 ```
 
+When the dashboard runs on a remote server, prefer SSH port forwarding from
+your local machine:
+
+```bash
+ssh -o ExitOnForwardFailure=yes -fN -L 8798:127.0.0.1:8787 hku_user@100.116.9.76
+open http://127.0.0.1:8798
+```
+
 Dashboard features:
 
-- `新运行`: choose method (`agent`, `mpc_dynamic`, `mpc_ep`), persona, and run mode.
-- `测评模式`: automated role-play LLM evaluation with live logs and progressive cards.
-- `Human-in-loop`: same simulation, but the page exposes A/B/C/custom user input controls.
+- `新运行`: first choose user category (`Role-play LLM` or `Human`), then user type/name, then controller method (`agent`, `mpc_dynamic`, `mpc_ep`).
+- `Role-play LLM`: automated role-play LLM evaluation with live logs and progressive cards.
+- `Human`: same simulation, but the page exposes one input box below the live terminal.
+  Enter `A/B/C` for strategy selection, `1-5` for result scoring, or a short comment
+  when the terminal asks for feedback.
 - Historical runs: open the collapsible left sidebar and select a prior result.
 - Progressive visualization: VPP target, AC setpoint, selected strategy, appliance schedules,
   user score, and final `run_summary.txt`.
@@ -167,11 +184,31 @@ contains `[family/agent]`.
 ### Single-persona run output
 
 ```
-benchmark_results/<YYYY-MM-DD>/<role>_<method>[_Hn]_<city>_3days/
+benchmark_results/<YYYY-MM-DD>/<role-or-human_name_human>_<method>[_Hn]_<city>_3days/
 ├── run_summary.txt          ← ★ human-readable summary (always check this first)
 ├── benchmark_result.json    ← raw metrics in JSON
 └── <eplus files>            ← EnergyPlus simulation outputs
 ```
+
+Role-play LLM runs use the persona role prefix:
+
+```text
+benchmark_results/2026-06-13/role_a_agent_tianjin_3days/
+benchmark_results/2026-06-13/role_a_mpc_dynamic_H6_tianjin_3days/
+benchmark_results/2026-06-13/role_a_mpc_ep_H6_tianjin_3days/
+```
+
+Human runs use the custom human name plus `_human`, then the controller method:
+
+```text
+benchmark_results/2026-06-13/alice_human_agent_tianjin_3days/
+benchmark_results/2026-06-13/alice_human_mpc_dynamic_H6_tianjin_3days/
+benchmark_results/2026-06-13/alice_human_mpc_ep_H6_tianjin_3days/
+```
+
+If the exact same default run directory already exists, it is replaced before
+the new run starts. Other methods, users, cities, horizons, or dates are left
+untouched. Passing `--output /custom/path` bypasses the default naming scheme.
 
 ### Multi-persona household run output
 
@@ -315,18 +352,20 @@ python3 run_benchmark.py --building family --skip-existing
 
 ## Interactive Agent Demo
 
-### Human-in-the-loop mode (`run_agent_loop.py`)
+### Human user mode (`run_persona_json.py`)
 
-Runs the **identical** 3-day EnergyPlus + VPP co-simulation as
-`run_persona_json.py`, but replaces the LLM-simulated user with **real human
-terminal input**.
+The recommended human-in-the-loop entrypoint is `run_persona_json.py` with
+`--user-mode human`. It runs the same 3-day EnergyPlus + VPP co-simulation as
+the role-play benchmark, but replaces the LLM-simulated user with **real human
+input** while preserving the selected controller method.
 
 ```bash
 cd /path/to/EnergyBridge
 conda activate energybridge
-python3 examples/run_agent_loop.py
-python3 examples/run_agent_loop.py --city Tianjin
-python3 examples/run_agent_loop.py --output /tmp/my_run
+python3 experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
+  --user-mode human --human-name alice --method agent
+python3 experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
+  --user-mode human --human-name alice --method mpc_dynamic --mpc-horizon 6
 ```
 
 Before each VPP event (18:00-19:00, Days 1–3) you will see:
@@ -337,19 +376,24 @@ Before each VPP event (18:00-19:00, Days 1–3) you will see:
   │  [B] 平衡策略  —  升温至26°C，家电提前完成或延后  (轻微温漂，节电约15%)
   │  [C] 节能优先  —  升温至27°C，所有可平移家电延迟  (明显温漂，节电约30%)
   └──────────────────────────────────────────────────────────────
-  > A          ← type A / B / C, free text, or Enter for auto
+  > A          ← type A / B / C, free text, or Enter for default
 ```
 
 After each event ends you rate your satisfaction (1–5) and leave a comment.
 
-Output goes to `benchmark_results/human_<YYYYMMDD_HHMMSS>/` — same layout as
-single-persona runs (`run_summary.txt` + `benchmark_result.json`).
+Output follows the standard benchmark naming scheme, for example
+`benchmark_results/2026-06-13/alice_human_agent_tianjin_3days/`.
+
+`examples/run_agent_loop.py` is kept as a lightweight legacy interactive demo,
+but benchmark comparisons should use `run_persona_json.py --user-mode human`
+so the result naming, summary metrics, and dashboard history stay consistent.
 
 | Mode | User input | EnergyPlus | VPP agent |
 |------|-----------|-----------|-----------|
-| `run_persona_json.py` | LLM roleplay | ✓ | ✓ |
+| `run_persona_json.py --user-mode roleplay` | LLM roleplay | ✓ | ✓ |
+| `run_persona_json.py --user-mode human` | **Real human** | ✓ | ✓ |
 | `run_multi_persona_json.py` | LLM household discussion | ✓ | ✓ |
-| `run_agent_loop.py` | **Real human** | ✓ | ✓ |
+| `examples/run_agent_loop.py` | Legacy real-human demo | ✓ | ✓ |
 
 ### Automated roleplay evaluation (`run_roleplay_evaluation.py`)
 
