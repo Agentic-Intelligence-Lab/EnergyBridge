@@ -32,13 +32,58 @@ PMV_MET = 1.1; PMV_CLO = 0.5; PMV_V = 0.1; PMV_RH = 55.0
 PMV_DEADBAND = 0.5; SP_MIN = 22.0; SP_MAX = 28.0; SP_STEP = 0.5
 SP_DEFAULT = 26.0; HTG_SP = 20.0; UNMET_TOL = 0.556
 
-# 3x VPP-1: same event type, triggered every day at 18:00
-# Day1 h=18, Day2 h=42, Day3 h=66 (1-hour demand reduction window)
+# 3x VPP-1: same event type, configured as absolute simulation-hour windows.
+# The Agent prompt and appliance guardrails derive their timing from this list.
 VPP_EVENTS = [
     {"id": "vpp1", "trigger_h": 18.0, "end_h": 19.0, "day": 1},
     {"id": "vpp2", "trigger_h": 42.0, "end_h": 43.0, "day": 2},
     {"id": "vpp3", "trigger_h": 66.0, "end_h": 67.0, "day": 3},
 ]
+
+
+def _fmt_clock_h(hour: float) -> str:
+    """Format an hour-of-day float as HH:MM for user-facing logs/prompts."""
+    h = float(hour) % 24.0
+    hh = int(h)
+    mm = int(round((h - hh) * 60))
+    if mm >= 60:
+        hh = (hh + 1) % 24
+        mm = 0
+    return f"{hh:02d}:{mm:02d}"
+
+
+def _event_start_hod(event: dict | None) -> float:
+    return float((event or {}).get("trigger_h", 18.0)) % 24.0
+
+
+def _event_end_hod(event: dict | None) -> float:
+    return float((event or {}).get("end_h", 19.0)) % 24.0
+
+
+def _event_window_text(event: dict | None) -> str:
+    return f"{_fmt_clock_h(_event_start_hod(event))}-{_fmt_clock_h(_event_end_hod(event))}"
+
+
+def _event_preheat_safe_end_hod(event: dict | None) -> float:
+    """Prefer ending thermal preheat one hour before the current VPP window."""
+    return (_event_start_hod(event) - 1.0) % 24.0
+
+
+def _find_active_or_upcoming_vpp_event(sim_h: float, *, vpp_id: str = "") -> dict | None:
+    """Return the active event or the next event later on the same simulated day."""
+    if vpp_id:
+        for ev in VPP_EVENTS:
+            if ev.get("id") == vpp_id:
+                return ev
+    for ev in VPP_EVENTS:
+        if float(ev["trigger_h"]) <= sim_h < float(ev["end_h"]):
+            return ev
+    day_idx = int(sim_h // 24)
+    upcoming = [
+        ev for ev in VPP_EVENTS
+        if sim_h < float(ev["trigger_h"]) and int(float(ev["trigger_h"]) // 24) == day_idx
+    ]
+    return min(upcoming, key=lambda ev: float(ev["trigger_h"])) if upcoming else None
 
 @dataclass
 class BenchmarkResult:
@@ -116,6 +161,7 @@ class _FamilyLoop:
         self.vpp_scored: set = set()                # ids already scored
         self.vpp_mem_ctx: str = ""                  # compressed memory for next LLM call
         self.vpp_user_input: str = ""               # roleplay user preference before agent acts
+        self.vpp_user_input_by_id: Dict[str, str] = {}
         self.vpp_last_reason: str = ""              # agent reason from last LLM call
         # Per-event VPP energy tracking and demand-agent outputs
         self.vpp_event_energy_wh: Dict[str, float] = {}   # {event_id: Wh} accumulated per event
@@ -402,9 +448,44 @@ def _present_agent_controlled_appliances(appliance_config: dict | None) -> List[
     names = []
     for name in ("washer", "dishwasher", "dryer", "water_heater", "ev"):
         dev_cfg = cfg.get(name, {}) or {}
-        if bool(dev_cfg.get("present", False)):
+        if not bool(dev_cfg.get("present", False)):
+            continue
+        if name in ("washer", "dishwasher", "dryer"):
+            if bool(dev_cfg.get("shiftable", True)) and bool(dev_cfg.get("dr_adjustable", True)):
+                names.append(name)
+        elif name == "water_heater":
+            if bool(dev_cfg.get("dr_adjustable", True)):
+                names.append(name)
+        else:
             names.append(name)
     return names
+
+
+def _fixed_appliance_constraint_text(appliance_config: dict | None) -> str:
+    """Describe present devices that exist but cannot be shifted by the Agent."""
+    cfg = appliance_config or {}
+    fixed: List[str] = []
+    for name in ("washer", "dishwasher", "dryer"):
+        dev_cfg = cfg.get(name, {}) or {}
+        if bool(dev_cfg.get("present", False)) and (
+            not bool(dev_cfg.get("shiftable", True)) or not bool(dev_cfg.get("dr_adjustable", True))
+        ):
+            preferred = dev_cfg.get("preferred_h", "?")
+            duration = dev_cfg.get("duration_h", "?")
+            fixed.append(f"{name}: fixed/non-DR-adjustable preferred start={preferred}, duration={duration}h")
+    wh_cfg = cfg.get("water_heater", {}) or {}
+    if bool(wh_cfg.get("present", False)) and not bool(wh_cfg.get("dr_adjustable", True)):
+        fixed.append(
+            "water_heater: fixed/non-DR-adjustable "
+            f"preheat={wh_cfg.get('pre_heat_window_start_h', '?')}-{wh_cfg.get('pre_heat_window_end_h', '?')}"
+        )
+    if not fixed:
+        return ""
+    return (
+        "\n[Fixed appliance constraints]\n"
+        "These present devices are NOT controllable by the Agent. Do not output commands for them; account for them as fixed load constraints:\n"
+        + "\n".join(f"- {item}" for item in fixed)
+    )
 
 
 def _default_explicit_appliance_actions(appliance_config: dict | None) -> dict:
@@ -430,6 +511,64 @@ def _default_explicit_appliance_actions(appliance_config: dict | None) -> dict:
             "ev_mode": "smart",
             "ev_charge_start_h": None,
             "ev_charge_end_h": None,
+        })
+    return actions
+
+
+def _vpp_safe_cycle_start(dev_cfg: dict, event: dict | None) -> float:
+    """Choose a same-day cycle start that avoids the current VPP window."""
+    duration_h = float(dev_cfg.get("duration_h", 1.0))
+    earliest_h = float(dev_cfg.get("earliest_h", 8.0))
+    latest_h = float(dev_cfg.get("latest_h", 23.0))
+    preferred_h = float(dev_cfg.get("preferred_h", 14.0))
+    vpp_start = _event_start_hod(event)
+    vpp_end = _event_end_hod(event)
+    preferred = max(earliest_h, min(preferred_h, latest_h))
+    if not _interval_overlaps(preferred, preferred + duration_h, vpp_start, vpp_end):
+        return float(preferred)
+    before = max(earliest_h, min(preferred_h, vpp_start - duration_h))
+    if before >= earliest_h and not _interval_overlaps(before, before + duration_h, vpp_start, vpp_end):
+        return float(before)
+    after = max(vpp_end, earliest_h)
+    if after + duration_h <= latest_h and not _interval_overlaps(after, after + duration_h, vpp_start, vpp_end):
+        return float(after)
+    return float(preferred)
+
+
+def _vpp_safe_appliance_actions(appliance_config: dict | None, event: dict | None = None) -> dict:
+    """Agent-only safe appliance plan for the provided VPP event window."""
+    actions = _default_explicit_appliance_actions(appliance_config)
+    cfg = appliance_config or {}
+    present = set(_present_agent_controlled_appliances(appliance_config))
+    for name in ("washer", "dishwasher", "dryer"):
+        if name not in present:
+            continue
+        dev_cfg = (cfg.get(name, {}) or {})
+        actions[f"{name}_start_h"] = _vpp_safe_cycle_start(dev_cfg, event)
+        actions[f"{name}_skip"] = False
+    if "water_heater" in present:
+        wh_cfg = (cfg.get("water_heater", {}) or {})
+        vpp_start = _event_start_hod(event)
+        vpp_end = _event_end_hod(event)
+        preferred_end = float(wh_cfg.get("pre_heat_window_end_h", _event_preheat_safe_end_hod(event)))
+        safe_end = min(preferred_end, _event_preheat_safe_end_hod(event))
+        if _interval_overlaps(max(0.0, safe_end - 1.0), safe_end, vpp_start, vpp_end):
+            safe_end = vpp_end
+        safe_start = min(float(wh_cfg.get("pre_heat_window_start_h", 14.0)), safe_end - 1.0)
+        safe_start = max(8.0, safe_start)
+        actions.update({
+            "water_heater_preheat_start_h": float(safe_start),
+            "water_heater_preheat_end_h": float(safe_end),
+            "water_heater_preheat_temp_c": float(max(68.0, wh_cfg.get("pre_heat_temp_c", 68.0))),
+            "water_heater_preheat": True,
+        })
+    if "ev" in present:
+        vpp_end = _event_end_hod(event)
+        charge_start = max(22.0, vpp_end)
+        actions.update({
+            "ev_mode": "delay",
+            "ev_charge_start_h": float(charge_start % 24.0),
+            "ev_charge_end_h": 7.0,
         })
     return actions
 
@@ -475,12 +614,21 @@ def _missing_explicit_appliance_actions(actions: dict | None, appliance_config: 
     return missing
 
 
-def _explicit_appliance_requirement_text(appliance_config: dict | None) -> str:
+def _explicit_appliance_requirement_text(
+    appliance_config: dict | None, *, vpp_event: dict | None = None
+) -> str:
     """Human-readable prompt text listing the exact non-null fields required now."""
     present = _present_agent_controlled_appliances(appliance_config)
     if not present:
         return "\n[Explicit appliance commands required now]: none; no controlled appliances are present."
-    defaults = _default_explicit_appliance_actions(appliance_config)
+    defaults = _vpp_safe_appliance_actions(appliance_config, vpp_event) if vpp_event else _default_explicit_appliance_actions(appliance_config)
+    vpp_note = (
+        "\nBecause today has a VPP event window "
+        f"{_event_window_text(vpp_event)}, these defaults are VPP-safe: "
+        "shiftable cycles avoid the event window, water-heater preheat ends before the event when feasible, "
+        "and EV charging is delayed outside the event window."
+        if vpp_event else ""
+    )
     return (
         "\n[Explicit appliance commands required now]\n"
         "Every present controllable appliance must receive an explicit non-null command in every JSON response.\n"
@@ -488,7 +636,94 @@ def _explicit_appliance_requirement_text(appliance_config: dict | None) -> str:
         f"{json.dumps(defaults, ensure_ascii=False, sort_keys=True)}\n"
         "For washer/dishwasher/dryer: provide start_h and skip=false, unless the task is truly unnecessary and skip=true.\n"
         "For water_heater: provide preheat=true/false plus start/end/temp. For EV: provide ev_mode."
+        f"{vpp_note}"
     )
+
+
+def _interval_overlaps(start: float, end: float, window_start: float, window_end: float) -> bool:
+    """Return True when a local-hour interval overlaps a same-day window."""
+    start = float(start) % 24.0
+    end = float(end) % 24.0
+    intervals = [(start, end)] if start < end else [(start, 24.0), (0.0, end)]
+    return any(a < window_end and b > window_start for a, b in intervals if a != b)
+
+
+def _vpp_appliance_conflicts(
+    actions: dict | None, appliance_config: dict | None, event: dict | None = None
+) -> List[str]:
+    """Find Agent appliance commands that would place controllable load in the VPP window."""
+    actions = actions or {}
+    cfg = appliance_config or {}
+    conflicts: List[str] = []
+    present = set(_present_agent_controlled_appliances(appliance_config))
+    vpp_start = _event_start_hod(event)
+    vpp_end = _event_end_hod(event)
+    window_text = _event_window_text(event)
+    for name in ("washer", "dishwasher", "dryer"):
+        if name not in present or bool(actions.get(f"{name}_skip")):
+            continue
+        start = actions.get(f"{name}_start_h")
+        if start is None:
+            continue
+        duration_h = float((cfg.get(name, {}) or {}).get("duration_h", 1.0))
+        try:
+            if _interval_overlaps(float(start), float(start) + duration_h, vpp_start, vpp_end):
+                conflicts.append(
+                    f"{name}: scheduled {_fmt_clock_h(float(start))}-{_fmt_clock_h(float(start) + duration_h)} overlaps VPP {window_text}"
+                )
+        except (TypeError, ValueError):
+            continue
+    if "water_heater" in present and actions.get("water_heater_preheat") is not False:
+        start = actions.get("water_heater_preheat_start_h")
+        end = actions.get("water_heater_preheat_end_h")
+        try:
+            if start is not None and end is not None and _interval_overlaps(float(start), float(end), vpp_start, vpp_end):
+                conflicts.append(
+                    f"water_heater: preheat {_fmt_clock_h(float(start))}-{_fmt_clock_h(float(end))} overlaps VPP {window_text}"
+                )
+        except (TypeError, ValueError):
+            pass
+    if "ev" in present:
+        mode = str(actions.get("ev_mode") or "").lower()
+        if mode == "normal":
+            conflicts.append(f"ev: normal mode may charge during VPP {window_text}")
+        start = actions.get("ev_charge_start_h")
+        end = actions.get("ev_charge_end_h")
+        try:
+            if start is not None and end is not None and _interval_overlaps(float(start), float(end), vpp_start, vpp_end):
+                conflicts.append(
+                    f"ev: charge window {_fmt_clock_h(float(start))}-{_fmt_clock_h(float(end))} overlaps VPP {window_text}"
+                )
+        except (TypeError, ValueError):
+            pass
+    return conflicts
+
+
+def _filter_controllable_appliance_actions(actions: dict | None, appliance_config: dict | None) -> dict:
+    """Drop LLM commands for fixed/non-controllable appliances before applying them."""
+    actions = actions or {}
+    controllable = set(_present_agent_controlled_appliances(appliance_config))
+    allowed: set[str] = set()
+    for name in ("washer", "dishwasher", "dryer"):
+        if name in controllable:
+            allowed.update({f"{name}_start_h", f"{name}_skip"})
+    if "water_heater" in controllable:
+        allowed.update({
+            "water_heater_preheat_start_h",
+            "water_heater_preheat_end_h",
+            "water_heater_preheat_temp_c",
+            "water_heater_preheat",
+        })
+    if "ev" in controllable:
+        allowed.update({"ev_mode", "ev_charge_start_h", "ev_charge_end_h"})
+    filtered = {key: value for key, value in actions.items() if key in allowed}
+    dropped = sorted(key for key, value in actions.items() if value is not None and key not in allowed)
+    if dropped:
+        print(
+            "  [Appliance Control] dropping commands for fixed/absent devices: "
+            f"{', '.join(dropped)}"
+        )
+    return filtered
 
 
 def _service_completed(name: str, info: dict) -> bool:
@@ -748,7 +983,7 @@ If grid goals conflict with comfort, safety, consent, or caregiving routines, ch
 
     _LLM_SYS_FAM = f"""You are an autonomous AC (air conditioning) and appliance agent for a family home.
 SIMULATION: 3 days in July (Tianjin, China). Timestep 10 min. Total 72 hours.
-You are called at: (1) start of occupied period each day 08:00, (2) VPP demand-response events 18:00, (3) times you request.
+You are called at: (1) start of occupied period each day 08:00, (2) VPP demand-response events, (3) times you request.
 
 [AC CONTROL]
 Occupied hours: 08:00-22:00. Outside this window AC is automatically set to 28°C (standby).
@@ -756,18 +991,22 @@ User preferred comfort range: {_ac_sp_min:.1f}–{_ac_sp_max:.1f}°C (tolerance 
 Normal setpoint target: ~{_ac_sp_default:.1f}°C. PMV near 0 at 25.5°C; >+0.5 when zone exceeds 27°C.
 Allowed setpoint range: {_run_sp_min:.1f}–{_run_sp_max:.1f}°C.
 
-[VPP DEMAND RESPONSE — 18:00-19:00 each day]
+[VPP DEMAND RESPONSE]
 Goal: reduce total electricity consumption for 1 hour to support the grid.
+The exact event window is provided at runtime as VPP_WINDOW=start-end.
 {_vpp_ac_strategy_text}
-Appliances: you have full scheduling control over all independent devices (see details below).
+Appliances: you have full scheduling control over controllable independent devices (see details below). Fixed/non-DR-adjustable devices are external constraints, not commands you can change.
 IMPORTANT: control each appliance independently. Decisions persist until you change them. Learn from past VPP event scores.
+HARD APPLIANCE RULE: on every VPP day, no present controllable appliance may draw controllable load during VPP_WINDOW.
+This means washer/dishwasher/dryer cycles must not overlap VPP_WINDOW, water-heater preheat must avoid VPP_WINDOW, and EV charging must use smart/delay or an explicit non-overlapping window.
+Plan appliance schedules before the event. Waiting until the VPP start time is too late for preheating or long-cycle tasks.
 {_protective_policy}
 
 [APPLIANCE CONTROL — default strategy & available parameters]
 
 WASHER / DISHWASHER / DRYER (run once per day)
   Default: run at 14:00 (well before VPP window). Shift earlier or later as needed.
-  On VPP days: shift to BEFORE 17:00 so laundry finishes before peak demand.
+  On VPP days: choose a start time so the full cycle does not overlap VPP_WINDOW.
   Service rule: these tasks should normally still be completed the same day.
   Skip is an exception only when the task is truly unnecessary that day. If you choose skip,
   the system may ask you once to confirm; otherwise reschedule instead.
@@ -778,17 +1017,17 @@ WASHER / DISHWASHER / DRYER (run once per day)
 
 WATER HEATER (electric tank, thermal storage)
   Default: preheat 15:00-18:00 at 65°C so hot water is ready by bath time 21:00.
-  On VPP days: keep same or extend window earlier (e.g. 13:00-17:00) to avoid heating during 18:00-19:00.
+  On VPP days: move the preheat window away from VPP_WINDOW, preferably ending about 1 hour before the event.
   Hotter tank = more thermal storage = less chance of heating during VPP.
   Parameters:
     water_heater_preheat_start_h : float  — hour-of-day to begin preheating (default 15.0).
-    water_heater_preheat_end_h   : float  — hour-of-day to stop preheating  (default 18.0, must be ≤18 on VPP days).
+    water_heater_preheat_end_h   : float  — hour-of-day to stop preheating; avoid VPP_WINDOW on VPP days.
     water_heater_preheat_temp_c  : float  — tank setpoint during preheat, 45–75°C (default 65.0).
     water_heater_preheat         : bool   — true = activate, false = disable (you can omit if setting times).
 
 EV CHARGER (home charger, arrives 18:00, departs 07:30)
   Default (smart mode): charge immediately on arrival, skip VPP window automatically.
-  On VPP days: use delay mode OR set explicit window to charge 22:00-07:00 (overnight valley).
+  On VPP days: use smart/delay mode OR set an explicit charge window that does not overlap VPP_WINDOW.
   SOC and arrival time shown in status each step.
   Parameters:
     ev_mode             : "smart"|"delay"|"normal"  — smart=avoid-VPP, delay=after-22:00, normal=immediate.
@@ -822,6 +1061,8 @@ All times are hour-of-day (0–23.9)."""
                      user_pref_input=""):
         import json as _j
         hh = int(hod % 24)
+        vpp_event = _find_active_or_upcoming_vpp_event(sim_h, vpp_id=vpp_id if vpp_active else "")
+        vpp_window = _event_window_text(vpp_event) if vpp_event else ""
         if vpp_active:
             _dkwh = getattr(loop, "current_vpp_demand_kwh", None)
             _dkw = getattr(loop, "current_vpp_demand_kw", None)
@@ -838,9 +1079,20 @@ All times are hour-of-day (0–23.9)."""
                 f" recommended_bid={float(_cap.get('recommended_bid_kw', 0.0)):.2f}kW,"
                 f" constraints={_cap.get('main_constraints', [])}."
             )
-            vpp_tag = f"  *** VPP_ACTIVE (event {vpp_id}): reduce load!{_dtag}{_ctag}  User will score your response ***"
+            vpp_tag = (
+                f"  *** VPP_ACTIVE (event {vpp_id}, VPP_WINDOW={vpp_window}): "
+                f"reduce load!{_dtag}{_ctag}  User will score your response ***"
+            )
         else:
             vpp_tag = ""
+        upcoming_vpp_tag = ""
+        if not vpp_active and vpp_event:
+            upcoming_vpp_tag = (
+                f"\n  *** VPP_TODAY ({vpp_event['id']}, VPP_WINDOW={vpp_window}): "
+                "plan appliances now so no controllable appliance overlaps this window. "
+                "Use VPP-safe schedules: shiftable cycles avoid the window, "
+                "water-heater preheat ends before the event when feasible, and EV charging avoids the window. ***"
+            )
         # Post-VPP recovery signal: tell LLM to restore setpoint within 2h after VPP ends
         post_vpp_tag = ""
         if not vpp_active:
@@ -860,11 +1112,12 @@ All times are hour-of-day (0–23.9)."""
             appl_tag = f"\nAppliances:\n{appl_lines}"
         else:
             appl_tag = ""
-        explicit_appliance_tag = _explicit_appliance_requirement_text(appliance_config)
-        prompt = (f"sim_hour={sim_h:.1f}  clock={hh:02d}:00{vpp_tag}{post_vpp_tag}\n"
+        fixed_appliance_tag = _fixed_appliance_constraint_text(appliance_config)
+        explicit_appliance_tag = _explicit_appliance_requirement_text(appliance_config, vpp_event=vpp_event)
+        prompt = (f"sim_hour={sim_h:.1f}  clock={hh:02d}:00{vpp_tag}{upcoming_vpp_tag}{post_vpp_tag}\n"
                   f"zone_temp={temp:.1f}C  outdoor={out_t:.1f}C\n"
                   f"remaining_sim_hours={remaining_h:.0f}\n"
-                  f"user_pref: {user_pref}{user_now_tag}{appl_tag}{explicit_appliance_tag}{mem_tag}")
+                  f"user_pref: {user_pref}{user_now_tag}{appl_tag}{fixed_appliance_tag}{explicit_appliance_tag}{mem_tag}")
         if vpp_active:
             fb_sp = min(_run_sp_max, _ac_sp_default if _protective_mode else 26.5)
             fb_nch = None
@@ -874,7 +1127,10 @@ All times are hour-of-day (0–23.9)."""
         fallback = {
             "setpoint": fb_sp,
             "next_check_hour": fb_nch,
-            "appliance_actions": _default_explicit_appliance_actions(appliance_config),
+            "appliance_actions": (
+                _vpp_safe_appliance_actions(appliance_config, vpp_event)
+                if vpp_event else _default_explicit_appliance_actions(appliance_config)
+            ),
         }
         def _validate_json(text: str) -> str:
             """Strip markdown fences and verify valid JSON; raises on failure."""
@@ -963,6 +1219,38 @@ All times are hour-of-day (0–23.9)."""
                     )
                 else:
                     print("  [Service Rule] skip revised to schedule/action")
+            if vpp_event:
+                vpp_conflicts = _vpp_appliance_conflicts(data.get("appliances", {}), appliance_config, vpp_event)
+                if vpp_conflicts:
+                    vpp_repair_prompt = (
+                        f"{prompt}\n\n"
+                        "[VPP appliance conflict repair required]\n"
+                        f"Your previous appliance commands would place controllable load in or too close to VPP_WINDOW={vpp_window}:\n"
+                        + "\n".join(f"- {item}" for item in vpp_conflicts)
+                        + "\nReturn the full JSON again. Keep the same AC setpoint if still appropriate, but rewrite appliance commands so:\n"
+                        "- washer/dishwasher/dryer cycles do not overlap VPP_WINDOW;\n"
+                        "- water-heater preheat does not overlap VPP_WINDOW and preferably ends before the event;\n"
+                        "- EV uses smart/delay or an explicit non-overlapping window.\n"
+                        "Use the VPP-safe defaults from the prompt if uncertain. Return full JSON only."
+                    )
+                    print(
+                        "  [VPP Appliance Rule] schedule conflicts -> asking LLM to repair: "
+                        f"{'; '.join(vpp_conflicts)}"
+                    )
+                    if verbose:
+                        print(f"  ┌─[VPP APPLIANCE REPAIR PROMPT]{'─'*28}")
+                        for _line in vpp_repair_prompt.splitlines():
+                            print(f"  │ {_line}")
+                        print(f"  └{'─'*56}")
+                    data = _call_llm_json(vpp_repair_prompt)
+                    remaining_conflicts = _vpp_appliance_conflicts(data.get("appliances", {}), appliance_config, vpp_event)
+                    if remaining_conflicts:
+                        print(
+                            "  [VPP Appliance Rule] conflicts remained; applying VPP-safe appliance defaults: "
+                            f"{'; '.join(remaining_conflicts)}"
+                        )
+                        data["appliances"] = _vpp_safe_appliance_actions(appliance_config, vpp_event)
+                        data["reason"] = (str(data.get("reason", ""))[:72] + " | VPP-safe appliance repair")[:100]
             final_missing_explicit = _missing_explicit_appliance_actions(
                 data.get("appliances", {}), appliance_config
             )
@@ -971,11 +1259,23 @@ All times are hour-of-day (0–23.9)."""
                     "  [Service Rule] still missing explicit appliance commands; applying safe explicit defaults for: "
                     f"{', '.join(final_missing_explicit)}"
                 )
-                repaired_actions = _default_explicit_appliance_actions(appliance_config)
+                repaired_actions = (
+                    _vpp_safe_appliance_actions(appliance_config, vpp_event)
+                    if vpp_event else _default_explicit_appliance_actions(appliance_config)
+                )
                 for key, value in (data.get("appliances", {}) or {}).items():
                     if value is not None:
                         repaired_actions[key] = value
                 data["appliances"] = repaired_actions
+                if vpp_event:
+                    remaining_conflicts = _vpp_appliance_conflicts(data.get("appliances", {}), appliance_config, vpp_event)
+                    if remaining_conflicts:
+                        print(
+                            "  [VPP Appliance Rule] missing-field repair still conflicts; applying VPP-safe appliance defaults: "
+                            f"{'; '.join(remaining_conflicts)}"
+                        )
+                        data["appliances"] = _vpp_safe_appliance_actions(appliance_config, vpp_event)
+                        data["reason"] = (str(data.get("reason", ""))[:72] + " | VPP-safe appliance repair")[:100]
             sp = round(max(_run_sp_min, min(_run_sp_max, float(data.get("setpoint", fb_sp)))), 1)
             nch = data.get("next_check_hour")
             if nch is not None:
@@ -984,7 +1284,10 @@ All times are hour-of-day (0–23.9)."""
                     nch = None
             reason = str(data.get("reason", ""))[:100]
             # --- Independent appliance commands from LLM ---
-            appl_actions = data.get("appliances", {})
+            appl_actions = _filter_controllable_appliance_actions(
+                data.get("appliances", {}), appliance_config
+            )
+            data["appliances"] = appl_actions
             day_num = int(sim_h // 24) + 1
             hh_mm = f"{int(hod % 24):02d}:{int((hod % 1)*60):02d}"
             vpp_tag = f" | VPP-{vpp_id}" if vpp_active else ""
@@ -1025,7 +1328,6 @@ All times are hour-of-day (0–23.9)."""
         state_dict["idf_path"] = str(idf_path)
         state_dict["epw_path"] = str(epw_path)
         state_dict["mpc_ep_output_dir"] = str(output_dir / "_mpc_ep_predictor")
-        state_dict["protective_user_mode"] = bool(_protective_mode)
         state_dict["mpc_decision_history"] = [
             item
             for day_items in loop.day_agent_decisions
@@ -1074,10 +1376,11 @@ All times are hour-of-day (0–23.9)."""
                 mean_temp_c=mean_t, pmv_ok_fraction=pmv_ok,
                 energy_kwh_per_day=e_day, agent_setpoint_c=sp_w,
                 event_index=event_index,
-                user_preference_text=loop_ref.vpp_user_input,
+                user_preference_text=loop_ref.vpp_user_input_by_id.get(ev["id"], loop_ref.vpp_user_input),
                 agent_reason=loop_ref.vpp_last_reason,
                 persona=persona_config,
                 appliance_summary=appliance_summary,
+                vpp_context=ev,
                 human_mode=human_mode)
             if r.get("source") != "roleplay_llm" and not human_mode:
                 raise RuntimeError(f"role-play LLM required, got {r.get('source')}")
@@ -1091,8 +1394,12 @@ All times are hour-of-day (0–23.9)."""
             print(f"  [VPP Result | Event {event_index}/3 {ev['id']}] User score: {sc}/5 ({lbl}) | {cmt[:80]}")
             print(f"  {'─'*62}")
             return {"id": ev["id"], "setpoint": sp_w, "score": sc, "label": lbl,
+                    "trigger_h": float(ev.get("trigger_h", 0.0)),
+                    "end_h": float(ev.get("end_h", 0.0)),
+                    "day": int(ev.get("day", event_index)),
                     "comfort_score": comfort_sc, "energy_score": energy_sc, "vpp_score": vpp_sc,
-                    "comment": cmt, "user_input": loop_ref.vpp_user_input[:80],
+                    "comment": cmt,
+                    "user_input": loop_ref.vpp_user_input_by_id.get(ev["id"], loop_ref.vpp_user_input)[:80],
                     "reason": loop_ref.vpp_last_reason[:120], "source": src}
         except Exception as e:
             print(f"  [VPP score {ev['id']}] error: {e}")
@@ -1205,7 +1512,7 @@ All times are hour-of-day (0–23.9)."""
                             f"(equivalent consumption cap ≤{_vpp_demand['target_kwh']:.2f} kWh)"
                         )
                         print(f"    AC   : Raise setpoint {_ac_sp_vpp_min:.1f}-{_ac_sp_vpp_max:.1f}°C  (pre-cool before, drift during)")
-                        print(f"    Other: Shift washer/EWH preheat/EV delay away from 18:00-19:00")
+                        print(f"    Other: Shift washer/EWH preheat/EV delay away from {_event_window_text(triggered_vpp)}")
                         print(f"  {'='*62}")
                     else:
                         hh = int(sim_h % 24)
@@ -1233,9 +1540,11 @@ All times are hour-of-day (0–23.9)."""
                                 loop.vpp_event_log,
                                 persona=persona_config,
                                 human_mode=human_mode)
+                            loop.vpp_user_input_by_id[vid] = loop.vpp_user_input
                         except Exception as _e:
                             print(f"  [UserInput] {_e}")
                             loop.vpp_user_input = ""
+                            loop.vpp_user_input_by_id[vid] = ""
                     else:
                         loop.vpp_user_input = ""
                     if method in ("mpc_dynamic", "mpc_ep"):
