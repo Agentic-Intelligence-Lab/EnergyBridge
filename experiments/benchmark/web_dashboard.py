@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -43,6 +44,29 @@ def _set_job(job_id: str, **updates) -> None:
     with JOBS_LOCK:
         if job_id in JOBS:
             JOBS[job_id].update(updates)
+
+
+def _infer_human_input_context(logs: list[str], requested_kind: str = "") -> tuple[str, str]:
+    """Infer which blocking human prompt the web input is answering."""
+    tail = "\n".join(logs[-100:])
+    event_matches = re.findall(r"(?:VPP event|VPP事件)\s*(\d+)", tail)
+    selected_matches = re.findall(r"\[Strategy Selected\s+\|\s+event=(\d+)\]", tail)
+    score_matches = re.findall(r"\[Human Score Selected\s+\|\s+event=(\d+)\]", tail)
+    event_id = (event_matches or selected_matches or score_matches or [""])[-1]
+
+    strategy_idx = max(tail.rfind("[请选择策略"), tail.rfind("输入 A / B / C"))
+    selected_idx = tail.rfind("[Strategy Selected")
+    score_prompt_idx = tail.rfind("请对本次VPP处理结果评分")
+    score_done_idx = tail.rfind("[Human Score Selected")
+    comment_idx = tail.rfind("可选：留下简短反馈")
+
+    if comment_idx > max(score_prompt_idx, strategy_idx) and comment_idx > score_done_idx:
+        return "score_comment", event_id
+    if score_prompt_idx > max(strategy_idx, selected_idx) and score_prompt_idx > score_done_idx:
+        return "score", event_id
+    if strategy_idx > selected_idx:
+        return "strategy_choice", event_id
+    return requested_kind or "unknown", event_id
 
 
 def _attach_finished_summary(job_id: str) -> None:
@@ -401,8 +425,6 @@ INDEX_HTML = r"""<!doctype html>
       padding: 12px;
       margin-top: 12px;
     }
-    .human-controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0; }
-    .human-controls button { padding: 9px; }
     .human-custom { display: grid; grid-template-columns: 1fr 110px; gap: 10px; }
     .empty { padding: 40px; text-align: center; color: var(--muted); }
     @media (max-width: 980px) {
@@ -442,7 +464,8 @@ INDEX_HTML = r"""<!doctype html>
       jobPoll: null,
       selectedMethod: 'agent',
       selectedPersona: 'basic_role_a_commuter_price_cooperative',
-      runMode: 'eval'
+      userMode: 'roleplay',
+      humanName: 'human_user'
     };
     const $ = (id) => document.getElementById(id);
     const fmt = (n, d=2) => Number.isFinite(Number(n)) ? Number(n).toFixed(d) : 'N/A';
@@ -541,14 +564,21 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function defaultCommand() {
-      return commandPreset(state.selectedMethod, state.selectedPersona, state.runMode);
+      return commandPreset(state.selectedMethod, state.selectedPersona, state.userMode, state.humanName);
     }
 
-    function commandPreset(method, persona, mode) {
+    function shellQuote(value) {
+      return `'${String(value || '').replaceAll("'", "'\"'\"'")}'`;
+    }
+
+    function commandPreset(method, persona, userMode, humanName) {
       const base = `conda run --no-capture-output -n energybridge python experiments/benchmark/run_persona_json.py ${persona || state.selectedPersona}`;
-      const horizon = method === 'mpc_dynamic' || method === 'mpc_ep' ? ' --mpc-horizon 6' : '';
-      const human = mode === 'human' ? ' --human' : '';
-      return `${base} --method ${method || 'agent'}${horizon}${human}`;
+      const controllerMethod = method || 'agent';
+      const horizon = controllerMethod === 'mpc_dynamic' || controllerMethod === 'mpc_ep' ? ' --mpc-horizon 6' : '';
+      const human = userMode === 'human'
+        ? ` --user-mode human --human-name ${shellQuote(humanName || 'human')}`
+        : ' --user-mode roleplay';
+      return `${base} --method ${controllerMethod}${horizon}${human}`;
     }
 
     function methodLabel(method) {
@@ -590,11 +620,11 @@ INDEX_HTML = r"""<!doctype html>
         const matches = [...text.matchAll(pattern)];
         return matches.length ? matches[matches.length - 1] : null;
       };
-      const day = latest(/\[AC Agent[^\]]*Day(\d+)/g)?.[1] || latest(/--- Day\s+(\d+)\s+start/g)?.[1] || '—';
+      const day = latest(/\[(?:AC|MPC) Agent[^\]]*Day(\d+)/g)?.[1] || latest(/--- Day\s+(\d+)\s+start/g)?.[1] || '—';
       const event = latest(/VPP Demand-Response Event\s+(\d+)\/3/g)?.[1] || '—';
       const energy = latest(/\[family\/[^\]]+\]\s+exit=\d+\s+energy=([0-9.]+)kWh\s+vpp_window=([0-9.]+)kWh/g);
       const score = latest(/User score:\s*([0-9.]+)\/5\s+\(([^)]+)\)/g);
-      const sp = latest(/\[AC Agent[^\]]*\]\s+setpoint[→-]([0-9.]+)/g);
+      const sp = latest(/\[(?:AC|MPC) Agent[^\]]*\].*?setpoint(?:→|->)([0-9.]+)/g);
       const demand = latest(/shed_target=([0-9.]+)kW\s+\(cap=([0-9.]+)kWh\)/g);
       const dialogue = [];
       const progressEvents = {};
@@ -608,7 +638,7 @@ INDEX_HTML = r"""<!doctype html>
         if (dayMatch) {
           currentDay = dayMatch[1];
         }
-        const acDayMatch = line.match(/\[AC Agent[^\]]*Day(\d+)/);
+        const acDayMatch = line.match(/\[(?:AC|MPC) Agent[^\]]*Day(\d+)/);
         if (acDayMatch) {
           currentDay = acDayMatch[1];
           currentKey = currentDay;
@@ -651,6 +681,37 @@ INDEX_HTML = r"""<!doctype html>
           const ev = ensureProgressEvent(progressEvents, currentKey);
           ev.day = currentKey;
         }
+        const humanScoreMatch = line.match(/\[Human Score Selected\s+\|\s+event=(\d+)\]\s+→\s+([0-9.]+)\/5\s+\|\s*(.*)/);
+        if (humanScoreMatch) {
+          currentKey = humanScoreMatch[1];
+          const scoreEv = ensureProgressEvent(progressEvents, currentKey);
+          scoreEv.day = currentKey;
+          scoreEv.score = `${humanScoreMatch[2]}/5 human`;
+          scoreEv.status = 'done';
+          const comment = humanScoreMatch[3].trim();
+          if (comment && comment !== '—') scoreEv.notes.push(`真人反馈: ${comment}`);
+        }
+        const webInputMatch = line.match(/\[web human input(?:\s+\|\s+kind=([^ ]+)\s+event=([^\]]+))?\]\s*(.*)/);
+        if (webInputMatch) {
+          const kind = webInputMatch[1] || 'unknown';
+          const inputEvent = webInputMatch[2] || '';
+          const value = (webInputMatch[3] || '').trim() || '回车默认';
+          const targetKey = inputEvent && inputEvent !== '?' ? inputEvent : currentKey;
+          if (targetKey) {
+            const inputEv = ensureProgressEvent(progressEvents, targetKey);
+            inputEv.day = targetKey;
+            if (kind === 'strategy_choice') {
+              inputEv.notes.push(`真人策略输入: ${value}`);
+            } else if (kind === 'score') {
+              inputEv.score = `${value}/5 human`;
+              inputEv.notes.push(`真人评分输入: ${value}`);
+            } else if (kind === 'score_comment') {
+              inputEv.notes.push(`真人评分反馈: ${value}`);
+            }
+          }
+          dialogue.push({type: 'user', label: 'Human Input', text: line});
+          continue;
+        }
         if (!currentKey) continue;
         const ev = ensureProgressEvent(progressEvents, currentKey);
         const selectedMatch = line.match(/\[Strategy Selected\s+\|\s+event=(\d+)\]\s+→\s+(.+)/);
@@ -663,7 +724,7 @@ INDEX_HTML = r"""<!doctype html>
         if (targetMatch) {
           ev.target = `${targetMatch[1]} kW / ${targetMatch[2]} kWh`;
         }
-        const acMatch = line.match(/\[AC Agent[^\]]*\]\s+setpoint[→-]([0-9.]+)/);
+        const acMatch = line.match(/\[(?:AC|MPC) Agent[^\]]*\].*?setpoint(?:→|->)([0-9.]+)/);
         if (acMatch) {
           ev.setpoint = `${acMatch[1]}°C`;
         }
@@ -709,10 +770,10 @@ INDEX_HTML = r"""<!doctype html>
         } else if (line.includes('[Strategy Selected')) {
           dialogue.push({type: 'user', label: 'User Strategy', text: line});
           ev.notes.push(line);
-        } else if (line.includes('[web human input]')) {
-          dialogue.push({type: 'user', label: 'Human Input', text: line});
+        } else if (line.includes('[Human Score Selected')) {
+          dialogue.push({type: 'result', label: 'Human Score', text: line});
           ev.notes.push(line);
-        } else if (line.includes('[AC Agent')) {
+        } else if (line.includes('[AC Agent') || line.includes('[MPC Agent')) {
           dialogue.push({type: 'agent', label: 'Agent', text: line});
           ev.notes.push(line);
         } else if (line.includes('[VPP Result')) {
@@ -745,42 +806,42 @@ INDEX_HTML = r"""<!doctype html>
         <option value="${p.id}" ${state.selectedPersona === p.id ? 'selected' : ''}>
           ${p.label} · ${p.name}
         </option>`).join('');
-      const humanInputPanel = state.runMode === 'human' ? `
+      const userTypeField = state.userMode === 'human' ? `
+        <div class="field-row">
+          <label for="humanNameInput">2. 用户类型</label>
+          <input id="humanNameInput" value="${state.humanName}" placeholder="输入真人用户名称，例如 alice">
+        </div>` : `
+        <div class="field-row">
+          <label for="personaSelect">2. 用户类型</label>
+          <select id="personaSelect">${personaOptions}</select>
+        </div>`;
+      const humanInputPanel = state.userMode === 'human' ? `
         <div class="human-dialogue">
-          <h3>Human-in-loop 输入对话框</h3>
-          <div class="sub">当命令行等待用户选择时，可以直接点 A/B/C，或发送自定义文字。</div>
-          <div class="human-controls">
-            <button class="secondary" data-human-input="A">选择 A</button>
-            <button class="secondary" data-human-input="B">选择 B</button>
-            <button class="secondary" data-human-input="C">选择 C</button>
-            <button class="secondary" data-human-input="">回车默认</button>
-          </div>
+          <h3>Human-in-loop 输入</h3>
+          <div class="sub">根据终端当前提示输入：策略阶段填 A/B/C，评分阶段填 1-5，反馈阶段可填一句话；直接发送空内容等于回车默认。</div>
           <div class="human-custom">
-            <input id="humanCustomInput" placeholder="自定义偏好文字，发送给 --human 输入点">
-            <button id="sendHumanCustom">发送输入</button>
+            <input id="humanCustomInput" placeholder="输入 A/B/C、1-5、反馈文字，或留空回车">
+            <button id="sendHumanCustom">回车</button>
           </div>
         </div>` : '';
       return `
         <div class="grid">
           <section class="panel">
             <h2>实时运行</h2>
-            <div class="sub">先选方法，再选用户，然后运行。默认是自动 role-play LLM 测评；命令行输入保留作 fallback。</div>
-            <h3>1. 方法</h3>
+            <div class="sub">先选用户类别，再选用户类型，最后选控制方法。命令行输入保留作 fallback。</div>
+            <h3>1. 用户类别</h3>
+            <div class="preset-grid">
+              <button class="${state.userMode === 'roleplay' ? '' : 'secondary'}" data-user-mode="roleplay">Role-play LLM</button>
+              <button class="${state.userMode === 'human' ? '' : 'secondary'}" data-user-mode="human">Human</button>
+            </div>
+            ${userTypeField}
+            <h3>3. 方法</h3>
             <div class="preset-grid">
               ${methods.map(m => `<button class="${state.selectedMethod === m ? '' : 'secondary'}" data-method="${m}">${methodLabel(m)}</button>`).join('')}
             </div>
-            <div class="field-row">
-              <label for="personaSelect">2. 用户类别</label>
-              <select id="personaSelect">${personaOptions}</select>
-            </div>
-            <h3>3. 运行模式</h3>
-            <div class="preset-grid">
-              <button class="${state.runMode === 'eval' ? '' : 'secondary'}" data-run-mode="eval">测评模式</button>
-              <button class="${state.runMode === 'human' ? '' : 'secondary'}" data-run-mode="human">Human-in-loop</button>
-            </div>
             <div class="command-row">
               <input id="commandInput" value="${defaultCommand()}">
-              <button id="startRun">运行${state.runMode === 'human' ? '真人模式' : '测评'}</button>
+              <button id="startRun">运行${state.userMode === 'human' ? 'Human' : 'Role-play LLM'}</button>
             </div>
             <div class="live-grid" id="liveMetrics">
               <div class="live-card"><span>Day/Event</span><strong>—</strong></div>
@@ -788,7 +849,6 @@ INDEX_HTML = r"""<!doctype html>
               <div class="live-card"><span>VPP target</span><strong>waiting</strong></div>
               <div class="live-card"><span>User score</span><strong>waiting</strong></div>
             </div>
-            ${humanInputPanel}
             <div style="height:10px"></div>
             <h3>逐步可视化</h3>
             <div class="progress-viz" id="progressViz"><div class="sub">运行时会按事件逐步生成可视化卡片。</div></div>
@@ -798,6 +858,7 @@ INDEX_HTML = r"""<!doctype html>
             <div id="finishedSummary"></div>
             <div style="height:10px"></div>
             <div class="terminal" id="runLog">等待运行命令...</div>
+            ${humanInputPanel}
           </section>
         </div>`;
     }
@@ -848,26 +909,46 @@ INDEX_HTML = r"""<!doctype html>
           render();
         };
       });
-      $('personaSelect').onchange = (e) => {
-        state.selectedPersona = e.target.value;
-        syncCommandFromSelections();
-      };
-      document.querySelectorAll('[data-run-mode]').forEach(btn => {
+      const personaSelect = $('personaSelect');
+      if (personaSelect) {
+        personaSelect.onchange = (e) => {
+          state.selectedPersona = e.target.value;
+          syncCommandFromSelections();
+        };
+      }
+      const humanNameInput = $('humanNameInput');
+      if (humanNameInput) {
+        humanNameInput.oninput = (e) => {
+          state.humanName = e.target.value;
+          syncCommandFromSelections();
+        };
+      }
+      document.querySelectorAll('[data-user-mode]').forEach(btn => {
         btn.onclick = () => {
-          state.runMode = btn.dataset.runMode;
+          state.userMode = btn.dataset.userMode;
           render();
         };
       });
       document.querySelectorAll('[data-human-input]').forEach(btn => {
-        btn.onclick = () => sendHumanInput(btn.dataset.humanInput);
+        btn.onclick = () => sendHumanInput(btn.dataset.humanInput, btn.dataset.humanKind || '');
       });
       const humanCustom = $('sendHumanCustom');
       if (humanCustom) {
         humanCustom.onclick = () => {
           const input = $('humanCustomInput');
-          sendHumanInput(input.value.trim());
+          sendHumanInput(input.value.trim(), 'custom');
           input.value = '';
         };
+        const input = $('humanCustomInput');
+        if (input) {
+          input.onkeydown = (event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              sendHumanInput(input.value.trim(), 'custom');
+              input.value = '';
+            }
+          };
+        }
       }
     }
 
@@ -990,7 +1071,7 @@ INDEX_HTML = r"""<!doctype html>
       }
     }
 
-    async function sendHumanInput(text) {
+    async function sendHumanInput(text, kind = '') {
       const log = $('runLog');
       if (!state.jobId) {
         if (log) log.textContent += '\n[web] 还没有正在运行的 human job。';
@@ -999,10 +1080,10 @@ INDEX_HTML = r"""<!doctype html>
       await api('/api/job_input', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({job_id: state.jobId, text})
+        body: JSON.stringify({job_id: state.jobId, text, kind})
       });
       if (log) {
-        log.textContent += `\n[web] sent human input: ${text || '(default enter)'}`;
+        log.textContent += `\n[web] sent human input${kind ? ` (${kind})` : ''}: ${text || '(default enter)'}`;
         log.scrollTop = log.scrollHeight;
       }
     }
@@ -1096,16 +1177,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             job_id = str(payload.get("job_id", ""))
             text = str(payload.get("text", ""))
+            requested_kind = str(payload.get("kind", ""))
             if "\n" in text or "\r" in text:
                 raise ValueError("Input must be a single line")
             with JOBS_LOCK:
                 proc = JOB_PROCS.get(job_id)
+                logs = list(JOBS.get(job_id, {}).get("logs", []))
             if proc is None or proc.stdin is None or proc.poll() is not None:
                 self._send_error(HTTPStatus.NOT_FOUND, "Job is not accepting input")
                 return
+            kind, event_id = _infer_human_input_context(logs, requested_kind=requested_kind)
             proc.stdin.write(text + "\n")
             proc.stdin.flush()
-            _append_job_log(job_id, f"[web human input] {text}")
+            _append_job_log(job_id, f"[web human input | kind={kind} event={event_id or '?'}] {text}")
             self._send_json({"ok": True})
         except Exception as exc:
             self._send_error(HTTPStatus.BAD_REQUEST, str(exc))
