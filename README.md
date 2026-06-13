@@ -70,12 +70,47 @@ python3 run_persona_json.py atom_comfort_sensitive
 # All options
 python3 run_persona_json.py atom_comfort_sensitive --city Tianjin --output /tmp/out
 
+# Compare supported controller methods
+python3 run_persona_json.py basic_role_a_commuter_price_cooperative --method agent
+python3 run_persona_json.py basic_role_a_commuter_price_cooperative --method mpc_dynamic --mpc-horizon 6
+python3 run_persona_json.py basic_role_a_commuter_price_cooperative --method mpc_ep --mpc-horizon 6
+
 # Available persona IDs:
 #   atom_comfort_sensitive, atom_control_auto, atom_price_indifferent, atom_task_rigid
 #   basic_role_a_commuter_price_cooperative, basic_role_b_home_comfort_gated
 #   basic_role_c_irregular_cautious, basic_role_d_commuter_ideal_dr
 #   basic_role_e_caregiver_low_dr, basic_role_f_commuter_ev_optimizer
 ```
+
+### Web dashboard
+
+The benchmark dashboard is a local, zero-extra-dependency web UI for running
+new evaluations and reviewing historical `run_summary.txt` outputs.
+
+```bash
+cd /home/hku_user/work/EnergyBridge
+conda activate energybridge
+python experiments/benchmark/web_dashboard.py --host 0.0.0.0 --port 8787
+```
+
+Open one of:
+
+```text
+http://127.0.0.1:8787
+http://<server-ip>:8787
+```
+
+Dashboard features:
+
+- `新运行`: choose method (`agent`, `mpc_dynamic`, `mpc_ep`), persona, and run mode.
+- `测评模式`: automated role-play LLM evaluation with live logs and progressive cards.
+- `Human-in-loop`: same simulation, but the page exposes A/B/C/custom user input controls.
+- Historical runs: open the collapsible left sidebar and select a prior result.
+- Progressive visualization: VPP target, AC setpoint, selected strategy, appliance schedules,
+  user score, and final `run_summary.txt`.
+
+The dashboard uses Python's standard library HTTP server. No additional
+`requirements.txt` package is needed for it.
 
 ### Run a multi-persona household (multi-agent mode)
 
@@ -132,7 +167,7 @@ contains `[family/agent]`.
 ### Single-persona run output
 
 ```
-benchmark_results/<persona_id>/
+benchmark_results/<YYYY-MM-DD>/<role>_<method>[_Hn]_<city>_3days/
 ├── run_summary.txt          ← ★ human-readable summary (always check this first)
 ├── benchmark_result.json    ← raw metrics in JSON
 └── <eplus files>            ← EnergyPlus simulation outputs
@@ -193,40 +228,37 @@ benchmark_results/multi__<id_a>__<id_b>/
 
 ### How the building agent gives peak-shaving decisions
 
-Each VPP demand-response window (18:00–19:00 daily) involves **two separate
-LLM agents** with no shared context:
+Each VPP demand-response window (18:00–19:00 daily) combines capacity
+quantification, a role-play user preference step, and a controller decision:
 
 ```
-Grid side                       Building side
-─────────────────────           ─────────────────────────────────────────
-VPP Demand Agent          →     AC Thermostat Agent
-  • Role: grid coordinator        • Role: household comfort manager
-  • Input: household's past        • Input: user preference (or household
-    VPP window kWh history           consensus from discussion pool)
-  • Output: energy cap (kWh)       • Input: VPP demand target (kWh)
-    for the next 1-hour window     • Output: per-timestep setpoint (°C)
-                                     + appliance schedule commands
+Capacity quantification      Role-play user              Controller
+─────────────────────        ────────────────────        ─────────────────────────
+  • Source: A3 reference       • Chooses A/B/C VPP         • agent / mpc_dynamic /
+    capacity model              strategy as persona         mpc_ep
+  • Output: 1.2x shed target   • Scores outcome after      • Output: AC setpoint
+    and equivalent kWh cap       the event                   + explicit appliance
+                                                            schedule commands
 ```
 
-**Grid-side VPP Demand Agent** (`_call_vpp_demand_agent` in `family_runner.py`):
+**VPP demand target** (`_call_vpp_demand_agent` in `family_runner.py`):
 
-1. Receives the household's historical VPP-window energy consumption list.
-2. For the **first event** (no history): issues a baseline target of **2.0 kWh**.
-3. For **subsequent events**: sets target = historical average — letting the
-   agent track the household's actual baseline without artificial reduction.
-4. Returns `{"target_kwh": <float>, "reason": "<brief>"}` as JSON.
-5. Falls back to a rule-based value if the LLM call fails.
+1. Reads the reference total-capacity quantification for the event.
+2. Uses `vpp_target_capacity_120_kw` as the shed target.
+3. Uses `vpp_target_kwh` as the equivalent consumption cap displayed in summaries.
+4. Falls back to a conservative rule only if quantification is unavailable.
 
 **EnergyBridge Agent** (`_FamilyLoop` in `family_runner.py`):
 
-1. Receives the VPP demand target and the user preference string (single-user)
-   or the household consensus string (multi-agent mode).
-2. Makes an LLM decision every simulation timestep during the VPP window:
+1. Receives the VPP demand target and the role-play user's selected preference
+   strategy (or real human input in Human-in-loop mode).
+2. Makes event-driven decisions at 08:00, VPP start, and requested follow-up times:
    - Setpoint strategy: pre-cool before the event, then raise setpoint during
      the window (configurable range in system prompt).
-   - Appliance scheduling: defer or skip shiftable loads (washer, dishwasher,
-     dryer) to keep in-window consumption below the cap.
-3. The agent's reasoning is stored in `reason` field of `vpp_event_log`.
+   - Appliance scheduling: every present controllable appliance must receive
+     explicit commands (washer, dishwasher, dryer, water heater, EV).
+3. The agent's reasoning and appliance actions are stored in `vpp_event_log`
+   and displayed in `run_summary.txt`.
 
 **Multi-agent household discussion** (`multi_agent_pool.py`):
 
