@@ -410,16 +410,19 @@ def _present_agent_controlled_appliances(appliance_config: dict | None) -> List[
 def _default_explicit_appliance_actions(appliance_config: dict | None) -> dict:
     """Safe explicit appliance defaults used in prompts, fallback, and repair checks."""
     actions: dict = {}
+    cfg = appliance_config or {}
     present = set(_present_agent_controlled_appliances(appliance_config))
     for name in ("washer", "dishwasher", "dryer"):
         if name in present:
-            actions[f"{name}_start_h"] = 14.0
+            dev_cfg = (cfg.get(name, {}) or {})
+            actions[f"{name}_start_h"] = float(dev_cfg.get("preferred_h", 14.0))
             actions[f"{name}_skip"] = False
     if "water_heater" in present:
+        wh_cfg = (cfg.get("water_heater", {}) or {})
         actions.update({
-            "water_heater_preheat_start_h": 14.0,
-            "water_heater_preheat_end_h": 18.0,
-            "water_heater_preheat_temp_c": 68.0,
+            "water_heater_preheat_start_h": float(wh_cfg.get("pre_heat_window_start_h", 14.0)),
+            "water_heater_preheat_end_h": float(wh_cfg.get("pre_heat_window_end_h", 18.0)),
+            "water_heater_preheat_temp_c": float(wh_cfg.get("pre_heat_temp_c", 68.0)),
             "water_heater_preheat": True,
         })
     if "ev" in present:
@@ -429,6 +432,18 @@ def _default_explicit_appliance_actions(appliance_config: dict | None) -> dict:
             "ev_charge_end_h": None,
         })
     return actions
+
+
+def _protective_control_mode(persona_config: dict | None) -> bool:
+    """True when the persona should receive advisory/minimal-control DR behavior."""
+    persona_config = persona_config or {}
+    tags = persona_config.get("tags", {}) or {}
+    schedule = persona_config.get("schedule", {}) or {}
+    return (
+        tags.get("schedule") == "caregiver"
+        or tags.get("control") in {"low_auto_accept", "privacy_sensitive"}
+        or bool(schedule.get("vulnerable_members"))
+    )
 
 
 def _missing_explicit_appliance_actions(actions: dict | None, appliance_config: dict | None) -> List[str]:
@@ -705,11 +720,31 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     _ac_sp_max    = float(_ac_cfg.get("setpoint_preferred_max_c", 26.0))
     _ac_sp_tol    = float(_ac_cfg.get("temp_tolerance_c", 1.0))
     _ac_sp_default = round((_ac_sp_min + _ac_sp_max) / 2, 1)
+    _protective_mode = _protective_control_mode(persona_config)
     _ac_sp_vpp_min = round(_ac_sp_max + 0.5, 1)   # minimum raise during VPP
     _ac_sp_vpp_max = round(_ac_sp_max + 1.5, 1)   # typical VPP raise ceiling
     # Override global SP_MIN based on persona comfort floor
     _run_sp_min = max(SP_MIN, _ac_sp_min - _ac_sp_tol)
     _run_sp_max = min(SP_MAX, _ac_sp_max + 2.0)  # allow VPP raise headroom
+    if _protective_mode:
+        _run_sp_max = min(_run_sp_max, _ac_sp_max)
+        _ac_sp_vpp_min = _ac_sp_default
+        _ac_sp_vpp_max = _ac_sp_max
+
+    _vpp_ac_strategy_text = (
+        f"Protective strategy: keep setpoint within {_ac_sp_min:.1f}-{_ac_sp_max:.1f}°C; do not raise above preferred max for VPP."
+        if _protective_mode
+        else f"AC strategy: raise setpoint to {_ac_sp_vpp_min:.1f}–{_ac_sp_vpp_max:.1f}°C (pre-cool BEFORE event, drift DURING event)."
+    )
+
+    _protective_policy = ""
+    if _protective_mode:
+        _protective_policy = f"""
+[PROTECTIVE USER MODE]
+This persona has vulnerable household members or very low acceptance of automation.
+Treat DR as advisory/minimal-control: keep HVAC within {_ac_sp_min:.1f}-{_ac_sp_max:.1f}°C, do not raise above the preferred max for VPP, and preserve fixed care routines.
+If grid goals conflict with comfort, safety, consent, or caregiving routines, choose comfort/safety and explain that only low-risk actions were taken.
+"""
 
     _LLM_SYS_FAM = f"""You are an autonomous AC (air conditioning) and appliance agent for a family home.
 SIMULATION: 3 days in July (Tianjin, China). Timestep 10 min. Total 72 hours.
@@ -723,9 +758,10 @@ Allowed setpoint range: {_run_sp_min:.1f}–{_run_sp_max:.1f}°C.
 
 [VPP DEMAND RESPONSE — 18:00-19:00 each day]
 Goal: reduce total electricity consumption for 1 hour to support the grid.
-AC strategy: raise setpoint to {_ac_sp_vpp_min:.1f}–{_ac_sp_vpp_max:.1f}°C (pre-cool BEFORE event, drift DURING event).
+{_vpp_ac_strategy_text}
 Appliances: you have full scheduling control over all independent devices (see details below).
 IMPORTANT: control each appliance independently. Decisions persist until you change them. Learn from past VPP event scores.
+{_protective_policy}
 
 [APPLIANCE CONTROL — default strategy & available parameters]
 
@@ -830,9 +866,10 @@ All times are hour-of-day (0–23.9)."""
                   f"remaining_sim_hours={remaining_h:.0f}\n"
                   f"user_pref: {user_pref}{user_now_tag}{appl_tag}{explicit_appliance_tag}{mem_tag}")
         if vpp_active:
-            fb_sp, fb_nch = 26.5, None
+            fb_sp = min(_run_sp_max, _ac_sp_default if _protective_mode else 26.5)
+            fb_nch = None
         else:
-            fb_sp = min(26.0, max(SP_MIN, round(temp - 0.5, 1)))
+            fb_sp = min(_run_sp_max, max(_run_sp_min, min(26.0, round(temp - 0.5, 1))))
             fb_nch = None
         fallback = {
             "setpoint": fb_sp,
@@ -939,7 +976,7 @@ All times are hour-of-day (0–23.9)."""
                     if value is not None:
                         repaired_actions[key] = value
                 data["appliances"] = repaired_actions
-            sp = round(max(SP_MIN, min(28.0, float(data.get("setpoint", fb_sp)))), 1)
+            sp = round(max(_run_sp_min, min(_run_sp_max, float(data.get("setpoint", fb_sp)))), 1)
             nch = data.get("next_check_hour")
             if nch is not None:
                 nch = float(nch)
@@ -988,6 +1025,7 @@ All times are hour-of-day (0–23.9)."""
         state_dict["idf_path"] = str(idf_path)
         state_dict["epw_path"] = str(epw_path)
         state_dict["mpc_ep_output_dir"] = str(output_dir / "_mpc_ep_predictor")
+        state_dict["protective_user_mode"] = bool(_protective_mode)
         state_dict["mpc_decision_history"] = [
             item
             for day_items in loop.day_agent_decisions

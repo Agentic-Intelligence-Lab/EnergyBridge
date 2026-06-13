@@ -76,13 +76,18 @@ def _choose_best_setpoint(
     cfg = (state.get("appliance_config") or {}).get("ac", {}) or {}
     pref_min = _float(cfg.get("setpoint_preferred_min_c"), 24.0)
     pref_max = _float(cfg.get("setpoint_preferred_max_c"), 26.0)
-    candidates = {25.5, 26.0, 26.5, 27.0, 27.5, pref_min, pref_max}
+    protective = bool(state.get("protective_user_mode"))
+    if protective:
+        candidates = {pref_min, pref_max, (pref_min + pref_max) / 2.0}
+    else:
+        candidates = {25.5, 26.0, 26.5, 27.0, 27.5, pref_min, pref_max}
     if current is not None:
         candidates.update({current - 0.5, current, current + 0.5})
-    if state.get("vpp_active"):
+    if state.get("vpp_active") and not protective:
         candidates.update({pref_max, pref_max + 0.5, pref_max + 1.0})
-    valid = [round(max(22.0, min(28.0, c)), 1) for c in candidates]
-    if state.get("vpp_active"):
+    upper = pref_max if protective else 28.0
+    valid = [round(max(22.0, min(upper, c)), 1) for c in candidates]
+    if state.get("vpp_active") and not protective:
         vpp_floor = round(max(pref_max + 0.5, current or pref_max), 1)
         raised = [sp for sp in valid if sp >= min(28.0, vpp_floor)]
         if raised:
