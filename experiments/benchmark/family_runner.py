@@ -978,9 +978,9 @@ All times are hour-of-day (0–23.9)."""
             temp=temp,
             out_t=out_t,
             vpp_event=vpp_event,
-            vpp_target_kwh=(
-                loop.current_vpp_demand_kwh if vpp_event is not None else None
-            ),
+            # MPC should react to the VPP window itself, but not to the
+            # capacity-quantification demand target used for reporting.
+            vpp_target_kwh=None,
             appliance_config=appliance_config or {},
         )
         state_dict["mpc_predictor"] = predictor
@@ -1375,6 +1375,26 @@ All times are hour-of-day (0–23.9)."""
     ec = api.runtime.run_energyplus(state, ["-w", str(epw_path), "-d", str(output_dir), str(idf_path)])
     api.state_manager.delete_state(state)
 
+    meter_vpp_kwh = _read_ep_vpp_window_energy(output_dir, VPP_EVENTS)
+    if meter_vpp_kwh:
+        loop.vpp_event_energy_wh = {
+            ev_id: float(kwh) * 1000.0
+            for ev_id, kwh in meter_vpp_kwh.items()
+        }
+        loop.vpp_e_wh = sum(loop.vpp_event_energy_wh.values())
+        for event_result in loop.vpp_event_log:
+            ev_id = event_result.get("id")
+            if ev_id not in meter_vpp_kwh:
+                continue
+            actual_kwh = round(float(meter_vpp_kwh[ev_id]), 4)
+            event_result["actual_kwh"] = actual_kwh
+            baseline_kwh = event_result.get("demand_baseline_kwh")
+            if baseline_kwh is not None:
+                event_result["actual_shed_kwh"] = round(
+                    max(0.0, float(baseline_kwh) - actual_kwh),
+                    4,
+                )
+
     kwh = loop.e_wh / 1000; occ = max(loop.occ_h, 1e-6)
     avg_sp = sum(d[1] for d in loop.decisions) / max(1, len(loop.decisions)) if loop.decisions else SP_DEFAULT
     pref_scores = [e["score"] for e in loop.vpp_event_log if e.get("score") is not None]
@@ -1540,6 +1560,63 @@ def _read_ep_energy(out_dir):
             if total_j > 0: return total_j / 3_600_000
         except Exception: pass
     return 0.0
+
+
+def _read_ep_vpp_window_energy(out_dir, vpp_events) -> dict[str, float]:
+    """Read per-event VPP electricity [kWh] from EnergyPlus timestep meter output."""
+    p = Path(out_dir) / "eplusout.mtr"
+    if not p.exists():
+        return {}
+
+    result = {str(ev["id"]): 0.0 for ev in vpp_events if ev.get("id")}
+    current_window = None
+    in_data = False
+    try:
+        with p.open(errors="ignore") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line:
+                    continue
+                if line.startswith("End of Data Dictionary"):
+                    in_data = True
+                    continue
+                if not in_data:
+                    continue
+                parts = [part.strip() for part in line.split(",")]
+                if not parts or not parts[0].isdigit():
+                    continue
+                code = int(parts[0])
+                if code == 2 and len(parts) >= 8:
+                    day = int(parts[1])
+                    hour = int(parts[5])
+                    start_min = float(parts[6])
+                    end_min = float(parts[7])
+                    start_h = (day - 1) * 24.0 + (hour - 1) + start_min / 60.0
+                    end_h = (day - 1) * 24.0 + (hour - 1) + end_min / 60.0
+                    current_window = (start_h, end_h)
+                    continue
+                if code != 9 or current_window is None or len(parts) < 2:
+                    continue
+                try:
+                    kwh = float(parts[1]) / 3_600_000.0
+                except ValueError:
+                    continue
+                start_h, end_h = current_window
+                duration_h = max(1e-9, end_h - start_h)
+                for ev in vpp_events:
+                    ev_id = str(ev.get("id", ""))
+                    if not ev_id:
+                        continue
+                    overlap_h = max(
+                        0.0,
+                        min(end_h, float(ev["end_h"])) - max(start_h, float(ev["trigger_h"])),
+                    )
+                    if overlap_h > 0.0:
+                        result[ev_id] = result.get(ev_id, 0.0) + kwh * overlap_h / duration_h
+    except Exception:
+        return {}
+
+    return {key: round(value, 6) for key, value in result.items() if value > 0.0}
 
 if __name__ == "__main__":
     import argparse

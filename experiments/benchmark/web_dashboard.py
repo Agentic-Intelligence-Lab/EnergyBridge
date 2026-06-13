@@ -92,11 +92,19 @@ def _attach_finished_summary(job_id: str) -> None:
     if summary_path:
         path = Path(summary_path)
         if path.exists():
-            _set_job(
-                job_id,
-                run_summary_path=str(path),
-                run_summary_text=path.read_text(encoding="utf-8", errors="replace"),
-            )
+            updates = {
+                "run_summary_path": str(path),
+                "run_summary_text": path.read_text(encoding="utf-8", errors="replace"),
+            }
+            result_path = path.parent / "benchmark_result.json"
+            if result_path.exists():
+                try:
+                    result_data = json.loads(result_path.read_text(encoding="utf-8"))
+                    _apply_meter_vpp_energy(result_data, path.parent)
+                    updates["benchmark_result"] = result_data
+                except Exception:
+                    pass
+            _set_job(job_id, **updates)
 
 
 def _run_command_job(job_id: str, argv: list[str]) -> None:
@@ -194,6 +202,77 @@ def _list_personas() -> list[dict]:
             "path": str(path),
         })
     return personas
+
+
+def _read_meter_vpp_energy(run_path: Path) -> dict[str, float]:
+    """Read VPP-window Electricity:Facility kWh from EnergyPlus timestep meters."""
+    mtr_path = run_path / "eplusout.mtr"
+    if not mtr_path.exists():
+        return {}
+    events = {
+        "vpp1": (18.0, 19.0),
+        "vpp2": (42.0, 43.0),
+        "vpp3": (66.0, 67.0),
+    }
+    values = {key: 0.0 for key in events}
+    in_data = False
+    current_window = None
+    try:
+        with mtr_path.open(errors="ignore") as f:
+            for raw in f:
+                line = raw.strip()
+                if line.startswith("End of Data Dictionary"):
+                    in_data = True
+                    continue
+                if not in_data or not line:
+                    continue
+                parts = [part.strip() for part in line.split(",")]
+                if not parts or not parts[0].isdigit():
+                    continue
+                code = int(parts[0])
+                if code == 2 and len(parts) >= 8:
+                    day = int(parts[1])
+                    hour = int(parts[5])
+                    start_min = float(parts[6])
+                    end_min = float(parts[7])
+                    start_h = (day - 1) * 24.0 + (hour - 1) + start_min / 60.0
+                    end_h = (day - 1) * 24.0 + (hour - 1) + end_min / 60.0
+                    current_window = (start_h, end_h)
+                    continue
+                if code != 9 or current_window is None or len(parts) < 2:
+                    continue
+                try:
+                    kwh = float(parts[1]) / 3_600_000.0
+                except ValueError:
+                    continue
+                start_h, end_h = current_window
+                duration_h = max(1e-9, end_h - start_h)
+                for event_id, (event_start, event_end) in events.items():
+                    overlap_h = max(0.0, min(end_h, event_end) - max(start_h, event_start))
+                    if overlap_h > 0.0:
+                        values[event_id] += kwh * overlap_h / duration_h
+    except Exception:
+        return {}
+    return {key: round(value, 6) for key, value in values.items() if value > 0.0}
+
+
+def _apply_meter_vpp_energy(data: dict, run_path: Path) -> None:
+    meter_values = _read_meter_vpp_energy(run_path)
+    if not meter_values:
+        return
+    total = 0.0
+    for event in data.get("vpp_event_log", []) or []:
+        event_id = event.get("id")
+        if event_id not in meter_values:
+            continue
+        actual_kwh = round(float(meter_values[event_id]), 4)
+        total += actual_kwh
+        event["actual_kwh"] = actual_kwh
+        baseline_kwh = event.get("demand_baseline_kwh")
+        if baseline_kwh is not None:
+            event["actual_shed_kwh"] = round(max(0.0, float(baseline_kwh) - actual_kwh), 4)
+    if total > 0.0:
+        data["vpp_window_energy_kwh"] = round(total, 4)
 
 
 INDEX_HTML = r"""<!doctype html>
@@ -299,6 +378,17 @@ INDEX_HTML = r"""<!doctype html>
       margin-bottom: 18px;
     }
     .title-block { max-width: 860px; }
+    .brand-title { font-size: 44px; letter-spacing: -1px; }
+    .result-name {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      margin: 2px 0 14px;
+      color: var(--muted);
+      font-weight: 750;
+      overflow-wrap: anywhere;
+    }
+    .result-name strong { color: var(--ink); }
     .pill-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
     .pill {
       border: 1px solid var(--line);
@@ -443,9 +533,11 @@ INDEX_HTML = r"""<!doctype html>
       <div class="sub">Agent 决策与 VPP 容量量化控制台</div>
       <button id="newRunButton">新运行</button>
       <div style="height:14px"></div>
-      <label for="runSelect">选择结果</label>
+      <label for="dateSelect">选择日期</label>
+      <select id="dateSelect"></select>
+      <div style="height:10px"></div>
+      <label for="runSelect">选择方法 / 结果</label>
       <select id="runSelect"></select>
-      <div class="run-list" id="runList"></div>
     </aside>
     <main>
       <div id="app" class="empty">正在加载 benchmark 结果...</div>
@@ -462,6 +554,7 @@ INDEX_HTML = r"""<!doctype html>
       eventId: 'vpp1',
       jobId: null,
       jobPoll: null,
+      selectedDate: '',
       selectedMethod: 'agent',
       selectedPersona: 'basic_role_a_commuter_price_cooperative',
       userMode: 'roleplay',
@@ -479,10 +572,11 @@ INDEX_HTML = r"""<!doctype html>
 
     async function loadRuns() {
       state.runs = await api('/api/runs');
-      const select = $('runSelect');
-      select.innerHTML = '<option value="">选择历史结果...</option>' + state.runs.map(r => `<option value="${r.id}">${r.label}</option>`).join('');
-      select.onchange = () => loadRun(select.value);
-      renderRunButtons();
+      const dates = [...new Set(state.runs.map(r => r.date).filter(Boolean))].sort().reverse();
+      if (!state.selectedDate || !dates.includes(state.selectedDate)) {
+        state.selectedDate = dates[0] || '';
+      }
+      renderHistorySelectors();
       render();
     }
 
@@ -493,13 +587,28 @@ INDEX_HTML = r"""<!doctype html>
       }
     }
 
-    function renderRunButtons() {
-      $('runList').innerHTML = state.runs.map(r => `
-        <button class="run-btn ${state.active === r.id ? 'active' : ''}" data-id="${r.id}">
-          ${r.method || 'unknown'} · ${r.persona || r.label}<br>
-          <small>${r.date || ''} ${r.city || ''}</small>
-        </button>`).join('');
-      document.querySelectorAll('.run-btn').forEach(btn => btn.onclick = () => loadRun(btn.dataset.id));
+    function renderHistorySelectors() {
+      const dates = [...new Set(state.runs.map(r => r.date).filter(Boolean))].sort().reverse();
+      const dateSelect = $('dateSelect');
+      if (dateSelect) {
+        dateSelect.innerHTML = dates.length
+          ? dates.map(date => `<option value="${date}" ${state.selectedDate === date ? 'selected' : ''}>${date}</option>`).join('')
+          : '<option value="">暂无结果</option>';
+        dateSelect.onchange = () => {
+          state.selectedDate = dateSelect.value;
+          state.active = null;
+          renderHistorySelectors();
+        };
+      }
+      const runs = state.runs.filter(r => r.date === state.selectedDate);
+      const runSelect = $('runSelect');
+      if (runSelect) {
+        runSelect.innerHTML = '<option value="">选择结果...</option>' + runs.map(r => {
+          const status = r.has_result ? '' : '未完成 · ';
+          return `<option value="${r.id}" ${state.active === r.id ? 'selected' : ''}>${status}${r.label}</option>`;
+        }).join('');
+        runSelect.onchange = () => loadRun(runSelect.value);
+      }
     }
 
     async function loadRun(id) {
@@ -509,7 +618,7 @@ INDEX_HTML = r"""<!doctype html>
       state.data = await api(`/api/run?id=${encodeURIComponent(id)}`);
       state.eventId = (state.data.vpp_event_log?.[0]?.id) || 'vpp1';
       $('runSelect').value = id;
-      renderRunButtons();
+      renderHistorySelectors();
       render();
     }
 
@@ -524,9 +633,138 @@ INDEX_HTML = r"""<!doctype html>
       return entries.map(([k, v]) => `${k}=${v}`).join(' · ');
     }
 
+    function slug(value) {
+      return String(value || '').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').toLowerCase();
+    }
+
+    function personaRunLabel(personaId) {
+      const match = String(personaId || '').match(/^basic_role_([a-z])(?:_|$)/);
+      return match ? `role_${match[1]}` : (slug(personaId) || 'persona');
+    }
+
+    function methodRunToken(method) {
+      return method === 'mpc_dynamic' || method === 'mpc_ep' ? `${method}_H6` : (method || 'agent');
+    }
+
+    function todayIso() {
+      return new Date().toISOString().slice(0, 10);
+    }
+
+    function expectedRunName() {
+      const prefix = state.userMode === 'human'
+        ? `${slug(state.humanName) || 'human'}_human`
+        : personaRunLabel(state.selectedPersona);
+      return `${todayIso()}/${prefix}_${methodRunToken(state.selectedMethod)}_tianjin_3days`;
+    }
+
+    function runNameFromOutput(outputDir) {
+      const raw = String(outputDir || '').replaceAll('\\\\', '/');
+      const marker = '/benchmark_results/';
+      if (raw.includes(marker)) return raw.split(marker).pop();
+      const parts = raw.split('/').filter(Boolean);
+      return parts.length >= 2 ? `${parts[parts.length - 2]}/${parts[parts.length - 1]}` : (raw || expectedRunName());
+    }
+
+    function appliancePlanFromActions(actions) {
+      const plan = {};
+      const a = actions || {};
+      if (a.washer_skip) plan.washer = '跳过';
+      else if (a.washer_start_h !== undefined && a.washer_start_h !== null) plan.washer = `排程@${Number(a.washer_start_h).toFixed(1)}`;
+      if (a.dishwasher_skip) plan.dishwasher = '跳过';
+      else if (a.dishwasher_start_h !== undefined && a.dishwasher_start_h !== null) plan.dishwasher = `排程@${Number(a.dishwasher_start_h).toFixed(1)}`;
+      if (a.water_heater_preheat) {
+        const start = a.water_heater_preheat_start_h ?? '?';
+        const end = a.water_heater_preheat_end_h ?? '?';
+        const temp = a.water_heater_preheat_temp_c ?? '?';
+        plan.water_heater = `预热 ${start}-${end} @ ${temp}°C`;
+      }
+      if (a.ev_mode) plan.ev = `模式 ${a.ev_mode}`;
+      return plan;
+    }
+
+    function vppTargetText(ev) {
+      const tq = ev?.total_quantification_90 || {};
+      const kw = ev?.demand_target_kw
+        ?? ev?.demand_target_shed_kwh
+        ?? tq.vpp_target_capacity_120_kw
+        ?? (Number.isFinite(Number(tq.avg_reported_capacity_90_kw)) ? Number(tq.avg_reported_capacity_90_kw) * 1.2 : null);
+      return Number.isFinite(Number(kw)) ? `${fmt(kw, 3)} kW` : 'N/A';
+    }
+
+    function eventEnergyText(ev) {
+      return Number.isFinite(Number(ev?.actual_kwh)) ? `${fmt(ev.actual_kwh, 3)} kWh VPP窗口` : 'N/A';
+    }
+
+    function metricCardsInner(items) {
+      return items.map(([label, value]) => `<div class="live-card"><span>${label}</span><strong>${value}</strong></div>`).join('');
+    }
+
+    function resultMetricsHtml(items) {
+      return `<div class="live-grid" id="liveMetrics">${metricCardsInner(items)}</div>`;
+    }
+
+    function progressCardsHtml(progress, emptyText = '等待结果...') {
+      return progress && progress.length
+        ? progress.map(ev => `
+          <div class="progress-card ${ev.status}">
+            <h4>${ev.label}</h4>
+            <div class="progress-row"><span>Day</span><strong>${ev.day}</strong></div>
+            <div class="progress-row"><span>VPP目标</span><strong>${ev.target}</strong></div>
+            <div class="progress-row"><span>空调设定</span><strong>${ev.setpoint}</strong></div>
+            <div class="progress-row"><span>用户评分</span><strong>${ev.score}</strong></div>
+            <div class="progress-row"><span>能耗</span><strong>${ev.energy}</strong></div>
+            <div class="progress-row"><span>选中策略</span><strong>${ev.selectedStrategy}</strong></div>
+            <div class="progress-section">
+              <strong>候选/决策记录</strong>
+              <div class="progress-log">
+                ${ev.strategies.length ? ev.strategies.map(item => `<div class="progress-chip">${item}</div>`).join('') : '<div class="progress-chip">waiting</div>'}
+              </div>
+            </div>
+            <div class="progress-section">
+              <strong>电器排程</strong>
+              <div class="appliance-grid">
+                ${Object.keys(ev.appliances).length
+                  ? Object.entries(ev.appliances).map(([name, text]) => `<div class="appliance-pill">${name}: ${text}</div>`).join('')
+                  : '<div class="appliance-pill">waiting</div>'}
+              </div>
+            </div>
+            <div class="progress-log">
+              ${ev.notes.map(note => `<div class="progress-chip">${note}</div>`).join('')}
+            </div>
+          </div>`).join('')
+        : `<div class="sub">${emptyText}</div>`;
+    }
+
+    function historyToLive(d) {
+      const events = d.vpp_event_log || [];
+      const progress = events.map((ev, idx) => {
+        const decisions = ev.day_decisions || [];
+        const lastDecision = decisions[decisions.length - 1] || {};
+        const actions = ev.vpp_trigger_actions || lastDecision.actions || lastDecision.raw_appliance_actions || {};
+        return {
+          key: String(idx + 1),
+          label: `Day ${idx + 1}`,
+          status: 'done',
+          day: String(idx + 1),
+          target: vppTargetText(ev),
+          setpoint: ev.setpoint !== undefined && ev.setpoint !== null ? `${fmt(ev.setpoint, 1)}°C` : 'N/A',
+          score: ev.score !== undefined && ev.score !== null ? `${ev.score}/5 ${ev.label || ''}` : 'N/A',
+          energy: eventEnergyText(ev),
+          selectedStrategy: ev.user_input || ev.label || ev.source || 'completed',
+          strategies: decisions.map(item => `${fmt(item.h % 24, 1)}h → ${fmt(item.sp, 1)}°C | ${item.reason || '无说明'}`),
+          appliances: appliancePlanFromActions(actions),
+          notes: [ev.reason, ev.comment].filter(Boolean).slice(-5)
+        };
+      });
+      const dialogue = events.flatMap((ev, idx) => [
+        {type: 'agent', label: `Event ${idx + 1} Agent`, text: ev.reason || '无 Agent 理由'},
+        {type: 'result', label: `Event ${idx + 1} Score`, text: `${ev.score ?? 'N/A'}/5 ${ev.label || ''} | ${ev.comment || ''}`}
+      ]);
+      return {progress, dialogue};
+    }
+
     function renderEvent(ev, index) {
       const tq = ev.total_quantification_90 || {};
-      const demandKw = ev.demand_target_kw ?? tq.vpp_target_capacity_120_kw;
       const actualShed = ev.actual_shed_kwh;
       const targetShed = ev.demand_target_shed_kwh ?? tq.vpp_target_capacity_energy_kwh;
       const demandOk = Number(actualShed) >= Number(targetShed || Infinity);
@@ -541,7 +779,7 @@ INDEX_HTML = r"""<!doctype html>
             <div class="score">${ev.score ?? 'N/A'}/5</div>
           </div>
           <div class="kv">
-            <div><span>VPP需求目标</span>${fmt(demandKw, 3)} kW</div>
+            <div><span>VPP削减目标</span>${vppTargetText(ev)}</div>
             <div><span>实际削减</span>${fmt(actualShed, 3)} / ${fmt(targetShed, 3)} kWh ${demandOk ? '✓' : '!'}</div>
             <div><span>等价用电上限</span>${fmt(ev.demand_target_kwh, 3)} kWh</div>
             <div><span>VPP实际用电</span>${fmt(ev.actual_kwh, 3)} kWh</div>
@@ -592,6 +830,8 @@ INDEX_HTML = r"""<!doctype html>
     function syncCommandFromSelections() {
       const input = $('commandInput');
       if (input) input.value = defaultCommand();
+      const resultName = $('resultName');
+      if (resultName) resultName.textContent = expectedRunName();
     }
 
     function ensureProgressEvent(events, key) {
@@ -626,6 +866,7 @@ INDEX_HTML = r"""<!doctype html>
       const score = latest(/User score:\s*([0-9.]+)\/5\s+\(([^)]+)\)/g);
       const sp = latest(/\[(?:AC|MPC) Agent[^\]]*\].*?setpoint(?:→|->)([0-9.]+)/g);
       const demand = latest(/shed_target=([0-9.]+)kW\s+\(cap=([0-9.]+)kWh\)/g);
+      const output = latest(/^OUTPUT\s+:\s+(.+)$/gm);
       const dialogue = [];
       const progressEvents = {};
       let currentKey = null;
@@ -722,7 +963,7 @@ INDEX_HTML = r"""<!doctype html>
         }
         const targetMatch = line.match(/shed_target=([0-9.]+)kW\s+\(cap=([0-9.]+)kWh\)/);
         if (targetMatch) {
-          ev.target = `${targetMatch[1]} kW / ${targetMatch[2]} kWh`;
+          ev.target = `${targetMatch[1]} kW`;
         }
         const acMatch = line.match(/\[(?:AC|MPC) Agent[^\]]*\].*?setpoint(?:→|->)([0-9.]+)/);
         if (acMatch) {
@@ -795,6 +1036,7 @@ INDEX_HTML = r"""<!doctype html>
         sp: sp ? `${sp[1]}°C` : 'waiting',
         demand: demand ? `${demand[1]} kW` : 'waiting',
         cap: demand ? `${demand[2]} kWh` : 'waiting',
+        outputName: output ? runNameFromOutput(output[1].trim()) : expectedRunName(),
         dialogue,
         progress
       };
@@ -828,7 +1070,8 @@ INDEX_HTML = r"""<!doctype html>
         <div class="grid">
           <section class="panel">
             <h2>实时运行</h2>
-            <div class="sub">先选用户类别，再选用户类型，最后选控制方法。命令行输入保留作 fallback。</div>
+            <div class="result-name">结果名称：<strong id="resultName">${expectedRunName()}</strong></div>
+            <div class="sub">选择用户和方法后运行，下面会显示日志和结果。</div>
             <h3>1. 用户类别</h3>
             <div class="preset-grid">
               <button class="${state.userMode === 'roleplay' ? '' : 'secondary'}" data-user-mode="roleplay">Role-play LLM</button>
@@ -867,8 +1110,7 @@ INDEX_HTML = r"""<!doctype html>
       $('app').innerHTML = `
         <div class="topbar">
           <div class="title-block">
-            <h1>新运行控制台</h1>
-            <div class="sub">运行新 benchmark 时，这里只显示当前 job 的实时日志和结果，不混入左侧历史结果。</div>
+            <h1 class="brand-title">EnergyBridge</h1>
           </div>
         </div>
         ${renderOps()}`;
@@ -877,27 +1119,40 @@ INDEX_HTML = r"""<!doctype html>
 
     function renderHistoryPage() {
       const d = state.data;
-      const events = d.vpp_event_log || [];
+      const live = historyToLive(d);
+      const resultName = d._run_id || runNameFromOutput(d.output_dir);
       $('app').innerHTML = `
         <div class="topbar">
           <div class="title-block">
-            <h1>${d.scenario || 'EnergyBridge Run'}</h1>
-            <div class="pill-row">
-              <span class="pill">${d.method || 'unknown'}</span>
-              <span class="pill">${d.weather || 'unknown city'}</span>
-              <span class="pill">exit ${d.exit_code}</span>
-              <span class="pill">${d.output_dir || ''}</span>
-            </div>
+            <h1 class="brand-title">EnergyBridge</h1>
           </div>
         </div>
-        <div class="grid metrics">
-          <div class="panel metric"><div class="label">用户评分</div><div class="value">${fmt(d.user_pref_score, 1)}/5</div></div>
-          <div class="panel metric"><div class="label">总能耗</div><div class="value">${fmt(d.energy_kwh_total, 1)} kWh</div></div>
-          <div class="panel metric"><div class="label">电器错峰</div><div class="value">${pct(d.appliance_shift_success_rate)}</div></div>
-          <div class="panel metric"><div class="label">VPP削减达成</div><div class="value">${fmt(d.vpp_demand_achievement_ratio, 2)}x</div></div>
-        </div>
-        <div class="grid event-layout">
-          <div class="events">${events.map(renderEvent).join('')}</div>
+        <div class="grid">
+          <section class="panel">
+            <h2>历史结果</h2>
+            <div class="result-name">结果名称：<strong>${resultName}</strong></div>
+            ${resultMetricsHtml([
+              ['方法', d.method || 'unknown'],
+              ['城市', d.weather || 'unknown'],
+              ['用户评分', `${fmt(d.user_pref_score, 1)}/5`],
+              ['总能耗', `${fmt(d.energy_kwh_total, 1)} kWh`],
+              ['VPP能耗', `${fmt(d.vpp_window_energy_kwh, 3)} kWh`],
+              ['电器错峰', pct(d.appliance_shift_success_rate)],
+              ['VPP削减达成', `${fmt(d.vpp_demand_achievement_ratio, 2)}x`],
+              ['状态', `exit ${d.exit_code}`]
+            ])}
+            <div style="height:10px"></div>
+            <h3>逐步可视化</h3>
+            <div class="progress-viz">${progressCardsHtml(live.progress, '没有事件记录。')}</div>
+            <div style="height:10px"></div>
+            <h3>实时日志摘要 / 对话结果</h3>
+            <div class="dialogue-feed">
+              ${live.dialogue.length
+                ? live.dialogue.map(item => `<div class="dialogue-item ${item.type}"><small>${item.label}</small>${item.text}</div>`).join('')
+                : '<div class="sub">没有对话记录。</div>'}
+            </div>
+            ${d.run_summary_text ? `<h3>完整用户日志 / run_summary.txt</h3><div class="summary-log">${d.run_summary_text}</div>` : ''}
+          </section>
         </div>`;
     }
 
@@ -959,9 +1214,10 @@ INDEX_HTML = r"""<!doctype html>
       $('newRunButton').onclick = () => {
         state.view = 'run';
         state.active = null;
-        state.data = null;
-        $('runSelect').value = '';
-        renderRunButtons();
+      state.data = null;
+        const runSelect = $('runSelect');
+        if (runSelect) runSelect.value = '';
+        renderHistorySelectors();
         render();
       };
       $('sidebarToggle').onclick = () => {
@@ -1010,56 +1266,35 @@ INDEX_HTML = r"""<!doctype html>
 
     function renderLiveJob(job) {
       const live = parseLive(job.logs || []);
+      const resultData = job.benchmark_result || null;
+      const resultLive = resultData ? historyToLive(resultData) : null;
+      const shownProgress = resultLive ? resultLive.progress : live.progress;
+      const shownDialogue = resultLive ? resultLive.dialogue : live.dialogue;
+      const resultName = $('resultName');
+      if (resultName) resultName.textContent = live.outputName || expectedRunName();
       const metrics = $('liveMetrics');
       if (metrics) {
-        metrics.innerHTML = `
-          <div class="live-card"><span>Day/Event</span><strong>D${live.day} / E${live.event}</strong></div>
-          <div class="live-card"><span>Setpoint</span><strong>${live.sp}</strong></div>
-          <div class="live-card"><span>VPP target</span><strong>${live.demand}</strong></div>
-          <div class="live-card"><span>User score</span><strong>${live.score}</strong></div>
-          <div class="live-card"><span>Total energy</span><strong>${live.energy}</strong></div>
-          <div class="live-card"><span>VPP energy</span><strong>${live.vpp}</strong></div>
-          <div class="live-card"><span>Energy cap</span><strong>${live.cap}</strong></div>
-          <div class="live-card"><span>Status</span><strong>${job.status}</strong></div>`;
+        const firstEvent = resultData?.vpp_event_log?.[0] || null;
+        metrics.innerHTML = metricCardsInner([
+          ['Day/Event', `D${live.day} / E${live.event}`],
+          ['Setpoint', resultData?.agent_setpoint_c ? `${fmt(resultData.agent_setpoint_c, 1)}°C` : live.sp],
+          ['VPP target', firstEvent ? vppTargetText(firstEvent) : live.demand],
+          ['User score', resultData?.user_pref_score ? `${fmt(resultData.user_pref_score, 1)}/5` : live.score],
+          ['Total energy', resultData?.energy_kwh_total ? `${fmt(resultData.energy_kwh_total, 1)} kWh` : live.energy],
+          ['VPP energy', resultData?.vpp_window_energy_kwh ? `${fmt(resultData.vpp_window_energy_kwh, 3)} kWh` : live.vpp],
+          ['Status', job.status]
+        ]);
       }
       const feed = $('dialogueFeed');
       if (feed) {
-        feed.innerHTML = live.dialogue.length
-          ? live.dialogue.map(item => `<div class="dialogue-item ${item.type}"><small>${item.label}</small>${item.text}</div>`).join('')
+        feed.innerHTML = shownDialogue.length
+          ? shownDialogue.map(item => `<div class="dialogue-item ${item.type}"><small>${item.label}</small>${item.text}</div>`).join('')
           : '<div class="sub">运行后会显示 Grid、Agent、用户选择和 role-play 评分。</div>';
         feed.scrollTop = feed.scrollHeight;
       }
       const progressViz = $('progressViz');
       if (progressViz) {
-        progressViz.innerHTML = live.progress.length
-          ? live.progress.map(ev => `
-            <div class="progress-card ${ev.status}">
-              <h4>${ev.label}</h4>
-              <div class="progress-row"><span>Day</span><strong>${ev.day}</strong></div>
-              <div class="progress-row"><span>VPP目标</span><strong>${ev.target}</strong></div>
-              <div class="progress-row"><span>空调设定</span><strong>${ev.setpoint}</strong></div>
-              <div class="progress-row"><span>用户评分</span><strong>${ev.score}</strong></div>
-              <div class="progress-row"><span>能耗</span><strong>${ev.energy}</strong></div>
-              <div class="progress-row"><span>选中策略</span><strong>${ev.selectedStrategy}</strong></div>
-              <div class="progress-section">
-                <strong>候选策略</strong>
-                <div class="progress-log">
-                  ${ev.strategies.length ? ev.strategies.map(item => `<div class="progress-chip">${item}</div>`).join('') : '<div class="progress-chip">waiting</div>'}
-                </div>
-              </div>
-              <div class="progress-section">
-                <strong>电器排程</strong>
-                <div class="appliance-grid">
-                  ${Object.keys(ev.appliances).length
-                    ? Object.entries(ev.appliances).map(([name, text]) => `<div class="appliance-pill">${name}: ${text}</div>`).join('')
-                    : '<div class="appliance-pill">waiting</div>'}
-                </div>
-              </div>
-              <div class="progress-log">
-                ${ev.notes.map(note => `<div class="progress-chip">${note}</div>`).join('')}
-              </div>
-            </div>`).join('')
-          : '<div class="sub">运行时会按事件逐步生成可视化卡片。</div>';
+        progressViz.innerHTML = progressCardsHtml(shownProgress, '运行时会按事件逐步生成可视化卡片。');
       }
       const summary = $('finishedSummary');
       if (summary) {
@@ -1126,7 +1361,30 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if run_path is None:
                 self._send_error(HTTPStatus.NOT_FOUND, "Unknown run")
                 return
-            self._send_json(json.loads((run_path / "benchmark_result.json").read_text(encoding="utf-8")))
+            result_path = run_path / "benchmark_result.json"
+            if result_path.exists():
+                data = json.loads(result_path.read_text(encoding="utf-8"))
+                _apply_meter_vpp_energy(data, run_path)
+            else:
+                rel = run_path.relative_to(self.results_dir).as_posix()
+                data = {
+                    "_run_id": rel,
+                    "output_dir": str(run_path),
+                    "method": self._infer_method_from_run_name(run_path.name),
+                    "weather": self._infer_city_from_run_name(run_path.name),
+                    "exit_code": "incomplete",
+                    "vpp_event_log": [],
+                    "error": "benchmark_result.json not found; run may still be running or stopped before summary export.",
+                }
+            data["_run_id"] = run_id
+            summary_path = run_path / "run_summary.txt"
+            if summary_path.exists():
+                data["run_summary_text"] = summary_path.read_text(encoding="utf-8", errors="replace")
+            elif not result_path.exists():
+                err_path = run_path / "eplusout.err"
+                if err_path.exists():
+                    data["run_summary_text"] = err_path.read_text(encoding="utf-8", errors="replace")
+            self._send_json(data)
             return
         if parsed.path == "/api/job":
             job_id = parse_qs(parsed.query).get("id", [""])[0]
@@ -1199,23 +1457,48 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _list_runs(self) -> list[dict]:
         runs = []
-        for path in sorted(self.results_dir.glob("*/*/benchmark_result.json"), reverse=True):
-            run_dir = path.parent
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
+        for run_dir in sorted((p for p in self.results_dir.glob("*/*") if p.is_dir()), reverse=True):
+            result_path = run_dir / "benchmark_result.json"
+            data = {}
+            if result_path.exists():
+                try:
+                    data = json.loads(result_path.read_text(encoding="utf-8"))
+                except Exception:
+                    data = {}
             rel = run_dir.relative_to(self.results_dir).as_posix()
+            method = data.get("method") or self._infer_method_from_run_name(run_dir.name)
+            city = data.get("weather") or self._infer_city_from_run_name(run_dir.name)
             runs.append({
                 "id": rel,
-                "label": rel,
+                "label": run_dir.name,
                 "date": rel.split("/", 1)[0] if "/" in rel else "",
                 "persona": run_dir.name.split("_", 2)[0],
-                "method": data.get("method", ""),
-                "city": data.get("weather", ""),
+                "method": method,
+                "city": city,
                 "score": data.get("user_pref_score"),
+                "has_result": result_path.exists(),
             })
         return runs
+
+    @staticmethod
+    def _infer_method_from_run_name(name: str) -> str:
+        if "_mpc_dynamic" in name:
+            return "mpc_dynamic"
+        if "_mpc_ep" in name:
+            return "mpc_ep"
+        if "_rl_" in name:
+            return "rl"
+        if "_agent_" in name:
+            return "agent"
+        return "unknown"
+
+    @staticmethod
+    def _infer_city_from_run_name(name: str) -> str:
+        parts = name.split("_")
+        for city in ("tianjin", "beijing", "shanghai"):
+            if city in parts:
+                return city
+        return ""
 
     def _resolve_run(self, run_id: str) -> Path | None:
         if not run_id or ".." in Path(run_id).parts:
@@ -1225,7 +1508,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             run_path.relative_to(self.results_dir.resolve())
         except ValueError:
             return None
-        if not (run_path / "benchmark_result.json").is_file():
+        if not run_path.is_dir():
             return None
         return run_path
 
