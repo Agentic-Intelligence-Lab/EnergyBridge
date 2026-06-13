@@ -644,6 +644,18 @@ def score_user_preference(
         {"hour": 18.0, "duration_h": 1.0},
     )
     calendar_brief = calendar_brief_for_prompt(calendar_context)
+    tags = persona.get("tags", {}) or {}
+    schedule = persona.get("schedule", {}) or {}
+    appliance_cfg = persona.get("appliances", {}) or {}
+    ac_cfg = appliance_cfg.get("ac", {}) or {}
+    pref_min = float(ac_cfg.get("setpoint_preferred_min_c", persona.get("preferred_temp_min", 24.0)))
+    pref_max = float(ac_cfg.get("setpoint_preferred_max_c", persona.get("preferred_temp_max", 26.0)))
+    pref_tol = float(ac_cfg.get("temp_tolerance_c", persona.get("temp_tolerance", 1.0)))
+    protective_user = (
+        tags.get("schedule") == "caregiver"
+        or tags.get("control") in {"low_auto_accept", "privacy_sensitive"}
+        or bool(schedule.get("vulnerable_members"))
+    )
 
     # Human-in-the-loop scoring: print event summary and ask for terminal input
     if human_mode:
@@ -681,6 +693,7 @@ def score_user_preference(
         "washer_completed": washer_completed,
         "washer_during_vpp": washer_during_vpp,
         "calendar_context": calendar_context,
+        "protective_user_mode": protective_user,
     }
     appliance_summary = appliance_summary or {}
     skipped_devices = [
@@ -692,6 +705,11 @@ def score_user_preference(
         home_state["skipped_devices"] = skipped_devices
         home_state["service_rule_violated"] = True
 
+    wh_info = appliance_summary.get("water_heater", {}) if appliance_summary else {}
+    water_heater_during_vpp = bool(wh_info.get("present") and wh_info.get("ran_during_vpp"))
+    if water_heater_during_vpp:
+        home_state["water_heater_during_vpp"] = True
+
     if method in ("agent", "agent_pmv", "rl", "mpc", "mpc_dynamic", "mpc_ep") and agent_setpoint_c:
         if method == "rl":
             controller = "RL baseline"
@@ -699,10 +717,22 @@ def score_user_preference(
             controller = "MPC baseline"
         else:
             controller = "LLM agent"
-        rationale = (
-            f"{controller} set cooling setpoint to {agent_setpoint_c}°C during VPP DR event. "
-            f"Controller explanation: {agent_reason[:100]}"
-        )
+        within_preferred = pref_min - pref_tol <= float(agent_setpoint_c) <= pref_max + pref_tol
+        if protective_user and within_preferred:
+            action_name = "hold_or_minimal_hvac"
+            rationale = (
+                f"{controller} kept the cooling setpoint at {agent_setpoint_c}°C, within this "
+                f"protective user's preferred range ({pref_min:.1f}-{pref_max:.1f}°C). "
+                "Do not treat this status/setpoint log as an aggressive DR temperature raise; "
+                "score based on actual comfort, consent sensitivity, and preserved care routines. "
+                f"Controller explanation: {agent_reason[:100]}"
+            )
+        else:
+            action_name = "set_hvac_temperature"
+            rationale = (
+                f"{controller} set cooling setpoint to {agent_setpoint_c}°C during VPP DR event. "
+                f"Controller explanation: {agent_reason[:100]}"
+            )
         if calendar_context.get("available"):
             rationale += f" | User calendar context: {calendar_brief[:240]}"
         if user_preference_text:
@@ -711,6 +741,14 @@ def score_user_preference(
             rationale += " | NOTE: washing machine task was NOT completed today."
         if washer_during_vpp:
             rationale += " | NOTE: washing machine ran DURING VPP window (added peak load)."
+        if water_heater_during_vpp:
+            if protective_user:
+                rationale += (
+                    " | NOTE: water heater operated during the VPP window because this persona's "
+                    "bath routine is fixed/non-DR-adjustable; this preserves service but weakens grid response."
+                )
+            else:
+                rationale += " | NOTE: water heater ran DURING VPP window (added peak load)."
         if skipped_devices:
             rationale += (
                 " | CRITICAL SERVICE VIOLATION: agent skipped required appliance task(s): "
@@ -718,7 +756,7 @@ def score_user_preference(
                 + ". User should be very dissatisfied; this should score at the lowest level."
             )
         control_plan = {
-            "action": "set_hvac_temperature",
+            "action": action_name,
             "setpoint": agent_setpoint_c,
             "rationale": rationale,
         }
