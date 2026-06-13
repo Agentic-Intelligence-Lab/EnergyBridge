@@ -646,6 +646,7 @@ def score_user_preference(
             comment = input("  > ").strip()
         except (EOFError, KeyboardInterrupt):
             comment = ""
+        print(f"  [Human Score Selected | event={event_index}] → {score}/5 | {comment or '—'}")
         return {
             "score": score, "comfort_score": score, "energy_score": score,
             "vpp_score": score, "label": "human", "comment": comment or "—",

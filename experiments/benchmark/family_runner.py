@@ -43,6 +43,7 @@ VPP_EVENTS = [
 @dataclass
 class BenchmarkResult:
     scenario: str = ""; building: str = "family"; weather: str = ""; method: str = ""
+    user_label: str = ""
     exit_code: int = -1; energy_kwh_total: float = 0.0; energy_kwh_per_day: float = 0.0
     pmv_ok_fraction: float = 0.0; comfort_ok_fraction: float = 0.0
     mean_pmv: float = 0.0; mean_temp_c: float = 0.0
@@ -1040,20 +1041,25 @@ All times are hour-of-day (0–23.9)."""
                 persona=persona_config,
                 appliance_summary=appliance_summary,
                 human_mode=human_mode)
-            if r.get("source") != "roleplay_llm":
+            if r.get("source") != "roleplay_llm" and not human_mode:
                 raise RuntimeError(f"role-play LLM required, got {r.get('source')}")
             sc = r.get("score") or 0.0
+            comfort_sc = r.get("comfort_score")
+            energy_sc = r.get("energy_score")
+            vpp_sc = r.get("vpp_score")
             lbl = r.get("label", "?")
             cmt = r.get("comment", "")[:100]
             src = r.get("source", "?")
             print(f"  [VPP Result | Event {event_index}/3 {ev['id']}] User score: {sc}/5 ({lbl}) | {cmt[:80]}")
             print(f"  {'─'*62}")
             return {"id": ev["id"], "setpoint": sp_w, "score": sc, "label": lbl,
+                    "comfort_score": comfort_sc, "energy_score": energy_sc, "vpp_score": vpp_sc,
                     "comment": cmt, "user_input": loop_ref.vpp_user_input[:80],
                     "reason": loop_ref.vpp_last_reason[:120], "source": src}
         except Exception as e:
             print(f"  [VPP score {ev['id']}] error: {e}")
             return {"id": ev["id"], "setpoint": loop_ref.sp, "score": None, "label": "?",
+                    "comfort_score": None, "energy_score": None, "vpp_score": None,
                     "comment": str(e)[:60], "user_input": "", "source": "error"}
 
     def cb(s):
@@ -1372,6 +1378,9 @@ All times are hour-of-day (0–23.9)."""
     kwh = loop.e_wh / 1000; occ = max(loop.occ_h, 1e-6)
     avg_sp = sum(d[1] for d in loop.decisions) / max(1, len(loop.decisions)) if loop.decisions else SP_DEFAULT
     pref_scores = [e["score"] for e in loop.vpp_event_log if e.get("score") is not None]
+    comfort_scores = [e["comfort_score"] for e in loop.vpp_event_log if e.get("comfort_score") is not None]
+    energy_scores = [e["energy_score"] for e in loop.vpp_event_log if e.get("energy_score") is not None]
+    vpp_scores = [e["vpp_score"] for e in loop.vpp_event_log if e.get("vpp_score") is not None]
     # VPP compliance: family baseline 25.5C -> compliant if VPP setpoint >= 26.0C
     _VPP_COMPLY_SP = 26.0
     n_comply = sum(1 for e in loop.vpp_event_log if e.get("setpoint", 0) >= _VPP_COMPLY_SP)
@@ -1474,6 +1483,9 @@ All times are hour-of-day (0–23.9)."""
         agent_setpoint_c=round(avg_sp, 1),
         user_pref_scores=pref_scores,
         user_pref_score=sum(pref_scores)/max(1,len(pref_scores)) if pref_scores else None,
+        user_comfort_scores=comfort_scores,
+        user_energy_scores=energy_scores,
+        user_vpp_scores=vpp_scores,
         vpp_compliance_rate=vpp_comply_rate,
         llm_call_count=loop.llm_calls, llm_call_failures=loop.llm_failures,
         llm_latency_total_s=round(loop.llm_latency_s, 2),
