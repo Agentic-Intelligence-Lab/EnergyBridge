@@ -60,8 +60,7 @@ dimensions (comfort, cost, control, flexibility, trust, ecology).
 `energybridge/roleplay/personas/calendars/<persona_id>/calendar_7day.json`
 stores the paired 7-day synthetic calendar for each approved persona. Day 1 is
 Sunday, so the default 3-day benchmark evaluates Sunday, Monday, and Tuesday.
-These
-calendars are loaded automatically and injected into role-play strategy
+These calendars are loaded automatically and injected into role-play strategy
 selection/scoring so simulated users consider appointments, return-home comfort,
 EV departure deadlines, hot-water deadlines, and chore constraints.
 
@@ -167,19 +166,59 @@ consensus preference string → injected to building agent.
 When N = 1 this degrades naturally to a single-user instruction (the one
 member's opinion becomes the consensus directly).
 
-### Run all 10 personas (batch)
+### Run the 10-persona baseline matrix
 
 ```bash
 cd experiments/benchmark
-python3 run_all_personas.py
 
-# Options
-python3 run_all_personas.py --results-dir /path/to/output --city Tianjin
-python3 run_all_personas.py --no-skip       # re-run even if log exists
+# Preview today's full matrix without running it:
+python3 run_baseline_matrix.py --dry-run
+
+# Run all approved personas with agent, mpc_dynamic, and mpc_ep:
+python3 run_baseline_matrix.py --city Tianjin --mpc-horizon 6
+
+# Resume a long run after interruption:
+python3 run_baseline_matrix.py --resume
 ```
 
-The batch script resumes automatically: skips personas whose log already
-contains `[family/agent]`.
+Default matrix: 10 approved personas × 3 methods = 30 jobs. Each job delegates
+to `run_persona_json.py`, so the same calendar-aware role-play logic,
+`run_summary.txt`, and default result naming are used. Without `--resume`, each
+job replaces only its exact target output folder before running; other methods,
+users, horizons, cities, and dates are not touched.
+
+Batch outputs are written under the normal dated benchmark folder:
+
+```text
+benchmark_results/<YYYY-MM-DD>/<role>_<method>[_H6]_<city>_3days/
+benchmark_results/<YYYY-MM-DD>/_batch_logs/baseline_matrix_<city>_H6/
+benchmark_results/<YYYY-MM-DD>/_batch_logs/baseline_matrix_summary_<city>_H6.json
+benchmark_results/<YYYY-MM-DD>/_batch_logs/baseline_matrix_summary_<city>_H6.csv
+```
+
+Useful controls:
+
+- `--methods agent mpc_dynamic`: run only selected methods.
+- `--personas role_a ...`: run only selected persona IDs.
+- `--max-runs 1`: smoke-test the script with one job.
+- `--fail-fast`: stop immediately on the first failed simulation.
+
+### Generate a compact report
+
+After the matrix finishes, generate a one-page summary with charts and tables:
+
+```bash
+cd experiments/benchmark
+python3 generate_baseline_matrix_report.py --city Tianjin --horizon 6
+```
+
+The report is written to the same dated batch folder under `_batch_logs/`:
+
+```text
+baseline_matrix_report/baseline_matrix_report.png
+baseline_matrix_report/baseline_matrix_report.md
+baseline_matrix_report/baseline_matrix_report_table.csv
+```
 
 ---
 
