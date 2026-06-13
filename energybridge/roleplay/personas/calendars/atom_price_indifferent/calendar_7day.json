@@ -1,0 +1,522 @@
+{
+  "schema_version": "calendar_v1",
+  "persona_id": "atom_price_indifferent",
+  "source": "synthetic_energybridge_calendar_v2_tag_aware",
+  "timezone": "Asia/Shanghai",
+  "week_start": "Sunday",
+  "description": "Tag-aware 7-day synthetic calendar. Day1 is Sunday; the default 3-day benchmark therefore evaluates Sunday, Monday, and Tuesday.",
+  "persona_tags": {
+    "schedule": "regular_commuter",
+    "comfort": "normal_comfort",
+    "task": "semi_rigid",
+    "price": "low_incentive",
+    "control": "suggestion_first",
+    "grid_value": "low_value"
+  },
+  "days": [
+    {
+      "day": 1,
+      "weekday": "Sunday",
+      "day_type": "weekend",
+      "summary": "Sunday: non-workday with errands and evening home time.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 7.0,
+          "end_h": 7.5,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Sunday home morning",
+          "start_h": 9.0,
+          "end_h": 11.0,
+          "location": "home",
+          "energy_relevance": "occupied comfort"
+        },
+        {
+          "title": "Sunday errands",
+          "start_h": 14.0,
+          "end_h": 17.0,
+          "location": "outside",
+          "energy_relevance": "away from home before VPP"
+        },
+        {
+          "title": "Sunday evening at home",
+          "start_h": 18.0,
+          "end_h": 21.0,
+          "location": "home",
+          "energy_relevance": "VPP directly overlaps home activity"
+        },
+        {
+          "title": "Laundry task",
+          "start_h": 19.0,
+          "end_h": 21.0,
+          "location": "home",
+          "energy_relevance": "shiftable chore deadline"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 21.0,
+          "end_h": 21.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 23.0,
+          "end_h": 23.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 17.0,
+        "next_departure_h": 32.5,
+        "bath_shower_h": 21.0,
+        "vulnerable_member_home": false,
+        "appliance_deadlines": {
+          "washer": "complete today while avoiding 18:00-19:00 if possible",
+          "water_heater": "hot water ready before 21:00"
+        }
+      }
+    },
+    {
+      "day": 2,
+      "weekday": "Monday",
+      "day_type": "weekday",
+      "summary": "Monday: regular workday commute; return-home comfort is relevant.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 7.0,
+          "end_h": 7.5,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Commute to office",
+          "start_h": 8.0,
+          "end_h": 8.5,
+          "location": "transit",
+          "energy_relevance": "home becomes unoccupied"
+        },
+        {
+          "title": "Working hours - in office",
+          "start_h": 8.5,
+          "end_h": 17.5,
+          "location": "office",
+          "energy_relevance": "home away period"
+        },
+        {
+          "title": "Commute home",
+          "start_h": 17.5,
+          "end_h": 18.0,
+          "location": "transit",
+          "energy_relevance": "VPP may overlap return-home preparation"
+        },
+        {
+          "title": "Monday dinner at home",
+          "start_h": 19.0,
+          "end_h": 20.0,
+          "location": "home",
+          "energy_relevance": "post-VPP comfort"
+        },
+        {
+          "title": "Laundry task",
+          "start_h": 19.0,
+          "end_h": 21.0,
+          "location": "home",
+          "energy_relevance": "shiftable chore deadline"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 21.0,
+          "end_h": 21.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 23.0,
+          "end_h": 23.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 18.0,
+        "next_departure_h": 56.5,
+        "bath_shower_h": 21.0,
+        "vulnerable_member_home": false,
+        "appliance_deadlines": {
+          "washer": "complete today while avoiding 18:00-19:00 if possible",
+          "water_heater": "hot water ready before 21:00"
+        }
+      }
+    },
+    {
+      "day": 3,
+      "weekday": "Tuesday",
+      "day_type": "weekday",
+      "summary": "Tuesday: regular workday commute; return-home comfort is relevant.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 7.0,
+          "end_h": 7.5,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Commute to office",
+          "start_h": 8.0,
+          "end_h": 8.5,
+          "location": "transit",
+          "energy_relevance": "home becomes unoccupied"
+        },
+        {
+          "title": "Working hours - in office",
+          "start_h": 8.5,
+          "end_h": 17.5,
+          "location": "office",
+          "energy_relevance": "home away period"
+        },
+        {
+          "title": "Commute home",
+          "start_h": 17.5,
+          "end_h": 18.0,
+          "location": "transit",
+          "energy_relevance": "VPP may overlap return-home preparation"
+        },
+        {
+          "title": "Tuesday dinner at home",
+          "start_h": 19.0,
+          "end_h": 20.0,
+          "location": "home",
+          "energy_relevance": "post-VPP comfort"
+        },
+        {
+          "title": "Laundry task",
+          "start_h": 19.0,
+          "end_h": 21.0,
+          "location": "home",
+          "energy_relevance": "shiftable chore deadline"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 21.0,
+          "end_h": 21.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 23.0,
+          "end_h": 23.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 18.0,
+        "next_departure_h": 80.5,
+        "bath_shower_h": 21.0,
+        "vulnerable_member_home": false,
+        "appliance_deadlines": {
+          "washer": "complete today while avoiding 18:00-19:00 if possible",
+          "water_heater": "hot water ready before 21:00"
+        }
+      }
+    },
+    {
+      "day": 4,
+      "weekday": "Wednesday",
+      "day_type": "weekday",
+      "summary": "Wednesday: regular workday commute; return-home comfort is relevant.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 7.0,
+          "end_h": 7.5,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Commute to office",
+          "start_h": 8.0,
+          "end_h": 8.5,
+          "location": "transit",
+          "energy_relevance": "home becomes unoccupied"
+        },
+        {
+          "title": "Working hours - in office",
+          "start_h": 8.5,
+          "end_h": 17.5,
+          "location": "office",
+          "energy_relevance": "home away period"
+        },
+        {
+          "title": "Commute home",
+          "start_h": 17.5,
+          "end_h": 18.0,
+          "location": "transit",
+          "energy_relevance": "VPP may overlap return-home preparation"
+        },
+        {
+          "title": "Wednesday dinner at home",
+          "start_h": 19.0,
+          "end_h": 20.0,
+          "location": "home",
+          "energy_relevance": "post-VPP comfort"
+        },
+        {
+          "title": "Laundry task",
+          "start_h": 19.0,
+          "end_h": 21.0,
+          "location": "home",
+          "energy_relevance": "shiftable chore deadline"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 21.0,
+          "end_h": 21.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 23.0,
+          "end_h": 23.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 18.0,
+        "next_departure_h": 104.5,
+        "bath_shower_h": 21.0,
+        "vulnerable_member_home": false,
+        "appliance_deadlines": {
+          "washer": "complete today while avoiding 18:00-19:00 if possible",
+          "water_heater": "hot water ready before 21:00"
+        }
+      }
+    },
+    {
+      "day": 5,
+      "weekday": "Thursday",
+      "day_type": "weekday",
+      "summary": "Thursday: regular workday commute; return-home comfort is relevant.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 7.0,
+          "end_h": 7.5,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Commute to office",
+          "start_h": 8.0,
+          "end_h": 8.5,
+          "location": "transit",
+          "energy_relevance": "home becomes unoccupied"
+        },
+        {
+          "title": "Working hours - in office",
+          "start_h": 8.5,
+          "end_h": 17.5,
+          "location": "office",
+          "energy_relevance": "home away period"
+        },
+        {
+          "title": "Commute home",
+          "start_h": 17.5,
+          "end_h": 18.0,
+          "location": "transit",
+          "energy_relevance": "VPP may overlap return-home preparation"
+        },
+        {
+          "title": "Thursday dinner at home",
+          "start_h": 19.0,
+          "end_h": 20.0,
+          "location": "home",
+          "energy_relevance": "post-VPP comfort"
+        },
+        {
+          "title": "Laundry task",
+          "start_h": 19.0,
+          "end_h": 21.0,
+          "location": "home",
+          "energy_relevance": "shiftable chore deadline"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 21.0,
+          "end_h": 21.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 23.0,
+          "end_h": 23.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 18.0,
+        "next_departure_h": 128.5,
+        "bath_shower_h": 21.0,
+        "vulnerable_member_home": false,
+        "appliance_deadlines": {
+          "washer": "complete today while avoiding 18:00-19:00 if possible",
+          "water_heater": "hot water ready before 21:00"
+        }
+      }
+    },
+    {
+      "day": 6,
+      "weekday": "Friday",
+      "day_type": "weekday",
+      "summary": "Friday: regular workday commute; return-home comfort is relevant.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 7.0,
+          "end_h": 7.5,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Commute to office",
+          "start_h": 8.0,
+          "end_h": 8.5,
+          "location": "transit",
+          "energy_relevance": "home becomes unoccupied"
+        },
+        {
+          "title": "Working hours - in office",
+          "start_h": 8.5,
+          "end_h": 17.5,
+          "location": "office",
+          "energy_relevance": "home away period"
+        },
+        {
+          "title": "Commute home",
+          "start_h": 17.5,
+          "end_h": 18.0,
+          "location": "transit",
+          "energy_relevance": "VPP may overlap return-home preparation"
+        },
+        {
+          "title": "Friday dinner at home",
+          "start_h": 19.0,
+          "end_h": 20.0,
+          "location": "home",
+          "energy_relevance": "post-VPP comfort"
+        },
+        {
+          "title": "Laundry task",
+          "start_h": 19.0,
+          "end_h": 21.0,
+          "location": "home",
+          "energy_relevance": "shiftable chore deadline"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 21.0,
+          "end_h": 21.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 23.0,
+          "end_h": 23.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 18.0,
+        "next_departure_h": 152.5,
+        "bath_shower_h": 21.0,
+        "vulnerable_member_home": false,
+        "appliance_deadlines": {
+          "washer": "complete today while avoiding 18:00-19:00 if possible",
+          "water_heater": "hot water ready before 21:00"
+        }
+      }
+    },
+    {
+      "day": 7,
+      "weekday": "Saturday",
+      "day_type": "weekend",
+      "summary": "Saturday: non-workday with errands and evening home time.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 7.0,
+          "end_h": 7.5,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Saturday home morning",
+          "start_h": 9.0,
+          "end_h": 11.0,
+          "location": "home",
+          "energy_relevance": "occupied comfort"
+        },
+        {
+          "title": "Saturday errands",
+          "start_h": 14.0,
+          "end_h": 17.0,
+          "location": "outside",
+          "energy_relevance": "away from home before VPP"
+        },
+        {
+          "title": "Saturday evening at home",
+          "start_h": 18.0,
+          "end_h": 21.0,
+          "location": "home",
+          "energy_relevance": "VPP directly overlaps home activity"
+        },
+        {
+          "title": "Laundry task",
+          "start_h": 19.0,
+          "end_h": 21.0,
+          "location": "home",
+          "energy_relevance": "shiftable chore deadline"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 21.0,
+          "end_h": 21.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 23.0,
+          "end_h": 23.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 17.0,
+        "next_departure_h": 56.5,
+        "bath_shower_h": 21.0,
+        "vulnerable_member_home": false,
+        "appliance_deadlines": {
+          "washer": "complete today while avoiding 18:00-19:00 if possible",
+          "water_heater": "hot water ready before 21:00"
+        }
+      }
+    }
+  ]
+}

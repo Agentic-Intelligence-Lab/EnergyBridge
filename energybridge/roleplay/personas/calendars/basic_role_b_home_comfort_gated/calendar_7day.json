@@ -1,0 +1,438 @@
+{
+  "schema_version": "calendar_v1",
+  "persona_id": "basic_role_b_home_comfort_gated",
+  "source": "synthetic_energybridge_calendar_v2_tag_aware",
+  "timezone": "Asia/Shanghai",
+  "week_start": "Sunday",
+  "description": "Tag-aware 7-day synthetic calendar. Day1 is Sunday; the default 3-day benchmark therefore evaluates Sunday, Monday, and Tuesday.",
+  "persona_tags": {
+    "schedule": "stay_at_home",
+    "comfort": "temp_sensitive",
+    "task": "semi_rigid",
+    "price": "low_incentive",
+    "control": "confirm_required",
+    "grid_value": "short_peak_cut"
+  },
+  "days": [
+    {
+      "day": 1,
+      "weekday": "Sunday",
+      "day_type": "weekend",
+      "summary": "Sunday: mostly at home; comfort constraints apply through the day. Temperature deviations are very noticeable. User expects explicit consent or careful explanation.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 7.0,
+          "end_h": 7.5,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Sunday remote/home activities",
+          "start_h": 9.0,
+          "end_h": 17.5,
+          "location": "home",
+          "energy_relevance": "occupied comfort"
+        },
+        {
+          "title": "Laundry task",
+          "start_h": 10.0,
+          "end_h": 12.0,
+          "location": "home",
+          "energy_relevance": "shiftable chore deadline"
+        },
+        {
+          "title": "Sunday dinner preparation",
+          "start_h": 18.0,
+          "end_h": 19.0,
+          "location": "home",
+          "energy_relevance": "direct VPP conflict; comfort sensitive"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 21.0,
+          "end_h": 21.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 23.0,
+          "end_h": 23.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 7.0,
+        "next_departure_h": null,
+        "bath_shower_h": 21.0,
+        "vulnerable_member_home": false,
+        "appliance_deadlines": {
+          "washer": "complete today while avoiding 18:00-19:00 if possible",
+          "water_heater": "hot water ready before 21:00"
+        }
+      }
+    },
+    {
+      "day": 2,
+      "weekday": "Monday",
+      "day_type": "weekday",
+      "summary": "Monday: mostly at home; comfort constraints apply through the day. Temperature deviations are very noticeable. User expects explicit consent or careful explanation.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 7.0,
+          "end_h": 7.5,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Monday remote/home activities",
+          "start_h": 9.0,
+          "end_h": 17.5,
+          "location": "home",
+          "energy_relevance": "occupied comfort"
+        },
+        {
+          "title": "Laundry task",
+          "start_h": 10.0,
+          "end_h": 12.0,
+          "location": "home",
+          "energy_relevance": "shiftable chore deadline"
+        },
+        {
+          "title": "Monday dinner preparation",
+          "start_h": 18.0,
+          "end_h": 19.0,
+          "location": "home",
+          "energy_relevance": "direct VPP conflict; comfort sensitive"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 21.0,
+          "end_h": 21.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 23.0,
+          "end_h": 23.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 7.0,
+        "next_departure_h": null,
+        "bath_shower_h": 21.0,
+        "vulnerable_member_home": false,
+        "appliance_deadlines": {
+          "washer": "complete today while avoiding 18:00-19:00 if possible",
+          "water_heater": "hot water ready before 21:00"
+        }
+      }
+    },
+    {
+      "day": 3,
+      "weekday": "Tuesday",
+      "day_type": "weekday",
+      "summary": "Tuesday: mostly at home; comfort constraints apply through the day. Temperature deviations are very noticeable. User expects explicit consent or careful explanation.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 7.0,
+          "end_h": 7.5,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Tuesday remote/home activities",
+          "start_h": 9.0,
+          "end_h": 17.5,
+          "location": "home",
+          "energy_relevance": "occupied comfort"
+        },
+        {
+          "title": "Laundry task",
+          "start_h": 10.0,
+          "end_h": 12.0,
+          "location": "home",
+          "energy_relevance": "shiftable chore deadline"
+        },
+        {
+          "title": "Tuesday dinner preparation",
+          "start_h": 18.0,
+          "end_h": 19.0,
+          "location": "home",
+          "energy_relevance": "direct VPP conflict; comfort sensitive"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 21.0,
+          "end_h": 21.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 23.0,
+          "end_h": 23.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 7.0,
+        "next_departure_h": null,
+        "bath_shower_h": 21.0,
+        "vulnerable_member_home": false,
+        "appliance_deadlines": {
+          "washer": "complete today while avoiding 18:00-19:00 if possible",
+          "water_heater": "hot water ready before 21:00"
+        }
+      }
+    },
+    {
+      "day": 4,
+      "weekday": "Wednesday",
+      "day_type": "weekday",
+      "summary": "Wednesday: mostly at home; comfort constraints apply through the day. Temperature deviations are very noticeable. User expects explicit consent or careful explanation.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 7.0,
+          "end_h": 7.5,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Wednesday remote/home activities",
+          "start_h": 9.0,
+          "end_h": 17.5,
+          "location": "home",
+          "energy_relevance": "occupied comfort"
+        },
+        {
+          "title": "Laundry task",
+          "start_h": 10.0,
+          "end_h": 12.0,
+          "location": "home",
+          "energy_relevance": "shiftable chore deadline"
+        },
+        {
+          "title": "Wednesday dinner preparation",
+          "start_h": 18.0,
+          "end_h": 19.0,
+          "location": "home",
+          "energy_relevance": "direct VPP conflict; comfort sensitive"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 21.0,
+          "end_h": 21.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 23.0,
+          "end_h": 23.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 7.0,
+        "next_departure_h": null,
+        "bath_shower_h": 21.0,
+        "vulnerable_member_home": false,
+        "appliance_deadlines": {
+          "washer": "complete today while avoiding 18:00-19:00 if possible",
+          "water_heater": "hot water ready before 21:00"
+        }
+      }
+    },
+    {
+      "day": 5,
+      "weekday": "Thursday",
+      "day_type": "weekday",
+      "summary": "Thursday: mostly at home; comfort constraints apply through the day. Temperature deviations are very noticeable. User expects explicit consent or careful explanation.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 7.0,
+          "end_h": 7.5,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Thursday remote/home activities",
+          "start_h": 9.0,
+          "end_h": 17.5,
+          "location": "home",
+          "energy_relevance": "occupied comfort"
+        },
+        {
+          "title": "Laundry task",
+          "start_h": 10.0,
+          "end_h": 12.0,
+          "location": "home",
+          "energy_relevance": "shiftable chore deadline"
+        },
+        {
+          "title": "Thursday dinner preparation",
+          "start_h": 18.0,
+          "end_h": 19.0,
+          "location": "home",
+          "energy_relevance": "direct VPP conflict; comfort sensitive"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 21.0,
+          "end_h": 21.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 23.0,
+          "end_h": 23.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 7.0,
+        "next_departure_h": null,
+        "bath_shower_h": 21.0,
+        "vulnerable_member_home": false,
+        "appliance_deadlines": {
+          "washer": "complete today while avoiding 18:00-19:00 if possible",
+          "water_heater": "hot water ready before 21:00"
+        }
+      }
+    },
+    {
+      "day": 6,
+      "weekday": "Friday",
+      "day_type": "weekday",
+      "summary": "Friday: mostly at home; comfort constraints apply through the day. Temperature deviations are very noticeable. User expects explicit consent or careful explanation.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 7.0,
+          "end_h": 7.5,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Friday remote/home activities",
+          "start_h": 9.0,
+          "end_h": 17.5,
+          "location": "home",
+          "energy_relevance": "occupied comfort"
+        },
+        {
+          "title": "Laundry task",
+          "start_h": 10.0,
+          "end_h": 12.0,
+          "location": "home",
+          "energy_relevance": "shiftable chore deadline"
+        },
+        {
+          "title": "Friday dinner preparation",
+          "start_h": 18.0,
+          "end_h": 19.0,
+          "location": "home",
+          "energy_relevance": "direct VPP conflict; comfort sensitive"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 21.0,
+          "end_h": 21.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 23.0,
+          "end_h": 23.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 7.0,
+        "next_departure_h": null,
+        "bath_shower_h": 21.0,
+        "vulnerable_member_home": false,
+        "appliance_deadlines": {
+          "washer": "complete today while avoiding 18:00-19:00 if possible",
+          "water_heater": "hot water ready before 21:00"
+        }
+      }
+    },
+    {
+      "day": 7,
+      "weekday": "Saturday",
+      "day_type": "weekend",
+      "summary": "Saturday: mostly at home; comfort constraints apply through the day. Temperature deviations are very noticeable. User expects explicit consent or careful explanation.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 7.0,
+          "end_h": 7.5,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Saturday remote/home activities",
+          "start_h": 9.0,
+          "end_h": 17.5,
+          "location": "home",
+          "energy_relevance": "occupied comfort"
+        },
+        {
+          "title": "Laundry task",
+          "start_h": 10.0,
+          "end_h": 12.0,
+          "location": "home",
+          "energy_relevance": "shiftable chore deadline"
+        },
+        {
+          "title": "Saturday dinner preparation",
+          "start_h": 18.0,
+          "end_h": 19.0,
+          "location": "home",
+          "energy_relevance": "direct VPP conflict; comfort sensitive"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 21.0,
+          "end_h": 21.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 23.0,
+          "end_h": 23.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 7.0,
+        "next_departure_h": null,
+        "bath_shower_h": 21.0,
+        "vulnerable_member_home": false,
+        "appliance_deadlines": {
+          "washer": "complete today while avoiding 18:00-19:00 if possible",
+          "water_heater": "hot water ready before 21:00"
+        }
+      }
+    }
+  ]
+}

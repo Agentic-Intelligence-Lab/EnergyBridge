@@ -1,0 +1,487 @@
+{
+  "schema_version": "calendar_v1",
+  "persona_id": "basic_role_e_caregiver_low_dr",
+  "source": "synthetic_energybridge_calendar_v2_tag_aware",
+  "timezone": "Asia/Shanghai",
+  "week_start": "Sunday",
+  "description": "Tag-aware 7-day synthetic calendar. Day1 is Sunday; the default 3-day benchmark therefore evaluates Sunday, Monday, and Tuesday.",
+  "persona_tags": {
+    "schedule": "caregiver",
+    "comfort": "temp_sensitive",
+    "task": "rigid",
+    "price": "low_incentive",
+    "control": "low_auto_accept",
+    "grid_value": "low_value"
+  },
+  "days": [
+    {
+      "day": 1,
+      "weekday": "Sunday",
+      "day_type": "weekend",
+      "summary": "Sunday: caregiving schedule with vulnerable household member at home. Temperature deviations are very noticeable. User expects explicit consent or careful explanation.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 6.5,
+          "end_h": 7.0,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Medication routine",
+          "start_h": 8.0,
+          "end_h": 8.5,
+          "location": "home",
+          "energy_relevance": "safety routine"
+        },
+        {
+          "title": "Fixed laundry routine",
+          "start_h": 10.0,
+          "end_h": 12.0,
+          "location": "home",
+          "energy_relevance": "rigid task timing"
+        },
+        {
+          "title": "Nap/rest period",
+          "start_h": 14.0,
+          "end_h": 16.0,
+          "location": "home",
+          "energy_relevance": "avoid noise and discomfort"
+        },
+        {
+          "title": "Sunday dinner care",
+          "start_h": 18.0,
+          "end_h": 19.0,
+          "location": "home",
+          "energy_relevance": "VPP conflict with vulnerable member at home"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 20.0,
+          "end_h": 20.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 22.0,
+          "end_h": 22.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 6.5,
+        "next_departure_h": null,
+        "bath_shower_h": 20.0,
+        "vulnerable_member_home": true,
+        "appliance_deadlines": {
+          "washer": "fixed around 10:00; do not skip",
+          "water_heater": "hot water ready before 20:00"
+        }
+      }
+    },
+    {
+      "day": 2,
+      "weekday": "Monday",
+      "day_type": "weekday",
+      "summary": "Monday: caregiving schedule with vulnerable household member at home. Temperature deviations are very noticeable. User expects explicit consent or careful explanation.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 6.5,
+          "end_h": 7.0,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Medication routine",
+          "start_h": 8.0,
+          "end_h": 8.5,
+          "location": "home",
+          "energy_relevance": "safety routine"
+        },
+        {
+          "title": "Fixed laundry routine",
+          "start_h": 10.0,
+          "end_h": 12.0,
+          "location": "home",
+          "energy_relevance": "rigid task timing"
+        },
+        {
+          "title": "Nap/rest period",
+          "start_h": 14.0,
+          "end_h": 16.0,
+          "location": "home",
+          "energy_relevance": "avoid noise and discomfort"
+        },
+        {
+          "title": "Monday dinner care",
+          "start_h": 18.0,
+          "end_h": 19.0,
+          "location": "home",
+          "energy_relevance": "VPP conflict with vulnerable member at home"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 20.0,
+          "end_h": 20.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 22.0,
+          "end_h": 22.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 6.5,
+        "next_departure_h": null,
+        "bath_shower_h": 20.0,
+        "vulnerable_member_home": true,
+        "appliance_deadlines": {
+          "washer": "fixed around 10:00; do not skip",
+          "water_heater": "hot water ready before 20:00"
+        }
+      }
+    },
+    {
+      "day": 3,
+      "weekday": "Tuesday",
+      "day_type": "weekday",
+      "summary": "Tuesday: caregiving schedule with vulnerable household member at home. Temperature deviations are very noticeable. User expects explicit consent or careful explanation.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 6.5,
+          "end_h": 7.0,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Medication routine",
+          "start_h": 8.0,
+          "end_h": 8.5,
+          "location": "home",
+          "energy_relevance": "safety routine"
+        },
+        {
+          "title": "Fixed laundry routine",
+          "start_h": 10.0,
+          "end_h": 12.0,
+          "location": "home",
+          "energy_relevance": "rigid task timing"
+        },
+        {
+          "title": "Nap/rest period",
+          "start_h": 14.0,
+          "end_h": 16.0,
+          "location": "home",
+          "energy_relevance": "avoid noise and discomfort"
+        },
+        {
+          "title": "Tuesday dinner care",
+          "start_h": 18.0,
+          "end_h": 19.0,
+          "location": "home",
+          "energy_relevance": "VPP conflict with vulnerable member at home"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 20.0,
+          "end_h": 20.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 22.0,
+          "end_h": 22.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 6.5,
+        "next_departure_h": null,
+        "bath_shower_h": 20.0,
+        "vulnerable_member_home": true,
+        "appliance_deadlines": {
+          "washer": "fixed around 10:00; do not skip",
+          "water_heater": "hot water ready before 20:00"
+        }
+      }
+    },
+    {
+      "day": 4,
+      "weekday": "Wednesday",
+      "day_type": "weekday",
+      "summary": "Wednesday: caregiving schedule with vulnerable household member at home. Temperature deviations are very noticeable. User expects explicit consent or careful explanation.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 6.5,
+          "end_h": 7.0,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Medication routine",
+          "start_h": 8.0,
+          "end_h": 8.5,
+          "location": "home",
+          "energy_relevance": "safety routine"
+        },
+        {
+          "title": "Fixed laundry routine",
+          "start_h": 10.0,
+          "end_h": 12.0,
+          "location": "home",
+          "energy_relevance": "rigid task timing"
+        },
+        {
+          "title": "Nap/rest period",
+          "start_h": 14.0,
+          "end_h": 16.0,
+          "location": "home",
+          "energy_relevance": "avoid noise and discomfort"
+        },
+        {
+          "title": "Wednesday dinner care",
+          "start_h": 18.0,
+          "end_h": 19.0,
+          "location": "home",
+          "energy_relevance": "VPP conflict with vulnerable member at home"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 20.0,
+          "end_h": 20.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 22.0,
+          "end_h": 22.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 6.5,
+        "next_departure_h": null,
+        "bath_shower_h": 20.0,
+        "vulnerable_member_home": true,
+        "appliance_deadlines": {
+          "washer": "fixed around 10:00; do not skip",
+          "water_heater": "hot water ready before 20:00"
+        }
+      }
+    },
+    {
+      "day": 5,
+      "weekday": "Thursday",
+      "day_type": "weekday",
+      "summary": "Thursday: caregiving schedule with vulnerable household member at home. Temperature deviations are very noticeable. User expects explicit consent or careful explanation.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 6.5,
+          "end_h": 7.0,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Medication routine",
+          "start_h": 8.0,
+          "end_h": 8.5,
+          "location": "home",
+          "energy_relevance": "safety routine"
+        },
+        {
+          "title": "Fixed laundry routine",
+          "start_h": 10.0,
+          "end_h": 12.0,
+          "location": "home",
+          "energy_relevance": "rigid task timing"
+        },
+        {
+          "title": "Nap/rest period",
+          "start_h": 14.0,
+          "end_h": 16.0,
+          "location": "home",
+          "energy_relevance": "avoid noise and discomfort"
+        },
+        {
+          "title": "Thursday dinner care",
+          "start_h": 18.0,
+          "end_h": 19.0,
+          "location": "home",
+          "energy_relevance": "VPP conflict with vulnerable member at home"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 20.0,
+          "end_h": 20.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 22.0,
+          "end_h": 22.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 6.5,
+        "next_departure_h": null,
+        "bath_shower_h": 20.0,
+        "vulnerable_member_home": true,
+        "appliance_deadlines": {
+          "washer": "fixed around 10:00; do not skip",
+          "water_heater": "hot water ready before 20:00"
+        }
+      }
+    },
+    {
+      "day": 6,
+      "weekday": "Friday",
+      "day_type": "weekday",
+      "summary": "Friday: caregiving schedule with vulnerable household member at home. Temperature deviations are very noticeable. User expects explicit consent or careful explanation.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 6.5,
+          "end_h": 7.0,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Medication routine",
+          "start_h": 8.0,
+          "end_h": 8.5,
+          "location": "home",
+          "energy_relevance": "safety routine"
+        },
+        {
+          "title": "Fixed laundry routine",
+          "start_h": 10.0,
+          "end_h": 12.0,
+          "location": "home",
+          "energy_relevance": "rigid task timing"
+        },
+        {
+          "title": "Nap/rest period",
+          "start_h": 14.0,
+          "end_h": 16.0,
+          "location": "home",
+          "energy_relevance": "avoid noise and discomfort"
+        },
+        {
+          "title": "Friday dinner care",
+          "start_h": 18.0,
+          "end_h": 19.0,
+          "location": "home",
+          "energy_relevance": "VPP conflict with vulnerable member at home"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 20.0,
+          "end_h": 20.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 22.0,
+          "end_h": 22.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 6.5,
+        "next_departure_h": null,
+        "bath_shower_h": 20.0,
+        "vulnerable_member_home": true,
+        "appliance_deadlines": {
+          "washer": "fixed around 10:00; do not skip",
+          "water_heater": "hot water ready before 20:00"
+        }
+      }
+    },
+    {
+      "day": 7,
+      "weekday": "Saturday",
+      "day_type": "weekend",
+      "summary": "Saturday: caregiving schedule with vulnerable household member at home. Temperature deviations are very noticeable. User expects explicit consent or careful explanation.",
+      "events": [
+        {
+          "title": "Wake and morning routine",
+          "start_h": 6.5,
+          "end_h": 7.0,
+          "location": "home",
+          "energy_relevance": "morning comfort baseline"
+        },
+        {
+          "title": "Medication routine",
+          "start_h": 8.0,
+          "end_h": 8.5,
+          "location": "home",
+          "energy_relevance": "safety routine"
+        },
+        {
+          "title": "Fixed laundry routine",
+          "start_h": 10.0,
+          "end_h": 12.0,
+          "location": "home",
+          "energy_relevance": "rigid task timing"
+        },
+        {
+          "title": "Nap/rest period",
+          "start_h": 14.0,
+          "end_h": 16.0,
+          "location": "home",
+          "energy_relevance": "avoid noise and discomfort"
+        },
+        {
+          "title": "Saturday dinner care",
+          "start_h": 18.0,
+          "end_h": 19.0,
+          "location": "home",
+          "energy_relevance": "VPP conflict with vulnerable member at home"
+        },
+        {
+          "title": "Bath / shower",
+          "start_h": 20.0,
+          "end_h": 20.5,
+          "location": "home",
+          "energy_relevance": "hot water deadline"
+        },
+        {
+          "title": "Sleep",
+          "start_h": 22.0,
+          "end_h": 22.5,
+          "location": "home",
+          "energy_relevance": "quiet comfort"
+        }
+      ],
+      "constraints": {
+        "home_arrival_h": 6.5,
+        "next_departure_h": null,
+        "bath_shower_h": 20.0,
+        "vulnerable_member_home": true,
+        "appliance_deadlines": {
+          "washer": "fixed around 10:00; do not skip",
+          "water_heater": "hot water ready before 20:00"
+        }
+      }
+    }
+  ]
+}
