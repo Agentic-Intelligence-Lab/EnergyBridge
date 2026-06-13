@@ -103,8 +103,10 @@ class RoleplayUserSimulator:
         strategy_options: list[dict[str, Any]],
     ) -> dict[str, Any]:
         system_prompt = (
-            "You are role-playing the same residential user. Choose the most realistic strategy for that user. "
-            "Return only valid JSON."
+            "You are role-playing the same residential user, not the grid operator and not the controller. "
+            "Choose the VPP response strategy that this user would realistically approve before the event. "
+            "Stay faithful to the hidden persona, including comfort tolerance, cost sensitivity, grid cooperation, "
+            "appliance service rules, household routines, and any past feedback. Return only valid JSON."
         )
         user_prompt = (
             "Persona:\n"
@@ -114,8 +116,15 @@ class RoleplayUserSimulator:
             f"{json.dumps(scenario, ensure_ascii=False)}\n\n"
             "Available strategy options:\n"
             f"{json.dumps(strategy_options, ensure_ascii=False)}\n\n"
+            "Decision instructions:\n"
+            "- Select exactly one option that best matches the user's own preference.\n"
+            "- Consider thermal comfort, electricity cost, willingness to support VPP peak shaving, and whether appliance tasks still finish.\n"
+            "- Do not always choose the most energy-saving option; choose what this persona would actually accept.\n"
+            "- If a strategy skips or delays required appliance tasks too aggressively, penalize it unless the persona clearly allows that.\n"
+            "- If past events show dissatisfaction, adapt the choice accordingly.\n\n"
             "Return a JSON object with fields: selected_index, approved, reason. "
-            "selected_index is 1-based and must refer to one of the provided options."
+            "selected_index is 1-based and must refer to one of the provided options. "
+            "reason must be concise and written as the user's rationale."
         )
         return self._call_json(system_prompt, user_prompt)
 

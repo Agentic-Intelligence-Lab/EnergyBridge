@@ -69,8 +69,9 @@ class BenchmarkResult:
     appliance_shift_success_rate: float = 0.0  # fraction of present shiftable tasks completed and shifted outside VPP
     task_completion_per_day: List[float] = field(default_factory=list)  # per-day shiftable completion [day1,day2,day3]
     task_shift_success_per_day: List[float] = field(default_factory=list)  # per-day shift success [day1,day2,day3]
-    vpp_demand_targets: List[float] = field(default_factory=list)       # per-event energy targets from VPP demand agent
-    vpp_demand_achievement_ratio: float = 0.0  # sum(actual_kwh) / sum(target_kwh) across all VPP events
+    vpp_demand_targets: List[float] = field(default_factory=list)       # per-event equivalent consumption caps
+    vpp_demand_targets_kw: List[float] = field(default_factory=list)    # per-event shed-capacity targets from quantification
+    vpp_demand_achievement_ratio: float = 0.0  # sum(actual_shed_kwh) / sum(target_shed_kwh)
     ev_target_reached_rate: float = 0.0         # fraction of days EV reached target SOC
     ewh_preheat_used_rate: float = 0.0          # fraction of days EWH preheat was active
     appliance_results: dict = field(default_factory=dict)  # per-device per-day details
@@ -121,7 +122,8 @@ class _FamilyLoop:
         self.vpp_capacity_by_id: Dict[str, dict] = {}      # household capacity assessment sent to VPP
         self.vpp_capacity_window_by_id: Dict[str, List[dict]] = {}  # per-timestep physical capacity
         self.total_quantification_by_id: Dict[str, dict] = {}  # reference A3 90% event capacity
-        self.current_vpp_demand_kwh: float = 0.0           # demand target for active VPP event
+        self.current_vpp_demand_kwh: float = 0.0           # equivalent consumption cap for active VPP event
+        self.current_vpp_demand_kw: float = 0.0            # shed-capacity target for active VPP event
         self.current_vpp_capacity: Dict[str, Any] = {}
         self.days_evaluated: set = set()                    # prevent double-printing daily eval
         self.vpp_trigger_actions: Dict[str, dict] = {}      # {event_id: appliance_actions at VPP trigger}
@@ -266,70 +268,47 @@ def _print_prev_day_completion(suite, day_idx: int, day_num: int) -> None:
         print(f"    (no controllable appliances in this household)")
 
 
-def _call_vpp_demand_agent(event_id: str, prev_vpp_kwh: list,
-                           capacity_assessment: dict | None = None) -> dict:
-    """Grid-side VPP demand agent — issues an energy consumption LIMIT for the
-    upcoming 1-hour VPP window based on historical household VPP energy data.
+def _call_vpp_demand_agent(event_id: str, total_quantification: dict | None = None) -> dict:
+    """Build the VPP demand target directly from reference capacity quantification.
 
-    Context is completely SEPARATE from the household agent (no shared history).
-    Returns: {"target_kwh": float, "reason": str, "source": "llm"|"rule"}
+    Returns: {"target_kwh": float, "reason": str, "source": str}
     """
-    import json as _j
+    tq = total_quantification or {}
+    if tq.get("status") == "computed":
+        duration_h = max(1e-6, float(tq.get("duration_hours", 1.0) or 1.0))
+        baseline_kwh = float(tq.get("avg_p_base_q50_kw", 0.0) or 0.0) * duration_h
+        target_kwh = float(tq.get("vpp_target_kwh", 0.0) or 0.0)
+        if target_kwh <= 0.0:
+            target_kwh = float(tq.get("avg_p_dr_hat_conservative_kw", 0.0) or 0.0) * duration_h
+        accepted_capacity_kw = float(
+            tq.get("vpp_target_capacity_120_kw", tq.get("avg_reported_capacity_90_kw", 0.0)) or 0.0
+        )
+        target_shed_kwh = float(tq.get("vpp_target_capacity_energy_kwh", 0.0) or 0.0)
+        return {
+            "target_kwh": round(max(0.1, target_kwh), 3),
+            "reason": "A3 capacity quantification target (1.2x)",
+            "source": "total_quantification_120",
+            "baseline_kwh": round(baseline_kwh, 3),
+            "accepted_capacity_kw": round(accepted_capacity_kw, 3),
+            "target_shed_kw": round(accepted_capacity_kw, 3),
+            "target_shed_kwh": round(target_shed_kwh, 3),
+            "reported_shed_90_energy_kwh": round(
+                float(tq.get("reported_shed_90_energy_kwh", 0.0) or 0.0), 3
+            ),
+            "target_capacity_energy_kwh": round(
+                float(tq.get("vpp_target_capacity_energy_kwh", 0.0) or 0.0), 3
+            ),
+        }
 
-    # ── Code-generated VPP energy log (no LLM) ───────────────────────
-    if prev_vpp_kwh:
-        log_lines = "\n".join(f"  Event {i+1}: {kwh:.3f} kWh"
-                               for i, kwh in enumerate(prev_vpp_kwh))
-        avg_kwh = sum(prev_vpp_kwh) / len(prev_vpp_kwh)
-        baseline_kwh = avg_kwh
-    else:
-        log_lines = "  (no previous VPP data — first event)"
-        baseline_kwh = 2.0  # fallback until this household has event history
-
-    assessment = (capacity_assessment or {}).get("assessment", {})
-    recommended_bid_kw = max(0.0, float(assessment.get("recommended_bid_kw", 0.0) or 0.0))
-    committable_kw = max(0.0, float(assessment.get("committable_kw", 0.0) or 0.0))
-    success_probability = float(assessment.get("success_probability", 0.0) or 0.0)
-    constraints = assessment.get("main_constraints", [])
-    rule_target = round(max(0.1, baseline_kwh - recommended_bid_kw), 3)
-    _sys = (
-        "You are a grid-side VPP (Virtual Power Plant) coordinator managing a "
-        "residential demand-response program. Your ONLY role: issue an energy "
-        "consumption LIMIT (kWh) for the upcoming 1-hour VPP demand-response "
-        "window for one household. This is NOT the household perspective. "
-        'Output JSON only: {"target_kwh": <float>, "reason": "<max 80 chars>"}'
-    )
-    _usr = (
-        f"Household VPP window consumption history (each entry = 1-hour window):\n"
-        f"{log_lines}\n\n"
-        f"Household physical capacity assessment:\n"
-        f"  committable={committable_kw:.3f} kW\n"
-        f"  recommended_bid={recommended_bid_kw:.3f} kW\n"
-        f"  success_probability={success_probability:.3f}\n"
-        f"  constraints={constraints}\n\n"
-        "Rules:\n"
-        f"  - Counterfactual baseline for this 1-hour window = {baseline_kwh:.3f} kWh\n"
-        "  - Respect the household recommended bid; do not request a larger reduction\n"
-        "  - target_kwh = baseline_kwh - accepted reduction kW * 1 hour\n"
-        "Set target_kwh for the NEXT 1-hour VPP window.\n"
-        'Respond with JSON only: {"target_kwh": <number>, "reason": "<brief>"}'
-    )
-    try:
-        from energybridge.llm.client import LLMClient
-        _r = LLMClient().chat_with_metrics(_sys, _usr, max_retries=2, retry_base_delay=1.0)
-        data = _j.loads(_r["text"].strip())
-        raw_target = float(data["target_kwh"])
-        minimum_target = max(0.1, baseline_kwh - recommended_bid_kw)
-        target = round(max(minimum_target, min(baseline_kwh, raw_target)), 3)
-        reason = str(data.get("reason", ""))[:80]
-        return {"target_kwh": target, "reason": reason, "source": "llm",
-                "baseline_kwh": round(baseline_kwh, 3),
-                "accepted_capacity_kw": round(max(0.0, baseline_kwh - target), 3)}
-    except Exception as _e:
-        return {"target_kwh": rule_target,
-                "reason": f"capacity-aware rule fallback: {str(_e)[:32]}",
-                "source": "rule", "baseline_kwh": round(baseline_kwh, 3),
-                "accepted_capacity_kw": round(max(0.0, baseline_kwh - rule_target), 3)}
+    return {
+        "target_kwh": 2.0,
+        "reason": "quantification unavailable fallback",
+        "source": "fallback",
+        "baseline_kwh": 2.0,
+        "accepted_capacity_kw": 0.0,
+        "target_shed_kw": 0.0,
+        "target_shed_kwh": 0.0,
+    }
 
 
 def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
@@ -407,6 +386,95 @@ def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
             print(f"    [Appliance] ev charge_window error: {e}")
 
 
+def _requested_skip_devices(actions: dict | None) -> List[str]:
+    """Return shiftable appliances explicitly marked to skip for the current day."""
+    requested = []
+    for name in ("washer", "dishwasher", "dryer"):
+        if bool((actions or {}).get(f"{name}_skip")):
+            requested.append(name)
+    return requested
+
+
+def _present_agent_controlled_appliances(appliance_config: dict | None) -> List[str]:
+    """Appliances the Agent must explicitly command on every decision call."""
+    cfg = appliance_config or {}
+    names = []
+    for name in ("washer", "dishwasher", "dryer", "water_heater", "ev"):
+        dev_cfg = cfg.get(name, {}) or {}
+        if bool(dev_cfg.get("present", False)):
+            names.append(name)
+    return names
+
+
+def _default_explicit_appliance_actions(appliance_config: dict | None) -> dict:
+    """Safe explicit appliance defaults used in prompts, fallback, and repair checks."""
+    actions: dict = {}
+    present = set(_present_agent_controlled_appliances(appliance_config))
+    for name in ("washer", "dishwasher", "dryer"):
+        if name in present:
+            actions[f"{name}_start_h"] = 14.0
+            actions[f"{name}_skip"] = False
+    if "water_heater" in present:
+        actions.update({
+            "water_heater_preheat_start_h": 14.0,
+            "water_heater_preheat_end_h": 18.0,
+            "water_heater_preheat_temp_c": 68.0,
+            "water_heater_preheat": True,
+        })
+    if "ev" in present:
+        actions.update({
+            "ev_mode": "smart",
+            "ev_charge_start_h": None,
+            "ev_charge_end_h": None,
+        })
+    return actions
+
+
+def _missing_explicit_appliance_actions(actions: dict | None, appliance_config: dict | None) -> List[str]:
+    """Return fields missing from an Agent response for present controllable appliances."""
+    actions = actions or {}
+    missing: List[str] = []
+    present = set(_present_agent_controlled_appliances(appliance_config))
+    for name in ("washer", "dishwasher", "dryer"):
+        if name in present:
+            start_key = f"{name}_start_h"
+            skip_key = f"{name}_skip"
+            if actions.get(skip_key) is True:
+                continue
+            if actions.get(start_key) is None:
+                missing.append(start_key)
+            if actions.get(skip_key) is None:
+                missing.append(skip_key)
+    if "water_heater" in present:
+        for key in (
+            "water_heater_preheat_start_h",
+            "water_heater_preheat_end_h",
+            "water_heater_preheat_temp_c",
+            "water_heater_preheat",
+        ):
+            if actions.get(key) is None:
+                missing.append(key)
+    if "ev" in present and actions.get("ev_mode") is None:
+        missing.append("ev_mode")
+    return missing
+
+
+def _explicit_appliance_requirement_text(appliance_config: dict | None) -> str:
+    """Human-readable prompt text listing the exact non-null fields required now."""
+    present = _present_agent_controlled_appliances(appliance_config)
+    if not present:
+        return "\n[Explicit appliance commands required now]: none; no controlled appliances are present."
+    defaults = _default_explicit_appliance_actions(appliance_config)
+    return (
+        "\n[Explicit appliance commands required now]\n"
+        "Every present controllable appliance must receive an explicit non-null command in every JSON response.\n"
+        "Do NOT leave present-device fields null to mean default/no-change. Use the safe explicit defaults below if unchanged:\n"
+        f"{json.dumps(defaults, ensure_ascii=False, sort_keys=True)}\n"
+        "For washer/dishwasher/dryer: provide start_h and skip=false, unless the task is truly unnecessary and skip=true.\n"
+        "For water_heater: provide preheat=true/false plus start/end/temp. For EV: provide ev_mode."
+    )
+
+
 def _service_completed(name: str, info: dict) -> bool:
     """Whether a controllable appliance met its user-facing service goal."""
     if name == "water_heater":
@@ -414,6 +482,24 @@ def _service_completed(name: str, info: dict) -> bool:
     if name == "ev":
         return bool(info.get("target_reached", False))
     return bool(info.get("completed", False)) and not bool(info.get("skipped", False))
+
+
+def _capacity_hvac_context(loop, *, temp: float, out_t: float, facility_w: float) -> dict:
+    """Build a lightweight HVAC proxy so capacity calls reflect AC flexibility."""
+    appliance_kw = 0.0
+    suite = getattr(loop, "appliance_suite", None)
+    if suite is not None:
+        appliance_kw = sum(float(v or 0.0) for v in getattr(suite, "_last_powers", {}).values())
+    facility_kw = max(0.0, float(facility_w or 0.0) / 1000.0)
+    hvac_kw = max(0.0, facility_kw - appliance_kw)
+    return {
+        "hvac_power_kw": hvac_kw,
+        "indoor_temp_c": float(temp),
+        "outdoor_temp_c": float(out_t),
+        "current_setpoint_c": float(getattr(loop, "sp", SP_DEFAULT)),
+        "max_setpoint_c": 27.5,
+        "min_active_power_kw": 0.15,
+    }
 
 
 def _build_decision_time_state(
@@ -645,9 +731,12 @@ IMPORTANT: control each appliance independently. Decisions persist until you cha
 WASHER / DISHWASHER / DRYER (run once per day)
   Default: run at 14:00 (well before VPP window). Shift earlier or later as needed.
   On VPP days: shift to BEFORE 17:00 so laundry finishes before peak demand.
+  Service rule: these tasks should normally still be completed the same day.
+  Skip is an exception only when the task is truly unnecessary that day. If you choose skip,
+  the system may ask you once to confirm; otherwise reschedule instead.
   Parameters:
     washer_start_h      : float  — hour-of-day to start (e.g. 10.0 = 10:00). Allowed window shown in status.
-    washer_skip         : bool   — true = do not run today (e.g. no laundry needed).
+    washer_skip         : bool   — true = do not run today only if the task is genuinely unnecessary.
     (same pattern for dishwasher_start_h, dishwasher_skip, dryer_start_h, dryer_skip)
 
 WATER HEATER (electric tank, thermal storage)
@@ -673,22 +762,24 @@ EV CHARGER (home charger, arrives 18:00, departs 07:30)
 Return JSON ONLY (no markdown, no explanation):
 {{"setpoint": X, "next_check_hour": Y_or_null, "reason": "≤100 chars",
  "appliances": {{
-   "washer_start_h": null_or_float,
-   "washer_skip": null_or_bool,
-   "dishwasher_start_h": null_or_float,
-   "dishwasher_skip": null_or_bool,
-   "dryer_start_h": null_or_float,
-   "dryer_skip": null_or_bool,
-   "water_heater_preheat_start_h": null_or_float,
-   "water_heater_preheat_end_h": null_or_float,
-   "water_heater_preheat_temp_c": null_or_float,
-   "water_heater_preheat": null_or_bool,
+   "washer_start_h": float_or_null_if_absent,
+   "washer_skip": bool_or_null_if_absent,
+   "dishwasher_start_h": float_or_null_if_absent,
+   "dishwasher_skip": bool_or_null_if_absent,
+   "dryer_start_h": float_or_null_if_absent,
+   "dryer_skip": bool_or_null_if_absent,
+   "water_heater_preheat_start_h": float_or_null_if_absent,
+   "water_heater_preheat_end_h": float_or_null_if_absent,
+   "water_heater_preheat_temp_c": float_or_null_if_absent,
+   "water_heater_preheat": bool_or_null_if_absent,
    "ev_mode": null_or_"smart"|"delay"|"normal",
    "ev_charge_start_h": null_or_float,
    "ev_charge_end_h": null_or_float
  }}
 }}
-null means no change / keep current. All times are hour-of-day (0–23.9)."""
+For every PRESENT appliance, appliance fields must be explicit and non-null as described in the runtime prompt.
+Use null only for appliances that are absent from the home, or for optional EV charge-window overrides.
+All times are hour-of-day (0–23.9)."""
 
     def _llm_trigger(temp, out_t, hod, sim_h, remaining_h, vpp_active=False, vpp_id="",
                      user_pref_input=""):
@@ -696,7 +787,14 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
         hh = int(hod % 24)
         if vpp_active:
             _dkwh = getattr(loop, "current_vpp_demand_kwh", None)
-            _dtag = f"  Grid target ≤{_dkwh:.2f}kWh this 1h window." if _dkwh else ""
+            _dkw = getattr(loop, "current_vpp_demand_kw", None)
+            if _dkw:
+                _dtag = (
+                    f"  Grid target: shed ≥{_dkw:.3f}kW for this 1h window"
+                    + (f" (equivalent consumption cap ≤{_dkwh:.2f}kWh)." if _dkwh else ".")
+                )
+            else:
+                _dtag = f"  Grid target ≤{_dkwh:.2f}kWh this 1h window." if _dkwh else ""
             _cap = getattr(loop, "current_vpp_capacity", {}).get("assessment", {})
             _ctag = (
                 f" Household capacity assessment: committable={float(_cap.get('committable_kw', 0.0)):.2f}kW,"
@@ -725,16 +823,21 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
             appl_tag = f"\nAppliances:\n{appl_lines}"
         else:
             appl_tag = ""
+        explicit_appliance_tag = _explicit_appliance_requirement_text(appliance_config)
         prompt = (f"sim_hour={sim_h:.1f}  clock={hh:02d}:00{vpp_tag}{post_vpp_tag}\n"
                   f"zone_temp={temp:.1f}C  outdoor={out_t:.1f}C\n"
                   f"remaining_sim_hours={remaining_h:.0f}\n"
-                  f"user_pref: {user_pref}{user_now_tag}{appl_tag}{mem_tag}")
+                  f"user_pref: {user_pref}{user_now_tag}{appl_tag}{explicit_appliance_tag}{mem_tag}")
         if vpp_active:
             fb_sp, fb_nch = 26.5, None
         else:
             fb_sp = min(26.0, max(SP_MIN, round(temp - 0.5, 1)))
             fb_nch = None
-        fallback = {"setpoint": fb_sp, "next_check_hour": fb_nch}
+        fallback = {
+            "setpoint": fb_sp,
+            "next_check_hour": fb_nch,
+            "appliance_actions": _default_explicit_appliance_actions(appliance_config),
+        }
         def _validate_json(text: str) -> str:
             """Strip markdown fences and verify valid JSON; raises on failure."""
             t = text.strip()
@@ -746,6 +849,22 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
             _j.loads(t)  # raises json.JSONDecodeError if not valid JSON
             return t
 
+        def _call_llm_json(prompt_text: str):
+            _llm_r = LLMClient().chat_with_metrics(
+                _LLM_SYS_FAM,
+                prompt_text,
+                max_retries=5,
+                retry_base_delay=2.0,
+                validate_fn=_validate_json,
+            )
+            _m = _llm_r.get("metrics", {})
+            _tu = _m.get("token_usage", {})
+            loop.llm_calls += 1
+            loop.llm_latency_s += _m.get("latency_seconds", 0.0)
+            loop.llm_tokens_prompt += _tu.get("prompt_tokens", 0)
+            loop.llm_tokens_comp += _tu.get("completion_tokens", 0)
+            return _j.loads(_llm_r["text"])
+
         try:
             from energybridge.llm.client import LLMClient
             if verbose:
@@ -753,16 +872,72 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                 for _line in prompt.splitlines():
                     print(f"  │ {_line}")
                 print(f"  └{'─'*56}")
-            _llm_r = LLMClient().chat_with_metrics(_LLM_SYS_FAM, prompt,
-                                    max_retries=5, retry_base_delay=2.0,
-                                    validate_fn=_validate_json)
-            resp = _llm_r["text"]
-            _m = _llm_r.get("metrics", {}); _tu = _m.get("token_usage", {})
-            loop.llm_calls += 1
-            loop.llm_latency_s += _m.get("latency_seconds", 0.0)
-            loop.llm_tokens_prompt += _tu.get("prompt_tokens", 0)
-            loop.llm_tokens_comp   += _tu.get("completion_tokens", 0)
-            data = _j.loads(resp)
+            data = _call_llm_json(prompt)
+            missing_explicit = _missing_explicit_appliance_actions(
+                data.get("appliances", {}), appliance_config
+            )
+            if missing_explicit:
+                repair_prompt = (
+                    f"{prompt}\n\n"
+                    "[Explicit appliance command repair required]\n"
+                    f"Your previous JSON omitted required present-appliance command fields: {', '.join(missing_explicit)}.\n"
+                    "Return the full JSON again. Keep the same AC setpoint if still appropriate, but every present appliance must have explicit non-null settings.\n"
+                    "Use the safe defaults from the prompt when you do not want to change an appliance.\n"
+                    "Return full JSON only."
+                )
+                print(
+                    "  [Service Rule] missing explicit appliance commands -> asking LLM to repair: "
+                    f"{', '.join(missing_explicit)}"
+                )
+                if verbose:
+                    print(f"  ┌─[EXPLICIT APPLIANCE REPAIR PROMPT]{'─'*25}")
+                    for _line in repair_prompt.splitlines():
+                        print(f"  │ {_line}")
+                    print(f"  └{'─'*56}")
+                data = _call_llm_json(repair_prompt)
+            initial_skip_devices = _requested_skip_devices(data.get("appliances", {}))
+            if initial_skip_devices:
+                confirm_prompt = (
+                    f"{prompt}\n\n"
+                    f"[Skip confirmation required]\n"
+                    f"You proposed skip for: {', '.join(initial_skip_devices)}.\n"
+                    f"Daily service tasks should normally still be completed the same day.\n"
+                    f"Please reconsider once.\n"
+                    f"If the task is still genuinely unnecessary today, you may keep skip, but state that clearly in reason.\n"
+                    f"Otherwise replace skip with a valid start time and set the skip field to false or null.\n"
+                    f"Return full JSON only."
+                )
+                print(
+                    "  [Service Rule] skip requested for "
+                    f"{', '.join(initial_skip_devices)} -> asking LLM to confirm once"
+                )
+                if verbose:
+                    print(f"  ┌─[SKIP CONFIRM PROMPT]{'─'*42}")
+                    for _line in confirm_prompt.splitlines():
+                        print(f"  │ {_line}")
+                    print(f"  └{'─'*56}")
+                data = _call_llm_json(confirm_prompt)
+                confirmed_skip_devices = _requested_skip_devices(data.get("appliances", {}))
+                if confirmed_skip_devices:
+                    print(
+                        "  [Service Rule] confirmed skip accepted for "
+                        f"{', '.join(confirmed_skip_devices)}"
+                    )
+                else:
+                    print("  [Service Rule] skip revised to schedule/action")
+            final_missing_explicit = _missing_explicit_appliance_actions(
+                data.get("appliances", {}), appliance_config
+            )
+            if final_missing_explicit:
+                print(
+                    "  [Service Rule] still missing explicit appliance commands; applying safe explicit defaults for: "
+                    f"{', '.join(final_missing_explicit)}"
+                )
+                repaired_actions = _default_explicit_appliance_actions(appliance_config)
+                for key, value in (data.get("appliances", {}) or {}).items():
+                    if value is not None:
+                        repaired_actions[key] = value
+                data["appliances"] = repaired_actions
             sp = round(max(SP_MIN, min(28.0, float(data.get("setpoint", fb_sp)))), 1)
             nch = data.get("next_check_hour")
             if nch is not None:
@@ -851,6 +1026,10 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
             mean_t = sum(wtemps)/max(1,len(wtemps)) if wtemps else loop_ref.temp_s/max(loop_ref.occ_h,1)
             pmv_ok = sum(wpmvs)/max(1,len(wpmvs)) if wpmvs else 0.5
             e_day  = (loop_ref.e_wh/1000) / max(1, sim_h/24)
+            appliance_summary = (
+                loop_ref.appliance_suite.vpp_day_summary(event_index - 1)
+                if loop_ref.appliance_suite is not None else {}
+            )
             r = score_user_preference(
                 building="family", method=method,
                 mean_temp_c=mean_t, pmv_ok_fraction=pmv_ok,
@@ -859,6 +1038,7 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                 user_preference_text=loop_ref.vpp_user_input,
                 agent_reason=loop_ref.vpp_last_reason,
                 persona=persona_config,
+                appliance_summary=appliance_summary,
                 human_mode=human_mode)
             if r.get("source") != "roleplay_llm":
                 raise RuntimeError(f"role-play LLM required, got {r.get('source')}")
@@ -938,12 +1118,19 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                                          for e in VPP_EVENTS if e["trigger_h"] < triggered_vpp["trigger_h"]]
                         print(f"  [VPP Energy Log] code-generated, no LLM: {[round(k,3) for k in _prev_vpp_kwh] or '(none)'}")
                         _capacity = {}
+                        _total_q90 = loop.total_quantification_by_id.get(
+                            vid,
+                            {"status": "not_computed", "reason": "Reference A3 quantification unavailable"},
+                        )
                         if loop.appliance_suite is not None:
                             try:
                                 from energybridge.quantification import assess_suite_vpp_request
                                 _capacity = assess_suite_vpp_request(
                                     loop.appliance_suite, sim_h,
                                     target_kw=2.0, duration_minutes=60.0,
+                                    hvac_context=_capacity_hvac_context(
+                                        loop, temp=temp, out_t=out_t, facility_w=fac
+                                    ),
                                 )
                             except Exception as _ce:
                                 print(f"  [Capacity Assessment] failed: {_ce}")
@@ -956,13 +1143,23 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                             f"bid={float(_assessment.get('recommended_bid_kw', 0.0)):.3f}kW "
                             f"success={float(_assessment.get('success_probability', 0.0)):.1%}"
                         )
-                        _vpp_demand = _call_vpp_demand_agent(vid, _prev_vpp_kwh, _capacity)
+                        _vpp_demand = _call_vpp_demand_agent(vid, _total_q90)
                         loop.vpp_demand_by_id[vid] = _vpp_demand
                         loop.current_vpp_demand_kwh = _vpp_demand["target_kwh"]
-                        print(f"  [VPP Grid Agent] {vid} demand_target={_vpp_demand['target_kwh']:.3f}kWh  [{_vpp_demand['reason']}]")
+                        loop.current_vpp_demand_kw = _vpp_demand.get("target_shed_kw", 0.0)
+                        print(
+                            f"  [VPP Grid Agent] {vid} "
+                            f"shed_target={loop.current_vpp_demand_kw:.3f}kW "
+                            f"(cap={_vpp_demand['target_kwh']:.3f}kWh)  "
+                            f"[{_vpp_demand['reason']}]"
+                        )
                         print(f"  {'='*62}")
                         print(f"  VPP Demand-Response Event {ev_idx_n}/3  (Day{day_num}  {ev_h_start:02d}:00-{ev_h_end:02d}:00)")
-                        print(f"    Goal : Reduce household electricity to ≤{_vpp_demand['target_kwh']:.2f} kWh for this 1-hour window")
+                        print(
+                            f"    Goal : Shed ≥{loop.current_vpp_demand_kw:.3f} kW "
+                            f"for this 1-hour window "
+                            f"(equivalent consumption cap ≤{_vpp_demand['target_kwh']:.2f} kWh)"
+                        )
                         print(f"    AC   : Raise setpoint {_ac_sp_vpp_min:.1f}-{_ac_sp_vpp_max:.1f}°C  (pre-cool before, drift during)")
                         print(f"    Other: Shift washer/EWH preheat/EV delay away from 18:00-19:00")
                         print(f"  {'='*62}")
@@ -1070,6 +1267,9 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                         _step_capacity = assess_suite_vpp_request(
                             loop.appliance_suite, sim_h,
                             target_kw=2.0, duration_minutes=60.0,
+                            hvac_context=_capacity_hvac_context(
+                                loop, temp=temp, out_t=out_t, facility_w=fac
+                            ),
                         )
                         _step_assessment = _step_capacity.get("assessment", {})
                         loop.vpp_capacity_window_by_id.setdefault(active_vpp["id"], []).append({
@@ -1088,9 +1288,18 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
                 if psim < ev["end_h"] <= sim_h and ev["id"] not in loop.vpp_scored:
                     ev_idx = next((i+1 for i,e in enumerate(VPP_EVENTS) if e["id"]==ev["id"]), 1)
                     result = _score_event(ev, loop, sim_h, event_index=ev_idx, human_mode=human_mode)
-                    # Attach actual energy and demand target to event log
+                    # Attach actual energy and demand targets to event log.
+                    _demand = loop.vpp_demand_by_id.get(ev["id"], {})
                     result["actual_kwh"] = round(loop.vpp_event_energy_wh.get(ev["id"], 0.0) / 1000.0, 4)
-                    result["demand_target_kwh"] = loop.vpp_demand_by_id.get(ev["id"], {}).get("target_kwh", None)
+                    result["demand_target_kwh"] = _demand.get("target_kwh", None)
+                    result["demand_baseline_kwh"] = _demand.get("baseline_kwh", None)
+                    result["demand_target_kw"] = _demand.get("target_shed_kw", None)
+                    result["demand_target_shed_kwh"] = _demand.get("target_shed_kwh", None)
+                    if result["demand_baseline_kwh"] is not None:
+                        result["actual_shed_kwh"] = round(
+                            max(0.0, float(result["demand_baseline_kwh"]) - result["actual_kwh"]),
+                            4,
+                        )
                     result["capacity_assessment"] = loop.vpp_capacity_by_id.get(ev["id"], {})
                     _cap_rows = loop.vpp_capacity_window_by_id.get(ev["id"], [])
                     if _cap_rows:
@@ -1196,13 +1405,24 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
         appl_vpp_avoid_rate = sum(avoid_fracs) / max(1, len(avoid_fracs))
         appl_task_complete_rate = sum(complete_fracs) / max(1, len(complete_fracs))
         appl_shift_success_rate = sum(shift_success_fracs) / max(1, len(shift_success_fracs))
-        # Per-event VPP demand targets from grid-side agent
+        # Per-event VPP demand targets from grid-side agent.
         _vpp_targets = [loop.vpp_demand_by_id.get(e["id"], {}).get("target_kwh", 0.0)
                         for e in VPP_EVENTS]
-        # VPP demand achievement ratio: actual / target (summed across all events)
-        _vpp_actual_total = sum(loop.vpp_event_energy_wh.get(e["id"], 0.0) / 1000.0 for e in VPP_EVENTS)
-        _vpp_target_total = sum(v for v in _vpp_targets if v > 0)
-        _vpp_achieve_ratio = round(_vpp_actual_total / _vpp_target_total, 4) if _vpp_target_total > 0 else 0.0
+        _vpp_targets_kw = [loop.vpp_demand_by_id.get(e["id"], {}).get("target_shed_kw", 0.0)
+                           for e in VPP_EVENTS]
+        _vpp_shed_targets = [loop.vpp_demand_by_id.get(e["id"], {}).get("target_shed_kwh", 0.0)
+                             for e in VPP_EVENTS]
+        _vpp_actual_shed_total = 0.0
+        for e in VPP_EVENTS:
+            _demand = loop.vpp_demand_by_id.get(e["id"], {})
+            _baseline = float(_demand.get("baseline_kwh", 0.0) or 0.0)
+            _actual = loop.vpp_event_energy_wh.get(e["id"], 0.0) / 1000.0
+            _vpp_actual_shed_total += max(0.0, _baseline - _actual)
+        _vpp_shed_target_total = sum(v for v in _vpp_shed_targets if v > 0)
+        _vpp_achieve_ratio = (
+            round(_vpp_actual_shed_total / _vpp_shed_target_total, 4)
+            if _vpp_shed_target_total > 0 else 0.0
+        )
         # Per-day completion list (for JSON export and final summary)
         _task_per_day = []
         _shift_success_per_day = []
@@ -1264,6 +1484,7 @@ null means no change / keep current. All times are hour-of-day (0–23.9)."""
         task_completion_per_day=_task_per_day if loop.appliance_suite is not None else [],
         task_shift_success_per_day=_shift_success_per_day if loop.appliance_suite is not None else [],
         vpp_demand_targets=_vpp_targets,
+        vpp_demand_targets_kw=_vpp_targets_kw,
         vpp_demand_achievement_ratio=_vpp_achieve_ratio,
         ev_target_reached_rate=round(ev_target_rate, 3),
         ewh_preheat_used_rate=round(ewh_preheat_rate, 3),

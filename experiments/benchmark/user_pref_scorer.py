@@ -115,7 +115,9 @@ def _rule_score(persona: dict, mean_temp_c: float, pmv_ok_fraction: float,
                 energy_kwh_per_day: float,
                 zone_group_temps: dict | None = None,
                 washer_completed: bool = True,
-                washer_during_vpp: bool = False) -> dict:
+                washer_during_vpp: bool = False,
+                skipped_task_count: int = 0,
+                skipped_devices: list[str] | None = None) -> dict:
     """Rule-based fallback scorer using persona weights."""
     weights = persona.get("scoring_weights", {"comfort": 0.5, "energy": 0.3, "vpp": 0.2})
     sp = persona.get("stable_preferences", {})
@@ -163,6 +165,18 @@ def _rule_score(persona: dict, mean_temp_c: float, pmv_ok_fraction: float,
         comfort_score = max(1, comfort_score - 1)
     if washer_during_vpp:
         vpp_score = max(1, vpp_score - 1)   # ran washer added peak load
+
+    if skipped_task_count > 0:
+        skipped_names = ", ".join(skipped_devices or [])
+        return {
+            "score": 1,
+            "comfort_score": max(1, comfort_score),
+            "energy_score": max(1, energy_score),
+            "vpp_score": 1,
+            "label": "very_dissatisfied",
+            "comment": f"rule_based: skipped required task(s): {skipped_names or skipped_task_count}",
+            "zone_comfort_scores": None,
+        }
 
     # weighted overall
     w_c = weights.get("comfort", 0.5)
@@ -305,7 +319,9 @@ def get_user_preference_input(
     print(f"  └{'─'*56}")
 
     # Step 3: Select strategy
-    selected = _auto_select_strategy(candidates, persona)
+    rule_selected = _auto_select_strategy(candidates, persona)
+    selected = rule_selected
+    roleplay_selection_meta = {}
 
     if human_mode:
         # --- Human-in-the-loop: prompt for selection ---
@@ -342,12 +358,34 @@ def get_user_preference_input(
             print(f"  [Strategy Selected  | event={event_index}] → [{selected['id']}] {selected['label']} (human→auto)")
 
     else:
-        print(f"  [Strategy Selected  | event={event_index}] → [{selected['id']}] {selected['label']} (auto)")
+        try:
+            selected, roleplay_reason, roleplay_selection_meta = _roleplay_select_strategy(
+                candidates,
+                persona,
+                building=building,
+                event_index=event_index,
+                vpp_context=vpp_context,
+                past_events=past_events,
+                appliance_presence=appliance_presence,
+            )
+            reason_suffix = f" | {roleplay_reason[:80]}" if roleplay_reason else ""
+            print(
+                f"  [Strategy Selected  | event={event_index}] → "
+                f"[{selected['id']}] {selected['label']} (auto roleplay_llm){reason_suffix}"
+            )
+        except Exception as exc:
+            selected = rule_selected
+            roleplay_selection_meta = {"source": "rule_fallback", "error": str(exc)[:120]}
+            print(
+                f"  [Strategy Selected  | event={event_index}] → "
+                f"[{selected['id']}] {selected['label']} (auto rule_fallback: {str(exc)[:60]})"
+            )
 
     pref = _compose_pref_with_appliances(selected, appliance_presence)
-    mode_tag = "human_auto" if human_mode else "auto"
+    mode_tag = "human_auto" if human_mode else roleplay_selection_meta.get("source", "auto")
     _log_and_return(log_path, persona, event_index, f"strategy_{mode_tag}",
                     pref, extra={"selected_id": selected["id"],
+                                 "selection_meta": roleplay_selection_meta,
                                  "candidates": [{k: c[k] for k in ("id","label","description")}
                                                 for c in candidates]})
     return pref
@@ -473,6 +511,76 @@ def _auto_select_strategy(candidates: list[dict], persona: dict) -> dict:
     return next((c for c in candidates if c["id"] == sel_id), candidates[1])
 
 
+def _roleplay_select_strategy(
+    candidates: list[dict],
+    persona: dict,
+    *,
+    building: str,
+    event_index: int,
+    vpp_context: dict,
+    past_events: list,
+    appliance_presence: dict,
+) -> tuple[dict, str, dict]:
+    """Ask the role-play user LLM to choose one candidate strategy."""
+    from energybridge.llm.roleplay_user import RoleplayUserSimulator
+
+    strategy_options = []
+    for idx, candidate in enumerate(candidates, start=1):
+        strategy_options.append({
+            "index": idx,
+            "id": candidate.get("id"),
+            "label": candidate.get("label"),
+            "description": candidate.get("description"),
+            "tradeoff": candidate.get("tradeoff"),
+            "user_pref": candidate.get("user_pref"),
+            "appliance_plan_cn": _strategy_appliance_plan_cn(
+                str(candidate.get("id", "")).upper(), appliance_presence
+            ),
+            "appliance_pref_en": _strategy_appliance_pref_en(
+                str(candidate.get("id", "")).upper(), appliance_presence
+            ),
+        })
+    scenario = {
+        "building": building,
+        "event_index": event_index,
+        "vpp_context": vpp_context,
+        "active_appliances": [k for k, v in appliance_presence.items() if v],
+        "past_events": [
+            {
+                "id": e.get("id"),
+                "score": e.get("score"),
+                "label": e.get("label"),
+                "comment": e.get("comment", ""),
+                "user_input": e.get("user_input", ""),
+            }
+            for e in (past_events or [])
+        ],
+        "instruction": (
+            "Choose the option this home user would approve before the VPP event. "
+            "The returned choice will be injected into the home agent prompt as the user's live preference."
+        ),
+    }
+    result = RoleplayUserSimulator().choose_strategy(
+        persona=persona,
+        turn_index=event_index,
+        scenario=scenario,
+        strategy_options=strategy_options,
+    )
+    data = result.get("data", {})
+    selected_index = int(data.get("selected_index", 0))
+    if not 1 <= selected_index <= len(candidates):
+        raise ValueError(f"invalid selected_index={selected_index}")
+    selected = candidates[selected_index - 1]
+    reason = str(data.get("reason", "")).strip()
+    return selected, reason, {
+        "selected_index": selected_index,
+        "approved": data.get("approved"),
+        "reason": reason,
+        "metrics": result.get("metrics", {}),
+        "source": "roleplay_llm",
+    }
+
+
 def _log_and_return(log_path, persona, event_index, source, text, extra: dict | None = None):
     if log_path:
         entry = {
@@ -502,6 +610,7 @@ def score_user_preference(
     persona: dict | None = None,
     washer_completed: bool = True,
     washer_during_vpp: bool = False,
+    appliance_summary: dict | None = None,
     log_path: Path | None = None,
     human_mode: bool = False,
 ):
@@ -550,6 +659,16 @@ def score_user_preference(
         "washer_completed": washer_completed,
         "washer_during_vpp": washer_during_vpp,
     }
+    appliance_summary = appliance_summary or {}
+    skipped_devices = [
+        name for name, info in appliance_summary.items()
+        if name in {"washer", "dishwasher", "dryer"} and bool(info.get("present")) and bool(info.get("skipped"))
+    ]
+    skipped_task_count = len(skipped_devices)
+    if skipped_devices:
+        home_state["skipped_devices"] = skipped_devices
+        home_state["service_rule_violated"] = True
+
     if method in ("agent", "agent_pmv", "rl", "mpc", "mpc_dynamic", "mpc_ep") and agent_setpoint_c:
         if method == "rl":
             controller = "RL baseline"
@@ -567,6 +686,12 @@ def score_user_preference(
             rationale += " | NOTE: washing machine task was NOT completed today."
         if washer_during_vpp:
             rationale += " | NOTE: washing machine ran DURING VPP window (added peak load)."
+        if skipped_devices:
+            rationale += (
+                " | CRITICAL SERVICE VIOLATION: agent skipped required appliance task(s): "
+                + ", ".join(skipped_devices)
+                + ". User should be very dissatisfied; this should score at the lowest level."
+            )
         control_plan = {
             "action": "set_hvac_temperature",
             "setpoint": agent_setpoint_c,
@@ -618,9 +743,23 @@ def score_user_preference(
             "zone_comfort_scores": fb.get("zone_comfort_scores"),
             "source": "roleplay_llm",
         }
+        if skipped_task_count > 0:
+            skipped_names = ", ".join(skipped_devices)
+            result.update({
+                "score": 1,
+                "comfort_score": min(result["comfort_score"], 2),
+                "energy_score": min(result["energy_score"], 2),
+                "vpp_score": 1,
+                "label": "very_dissatisfied",
+                "comment": (
+                    f"Required appliance task(s) were skipped ({skipped_names}); "
+                    "this violates the user's service rule."
+                ),
+            })
     except Exception as e:
         result = _rule_score(persona, mean_temp_c, pmv_ok_fraction, energy_kwh_per_day,
-                             zone_group_temps, washer_completed, washer_during_vpp)
+                             zone_group_temps, washer_completed, washer_during_vpp,
+                             skipped_task_count, skipped_devices)
         result["source"] = "rule_based_fallback"
 
     # Dialogue log
@@ -640,6 +779,7 @@ def score_user_preference(
             "comment": result.get("comment", ""),
             "washer_completed": washer_completed,
             "washer_during_vpp": washer_during_vpp,
+            "skipped_devices": skipped_devices,
             "source": result.get("source", "?"),
         })
 
