@@ -163,9 +163,27 @@ personas/
   basic_role_*.json          # 文档§6 复合原型（6个，供筛选）
   archetype_*.json           # 历史复合用户（8个）
   derived_*.json             # 历史衍生用户（5个）
+  calendars/<persona_id>/calendar_7day.json
 ```
 
 **总计：39 个 persona，全部通过 `validate_persona()` 校验。**
+
+### 5.1 Calendar 配套日程
+
+`calendars/<persona_id>/calendar_7day.json` 是 EnergyBridge 自研的 persona 离线
+合成周日程。它不依赖外部日历 API，而是为 benchmark 固定 7 天日程，使 role-play
+评估可复现。Day 1 固定为 Sunday，
+因此当前 3 天 benchmark 对应 Sunday、Monday、Tuesday；后续扩展到 7 天时可直接
+覆盖完整工作日/非工作日。
+
+Calendar 会自动注入到：
+- VPP 前的三种候选策略生成；
+- role-play LLM 对 A/B/C 策略的选择；
+- VPP 结束后的满意度评分。
+
+它提供的信息包括：当天事件、18:00-19:00 VPP 窗口冲突、回家时间、洗澡热水截止、
+EV 下一次出发时间、洗衣/洗碗等家务截止约束。这样用户模拟不再只依赖静态 persona，
+而会根据当天日程判断某个策略是否真实可接受。
 
 ---
 

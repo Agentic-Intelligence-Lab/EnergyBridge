@@ -57,6 +57,14 @@ thermostat on behalf of a persona-defined user.
 `energybridge/roleplay/personas/*.json` — 10 archetypes across 6 behavioral
 dimensions (comfort, cost, control, flexibility, trust, ecology).
 
+`energybridge/roleplay/personas/calendars/<persona_id>/calendar_7day.json`
+stores the paired 7-day synthetic calendar for each approved persona. Day 1 is
+Sunday, so the default 3-day benchmark evaluates Sunday, Monday, and Tuesday.
+These
+calendars are loaded automatically and injected into role-play strategy
+selection/scoring so simulated users consider appointments, return-home comfort,
+EV departure deadlines, hot-water deadlines, and chore constraints.
+
 See `energybridge/roleplay/personas/README.md` for schema and field definitions.
 
 ### Run a single persona
