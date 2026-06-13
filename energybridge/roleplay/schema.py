@@ -185,6 +185,7 @@ def to_legacy_dict(persona: dict) -> dict:
         },
         "persona_prompt":       prompts["agent_context"],
         "roleplay_user_prompt": prompts["system_prompt"],
+        "calendar": persona.get("calendar"),
     }
 
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json, warnings
 from pathlib import Path
+from energybridge.roleplay.calendar import attach_calendar
 from energybridge.roleplay.schema import validate_persona
 
 PERSONAS_DIR = Path(__file__).parent / "personas"
@@ -23,7 +24,7 @@ def load_persona(name_or_path: str | Path) -> dict:
     with path.open(encoding="utf-8") as fh:
         data = json.load(fh)
     validate_persona(data)
-    return data
+    return attach_calendar(data, PERSONAS_DIR)
 
 
 def load_personas(

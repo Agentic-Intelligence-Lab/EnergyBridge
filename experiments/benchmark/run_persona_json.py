@@ -41,6 +41,7 @@ if str(_BENCH_DIR) not in sys.path:
     sys.path.insert(0, str(_BENCH_DIR))
 
 import family_runner as fr
+from energybridge.roleplay.calendar import attach_calendar
 
 PERSONA_DIR = _PROJECT_ROOT / "energybridge" / "roleplay" / "personas"
 
@@ -49,11 +50,11 @@ def _load_persona_json(persona_arg: str) -> dict:
     """Accept a persona ID or a path to a JSON file."""
     p = Path(persona_arg)
     if p.exists() and p.suffix == ".json":
-        return json.loads(p.read_text(encoding="utf-8"))
+        return attach_calendar(json.loads(p.read_text(encoding="utf-8")), PERSONA_DIR)
     # Try by ID in the standard location
     candidate = PERSONA_DIR / f"{persona_arg}.json"
     if candidate.exists():
-        return json.loads(candidate.read_text(encoding="utf-8"))
+        return attach_calendar(json.loads(candidate.read_text(encoding="utf-8")), PERSONA_DIR)
     raise FileNotFoundError(
         f"Persona '{persona_arg}' not found. "
         f"Checked: {p}, {candidate}"

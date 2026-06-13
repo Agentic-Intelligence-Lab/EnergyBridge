@@ -18,6 +18,7 @@ L3 — past_events included so Day 3 agent sees Day 1+2 feedback.
 from __future__ import annotations
 import sys, json, random, datetime
 from pathlib import Path
+from energybridge.roleplay.calendar import calendar_brief_for_prompt, calendar_context_for_event
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -304,8 +305,10 @@ def get_user_preference_input(
         return override_msg
 
     # Step 1: Generate 3 candidate strategies
+    calendar_context = calendar_context_for_event(persona, event_index, vpp_context)
     candidates = generate_vpp_strategy_candidates(
-        building, event_index, vpp_context, past_events, persona
+        building, event_index, vpp_context, past_events, persona,
+        calendar_context=calendar_context,
     )
 
     # Step 2: Display all strategies
@@ -367,6 +370,7 @@ def get_user_preference_input(
                 vpp_context=vpp_context,
                 past_events=past_events,
                 appliance_presence=appliance_presence,
+                calendar_context=calendar_context,
             )
             reason_suffix = f" | {roleplay_reason[:80]}" if roleplay_reason else ""
             print(
@@ -386,6 +390,7 @@ def get_user_preference_input(
     _log_and_return(log_path, persona, event_index, f"strategy_{mode_tag}",
                     pref, extra={"selected_id": selected["id"],
                                  "selection_meta": roleplay_selection_meta,
+                                 "calendar_context": calendar_context,
                                  "candidates": [{k: c[k] for k in ("id","label","description")}
                                                 for c in candidates]})
     return pref
@@ -431,6 +436,7 @@ def generate_vpp_strategy_candidates(
     vpp_context: dict,
     past_events: list,
     persona: dict | None = None,
+    calendar_context: dict | None = None,
 ) -> list[dict]:
     """Generate 3 VPP response strategy candidates (A=comfort, B=balanced, C=savings).
 
@@ -457,12 +463,16 @@ def generate_vpp_strategy_candidates(
         _ap = _get_appliance_presence(vpp_context)
         _active_appliances = [k for k, v in _ap.items() if v]
         _active_appliances_text = ",".join(_active_appliances) if _active_appliances else "none"
+        _cal = calendar_context or calendar_context_for_event(persona, event_index, vpp_context)
+        _cal_brief = calendar_brief_for_prompt(_cal)
 
         sys_prompt = (
             "You are an energy management strategy advisor for a smart home VPP demand-response system. "
             "Generate 3 distinct response strategies for the upcoming peak-shaving event. "
             "Strategy A = comfort-first, B = balanced, C = energy-saving. "
             "Tailor them to the user persona and explicitly include appliance control. "
+            "Use the user's calendar as a hard preference context: do not propose schedules that would miss "
+            "appointments, return-home comfort needs, EV departure readiness, hot-water deadlines, or required chores. "
             "If appliances are available, mention how to handle washer, dishwasher, dryer, water heater, and EV in strategy text. "
             'Return ONLY a JSON array of exactly 3 objects, each with keys: '
             '"id" ("A"/"B"/"C"), '
@@ -475,6 +485,7 @@ def generate_vpp_strategy_candidates(
             f"Building={building}. VPP event #{event_index}. "
             f"Context: {json.dumps(vpp_context, ensure_ascii=False)}. "
             f"Active appliances: {_active_appliances_text}. "
+            f"{_cal_brief} "
             f"Persona: comfort_priority={sp.get('comfort_priority', 0.5)}, "
             f"preferred_range={sp.get('preferred_temp_min', 24)}-{sp.get('preferred_temp_max', 26)}°C. "
             f"Past events: {json.dumps(past_summary, ensure_ascii=False)}."
@@ -520,6 +531,7 @@ def _roleplay_select_strategy(
     vpp_context: dict,
     past_events: list,
     appliance_presence: dict,
+    calendar_context: dict | None = None,
 ) -> tuple[dict, str, dict]:
     """Ask the role-play user LLM to choose one candidate strategy."""
     from energybridge.llm.roleplay_user import RoleplayUserSimulator
@@ -544,6 +556,7 @@ def _roleplay_select_strategy(
         "building": building,
         "event_index": event_index,
         "vpp_context": vpp_context,
+        "calendar_context": calendar_context or calendar_context_for_event(persona, event_index, vpp_context),
         "active_appliances": [k for k, v in appliance_presence.items() if v],
         "past_events": [
             {
@@ -625,6 +638,12 @@ def score_user_preference(
         persona = OFFICE_PERSONA if building == "office" else FAMILY_PERSONA
     else:
         persona = normalize_persona(persona)
+    calendar_context = calendar_context_for_event(
+        persona,
+        event_index,
+        {"hour": 18.0, "duration_h": 1.0},
+    )
+    calendar_brief = calendar_brief_for_prompt(calendar_context)
 
     # Human-in-the-loop scoring: print event summary and ask for terminal input
     if human_mode:
@@ -632,6 +651,8 @@ def score_user_preference(
         print(f"  ╔═[VPP事件{event_index} 满意度评分]{'═'*36}")
         print(f"  ║  VPP期间室内均温: {mean_temp_c:.1f}°C   设定点: {sp_str}")
         print(f"  ║  今日用电: {energy_kwh_per_day:.2f} kWh   舒适达标率: {pmv_ok_fraction*100:.0f}%")
+        if calendar_context.get("available"):
+            print(f"  ║  日程约束: {calendar_context.get('summary', '')[:80]}")
         if agent_reason:
             print(f"  ║  Agent理由: {agent_reason[:100]}")
         print(f"  ╚{'═'*52}")
@@ -659,6 +680,7 @@ def score_user_preference(
         "energy_per_day_kwh": round(energy_kwh_per_day, 2),
         "washer_completed": washer_completed,
         "washer_during_vpp": washer_during_vpp,
+        "calendar_context": calendar_context,
     }
     appliance_summary = appliance_summary or {}
     skipped_devices = [
@@ -681,6 +703,8 @@ def score_user_preference(
             f"{controller} set cooling setpoint to {agent_setpoint_c}°C during VPP DR event. "
             f"Controller explanation: {agent_reason[:100]}"
         )
+        if calendar_context.get("available"):
+            rationale += f" | User calendar context: {calendar_brief[:240]}"
         if user_preference_text:
             rationale += f" | User had expressed: {user_preference_text[:80]}"
         if not washer_completed:
@@ -707,6 +731,8 @@ def score_user_preference(
                 f"pmv_comfort_ok={pmv_ok_fraction*100:.0f}%. No VPP adaptation."
             ),
         }
+        if calendar_context.get("available"):
+            control_plan["rationale"] += f" | User calendar context: {calendar_brief[:240]}"
 
     safety = {"status": "approved", "reason": "Within safe operation bounds."}
 
