@@ -67,6 +67,16 @@ def _persona_run_label(persona_id: str) -> str:
     return re.sub(r"[^a-zA-Z0-9]+", "_", persona_id).strip("_").lower()
 
 
+def _slug_label(value: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9]+", "_", value or "").strip("_").lower()
+
+
+def _run_prefix(persona_id: str, human_name: str = "") -> str:
+    if human_name:
+        return f"{_slug_label(human_name) or 'human'}_human"
+    return _persona_run_label(persona_id)
+
+
 def _method_run_token(method: str, mpc_horizon: int = 6) -> str:
     method = _canonical_method(method)
     if method in ("mpc_dynamic", "mpc_ep"):
@@ -80,9 +90,10 @@ def _default_output_dir(
     city: str,
     days: int = 3,
     mpc_horizon: int = 6,
+    human_name: str = "",
 ) -> Path:
     run_name = (
-        f"{_persona_run_label(persona_id)}_"
+        f"{_run_prefix(persona_id, human_name)}_"
         f"{_method_run_token(method, mpc_horizon)}_"
         f"{city.lower()}_{days}days"
     )
@@ -95,13 +106,16 @@ def _prepare_default_output_dir(
     city: str,
     days: int = 3,
     mpc_horizon: int = 6,
+    human_name: str = "",
 ) -> Path:
     """Return the default run directory, replacing only that exact run."""
     method = _canonical_method(method)
-    output_dir = _default_output_dir(persona_id, method, city, days=days, mpc_horizon=mpc_horizon)
+    output_dir = _default_output_dir(
+        persona_id, method, city, days=days, mpc_horizon=mpc_horizon, human_name=human_name
+    )
     expected_parent = DEFAULT_BENCHMARK_RESULTS_DIR / date.today().isoformat()
     expected_name = (
-        f"{_persona_run_label(persona_id)}_"
+        f"{_run_prefix(persona_id, human_name)}_"
         f"{_method_run_token(method, mpc_horizon)}_"
         f"{city.lower()}_{days}days"
     )
@@ -123,6 +137,7 @@ def _method_label(method: str) -> str:
     method = _canonical_method(method)
     labels = {
         "agent": "EnergyBridge Agent",
+        "human": "Human-in-loop Agent",
         "mpc_dynamic": "MPC-Dynamic baseline",
         "mpc_ep": "MPC-EnergyPlus baseline",
         "rl": "RL baseline",
@@ -154,7 +169,15 @@ def main() -> None:
     )
     parser.add_argument(
         "--human", action="store_true",
-        help="Human-in-the-loop: show 3 VPP strategies and wait for terminal selection.",
+        help="Deprecated alias for --user-mode human.",
+    )
+    parser.add_argument(
+        "--user-mode", choices=["roleplay", "human"], default="roleplay",
+        help="User type: roleplay LLM evaluator or real human input (default: roleplay).",
+    )
+    parser.add_argument(
+        "--human-name", default="",
+        help="Custom human user name used in default output directory prefix, e.g. alice_human_agent_tianjin_3days.",
     )
     parser.add_argument(
         "--method", choices=["agent", "mpc_dynamic", "mpc_ep", "mpc"], default="agent",
@@ -169,16 +192,24 @@ def main() -> None:
     persona = _load_persona_json(args.persona)
     pid     = persona["id"]
     method = _canonical_method(args.method)
+    human_mode = args.human or args.user_mode == "human"
+    controller_method = method
+    result_method = controller_method
+    human_name = args.human_name.strip() if human_mode else ""
     mpc_horizon = max(1, int(args.mpc_horizon))
     output_dir = (
         Path(args.output) if args.output
-        else _prepare_default_output_dir(pid, method, args.city, mpc_horizon=mpc_horizon)
+        else _prepare_default_output_dir(
+            pid, result_method, args.city, mpc_horizon=mpc_horizon, human_name=human_name
+        )
     )
 
     print("=" * 70)
     print(f"PERSONA : {pid}")
+    if human_mode:
+        print(f"USER    : {human_name or 'human'} (human)")
     print(f"CITY    : {args.city}")
-    print(f"METHOD  : {method}")
+    print(f"METHOD  : {result_method}")
     print(f"OUTPUT  : {output_dir}")
     print("=" * 70)
 
@@ -189,10 +220,12 @@ def main() -> None:
         output_dir       = output_dir,
         weather_label    = args.city.lower(),
         verbose          = args.verbose,
-        human_mode       = args.human,
-        method           = method,
+        human_mode       = human_mode,
+        method           = controller_method,
         mpc_horizon_steps= mpc_horizon,
     )
+    if human_mode:
+        result.user_label = f"{_slug_label(human_name) or 'human'}_human"
 
     print()
     print("=" * 70)
@@ -388,6 +421,7 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
         "  EnergyBridge 运行摘要  (run_summary.txt)",
         "=" * 62,
         f"  Persona    : {persona.get('id', '?')}",
+        f"  用户       : {d.get('user_label') or persona.get('id', '?')}",
         f"  名称       : {persona.get('name', '')}",
         f"  方法       : {_method_label(d.get('method', ''))}  ({d.get('method', 'unknown')})",
         f"  城市       : {city}",
