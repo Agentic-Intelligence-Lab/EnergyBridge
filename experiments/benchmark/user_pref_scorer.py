@@ -201,14 +201,35 @@ def _rule_score(persona: dict, mean_temp_c: float, pmv_ok_fraction: float,
 _APPLIANCE_KEYS = ("washer", "dishwasher", "dryer", "water_heater", "ev")
 
 
+def _fmt_hour_for_window(hour: float) -> str:
+    h = float(hour) % 24.0
+    hh = int(h)
+    mm = int(round((h - hh) * 60))
+    if mm >= 60:
+        hh = (hh + 1) % 24
+        mm = 0
+    return f"{hh:02d}:{mm:02d}"
+
+
+def _vpp_window_from_context(vpp_context: dict | None) -> tuple[float, float, str]:
+    ctx = vpp_context or {}
+    start = float(ctx.get("trigger_h", ctx.get("hour", 18.0))) % 24.0
+    if "end_h" in ctx:
+        end = float(ctx.get("end_h", start + float(ctx.get("duration_h", 1.0)))) % 24.0
+    else:
+        end = (start + float(ctx.get("duration_h", 1.0))) % 24.0
+    return start, end, f"{_fmt_hour_for_window(start)}-{_fmt_hour_for_window(end)}"
+
+
 def _get_appliance_presence(vpp_context: dict) -> dict:
     raw = (vpp_context or {}).get("appliances", {}) if isinstance(vpp_context, dict) else {}
     return {k: bool((raw.get(k, False) if isinstance(raw, dict) else False)) for k in _APPLIANCE_KEYS}
 
 
-def _strategy_appliance_plan_cn(strategy_id: str, presence: dict) -> str:
+def _strategy_appliance_plan_cn(strategy_id: str, presence: dict, vpp_context: dict | None = None) -> str:
     if not presence:
         return ""
+    start_h, _, window_text = _vpp_window_from_context(vpp_context)
     parts = []
     if presence.get("washer"):
         parts.append("洗衣机错峰")
@@ -217,9 +238,9 @@ def _strategy_appliance_plan_cn(strategy_id: str, presence: dict) -> str:
     if presence.get("dryer"):
         parts.append("烘干机错峰")
     if presence.get("water_heater"):
-        parts.append("热水器18:00前预热")
+        parts.append(f"热水器{_fmt_hour_for_window(start_h)}前预热")
     if presence.get("ev"):
-        parts.append("EV避开18:00-19:00")
+        parts.append(f"EV避开{window_text}")
     if not parts:
         return ""
 
@@ -232,20 +253,21 @@ def _strategy_appliance_plan_cn(strategy_id: str, presence: dict) -> str:
     return f"{head}：" + "，".join(parts)
 
 
-def _strategy_appliance_pref_en(strategy_id: str, presence: dict) -> str:
+def _strategy_appliance_pref_en(strategy_id: str, presence: dict, vpp_context: dict | None = None) -> str:
     if not presence:
         return ""
+    start_h, _, window_text = _vpp_window_from_context(vpp_context)
     actions = []
     if presence.get("washer"):
-        actions.append("shift washer away from 18:00-19:00")
+        actions.append(f"shift washer away from {window_text}")
     if presence.get("dishwasher"):
-        actions.append("shift dishwasher away from 18:00-19:00")
+        actions.append(f"shift dishwasher away from {window_text}")
     if presence.get("dryer"):
-        actions.append("shift dryer away from 18:00-19:00")
+        actions.append(f"shift dryer away from {window_text}")
     if presence.get("water_heater"):
-        actions.append("finish water-heater preheat before 18:00")
+        actions.append(f"finish water-heater preheat before {_fmt_hour_for_window(start_h)}")
     if presence.get("ev"):
-        actions.append("keep EV charging out of 18:00-19:00")
+        actions.append(f"keep EV charging out of {window_text}")
     if not actions:
         return ""
 
@@ -258,10 +280,10 @@ def _strategy_appliance_pref_en(strategy_id: str, presence: dict) -> str:
     return f"{prefix} " + ", ".join(actions) + "."
 
 
-def _compose_pref_with_appliances(selected: dict, presence: dict) -> str:
+def _compose_pref_with_appliances(selected: dict, presence: dict, vpp_context: dict | None = None) -> str:
     base = selected.get("user_pref", selected.get("description", "")).strip()
     sid = str(selected.get("id", "")).upper()
-    tail = _strategy_appliance_pref_en(sid, presence).strip()
+    tail = _strategy_appliance_pref_en(sid, presence, vpp_context).strip()
     if not tail:
         return base
     if not base:
@@ -297,10 +319,21 @@ def get_user_preference_input(
     # VPP override: comfort_sensitive persona may bypass strategy menu
     override_prob = persona.get("vpp_override_prob", 0.0)
     if override_prob > 0 and random.random() < override_prob:
-        override_msg = (
-            "I really don't want the temperature to go above 26°C during this VPP event. "
-            "My comfort is the top priority — please keep it below 26°C if at all possible."
-        )
+        tags = persona.get("tags", {}) or {}
+        ac_cfg = (persona.get("appliances", {}) or {}).get("ac", {}) or {}
+        pref_max = float(ac_cfg.get("setpoint_preferred_max_c", persona.get("preferred_temp_max", 26.0)))
+        _, _, window_text = _vpp_window_from_context(vpp_context)
+        if tags.get("control") == "confirm_required":
+            override_msg = (
+                "For this event, I confirm only a comfort-first or tiny adjustment plan: "
+                f"keep the AC at or below {pref_max:.1f}°C, avoid noticeable temperature drift, "
+                f"finish chores outside {window_text} if possible, and do not make any larger automatic changes."
+            )
+        else:
+            override_msg = (
+                "I really don't want the temperature to go above 26°C during this VPP event. "
+                "My comfort is the top priority — please keep it below 26°C if at all possible."
+            )
         _log_and_return(log_path, persona, event_index, "override_prefill", override_msg)
         return override_msg
 
@@ -316,7 +349,7 @@ def get_user_preference_input(
     print(f"  ┌─[Strategy Candidates | VPP event {event_index}]{'─'*30}")
     for c in candidates:
         print(f"  │  [{c['id']}] {c['label']}  —  {c['description']}  ({c['tradeoff']})")
-        plan_cn = _strategy_appliance_plan_cn(str(c.get('id', '')).upper(), appliance_presence)
+        plan_cn = _strategy_appliance_plan_cn(str(c.get('id', '')).upper(), appliance_presence, vpp_context)
         if plan_cn:
             print(f"  │      电器控制: {plan_cn}")
     print(f"  └{'─'*56}")
@@ -343,7 +376,7 @@ def get_user_preference_input(
             if override:
                 selected = override
                 print(f"  [Strategy Selected  | event={event_index}] → [{selected['id']}] {selected['label']} (human)")
-                pref = _compose_pref_with_appliances(selected, appliance_presence)
+                pref = _compose_pref_with_appliances(selected, appliance_presence, vpp_context)
                 _log_and_return(log_path, persona, event_index, "strategy_human",
                                 pref, extra={"selected_id": selected["id"], "human_input": raw_choice,
                                              "candidates": [{k: c[k] for k in ("id","label","description")}
@@ -385,7 +418,7 @@ def get_user_preference_input(
                 f"[{selected['id']}] {selected['label']} (auto rule_fallback: {str(exc)[:60]})"
             )
 
-    pref = _compose_pref_with_appliances(selected, appliance_presence)
+    pref = _compose_pref_with_appliances(selected, appliance_presence, vpp_context)
     mode_tag = "human_auto" if human_mode else roleplay_selection_meta.get("source", "auto")
     _log_and_return(log_path, persona, event_index, f"strategy_{mode_tag}",
                     pref, extra={"selected_id": selected["id"],
@@ -546,10 +579,10 @@ def _roleplay_select_strategy(
             "tradeoff": candidate.get("tradeoff"),
             "user_pref": candidate.get("user_pref"),
             "appliance_plan_cn": _strategy_appliance_plan_cn(
-                str(candidate.get("id", "")).upper(), appliance_presence
+                str(candidate.get("id", "")).upper(), appliance_presence, vpp_context
             ),
             "appliance_pref_en": _strategy_appliance_pref_en(
-                str(candidate.get("id", "")).upper(), appliance_presence
+                str(candidate.get("id", "")).upper(), appliance_presence, vpp_context
             ),
         })
     scenario = {
@@ -626,6 +659,7 @@ def score_user_preference(
     appliance_summary: dict | None = None,
     log_path: Path | None = None,
     human_mode: bool = False,
+    vpp_context: dict | None = None,
 ):
     """Score user satisfaction using roleplay LLM (fallback: rule-based).
 
@@ -641,7 +675,7 @@ def score_user_preference(
     calendar_context = calendar_context_for_event(
         persona,
         event_index,
-        {"hour": 18.0, "duration_h": 1.0},
+        vpp_context or {"hour": 18.0, "duration_h": 1.0},
     )
     calendar_brief = calendar_brief_for_prompt(calendar_context)
     tags = persona.get("tags", {}) or {}
@@ -724,7 +758,8 @@ def score_user_preference(
                 f"{controller} kept the cooling setpoint at {agent_setpoint_c}°C, within this "
                 f"protective user's preferred range ({pref_min:.1f}-{pref_max:.1f}°C). "
                 "Do not treat this status/setpoint log as an aggressive DR temperature raise; "
-                "score based on actual comfort, consent sensitivity, and preserved care routines. "
+                "score based on actual comfort, whether the event-specific user preference/confirmation was followed, "
+                "consent sensitivity, and preserved routines. "
                 f"Controller explanation: {agent_reason[:100]}"
             )
         else:
