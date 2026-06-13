@@ -235,6 +235,16 @@ def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
     """
     ta = trigger_actions or {}
 
+    def _first_day_action(key: str):
+        for decision in day_decisions or []:
+            raw = (decision or {}).get("raw_appliance_actions", {}) or {}
+            actions = (decision or {}).get("actions", {}) or {}
+            if key in raw and raw.get(key) is not None:
+                return raw.get(key)
+            if key in actions and actions.get(key) is not None:
+                return actions.get(key)
+        return None
+
     # ── AC ──
     # Gather all setpoints used across the day
     day_sps = [f"→{d['sp']:.1f}°C@{_fmt_h(d['h'])}" for d in day_decisions]
@@ -253,12 +263,18 @@ def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
         # day timeline, but should not overwrite the event strategy display.
         start_h = ta.get(start_k)
         skip    = ta.get(skip_k)
+        default_start_h = _first_day_action(start_k)
+        default_skip = _first_day_action(skip_k)
         if skip:
             lines.append(f"    ├ {label:<5}: 跳过 (agent指令skip)")
         elif start_h is not None:
             lines.append(f"    ├ {label:<5}: 排程@{_fmt_h(start_h)}")
+        elif default_skip:
+            lines.append(f"    ├ {label:<5}: 跳过（默认）")
+        elif default_start_h is not None:
+            lines.append(f"    ├ {label:<5}: 排程@{_fmt_h(default_start_h)}（默认）")
         else:
-            lines.append(f"    ├ {label:<5}: 未显式排程 (依赖自主调度)")
+            lines.append(f"    ├ {label:<5}: 保持原计划（默认）")
 
     # ── Water heater ──
     if not pd or "water_heater" in pd:
@@ -266,6 +282,10 @@ def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
         wh_start      = ta.get("water_heater_preheat_start_h")
         wh_end        = ta.get("water_heater_preheat_end_h")
         wh_temp       = ta.get("water_heater_preheat_temp_c")
+        default_wh_preheat = _first_day_action("water_heater_preheat")
+        default_wh_start = _first_day_action("water_heater_preheat_start_h")
+        default_wh_end = _first_day_action("water_heater_preheat_end_h")
+        default_wh_temp = _first_day_action("water_heater_preheat_temp_c")
         if wh_preheat is False:
             wh_str = "关闭预热"
         elif wh_start is not None and wh_end is not None:
@@ -273,8 +293,15 @@ def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
             wh_str = f"预热 {_fmt_h(wh_start)}-{_fmt_h(wh_end)}{temp_s}"
         elif wh_start is not None:
             wh_str = f"预热开始@{_fmt_h(wh_start)}"
+        elif default_wh_preheat is False:
+            wh_str = "关闭预热（默认）"
+        elif default_wh_start is not None and default_wh_end is not None:
+            temp_s = f" @ {default_wh_temp:.0f}°C" if default_wh_temp else ""
+            wh_str = f"预热 {_fmt_h(default_wh_start)}-{_fmt_h(default_wh_end)}{temp_s}（默认）"
+        elif default_wh_start is not None:
+            wh_str = f"预热开始@{_fmt_h(default_wh_start)}（默认）"
         else:
-            wh_str = "未显式控制 (默认预热窗口)"
+            wh_str = "保持预热策略（默认）"
         lines.append(f"    ├ 热水器  : {wh_str}")
 
     # ── EV ──
@@ -282,6 +309,9 @@ def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
         ev_mode  = ta.get("ev_mode")
         ev_start = ta.get("ev_charge_start_h")
         ev_end   = ta.get("ev_charge_end_h")
+        default_ev_mode = _first_day_action("ev_mode")
+        default_ev_start = _first_day_action("ev_charge_start_h")
+        default_ev_end = _first_day_action("ev_charge_end_h")
         if ev_mode == "delay":
             ev_str = f"delay模式 (22:00后充电)"
         elif ev_mode == "smart":
@@ -292,8 +322,18 @@ def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
             ev_str = f"充电窗口 {_fmt_h(ev_start)}-{_fmt_h(ev_end)}"
         elif ev_start is not None:
             ev_str = f"充电开始@{_fmt_h(ev_start)}"
+        elif default_ev_mode == "delay":
+            ev_str = "delay模式（默认）"
+        elif default_ev_mode == "smart":
+            ev_str = "smart模式（默认）"
+        elif default_ev_mode == "normal":
+            ev_str = "normal模式（默认）"
+        elif default_ev_start is not None and default_ev_end is not None:
+            ev_str = f"充电窗口 {_fmt_h(default_ev_start)}-{_fmt_h(default_ev_end)}（默认）"
+        elif default_ev_start is not None:
+            ev_str = f"充电开始@{_fmt_h(default_ev_start)}（默认）"
         else:
-            ev_str = "未显式控制 (默认smart)"
+            ev_str = "smart模式（默认）"
         lines.append(f"    └ EV      : {ev_str}")
 
     # Fix tree connector: last line should use └ instead of ├
@@ -305,8 +345,19 @@ def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
 
 
 def _vpp_ratio_str(result) -> str:
-    """Compute aggregate VPP demand achievement: sum(actual_kwh)/sum(target_kwh)."""
+    """Compute aggregate VPP demand achievement."""
     events = result.vpp_event_log
+    shed_targets = [e.get("demand_target_shed_kwh", 0.0) for e in events if e.get("demand_target_shed_kwh")]
+    actual_sheds = [e.get("actual_shed_kwh", 0.0) for e in events if e.get("demand_target_shed_kwh")]
+    if shed_targets and sum(shed_targets) > 0:
+        total_a = sum(actual_sheds)
+        total_t = sum(shed_targets)
+        ratio = total_a / total_t
+        per_ev = "  ".join(
+            f"VPP{i+1}:{a:.3f}/{t:.3f}" for i, (a, t) in enumerate(zip(actual_sheds, shed_targets))
+        )
+        ok = "✓达标" if ratio >= 1.0 else "✗未达标"
+        return f"削减{total_a:.3f}/{total_t:.3f}kWh = {ratio:.2f} {ok}  [{per_ev}]"
     actuals = [e.get("actual_kwh", 0.0) for e in events if e.get("demand_target_kwh")]
     targets = [e.get("demand_target_kwh", 0.0) for e in events if e.get("demand_target_kwh")]
     if not targets or sum(targets) == 0:
@@ -371,10 +422,25 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
         e = evt_by_id.get(vid, {})
         score_str = f"{e['score']}/5 ({e.get('label','?')})" if e.get("score") is not None else "未评分"
         sp_str = f"{e['setpoint']:.1f}°C" if e.get("setpoint") else "N/A"
-        # VPP demand: actual vs target (from grid-side demand agent)
+        # VPP demand: shed target from capacity quantification, plus the
+        # equivalent consumption cap used by controller objectives.
+        demand_kw = e.get("demand_target_kw")
+        demand_shed_kwh = e.get("demand_target_shed_kwh")
+        actual_shed = e.get("actual_shed_kwh")
         demand_t = e.get("demand_target_kwh")
         actual_k = e.get("actual_kwh")
-        if demand_t and actual_k is not None:
+        if demand_kw and demand_shed_kwh and actual_shed is not None:
+            ratio = actual_shed / demand_shed_kwh if demand_shed_kwh > 0 else 0
+            ok = "✓达标" if ratio >= 1.0 else "✗未达标"
+            cap_part = (
+                f"  等价用电上限≤{demand_t:.2f}kWh  实际用电{actual_k:.3f}kWh"
+                if demand_t and actual_k is not None else ""
+            )
+            demand_str = (
+                f"目标削减≥{demand_kw:.3f}kW (1h={demand_shed_kwh:.3f}kWh)  "
+                f"实际削减{actual_shed:.3f}kWh  比率{ratio:.2f} {ok}{cap_part}"
+            )
+        elif demand_t and actual_k is not None:
             ratio = actual_k / demand_t if demand_t > 0 else 0
             ok = "✓达标" if ratio <= 1.0 else "✗超标"
             demand_str = f"目标≤{demand_t:.2f}kWh  实际{actual_k:.3f}kWh  比率{ratio:.2f} {ok}"
@@ -426,9 +492,11 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
             total_q90_str = (
                 f"avg_expected_shed_kw={total_q90.get('avg_expected_shed_kw', 0):.3f}kW  "
                 f"avg_reported_capacity_90_kw={total_q90.get('avg_reported_capacity_90_kw', 0):.3f}kW  "
+                f"vpp_target_capacity_120_kw={total_q90.get('vpp_target_capacity_120_kw', 0):.3f}kW  "
                 f"firm_min_capacity_90_kw={total_q90.get('firm_min_capacity_90_kw', 0):.3f}kW  "
                 f"expected_shed_energy_kwh={total_q90.get('expected_shed_energy_kwh', 0):.3f}kWh  "
-                f"reported_shed_90_energy_kwh={total_q90.get('reported_shed_90_energy_kwh', 0):.3f}kWh"
+                f"reported_shed_90_energy_kwh={total_q90.get('reported_shed_90_energy_kwh', 0):.3f}kWh  "
+                f"vpp_target_kwh={total_q90.get('vpp_target_kwh', 0):.3f}kWh"
             )
         else:
             total_q90_str = (
