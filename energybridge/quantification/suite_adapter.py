@@ -100,14 +100,32 @@ def assess_suite_vpp_request(
     target_kw: float,
     duration_minutes: float = 60.0,
     household_prior: dict | None = None,
+    hvac_context: dict | None = None,
 ) -> dict:
     """Return a VPP-ready capacity assessment for the current household state."""
     observation, config = suite_capacity_inputs(suite, sim_h)
+    if hvac_context:
+        hvac_power_kw = max(0.0, float(hvac_context.get("hvac_power_kw", 0.0) or 0.0))
+        observation.update({
+            "hvac_power_kw": hvac_power_kw,
+            "hvac_indoor_temp_c": float(hvac_context.get("indoor_temp_c", 26.0) or 26.0),
+            "hvac_outdoor_temp_c": float(hvac_context.get("outdoor_temp_c", 30.0) or 30.0),
+            "hvac_setpoint_c": float(hvac_context.get("current_setpoint_c", 26.0) or 26.0),
+        })
+        config.setdefault("devices", {})["hvac"] = {
+            "enabled": hvac_power_kw > 0.0,
+            "type": "hvac_cooling",
+            "current_power_kw": hvac_power_kw,
+            "max_setpoint_c": float(hvac_context.get("max_setpoint_c", 27.5) or 27.5),
+            "min_active_power_kw": float(hvac_context.get("min_active_power_kw", 0.15) or 0.15),
+        }
     result = assess_vpp_request(
         observation=observation,
         device_config=config,
         request={"direction": "down", "target_kw": target_kw, "duration_minutes": duration_minutes},
         household_prior=household_prior,
     )
-    result["potential"]["adapter_basis"] = "current_appliance_suite_state"
+    result["potential"]["adapter_basis"] = (
+        "current_appliance_suite_state_plus_hvac_proxy" if hvac_context else "current_appliance_suite_state"
+    )
     return result

@@ -50,6 +50,8 @@ def estimate_dr_potential(
             result = _estimate_ev(name, cfg, observation, baseline_power, now, dt_hours, horizon_steps)
         elif device_type == "electric_water_heater":
             result = _estimate_water_heater(name, cfg, observation, baseline_power, dt_hours, horizon_steps)
+        elif device_type in {"hvac_cooling", "cooling_hvac"}:
+            result = _estimate_hvac_cooling(name, cfg, observation, baseline_power, dt_hours, horizon_steps)
         elif device_type == "task_appliance":
             result = _estimate_task(name, cfg, observation, baseline_power, now, dt_hours, horizon_steps)
         else:
@@ -245,6 +247,74 @@ def _estimate_water_heater(
         "setpoint_c": round(setpoint_c, 6),
         "thermal_slack_kwh": round(thermal_slack_kwh, 6),
         "heat_needed_kwh": round(heat_needed_kwh, 6),
+    }
+    return result
+
+
+def _estimate_hvac_cooling(
+    name: str,
+    cfg: Mapping[str, Any],
+    observation: Mapping[str, Any],
+    baseline_power: Mapping[str, float],
+    dt_hours: float,
+    horizon_steps: int,
+) -> Dict[str, Any]:
+    current_kw = _obs_float(observation, f"{name}_power_kw", _cfg_float(cfg, "current_power_kw", 0.0))
+    indoor_temp_c = _obs_float(
+        observation, f"{name}_indoor_temp_c", _cfg_float(cfg, "indoor_temperature_c", 26.0)
+    )
+    outdoor_temp_c = _obs_float(
+        observation, f"{name}_outdoor_temp_c", _cfg_float(cfg, "outdoor_temperature_c", 30.0)
+    )
+    current_setpoint_c = _obs_float(
+        observation, f"{name}_setpoint_c", _cfg_float(cfg, "current_setpoint_c", 26.0)
+    )
+    max_setpoint_c = _cfg_float(cfg, "max_setpoint_c", 27.5)
+    min_active_kw = max(EPS, _cfg_float(cfg, "min_active_power_kw", 0.15))
+
+    constraints = []
+    slack_c = max(0.0, max_setpoint_c - indoor_temp_c)
+    setpoint_headroom_c = max(0.0, max_setpoint_c - current_setpoint_c)
+    if current_kw <= min_active_kw:
+        constraints.append("hvac_idle")
+    if slack_c <= 0.1:
+        constraints.append("comfort_limit_reached")
+    if setpoint_headroom_c <= 0.1:
+        constraints.append("setpoint_ceiling_reached")
+
+    shed_kw = 0.0
+    shiftable_kwh = 0.0
+    if not constraints:
+        temp_factor = min(1.0, slack_c / 1.5)
+        setpoint_factor = min(1.0, setpoint_headroom_c / 1.5)
+        shed_fraction = min(0.9, 0.2 + 0.4 * temp_factor + 0.2 * setpoint_factor)
+        shed_kw = current_kw * max(0.0, shed_fraction)
+        shiftable_kwh = shed_kw * max(dt_hours, horizon_steps * dt_hours)
+
+    baseline_limited_shed_kw = min(shed_kw, _baseline_shed(name, baseline_power, current_kw))
+    outdoor_penalty = min(0.25, max(0.0, (outdoor_temp_c - indoor_temp_c) / 20.0))
+    reliability = 0.88 - outdoor_penalty
+    if "hvac_idle" in constraints:
+        reliability -= 0.35
+    if "comfort_limit_reached" in constraints or "setpoint_ceiling_reached" in constraints:
+        reliability -= 0.2
+
+    result = _device_result(
+        shed_kw=shed_kw,
+        add_kw=0.0,
+        shiftable_energy_kwh=shiftable_kwh,
+        rebound_risk_kw=shed_kw,
+        constraints=constraints,
+        reliability=reliability,
+        baseline_limited_shed_kw=baseline_limited_shed_kw,
+    )
+    result["state"] = {
+        "indoor_temp_c": round(indoor_temp_c, 6),
+        "outdoor_temp_c": round(outdoor_temp_c, 6),
+        "setpoint_c": round(current_setpoint_c, 6),
+        "max_setpoint_c": round(max_setpoint_c, 6),
+        "slack_c": round(slack_c, 6),
+        "setpoint_headroom_c": round(setpoint_headroom_c, 6),
     }
     return result
 

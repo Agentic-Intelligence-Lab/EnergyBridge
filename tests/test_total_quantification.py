@@ -10,3 +10,5 @@ def test_reference_a3_total_quantification_matches_reference_one_hour_event():
     assert result["firm_min_capacity_90_kw"] == 0.0
     assert result["expected_shed_energy_kwh"] == 6.509693
     assert result["reported_shed_90_energy_kwh"] == 2.307392
+    assert result["vpp_target_capacity_120_kw"] == 3.076523
+    assert result["vpp_target_kwh"] == 5.776256

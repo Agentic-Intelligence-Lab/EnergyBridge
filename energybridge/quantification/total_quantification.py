@@ -17,6 +17,8 @@ DEFAULT_PREDICTIONS = (
 DEFAULT_STRATEGY = REFERENCE_ROOT / "Total_Quantification/configs/example_evening_shed_strategy.json"
 DT_HOURS = 10.0 / 60.0
 BASELINE_UNCERTAINTY_SHARE = 1.0
+REFERENCE_CAPACITY_MULTIPLIER = 0.9
+VPP_TARGET_CAPACITY_MULTIPLIER = 1.2
 
 DEVICE_POWER_KEYS = {
     "ev": "baseline_ev_power_expected_kw",
@@ -103,20 +105,33 @@ def _quantify_row(row: Mapping[str, Any], actions: Sequence[Mapping[str, Any]]) 
 def _summarize_event(rows: Sequence[Mapping[str, float]], start: datetime, end: datetime) -> dict[str, Any]:
     if not rows:
         return {"status": "not_computed", "reason": "No A3 prediction rows matched the event window"}
+    duration_hours = round(len(rows) * DT_HOURS, 6)
+    avg_base_q50_kw = round(mean(row["p_base_q50_kw"] for row in rows), 6)
+    avg_reported_capacity_90_kw = round(mean(row["reported_shed_90_kw"] for row in rows), 6)
+    vpp_target_capacity_kw = round(
+        avg_reported_capacity_90_kw
+        * VPP_TARGET_CAPACITY_MULTIPLIER
+        / REFERENCE_CAPACITY_MULTIPLIER,
+        6,
+    )
+    vpp_target_kwh = round(
+        max(0.1, avg_base_q50_kw * duration_hours - vpp_target_capacity_kw * duration_hours),
+        6,
+    )
     summary = {
         "status": "computed",
         "method": "reference_A3_conformal_action_conditioned_90",
         "source_start": start.isoformat(sep=" "),
         "source_end": end.isoformat(sep=" "),
         "rows": len(rows),
-        "duration_hours": round(len(rows) * DT_HOURS, 6),
+        "duration_hours": duration_hours,
         "avg_p_base_q05_kw": round(mean(row["p_base_q05_kw"] for row in rows), 6),
-        "avg_p_base_q50_kw": round(mean(row["p_base_q50_kw"] for row in rows), 6),
+        "avg_p_base_q50_kw": avg_base_q50_kw,
         "avg_p_base_q95_kw": round(mean(row["p_base_q95_kw"] for row in rows), 6),
         "avg_expected_shed_kw": round(mean(row["expected_shed_kw"] for row in rows), 6),
         "avg_discounted_shed_before_pbase_margin_kw": round(
             mean(row["discounted_shed_before_pbase_margin_kw"] for row in rows), 6),
-        "avg_reported_capacity_90_kw": round(mean(row["reported_shed_90_kw"] for row in rows), 6),
+        "avg_reported_capacity_90_kw": avg_reported_capacity_90_kw,
         "firm_min_capacity_90_kw": round(min(row["reported_shed_90_kw"] for row in rows), 6),
         "peak_reported_capacity_90_kw": round(max(row["reported_shed_90_kw"] for row in rows), 6),
         "expected_shed_energy_kwh": round(sum(row["expected_shed_kwh_step"] for row in rows), 6),
@@ -124,6 +139,12 @@ def _summarize_event(rows: Sequence[Mapping[str, float]], start: datetime, end: 
         "avg_p_dr_hat_q50_kw": round(mean(row["p_dr_hat_q50_kw"] for row in rows), 6),
         "avg_p_dr_hat_conservative_kw": round(
             mean(row["p_dr_hat_conservative_kw"] for row in rows), 6),
+        "vpp_target_capacity_120_kw": vpp_target_capacity_kw,
+        "vpp_target_capacity_multiplier": VPP_TARGET_CAPACITY_MULTIPLIER,
+        "vpp_target_reference_multiplier": REFERENCE_CAPACITY_MULTIPLIER,
+        "vpp_target_capacity_energy_kwh": round(vpp_target_capacity_kw * duration_hours, 6),
+        "vpp_target_kwh": vpp_target_kwh,
+        "vpp_target_source": "avg_reported_capacity_90_kw * (1.2 / 0.9)",
     }
     for device in DEVICE_POWER_KEYS:
         expected_key = f"{device}_expected_shed_kw"
