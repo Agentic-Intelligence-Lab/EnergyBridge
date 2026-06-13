@@ -204,16 +204,24 @@ def _list_personas() -> list[dict]:
     return personas
 
 
-def _read_meter_vpp_energy(run_path: Path) -> dict[str, float]:
+def _read_meter_vpp_energy(run_path: Path, events_source: list[dict] | None = None) -> dict[str, float]:
     """Read VPP-window Electricity:Facility kWh from EnergyPlus timestep meters."""
     mtr_path = run_path / "eplusout.mtr"
     if not mtr_path.exists():
         return {}
-    events = {
-        "vpp1": (18.0, 19.0),
-        "vpp2": (42.0, 43.0),
-        "vpp3": (66.0, 67.0),
-    }
+    events = {}
+    for idx, event in enumerate(events_source or [], start=1):
+        try:
+            event_id = str(event.get("id") or f"vpp{idx}")
+            events[event_id] = (float(event["trigger_h"]), float(event["end_h"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not events:
+        events = {
+            "vpp1": (18.0, 19.0),
+            "vpp2": (42.0, 43.0),
+            "vpp3": (66.0, 67.0),
+        }
     values = {key: 0.0 for key in events}
     in_data = False
     current_window = None
@@ -257,7 +265,7 @@ def _read_meter_vpp_energy(run_path: Path) -> dict[str, float]:
 
 
 def _apply_meter_vpp_energy(data: dict, run_path: Path) -> None:
-    meter_values = _read_meter_vpp_energy(run_path)
+    meter_values = _read_meter_vpp_energy(run_path, data.get("vpp_event_log", []))
     if not meter_values:
         return
     total = 0.0
@@ -622,9 +630,23 @@ INDEX_HTML = r"""<!doctype html>
       render();
     }
 
+    function clockHour(value) {
+      const raw = Number(value || 0);
+      let hour = ((raw % 24) + 24) % 24;
+      let hh = Math.floor(hour);
+      let mm = Math.round((hour - hh) * 60);
+      if (mm >= 60) {
+        hh = (hh + 1) % 24;
+        mm = 0;
+      }
+      return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+    }
+
     function eventTitle(ev, index) {
       const day = index + 1;
-      return `${ev.id || `vpp${day}`} · Day ${day} 18:00-19:00`;
+      const start = ev.trigger_h !== undefined ? ev.trigger_h : 18 + index * 24;
+      const end = ev.end_h !== undefined ? ev.end_h : 19 + index * 24;
+      return `${ev.id || `vpp${day}`} · Day ${ev.day || day} ${clockHour(start)}-${clockHour(end)}`;
     }
 
     function actionsLine(actions) {
