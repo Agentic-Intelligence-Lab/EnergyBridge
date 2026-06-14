@@ -108,6 +108,53 @@ def _calendar_return_home_sensitive(persona_config: dict | None, event: dict | N
     return (start_h - margin_h) <= arrival_h <= (end_h + margin_h)
 
 
+def _calendar_home_occupied_during_event(persona_config: dict | None, event: dict | None) -> bool:
+    """True when the calendar has a home activity overlapping the VPP window."""
+    if not persona_config or not event:
+        return False
+    calendar = persona_config.get("calendar") or {}
+    days = calendar.get("days") or []
+    if not days:
+        return False
+    try:
+        event_day = int(event.get("day", 1) or 1)
+    except (TypeError, ValueError):
+        event_day = 1
+    day = next((item for item in days if int(item.get("day", -1)) == event_day), None)
+    if day is None:
+        weekly_day = ((event_day - 1) % len(days)) + 1
+        day = next((item for item in days if int(item.get("day", -1)) == weekly_day), None)
+    if day is None:
+        return False
+    start_h = _event_start_hod(event)
+    end_h = _event_end_hod(event)
+    for item in day.get("events") or []:
+        if str(item.get("location", "")).lower() != "home":
+            continue
+        try:
+            item_start = float(item.get("start_h"))
+            item_end = float(item.get("end_h"))
+        except (TypeError, ValueError):
+            continue
+        if item_start < end_h and item_end > start_h:
+            return True
+    return False
+
+
+def _calendar_occupied_or_return_home_sensitive(persona_config: dict | None, event: dict | None) -> bool:
+    """True when VPP thermal actions are likely visible to the user."""
+    return _calendar_home_occupied_during_event(persona_config, event) or _calendar_return_home_sensitive(persona_config, event)
+
+
+def _low_vpp_target_kw(demand_kw: float | None, *, threshold_kw: float = 0.75) -> bool:
+    """True when the VPP target is small enough that comfort should dominate."""
+    try:
+        target_kw = float(demand_kw)
+    except (TypeError, ValueError):
+        return False
+    return target_kw <= threshold_kw
+
+
 def _find_active_or_upcoming_vpp_event(
     sim_h: float,
     *,
@@ -665,6 +712,12 @@ def _benefit_explanation_prompt_text(
     if not event or not _price_sensitive_explanation_mode(persona_config):
         return ""
     estimate_kw = _controllable_vpp_load_estimate_kw(appliance_config)
+    if demand_kw is not None and 0.0 < demand_kw <= 0.75:
+        return (
+            "\nBENEFIT_EXPLANATION: this price/energy-sensitive user expects a brief quantified reason. "
+            f"This is a low-target event (~{demand_kw:.2f} kW), so explain the minimal action needed to meet that target. "
+            "Do not quote the full whole-home flexible-load estimate as if all of it must be curtailed."
+        )
     target_text = ""
     if demand_kw is not None and demand_kw > 0:
         target_text = f" VPP target is about {demand_kw:.2f} kW."
@@ -676,11 +729,36 @@ def _benefit_explanation_prompt_text(
     )
 
 
+def _vpp_intensity_prompt_text(event: dict | None, demand_kw: float | None) -> str:
+    """Tell the agent to scale intrusiveness to the event target, not just the VPP label."""
+    if not event or demand_kw is None:
+        return ""
+    try:
+        target_kw = float(demand_kw)
+    except (TypeError, ValueError):
+        return ""
+    if target_kw <= 0.0:
+        return (
+            "\nVPP_INTENSITY: this event uses an energy-cap target rather than a positive shed-kW target. "
+            "Use low-risk schedules that already avoid VPP_WINDOW. If the calendar says the home is away/unoccupied, "
+            "use the warm efficient edge of the AC range to meet the cap; if occupied or return-home, protect comfort and restore immediately."
+        )
+    if target_kw <= 0.75:
+        return (
+            f"\nVPP_INTENSITY: low target ({target_kw:.2f} kW). Use the least intrusive plan that meets VPP_WINDOW: "
+            "avoid starting controllable loads inside the window, but do not imply a whole-home aggressive curtailment. "
+            "If flexible devices are already outside the window, preserve routine. If the window overlaps occupancy or return-home time, "
+            "prioritize the user's normal comfort setpoint over extra AC setback; if the home is away/unoccupied, use the warm efficient edge."
+        )
+    return ""
+
+
 def _ensure_price_sensitive_reason_estimate(
     reason: str,
     persona_config: dict | None,
     appliance_config: dict | None,
     event: dict | None,
+    demand_kw: float | None = None,
 ) -> str:
     """Add a compact impact estimate when a price-sensitive reason omits it."""
     text = str(reason or "")
@@ -689,6 +767,13 @@ def _ensure_price_sensitive_reason_estimate(
     lowered = text.lower()
     if any(token in lowered for token in ("est.", "estimate", "roughly", "kw", "kwh", "saved", "shifted")):
         return text[:100]
+    try:
+        target_kw = float(demand_kw) if demand_kw is not None else None
+    except (TypeError, ValueError):
+        target_kw = None
+    if target_kw is not None and 0.0 < target_kw <= 0.75:
+        suffix = f" | low target ~{target_kw:.2f}kW, minimal action"
+        return (text[: max(0, 100 - len(suffix))] + suffix)[:100]
     estimate_kw = _controllable_vpp_load_estimate_kw(appliance_config)
     if estimate_kw <= 0:
         return text[:100]
@@ -1405,9 +1490,15 @@ All times are hour-of-day (0–23.9)."""
                     break
         return_home_tag = ""
         if vpp_event and _calendar_return_home_sensitive(persona_config, vpp_event):
+            demand_kw = getattr(loop, "current_vpp_demand_kw", None)
+            if _low_vpp_target_kw(demand_kw):
+                comfort_target = max(_ac_sp_min, min(_ac_sp_max, max(_ac_sp_default, _ac_sp_max - 0.5)))
+                return_home_action = f"prefer the normal comfort setpoint around {comfort_target:.1f}°C"
+            else:
+                return_home_action = f"keep active-event AC setpoint at or below the preferred max ({_ac_sp_max:.1f}°C)"
             return_home_tag = (
                 f"\n  *** RETURN_HOME_COMFORT: this VPP window is close to home arrival. "
-                f"Keep active-event AC setpoint at or below the preferred max ({_ac_sp_max:.1f}°C), "
+                f"{return_home_action}, "
                 "and restore comfort immediately when the event ends. ***"
             )
         mem_tag = loop.vpp_mem_ctx  # contains past event scores + user feedback
@@ -1424,6 +1515,10 @@ All times are hour-of-day (0–23.9)."""
             vpp_event,
             getattr(loop, "current_vpp_demand_kw", None),
         )
+        intensity_tag = _vpp_intensity_prompt_text(
+            vpp_event,
+            getattr(loop, "current_vpp_demand_kw", None),
+        )
         # Current event: user expressed preference before agent acts
         user_now_tag = f"\n[User says NOW]: {user_pref_input}" if user_pref_input else ""
         # Per-appliance status (independent devices)
@@ -1437,7 +1532,7 @@ All times are hour-of-day (0–23.9)."""
         prompt = (f"sim_hour={sim_h:.1f}  clock={hh:02d}:00{vpp_tag}{upcoming_vpp_tag}{post_vpp_tag}{return_home_tag}\n"
                   f"zone_temp={temp:.1f}C  outdoor={out_t:.1f}C\n"
                   f"remaining_sim_hours={remaining_h:.0f}\n"
-                  f"user_pref: {user_pref}{user_now_tag}{price_tag}{benefit_tag}{appl_tag}{fixed_appliance_tag}{explicit_appliance_tag}{mem_tag}")
+                  f"user_pref: {user_pref}{user_now_tag}{price_tag}{benefit_tag}{intensity_tag}{appl_tag}{fixed_appliance_tag}{explicit_appliance_tag}{mem_tag}")
         if vpp_active:
             fb_sp = min(_run_sp_max, _ac_sp_default if _protective_mode else 26.5)
             fb_nch = None
@@ -1616,10 +1711,24 @@ All times are hour-of-day (0–23.9)."""
             if vpp_event and _low_dr_intrusion_sensitive_mode(persona_config):
                 sp_upper = min(sp_upper, _ac_sp_max)
             if vpp_active:
+                demand_kw = float(getattr(loop, "current_vpp_demand_kw", 0.0) or 0.0)
+                low_target_unoccupied_warm = False
                 if _calendar_return_home_sensitive(persona_config, vpp_event):
-                    sp_upper = min(sp_upper, _ac_sp_max)
+                    if _low_vpp_target_kw(demand_kw):
+                        # Tiny return-home events should be handled by appliance shifting, not thermal discomfort.
+                        comfort_target = max(_ac_sp_min, min(_ac_sp_max, max(_ac_sp_default, _ac_sp_max - 0.5)))
+                        sp_upper = min(sp_upper, max(_run_sp_min, comfort_target))
+                        sp_lower = min(_energy_saving_sp_floor, sp_upper)
+                    else:
+                        sp_upper = min(sp_upper, _ac_sp_max)
+                elif _low_vpp_target_kw(demand_kw) and not _calendar_occupied_or_return_home_sensitive(persona_config, vpp_event):
+                    low_target_unoccupied_warm = True
+                    if demand_kw <= 0.0:
+                        efficient_target = min(_run_sp_max, _ac_sp_vpp_min)
+                    else:
+                        efficient_target = min(_run_sp_max, _ac_sp_max)
+                    sp_lower = max(_energy_saving_sp_floor, efficient_target)
                 if _low_dr_intrusion_sensitive_mode(persona_config):
-                    demand_kw = float(getattr(loop, "current_vpp_demand_kw", 0.0) or 0.0)
                     if demand_kw <= 0.5:
                         # Low-DR users should not feel a comfort sacrifice for a tiny/zero target.
                         small_target_cap = max(_energy_saving_sp_floor, _ac_sp_default)
@@ -1629,11 +1738,15 @@ All times are hour-of-day (0–23.9)."""
                 elif (persona_config.get("tags", {}) or {}).get("control") == "high_trust_auto":
                     comfort_tag = (persona_config.get("tags", {}) or {}).get("comfort")
                     high_trust_cap = _ac_sp_max
-                    if comfort_tag == "normal_comfort" and not _auto_saving_mode:
+                    if low_target_unoccupied_warm:
+                        high_trust_cap = max(_ac_sp_max, min(_run_sp_max, _ac_sp_vpp_min))
+                    elif comfort_tag == "normal_comfort" and not _auto_saving_mode:
                         high_trust_cap = max(_ac_sp_min, _ac_sp_max - 0.5)
                     sp_upper = min(sp_upper, high_trust_cap)
             raw_sp = float(data.get("setpoint", fb_sp))
-            sp_lower = _energy_saving_sp_floor
+            sp_lower = locals().get("sp_lower", _energy_saving_sp_floor)
+            if sp_lower > sp_upper:
+                sp_lower = sp_upper
             sp = round(max(sp_lower, min(sp_upper, raw_sp)), 1)
             if sp < raw_sp:
                 suffix = f" | comfort cap {sp_upper:.1f}C"
@@ -1652,6 +1765,7 @@ All times are hour-of-day (0–23.9)."""
                 persona_config,
                 appliance_config,
                 vpp_event,
+                getattr(loop, "current_vpp_demand_kw", None),
             )
             # --- Independent appliance commands from LLM ---
             appl_actions = _filter_controllable_appliance_actions(
@@ -1743,6 +1857,50 @@ All times are hour-of-day (0–23.9)."""
                 loop_ref.appliance_suite.vpp_day_summary(event_day_idx)
                 if loop_ref.appliance_suite is not None else {}
             )
+            _demand = loop_ref.vpp_demand_by_id.get(ev["id"], {})
+            _actual_kwh = round(loop_ref.vpp_event_energy_wh.get(ev["id"], 0.0) / 1000.0, 4)
+            _baseline_kwh = _demand.get("baseline_kwh", None)
+            _target_kwh = _demand.get("target_kwh", None)
+            _target_shed_kwh = _demand.get("target_shed_kwh", None)
+            _actual_shed_kwh = None
+            if _baseline_kwh is not None:
+                _actual_shed_kwh = round(max(0.0, float(_baseline_kwh) - _actual_kwh), 4)
+            _achieve_ratio = None
+            _achieved = None
+            _target_mode = "unknown"
+            _success_text = ""
+            if _actual_shed_kwh is not None and _target_shed_kwh is not None and float(_target_shed_kwh or 0.0) > 1e-9:
+                _achieve_ratio = round(_actual_shed_kwh / float(_target_shed_kwh), 4)
+                _achieved = _actual_shed_kwh + 1e-9 >= float(_target_shed_kwh)
+                _target_mode = "shed"
+                _success_text = "shed_ratio >= 1 means success"
+            elif _target_kwh is not None:
+                _achieved = _actual_kwh <= float(_target_kwh) + 1e-9
+                if float(_target_kwh) > 1e-9:
+                    _achieve_ratio = round(_actual_kwh / float(_target_kwh), 4)
+                _target_mode = "energy_cap"
+                _success_text = "cap_ratio <= 1 means success"
+            _achievement_text = (
+                "VPP target ACHIEVED; do not describe this event as missed."
+                if _achieved is True
+                else "VPP target NOT achieved; it is fair to describe this event as missed."
+                if _achieved is False
+                else "VPP target achievement unknown."
+            )
+            vpp_result_context = {
+                "event_id": ev["id"],
+                "target_mode": _target_mode,
+                "actual_kwh": _actual_kwh,
+                "target_kwh": _target_kwh,
+                "baseline_kwh": _baseline_kwh,
+                "actual_shed_kwh": _actual_shed_kwh,
+                "target_shed_kwh": _target_shed_kwh,
+                "target_shed_kw": _demand.get("target_shed_kw", None),
+                "achievement_ratio": _achieve_ratio,
+                "achieved": _achieved,
+                "success_text": _success_text,
+                "achievement_text": _achievement_text,
+            }
             r = score_user_preference(
                 building="family", method=method,
                 mean_temp_c=mean_t, pmv_ok_fraction=pmv_ok,
@@ -1753,6 +1911,7 @@ All times are hour-of-day (0–23.9)."""
                 persona=persona_config,
                 appliance_summary=appliance_summary,
                 vpp_context=ev,
+                vpp_result_context=vpp_result_context,
                 human_mode=human_mode)
             if r.get("source") != "roleplay_llm" and not human_mode:
                 raise RuntimeError(f"role-play LLM required, got {r.get('source')}")

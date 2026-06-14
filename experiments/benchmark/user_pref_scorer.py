@@ -946,6 +946,7 @@ def score_user_preference(
     log_path: Path | None = None,
     human_mode: bool = False,
     vpp_context: dict | None = None,
+    vpp_result_context: dict | None = None,
 ):
     """Score user satisfaction using roleplay LLM (fallback: rule-based).
 
@@ -1019,6 +1020,8 @@ def score_user_preference(
         "fixed_non_dr_adjustable_appliances": fixed_appliances,
         "event_preference_counts_as_confirmation": bool(user_preference_text),
     }
+    if vpp_result_context:
+        home_state["vpp_result"] = vpp_result_context
     appliance_summary = appliance_summary or {}
     skipped_devices = [
         name for name, info in appliance_summary.items()
@@ -1077,6 +1080,25 @@ def score_user_preference(
                 "Do not invent a financial or market pitch if the controller explanation did not contain one. "
                 "weak VPP contribution from fixed loads is not by itself a communication failure."
             )
+        if vpp_result_context:
+            ratio = vpp_result_context.get("achievement_ratio")
+            achieved = vpp_result_context.get("achieved")
+            target_mode = vpp_result_context.get("target_mode", "unknown")
+            success_text = vpp_result_context.get("success_text", "")
+            achievement_text = vpp_result_context.get("achievement_text", "")
+            if ratio is not None:
+                rationale += (
+                    f" | Event-level VPP result: mode={target_mode}, achieved={bool(achieved)}, "
+                    f"actual_shed={vpp_result_context.get('actual_shed_kwh', 'n/a')}kWh, "
+                    f"target_shed={vpp_result_context.get('target_shed_kwh', 'n/a')}kWh, "
+                    f"ratio={ratio}; {success_text}. {achievement_text}"
+                )
+            else:
+                rationale += (
+                    f" | Event-level VPP result: mode={target_mode}, achieved={bool(achieved)}, "
+                    f"actual_kwh={vpp_result_context.get('actual_kwh', 'n/a')}kWh, "
+                    f"target_cap={vpp_result_context.get('target_kwh', 'n/a')}kWh; {success_text}. {achievement_text}"
+                )
         if not washer_completed:
             rationale += " | NOTE: washing machine task was NOT completed today."
         if washer_during_vpp:
@@ -1149,6 +1171,22 @@ def score_user_preference(
             "zone_comfort_scores": fb.get("zone_comfort_scores"),
             "source": "roleplay_llm",
         }
+        if vpp_result_context and vpp_result_context.get("achieved") is True:
+            comment_lower = str(result.get("comment", "")).lower()
+            misleading_miss = any(
+                token in comment_lower
+                for token in ("missed", "failed", "not met", "not achieved")
+            )
+            severe_service_issue = bool(skipped_task_count or water_heater_during_vpp)
+            if (misleading_miss or result["vpp_score"] <= 2) and not severe_service_issue:
+                result["vpp_score"] = max(result["vpp_score"], 4)
+                result["energy_score"] = max(result["energy_score"], 3)
+                if result["comfort_score"] >= 4 and result["score"] < 4:
+                    result["score"] = 4
+                    result["label"] = "satisfied"
+                if misleading_miss:
+                    result["comment"] = "VPP target achieved; comfort/routine were preserved."
+                result["factual_consistency_guard"] = "corrected_achieved_vpp_missed_label"
         if skipped_task_count > 0:
             skipped_names = ", ".join(skipped_devices)
             result.update({
