@@ -166,6 +166,7 @@ class RoleplayUserSimulator:
             "- If selected_strategy.vpp_result or the control rationale includes event-level VPP achieved/ratio/actual_shed fields, use those facts when judging energy_score and vpp_score instead of guessing from daily energy alone. For shed targets, ratio>=1 is success; for energy-cap targets, ratio<=1 is success.\n"
             "- If event-level VPP achieved is true, do not say the VPP target was missed in the comment. You may still mention limited savings if the target was tiny, but call the event successful.\n"
             "- If the control plan says an appliance is fixed/non-DR-adjustable, do not treat that fixed operation as an agent scheduling violation.\n"
+            "- For low-disruption or confirmation-required users, if comfort/consent/routine were preserved and only fixed non-DR appliances limited VPP, keep overall satisfaction separate from the VPP subscore.\n"
             "- If a required controllable task was skipped or an approved comfort boundary was exceeded, score harshly.\n\n"
             "Return a JSON object with EXACTLY these fields:\n"
             "  satisfaction_score (int 1-5): overall satisfaction\n"

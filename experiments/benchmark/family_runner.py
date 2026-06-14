@@ -1713,10 +1713,24 @@ All times are hour-of-day (0–23.9)."""
             if vpp_active:
                 demand_kw = float(getattr(loop, "current_vpp_demand_kw", 0.0) or 0.0)
                 low_target_unoccupied_warm = False
+                _tags = (persona_config.get("tags", {}) or {})
+                _sched = persona_config.get("schedule", {}) or {}
+                fragile_comfort = (
+                    _tags.get("comfort") == "temp_sensitive"
+                    or _tags.get("control") in {"low_auto_accept", "privacy_sensitive"}
+                    or bool(_sched.get("vulnerable_members"))
+                )
                 if _calendar_return_home_sensitive(persona_config, vpp_event):
                     if _low_vpp_target_kw(demand_kw):
-                        # Tiny return-home events should be handled by appliance shifting, not thermal discomfort.
-                        comfort_target = max(_ac_sp_min, min(_ac_sp_max, max(_ac_sp_default, _ac_sp_max - 0.5)))
+                        # Tiny return-home events should avoid noticeable
+                        # discomfort.  Fragile users stay near the normal
+                        # setpoint; normal-comfort users may still use the
+                        # upper edge of their explicitly preferred range and
+                        # restore immediately after the event.
+                        if fragile_comfort:
+                            comfort_target = max(_ac_sp_min, min(_ac_sp_max, max(_ac_sp_default, _ac_sp_max - 0.5)))
+                        else:
+                            comfort_target = _ac_sp_max
                         sp_upper = min(sp_upper, max(_run_sp_min, comfort_target))
                         sp_lower = min(_energy_saving_sp_floor, sp_upper)
                     else:
@@ -1729,9 +1743,21 @@ All times are hour-of-day (0–23.9)."""
                         efficient_target = min(_run_sp_max, _ac_sp_max)
                     sp_lower = max(_energy_saving_sp_floor, efficient_target)
                 if _low_dr_intrusion_sensitive_mode(persona_config):
+                    if demand_kw > 0.0 and not fragile_comfort:
+                        sp_lower = max(
+                            locals().get("sp_lower", _energy_saving_sp_floor),
+                            min(_ac_sp_max, sp_upper),
+                        )
                     if demand_kw <= 0.5:
-                        # Low-DR users should not feel a comfort sacrifice for a tiny/zero target.
-                        small_target_cap = max(_energy_saving_sp_floor, _ac_sp_default)
+                        # Low-disruption users need consent/routine protection, not
+                        # necessarily colder-than-preferred HVAC.  Only truly
+                        # fragile comfort/privacy users stay pinned near the
+                        # normal setpoint; rigid/confirm-required users may use
+                        # the warm edge of their stated preferred range.
+                        small_target_cap = max(
+                            _energy_saving_sp_floor,
+                            _ac_sp_default if fragile_comfort else _ac_sp_max,
+                        )
                         sp_upper = min(sp_upper, small_target_cap)
                 if _protective_mode:
                     sp_upper = min(sp_upper, _ac_sp_max)
@@ -1932,6 +1958,9 @@ All times are hour-of-day (0–23.9)."""
                     "end_h": float(ev.get("end_h", 0.0)),
                     "day": int(ev.get("day", event_index)),
                     "comfort_score": comfort_sc, "energy_score": energy_sc, "vpp_score": vpp_sc,
+                    "target_mode": _target_mode,
+                    "target_achieved": _achieved,
+                    "demand_achievement_ratio": _achieve_ratio,
                     "comment": cmt,
                     "user_input": loop_ref.vpp_user_input_by_id.get(ev["id"], loop_ref.vpp_user_input)[:80],
                     "reason": loop_ref.vpp_last_reason[:120], "source": src}
@@ -2201,6 +2230,20 @@ All times are hour-of-day (0–23.9)."""
                             max(0.0, float(result["demand_baseline_kwh"]) - result["actual_kwh"]),
                             4,
                         )
+                    _target_shed = result.get("demand_target_shed_kwh")
+                    _target_cap = result.get("demand_target_kwh")
+                    _actual_shed = result.get("actual_shed_kwh")
+                    if _target_shed is not None and float(_target_shed or 0.0) > 1e-9 and _actual_shed is not None:
+                        result["target_mode"] = "shed"
+                        result["demand_achievement_ratio"] = round(float(_actual_shed) / float(_target_shed), 4)
+                        result["target_achieved"] = float(_actual_shed) + 1e-9 >= float(_target_shed)
+                    elif _target_cap is not None:
+                        result["target_mode"] = "energy_cap"
+                        result["demand_achievement_ratio"] = (
+                            round(float(result["actual_kwh"]) / float(_target_cap), 4)
+                            if float(_target_cap) > 1e-9 else None
+                        )
+                        result["target_achieved"] = float(result["actual_kwh"]) <= float(_target_cap) + 1e-9
                     result["capacity_assessment"] = loop.vpp_capacity_by_id.get(ev["id"], {})
                     _cap_rows = loop.vpp_capacity_window_by_id.get(ev["id"], [])
                     if _cap_rows:
@@ -2308,6 +2351,20 @@ All times are hour-of-day (0–23.9)."""
                     max(0.0, float(baseline_kwh) - actual_kwh),
                     4,
                 )
+            target_shed = event_result.get("demand_target_shed_kwh")
+            target_cap = event_result.get("demand_target_kwh")
+            actual_shed = event_result.get("actual_shed_kwh")
+            if target_shed is not None and float(target_shed or 0.0) > 1e-9 and actual_shed is not None:
+                event_result["target_mode"] = "shed"
+                event_result["demand_achievement_ratio"] = round(float(actual_shed) / float(target_shed), 4)
+                event_result["target_achieved"] = float(actual_shed) + 1e-9 >= float(target_shed)
+            elif target_cap is not None:
+                event_result["target_mode"] = "energy_cap"
+                event_result["demand_achievement_ratio"] = (
+                    round(float(actual_kwh) / float(target_cap), 4)
+                    if float(target_cap) > 1e-9 else None
+                )
+                event_result["target_achieved"] = float(actual_kwh) <= float(target_cap) + 1e-9
 
     kwh = loop.e_wh / 1000; occ = max(loop.occ_h, 1e-6)
     avg_sp = sum(d[1] for d in loop.decisions) / max(1, len(loop.decisions)) if loop.decisions else SP_DEFAULT

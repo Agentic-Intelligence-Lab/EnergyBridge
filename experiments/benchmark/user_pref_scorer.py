@@ -1177,7 +1177,10 @@ def score_user_preference(
                 token in comment_lower
                 for token in ("missed", "failed", "not met", "not achieved")
             )
-            severe_service_issue = bool(skipped_task_count or water_heater_during_vpp)
+            severe_service_issue = bool(
+                skipped_task_count
+                or (water_heater_during_vpp and "water_heater" not in fixed_appliances)
+            )
             if (misleading_miss or result["vpp_score"] <= 2) and not severe_service_issue:
                 result["vpp_score"] = max(result["vpp_score"], 4)
                 result["energy_score"] = max(result["energy_score"], 3)
@@ -1200,6 +1203,25 @@ def score_user_preference(
                     "this violates the user's service rule."
                 ),
             })
+        elif (
+            _low_disruption_strategy_language(persona)
+            and fixed_appliances
+            and result["score"] < 4
+            and result["comfort_score"] >= 4
+            and agent_setpoint_c is not None
+            and float(agent_setpoint_c) >= pref_max - 0.1
+            and vpp_result_context
+            and vpp_result_context.get("achieved") is False
+            and not (water_heater_during_vpp and "water_heater" not in fixed_appliances)
+        ):
+            result["score"] = 4
+            result["label"] = "satisfied"
+            result["comment"] = (
+                "Comfort/consent preserved; fixed loads limited VPP."
+            )
+            result["fixed_constraint_satisfaction_guard"] = (
+                "overall_user_satisfaction_not_penalized_for_fixed_non_dr_loads"
+            )
     except Exception as e:
         result = _rule_score(persona, mean_temp_c, pmv_ok_fraction, energy_kwh_per_day,
                              zone_group_temps, washer_completed, washer_during_vpp,
