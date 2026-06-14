@@ -4,11 +4,12 @@ EnergyBridge is a home-grid coordination benchmark for comparing an LLM
 home-energy Agent against MPC baselines under persona preferences, calendars,
 VPP demand-response events, EnergyPlus co-simulation, and role-play scoring.
 
-The current main benchmark is the **family-home VPP evaluation**. The default
-comparison is Tianjin for 3 days; a Germany real-data variant runs from
-2025-06-01 for 7 days with real weather. Day-ahead prices are an optional
-advanced input for any city. All paths use persona users, 7-day calendars,
-capacity quantification, EnergyPlus execution, and post-event role-play scoring.
+The current main benchmark is the **family-home VPP evaluation**. For fast
+iteration, use the Germany 3-day quick run: it starts on Sunday 2025-06-01,
+uses real Germany weather, can include day-ahead prices, and still keeps
+calendar context, capacity quantification, EnergyPlus execution, and role-play
+scoring. The longer Tianjin/Germany 7-day runs remain the comparable full
+baseline path.
 
 ---
 
@@ -93,6 +94,61 @@ needed beyond `requirements.txt`.
 
 ## Main Benchmark Commands
 
+### Recommended Fast Iteration: Germany 3-Day
+
+Use this when tuning Agent prompts or runner logic. It is shorter than the
+7-day matrix but still exercises the modern stack: persona calendar,
+capacity quantification, VPP events, EnergyPlus, optional day-ahead price, and
+role-play scoring.
+
+```bash
+python experiments/benchmark/run_germany_3day_quick.py basic_role_a_commuter_price_cooperative
+```
+
+Defaults:
+
+```text
+city      : Germany
+dates     : 2025-06-01 to 2025-06-03
+weekday   : Sunday, Monday, Tuesday
+days      : 3
+VPP       : daily 18:00-19:00
+price CSV : experiments/real_data/germany_2025_price.csv
+IDF       : generated from experiments/models/family_home/family_simple_3day.idf
+output    : benchmark_results/<YYYY-MM-DD>/<role>_<method>_germany_3days/
+```
+
+The generated run-specific IDF is stored under:
+
+```text
+benchmark_results/<YYYY-MM-DD>/_run_assets/<run_name>/family_simple_3day_2025-06-01_3days.idf
+```
+
+Useful variants:
+
+```bash
+# Same quick path, but a different user
+python experiments/benchmark/run_germany_3day_quick.py basic_role_f_commuter_ev_optimizer
+
+# Quick Germany MPC checks
+python experiments/benchmark/run_germany_3day_quick.py basic_role_a_commuter_price_cooperative --method mpc_dynamic
+python experiments/benchmark/run_germany_3day_quick.py basic_role_a_commuter_price_cooperative --method mpc_ep
+
+# Disable price input while keeping Germany weather/date
+python experiments/benchmark/run_germany_3day_quick.py basic_role_a_commuter_price_cooperative --no-price
+
+# Inspect the expanded command without running EnergyPlus
+python experiments/benchmark/run_germany_3day_quick.py basic_role_a_commuter_price_cooperative --dry-run
+```
+
+For a quick 10-persona matrix on the same Germany 3-day setup:
+
+```bash
+python experiments/benchmark/run_baseline_matrix.py \
+  --city Germany --days 3 --start-date 2025-06-01 --mpc-horizon 6 \
+  --price-csv experiments/real_data/germany_2025_price.csv
+```
+
 ### Run One Persona And One Method
 
 Run from the repository root:
@@ -137,9 +193,9 @@ python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_coo
   --city Tianjin --method agent --days 7
 ```
 
-### Germany Real-Data Variant
+### Germany Real-Data Full Variant
 
-Germany uses real weather and a 7-day date range:
+The full Germany comparison uses real weather and a 7-day date range:
 
 ```text
 weather: experiments/real_data/germany_2025_weather.csv
