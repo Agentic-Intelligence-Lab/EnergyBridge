@@ -21,6 +21,7 @@ experiments/**/eplusout.*
 experiments/**/eplustbl.*
 experiments/**/eplusssz.csv
 experiments/**/epluszsz.csv
+experiments/weather/epw/DEU_Germany_2025_real.epw
 eplusout.*
 eplustbl.*
 eplusssz.csv
