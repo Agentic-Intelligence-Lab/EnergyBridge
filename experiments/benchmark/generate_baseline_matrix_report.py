@@ -109,9 +109,9 @@ def _build_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
                 "user_pref_score": _as_float(result.get("user_pref_score")),
                 "energy_kwh_total": _as_float(result.get("energy_kwh_total")),
                 "vpp_window_energy_kwh": _as_float(result.get("vpp_window_energy_kwh")),
-                "vpp_demand_achievement_ratio": _as_float(result.get("vpp_demand_achievement_ratio")),
                 "appliance_vpp_avoidance_rate": _as_float(result.get("appliance_vpp_avoidance_rate")),
                 "appliance_task_completion_rate": _as_float(result.get("appliance_task_completion_rate")),
+                "appliance_shift_success_rate": _as_float(result.get("appliance_shift_success_rate")),
                 "vpp_compliance_rate": _as_float(result.get("vpp_compliance_rate")),
                 "llm_call_count": _as_float(result.get("llm_call_count")),
                 "elapsed_s": _as_float(row.get("elapsed_s")),
@@ -129,7 +129,7 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path) -> P
     md_path = report_dir / "baseline_matrix_report.md"
     summary = (
         df.groupby("method", observed=True)[
-            ["user_pref_score", "energy_kwh_total", "vpp_window_energy_kwh", "vpp_demand_achievement_ratio"]
+            ["user_pref_score", "energy_kwh_total", "vpp_window_energy_kwh", "appliance_shift_success_rate"]
         ]
         .mean()
         .round(4)
@@ -165,7 +165,7 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path) -> P
                     "user_pref_score",
                     "energy_kwh_total",
                     "vpp_window_energy_kwh",
-                    "vpp_demand_achievement_ratio",
+                    "appliance_shift_success_rate",
                     "appliance_vpp_avoidance_rate",
                     "appliance_task_completion_rate",
                     "elapsed_s",
@@ -179,10 +179,10 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path) -> P
     lines.append("")
     best = summary["user_pref_score"].idxmax()
     lowest_energy = summary["energy_kwh_total"].idxmin()
-    best_vpp = summary["vpp_demand_achievement_ratio"].idxmax()
+    best_shift = summary["appliance_shift_success_rate"].idxmax()
     lines.append(f"- Best average user score: **{best}**")
     lines.append(f"- Lowest average total energy: **{lowest_energy}**")
-    lines.append(f"- Best average VPP achievement ratio: **{best_vpp}**")
+    lines.append(f"- Best average appliance shift success rate: **{best_shift}**")
     lines.append("")
     lines.append("The matrix is calendar-aware and uses the 3-day benchmark window (Day 1 to Day 3).")
     md_path.write_text("\n".join(lines), encoding="utf-8")
@@ -191,65 +191,104 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path) -> P
 
 def _plot_report(df: pd.DataFrame, report_dir: Path) -> Path:
     plt.style.use("seaborn-v0_8-whitegrid")
-    fig = plt.figure(figsize=(20, 12), constrained_layout=True)
-    gs = fig.add_gridspec(2, 2, height_ratios=[1, 1.1])
-
+    fig, axes_arr = plt.subplots(2, 2, figsize=(22, 15), constrained_layout=True)
     axes = {
-        "score": fig.add_subplot(gs[0, 0]),
-        "energy": fig.add_subplot(gs[0, 1]),
-        "vpp": fig.add_subplot(gs[1, 0]),
-        "heatmap": fig.add_subplot(gs[1, 1]),
+        "score": axes_arr[0, 0],
+        "energy": axes_arr[0, 1],
+        "vpp_energy": axes_arr[1, 0],
+        "shift": axes_arr[1, 1],
     }
 
-    method_means = (
-        df.groupby("method", observed=True)[
-            ["user_pref_score", "energy_kwh_total", "vpp_window_energy_kwh", "vpp_demand_achievement_ratio"]
-        ]
-        .mean()
-        .reindex(METHOD_ORDER)
+    def _metric_matrix(metric: str) -> pd.DataFrame:
+        pivot = (
+            df.pivot(index="persona_id", columns="method", values=metric)
+            .reindex(columns=METHOD_ORDER)
+        )
+        pivot.columns = [METHOD_LABEL[c] for c in pivot.columns]
+        return pivot
+
+    def _draw_metric_table(
+        ax,
+        pivot: pd.DataFrame,
+        *,
+        title: str,
+        cmap: str,
+        fmt: str,
+        cbar_label: str,
+        vmin: float | None = None,
+        vmax: float | None = None,
+        lower_is_better: bool = False,
+        suffix: str = "",
+    ) -> None:
+        data = pivot.to_numpy(dtype=float)
+        cmap_name = f"{cmap}_r" if lower_is_better else cmap
+        im = ax.imshow(data, cmap=cmap_name, aspect="auto", vmin=vmin, vmax=vmax)
+        ax.set_title(title, fontsize=14, fontweight="bold")
+        ax.set_xticks(np.arange(len(pivot.columns)))
+        ax.set_xticklabels(list(pivot.columns), rotation=0)
+        ax.set_yticks(np.arange(len(pivot.index)))
+        ax.set_yticklabels(list(pivot.index), fontsize=9)
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+        ax.set_xticks(np.arange(-0.5, len(pivot.columns), 1), minor=True)
+        ax.set_yticks(np.arange(-0.5, len(pivot.index), 1), minor=True)
+        ax.grid(which="minor", color="white", linewidth=1.5)
+        ax.tick_params(which="minor", bottom=False, left=False)
+        for i in range(data.shape[0]):
+            for j in range(data.shape[1]):
+                value = data[i, j]
+                if np.isnan(value):
+                    label = "N/A"
+                else:
+                    label = f"{value:{fmt}}{suffix}"
+                ax.text(j, i, label, ha="center", va="center", color="#17202a", fontsize=9, fontweight="bold")
+        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.02)
+        cbar.set_label(cbar_label)
+
+    score_matrix = _metric_matrix("user_pref_score")
+    energy_matrix = _metric_matrix("energy_kwh_total")
+    vpp_energy_matrix = _metric_matrix("vpp_window_energy_kwh")
+    shift_matrix = _metric_matrix("appliance_shift_success_rate")
+
+    _draw_metric_table(
+        axes["score"],
+        score_matrix,
+        title="Persona x Method User Score",
+        cmap="YlGnBu",
+        fmt=".2f",
+        cbar_label="User score / 5",
+        vmin=0,
+        vmax=5,
     )
-    method_means.index = [METHOD_LABEL[m] for m in method_means.index]
-
-    method_means["user_pref_score"].plot(kind="bar", ax=axes["score"], color=["#244c5a", "#4f6d7a", "#7ea0b7"])
-    axes["score"].set_title("Average User Score")
-    axes["score"].set_xlabel("")
-    axes["score"].set_ylabel("Score / 5")
-    axes["score"].set_ylim(0, max(5, method_means["user_pref_score"].max() + 0.5))
-    axes["score"].tick_params(axis="x", rotation=0)
-
-    method_means["energy_kwh_total"].plot(kind="bar", ax=axes["energy"], color=["#7aa36b", "#90be6d", "#b7e4c7"])
-    axes["energy"].set_title("Average Total Energy")
-    axes["energy"].set_xlabel("")
-    axes["energy"].set_ylabel("kWh")
-    axes["energy"].tick_params(axis="x", rotation=0)
-
-    vpp_bars = method_means["vpp_demand_achievement_ratio"].plot(
-        kind="bar", ax=axes["vpp"], color=["#c97a40", "#e9a15d", "#f4c27a"]
+    _draw_metric_table(
+        axes["energy"],
+        energy_matrix,
+        title="Persona x Method Total Energy",
+        cmap="YlOrBr",
+        fmt=".1f",
+        cbar_label="Total energy kWh (lower is better)",
+        lower_is_better=True,
+        suffix="",
     )
-    axes["vpp"].axhline(1.0, color="#444444", linestyle="--", linewidth=1)
-    axes["vpp"].set_title("Average VPP Achievement Ratio")
-    axes["vpp"].set_xlabel("")
-    axes["vpp"].set_ylabel("Actual / Target")
-    axes["vpp"].tick_params(axis="x", rotation=0)
-
-    pivot = (
-        df.pivot(index="persona_id", columns="method", values="user_pref_score")
-        .reindex(columns=METHOD_ORDER)
+    _draw_metric_table(
+        axes["vpp_energy"],
+        vpp_energy_matrix,
+        title="Persona x Method VPP Window Energy",
+        cmap="Oranges",
+        fmt=".2f",
+        cbar_label="VPP-window kWh (lower is better)",
+        lower_is_better=True,
     )
-    pivot.columns = [METHOD_LABEL[c] for c in pivot.columns]
-    data = pivot.to_numpy(dtype=float)
-    im = axes["heatmap"].imshow(data, cmap="YlGnBu", aspect="auto", vmin=0, vmax=5)
-    axes["heatmap"].set_xticks(np.arange(len(pivot.columns)))
-    axes["heatmap"].set_xticklabels(list(pivot.columns), rotation=0)
-    axes["heatmap"].set_yticks(np.arange(len(pivot.index)))
-    axes["heatmap"].set_yticklabels(list(pivot.index))
-    axes["heatmap"].set_title("Persona vs Method User Score")
-    axes["heatmap"].set_xlabel("")
-    axes["heatmap"].set_ylabel("")
-    for i in range(data.shape[0]):
-        for j in range(data.shape[1]):
-            axes["heatmap"].text(j, i, f"{data[i, j]:.2f}", ha="center", va="center", color="#1f1f1f", fontsize=9)
-    fig.colorbar(im, ax=axes["heatmap"], label="User score / 5")
+    _draw_metric_table(
+        axes["shift"],
+        shift_matrix,
+        title="Persona x Method Appliance Shift Success",
+        cmap="PuBuGn",
+        fmt=".0%",
+        cbar_label="Completed tasks shifted away from VPP",
+        vmin=0,
+        vmax=1,
+    )
 
     fig.suptitle("EnergyBridge Baseline Matrix Report", fontsize=24, fontweight="bold")
     png_path = report_dir / "baseline_matrix_report.png"
