@@ -161,7 +161,9 @@ class WaterHeater:
     def set_preheat_schedule(self, day_idx: int,
                                start_h: float | None = None,
                                end_h: float | None = None,
-                               temp_c: float | None = None) -> bool:
+                               temp_c: float | None = None,
+                               *,
+                               force_routine: bool = False) -> bool:
         """Enable preheat for day_idx; optionally override window/temperature.
 
         start_h : hour-of-day to begin preheating  (e.g. 14.0 = 14:00).
@@ -169,7 +171,7 @@ class WaterHeater:
         temp_c  : tank setpoint during preheat (clamped 45-75 C).
         Unspecified params fall back to class defaults at execution time.
         """
-        if not self.present or not self.dr_adjustable:
+        if not self.present or (not self.dr_adjustable and not force_routine):
             return False
         state = self._days.get(day_idx)
         if state is None:
@@ -184,8 +186,13 @@ class WaterHeater:
         return True
 
     def request_preheat(self, day_idx: int) -> bool:
-        """Backward-compat alias: enable preheat with class-default window."""
-        return self.set_preheat_schedule(day_idx)
+        """Enable the configured daily preheat routine.
+
+        ``dr_adjustable=False`` means the Agent cannot reschedule the heater for
+        demand response.  It should not disable the user's own fixed preheat
+        window from the persona/calendar configuration.
+        """
+        return self.set_preheat_schedule(day_idx, force_routine=True)
 
     def step(self, sim_h: float, dt_h: float, vpp_active: bool) -> float:
         if not self.present:
@@ -196,7 +203,7 @@ class WaterHeater:
             return 0.0
         hod = sim_h % 24
         heating = False
-        if state["preheat_requested"] and self.dr_adjustable:
+        if state["preheat_requested"]:
             ph_start = state.get("preheat_start_h")
             ph_end = state.get("preheat_end_h")
             start = self.pre_heat_window_start_h if ph_start is None else float(ph_start)

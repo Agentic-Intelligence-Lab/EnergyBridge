@@ -615,6 +615,32 @@ def _default_explicit_appliance_actions(appliance_config: dict | None) -> dict:
     return actions
 
 
+def _fixed_appliance_routine_actions(appliance_config: dict | None) -> dict:
+    """Known routine schedules for present devices the Agent is not allowed to control.
+
+    These actions are used only for diagnostics/objective accounting.  They do
+    not grant the Agent permission to reschedule fixed appliances.
+    """
+    actions: dict = {}
+    cfg = appliance_config or {}
+    controlled = set(_present_agent_controlled_appliances(appliance_config))
+    for name in ("washer", "dishwasher", "dryer"):
+        dev_cfg = (cfg.get(name, {}) or {})
+        if not bool(dev_cfg.get("present", False)) or name in controlled:
+            continue
+        actions[f"{name}_start_h"] = float(dev_cfg.get("preferred_h", 14.0))
+        actions[f"{name}_skip"] = False
+    wh_cfg = (cfg.get("water_heater", {}) or {})
+    if bool(wh_cfg.get("present", False)) and "water_heater" not in controlled:
+        actions.update({
+            "water_heater_preheat_start_h": float(wh_cfg.get("pre_heat_window_start_h", 14.0)),
+            "water_heater_preheat_end_h": float(wh_cfg.get("pre_heat_window_end_h", 18.0)),
+            "water_heater_preheat_temp_c": float(wh_cfg.get("pre_heat_temp_c", 65.0)),
+            "water_heater_preheat": True,
+        })
+    return actions
+
+
 def _vpp_safe_cycle_start(dev_cfg: dict, event: dict | None) -> float:
     """Choose a same-day cycle start that avoids the current VPP window."""
     duration_h = float(dev_cfg.get("duration_h", 1.0))
@@ -1145,11 +1171,13 @@ def _compute_posthoc_decision_objective(
         appliance_config=appliance_config,
         facility_w=facility_w,
     )
+    appliance_actions = _fixed_appliance_routine_actions(appliance_config)
+    appliance_actions.update(dict(action_result.get("appliance_actions") or {}))
     action = {
         "setpoint": action_result.get("setpoint", getattr(loop, "sp", None)),
         "next_check_hour": action_result.get("next_check_hour"),
         "reason": action_result.get("reason", ""),
-        "appliances": dict(action_result.get("appliance_actions") or {}),
+        "appliances": appliance_actions,
     }
     return compute_home_objective_v15(
         action=action,
