@@ -804,11 +804,12 @@ def _build_decision_time_state(
     vpp_event: dict | None,
     vpp_target_kwh: float | None,
     appliance_config: dict | None,
+    facility_w: float | None = None,
 ) -> dict:
     """Build the Protocol A decision-time state shared by MPC and Agent logs."""
     from experiments.benchmark.baselines.state_adapter import build_mpc_state
 
-    return build_mpc_state(
+    state = build_mpc_state(
         sim_h=sim_h,
         hod=hod,
         day_idx=int(sim_h // 24),
@@ -824,6 +825,20 @@ def _build_decision_time_state(
             "previous_setpoint_c": getattr(loop, "sp", None),
         },
     )
+    if facility_w is not None:
+        facility_kw = max(0.0, float(facility_w) / 1000.0)
+        appliance_kw = 0.0
+        suite = getattr(loop, "appliance_suite", None)
+        if suite is not None:
+            appliance_kw = sum(float(v or 0.0) for v in getattr(suite, "_last_powers", {}).values())
+        state.update(
+            {
+                "current_facility_power_kw": facility_kw,
+                "current_hvac_power_kw": max(0.0, facility_kw - appliance_kw),
+                "current_appliance_power_kw": appliance_kw,
+            }
+        )
+    return state
 
 
 def _compute_posthoc_decision_objective(
@@ -1400,7 +1415,7 @@ All times are hour-of-day (0–23.9)."""
             fallback["reason"] = ""
             return fallback
 
-    def _mpc_trigger(temp, out_t, hod, sim_h, vpp_event=None):
+    def _mpc_trigger(temp, out_t, hod, sim_h, facility_w=None, vpp_event=None):
         from experiments.benchmark.baselines.mpc import plan_mpc_action
 
         predictor = "energyplus" if method == "mpc_ep" else "dynamic"
@@ -1410,6 +1425,7 @@ All times are hour-of-day (0–23.9)."""
             hod=hod,
             temp=temp,
             out_t=out_t,
+            facility_w=facility_w,
             vpp_event=vpp_event,
             # MPC should react to the VPP window itself, but not to the
             # capacity-quantification demand target used for reporting.
@@ -1643,6 +1659,7 @@ All times are hour-of-day (0–23.9)."""
                     if method in ("mpc_dynamic", "mpc_ep"):
                         res = _mpc_trigger(
                             temp, out_t, hod, sim_h,
+                            facility_w=fac,
                             vpp_event=triggered_vpp if is_vpp else None)
                     else:
                         res = _llm_trigger(temp, out_t, hod, sim_h, 72.0 - sim_h,
@@ -1656,6 +1673,7 @@ All times are hour-of-day (0–23.9)."""
                                 hod=hod,
                                 temp=temp,
                                 out_t=out_t,
+                                facility_w=fac,
                                 vpp_event=triggered_vpp if is_vpp else None,
                                 vpp_target_kwh=(
                                     loop.current_vpp_demand_kwh if is_vpp else None

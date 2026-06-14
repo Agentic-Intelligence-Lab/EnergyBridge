@@ -37,10 +37,19 @@ class EnergyPlusHorizonScorer:
         rows = self._run_rollout(state, action)
         if not rows:
             raise RuntimeError("EnergyPlus predictor produced no horizon rows")
+        thermal_correction = self._align_thermal_state(rows, state)
+        power_correction = self._align_power_state(rows, state)
         diagnostics = {
             "model": "energyplus_horizon_predictor_v1",
             "horizon_steps": len(rows),
             "horizon_minutes": round(len(rows) * float(rows[0].get("dt_h", 1.0 / 6.0)) * 60.0, 3),
+            "idf_path": rows[-1].get("mpc_ep_idf_path"),
+            "epw_path": rows[-1].get("mpc_ep_epw_path"),
+            "decision_sim_h": rows[0].get("mpc_ep_decision_sim_h"),
+            "replay_policy": rows[0].get("mpc_ep_replay_policy"),
+            "warmup_note": rows[0].get("mpc_ep_warmup_note"),
+            "thermal_state_alignment": thermal_correction,
+            "power_state_alignment": power_correction,
             "predicted_temp_c": rows[-1].get("temp_c"),
             "predicted_hvac_power_kw": rows[-1].get("hvac_power_kw"),
             "predicted_total_power_kw": rows[-1].get("facility_power_kw"),
@@ -49,6 +58,75 @@ class EnergyPlusHorizonScorer:
         for row in rows:
             row["dynamic_model_prediction"] = diagnostics
         return rows, diagnostics
+
+    def _align_thermal_state(self, rows: list[dict[str, Any]], decision_state: dict) -> dict[str, Any]:
+        """Anchor replayed EP zone temperatures to the live run's current state.
+
+        The EnergyPlus Python API does not expose a safe way to clone the
+        complete internal state of the main simulation into a candidate rollout.
+        The next-best correction is to align the objective states' zone air
+        temperature to the observed decision-time temperature, then decay that
+        correction over the short MPC horizon.
+        """
+        try:
+            live_temp = float(decision_state.get("temp_c"))
+            replay_temp = float(rows[0].get("temp_c"))
+        except (TypeError, ValueError, IndexError):
+            return {"enabled": False, "reason": "missing_live_or_replay_temperature"}
+
+        delta_c = live_temp - replay_temp
+        horizon = max(1, len(rows) - 1)
+        for idx, row in enumerate(rows):
+            raw_temp = row.get("temp_c")
+            try:
+                raw_temp_f = float(raw_temp)
+            except (TypeError, ValueError):
+                continue
+            decay = max(0.0, 1.0 - idx / horizon)
+            correction = delta_c * decay
+            row["mpc_ep_raw_temp_c"] = raw_temp_f
+            row["mpc_ep_temp_correction_c"] = correction
+            row["temp_c"] = raw_temp_f + correction
+        return {
+            "enabled": True,
+            "method": "decision_temperature_offset_linear_decay",
+            "live_decision_temp_c": live_temp,
+            "replay_first_temp_c": replay_temp,
+            "initial_delta_c": delta_c,
+            "final_step_correction_c": rows[-1].get("mpc_ep_temp_correction_c"),
+            "note": "Corrects objective-state temperature only; EnergyPlus facility power still comes from replay rollout.",
+        }
+
+    def _align_power_state(self, rows: list[dict[str, Any]], decision_state: dict) -> dict[str, Any]:
+        """Anchor replayed EP power to the live run's current meter state."""
+        try:
+            live_facility_kw = float(decision_state.get("current_facility_power_kw"))
+            replay_facility_kw = float(rows[0].get("facility_power_kw"))
+        except (TypeError, ValueError, IndexError):
+            return {"enabled": False, "reason": "missing_live_or_replay_facility_power"}
+
+        delta_kw = live_facility_kw - replay_facility_kw
+        horizon = max(1, len(rows) - 1)
+        for idx, row in enumerate(rows):
+            decay = max(0.0, 1.0 - idx / horizon)
+            correction = delta_kw * decay
+            for key in ("facility_power_kw", "hvac_power_kw"):
+                try:
+                    raw_value = float(row.get(key))
+                except (TypeError, ValueError):
+                    continue
+                row[f"mpc_ep_raw_{key}"] = raw_value
+                row[f"mpc_ep_{key}_correction_kw"] = correction
+                row[key] = max(0.0, raw_value + correction)
+        return {
+            "enabled": True,
+            "method": "decision_meter_power_offset_linear_decay",
+            "live_decision_facility_kw": live_facility_kw,
+            "replay_first_facility_kw": replay_facility_kw,
+            "initial_delta_kw": delta_kw,
+            "final_step_correction_kw": rows[-1].get("mpc_ep_facility_power_kw_correction_kw"),
+            "note": "Corrects objective-state facility/hvac power only; EnergyPlus internal plant state is not cloned.",
+        }
 
     def _run_rollout(self, decision_state: dict, action: dict) -> list[dict[str, Any]]:
         from pyenergyplus.api import EnergyPlusAPI
@@ -180,6 +258,11 @@ class EnergyPlusHorizonScorer:
                 "hvac_power_kw": hvac_kw,
                 "base_load_kw": 0.0,
                 "facility_power_kw": facility_kw,
+                "mpc_ep_idf_path": str(idf_path),
+                "mpc_ep_epw_path": str(epw_path),
+                "mpc_ep_decision_sim_h": sim_h0,
+                "mpc_ep_replay_policy": "fresh_energyplus_run_replayed_from_day1_to_decision_time",
+                "mpc_ep_warmup_note": "EnergyPlus warmup runs inside each candidate rollout; current main-run thermal state is not cloned.",
             })
             rows.append(objective_state)
 
