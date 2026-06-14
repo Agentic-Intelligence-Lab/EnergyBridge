@@ -38,12 +38,25 @@ def _latest_date_dir(results_root: Path) -> Path:
     return sorted(date_dirs, key=lambda p: p.name)[-1]
 
 
-def _find_summary_json(results_root: Path, date_dir: Path | None, city: str, horizon: int) -> Path:
+def _find_summary_json(
+    results_root: Path,
+    date_dir: Path | None,
+    city: str,
+    horizon: int,
+    days: int | None,
+) -> Path:
     root = date_dir or _latest_date_dir(results_root)
-    candidate = root / "_batch_logs" / f"baseline_matrix_summary_{city.lower()}_H{horizon}.json"
-    if not candidate.exists():
-        raise FileNotFoundError(f"Summary JSON not found: {candidate}")
-    return candidate
+    batch_dir = root / "_batch_logs"
+    candidates: list[Path] = []
+    if days is not None:
+        candidates.append(batch_dir / f"baseline_matrix_summary_{city.lower()}_{days}days_H{horizon}.json")
+    candidates.append(batch_dir / f"baseline_matrix_summary_{city.lower()}_H{horizon}.json")
+    candidates.extend(sorted(batch_dir.glob(f"baseline_matrix_summary_{city.lower()}_*days_H{horizon}.json")))
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    checked = "\n  ".join(str(path) for path in candidates)
+    raise FileNotFoundError(f"Summary JSON not found. Checked:\n  {checked}")
 
 
 def _load_matrix_rows(summary_json: Path) -> list[dict[str, Any]]:
@@ -125,8 +138,12 @@ def _build_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
     return df.sort_values(["persona_id", "method"]).reset_index(drop=True)
 
 
-def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path) -> Path:
-    md_path = report_dir / "baseline_matrix_report.md"
+def _artifact_name(prefix: str, filename: str) -> str:
+    return f"{prefix}_{filename}" if prefix else filename
+
+
+def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, prefix: str = "") -> Path:
+    md_path = report_dir / _artifact_name(prefix, "baseline_matrix_report.md")
     summary = (
         df.groupby("method", observed=True)[
             ["user_pref_score", "energy_kwh_total", "vpp_window_energy_kwh", "appliance_shift_success_rate"]
@@ -189,7 +206,7 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path) -> P
     return md_path
 
 
-def _plot_report(df: pd.DataFrame, report_dir: Path) -> Path:
+def _plot_report(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
     plt.style.use("seaborn-v0_8-whitegrid")
     fig, axes_arr = plt.subplots(2, 2, figsize=(22, 15), constrained_layout=True)
     axes = {
@@ -291,14 +308,14 @@ def _plot_report(df: pd.DataFrame, report_dir: Path) -> Path:
     )
 
     fig.suptitle("EnergyBridge Baseline Matrix Report", fontsize=24, fontweight="bold")
-    png_path = report_dir / "baseline_matrix_report.png"
+    png_path = report_dir / _artifact_name(prefix, "baseline_matrix_report.png")
     fig.savefig(png_path, dpi=220)
     plt.close(fig)
     return png_path
 
 
-def _write_csv(df: pd.DataFrame, report_dir: Path) -> Path:
-    csv_path = report_dir / "baseline_matrix_report_table.csv"
+def _write_csv(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
+    csv_path = report_dir / _artifact_name(prefix, "baseline_matrix_report_table.csv")
     df.to_csv(csv_path, index=False, encoding="utf-8-sig")
     return csv_path
 
@@ -314,8 +331,29 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--city",
         default="Tianjin",
-        choices=["Tianjin", "Beijing", "Shanghai"],
+        choices=["Tianjin", "Beijing", "Shanghai", "Germany"],
         help="City name used in the matrix summary file.",
+    )
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=None,
+        help="Optional simulation length used in the matrix summary suffix, e.g. 7 for *_7days_H6.",
+    )
+    parser.add_argument(
+        "--summary-json",
+        default="",
+        help="Optional explicit matrix summary JSON path. Overrides --date/--city/--days discovery.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="",
+        help="Optional report output directory. Defaults to <summary-dir>/baseline_matrix_report.",
+    )
+    parser.add_argument(
+        "--artifact-prefix",
+        default="",
+        help="Optional prefix for generated report artifact filenames, e.g. 3day_tianjin.",
     )
     parser.add_argument(
         "--horizon",
@@ -337,9 +375,15 @@ def main() -> None:
         if not candidate.is_dir():
             raise FileNotFoundError(f"Date directory not found: {args.date}")
         date_dir = candidate
-    summary_json = _find_summary_json(results_root, date_dir, args.city, args.horizon)
+    summary_json = (
+        Path(args.summary_json)
+        if args.summary_json
+        else _find_summary_json(results_root, date_dir, args.city, args.horizon, args.days)
+    )
+    if not summary_json.exists():
+        raise FileNotFoundError(f"Summary JSON not found: {summary_json}")
     summary_root = summary_json.parent
-    report_dir = summary_root / "baseline_matrix_report"
+    report_dir = Path(args.output_dir) if args.output_dir else summary_root / "baseline_matrix_report"
     report_dir.mkdir(parents=True, exist_ok=True)
 
     rows = _load_matrix_rows(summary_json)
@@ -347,9 +391,9 @@ def main() -> None:
     df = df.copy()
     df["method_label"] = df["method"].map(METHOD_LABEL)
 
-    md_path = _write_markdown(df, report_dir, summary_json)
-    csv_path = _write_csv(df, report_dir)
-    png_path = _plot_report(df, report_dir)
+    md_path = _write_markdown(df, report_dir, summary_json, args.artifact_prefix)
+    csv_path = _write_csv(df, report_dir, args.artifact_prefix)
+    png_path = _plot_report(df, report_dir, args.artifact_prefix)
 
     print(f"[OK] markdown: {md_path}")
     print(f"[OK] csv     : {csv_path}")
