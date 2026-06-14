@@ -791,7 +791,9 @@ def _ensure_price_sensitive_reason_estimate(
     if not event or not _price_sensitive_explanation_mode(persona_config):
         return text[:100]
     lowered = text.lower()
-    if any(token in lowered for token in ("est.", "estimate", "roughly", "kw", "kwh", "saved", "shifted")):
+    has_number = any(ch.isdigit() for ch in lowered)
+    quantified_terms = ("kw", "kwh", "est.", "estimate", "roughly", "~")
+    if has_number and any(token in lowered for token in quantified_terms):
         return text[:100]
     try:
         target_kw = float(demand_kw) if demand_kw is not None else None
@@ -799,12 +801,14 @@ def _ensure_price_sensitive_reason_estimate(
         target_kw = None
     if target_kw is not None and 0.0 < target_kw <= 0.75:
         suffix = f" | low target ~{target_kw:.2f}kW, minimal action"
-        return (text[: max(0, 100 - len(suffix))] + suffix)[:100]
+        base = text[: max(0, 100 - len(suffix))].rstrip(" ,;:|-")
+        return (base + suffix)[:100]
     estimate_kw = _controllable_vpp_load_estimate_kw(appliance_config)
     if estimate_kw <= 0:
         return text[:100]
     suffix = f" | est. shifted ~{estimate_kw:.1f}kW"
-    return (text[: max(0, 100 - len(suffix))] + suffix)[:100]
+    base = text[: max(0, 100 - len(suffix))].rstrip(" ,;:|-")
+    return (base + suffix)[:100]
 
 
 def _protective_control_mode(persona_config: dict | None) -> bool:
@@ -1478,9 +1482,26 @@ All times are hour-of-day (0–23.9)."""
             vpp_events=vpp_events,
         )
         vpp_window = _event_window_text(vpp_event) if vpp_event else ""
+        prompt_vpp_demand: dict[str, Any] = {}
+        if vpp_event:
+            _prompt_vid = str(vpp_event.get("id", ""))
+            prompt_vpp_demand = dict(loop.vpp_demand_by_id.get(_prompt_vid, {}))
+            if not prompt_vpp_demand and vpp_active:
+                prompt_vpp_demand = {
+                    "target_kwh": getattr(loop, "current_vpp_demand_kwh", 0.0),
+                    "target_shed_kw": getattr(loop, "current_vpp_demand_kw", 0.0),
+                }
+            if not prompt_vpp_demand:
+                _prompt_q90 = loop.total_quantification_by_id.get(
+                    _prompt_vid,
+                    {"status": "not_computed", "reason": "Reference A3 quantification unavailable"},
+                )
+                prompt_vpp_demand = _call_vpp_demand_agent(_prompt_vid, _prompt_q90)
+        prompt_vpp_demand_kw = prompt_vpp_demand.get("target_shed_kw") if prompt_vpp_demand else None
+        prompt_vpp_demand_kwh = prompt_vpp_demand.get("target_kwh") if prompt_vpp_demand else None
         if vpp_active:
-            _dkwh = getattr(loop, "current_vpp_demand_kwh", None)
-            _dkw = getattr(loop, "current_vpp_demand_kw", None)
+            _dkwh = prompt_vpp_demand_kwh
+            _dkw = prompt_vpp_demand_kw
             _duration_h = max(1e-6, float(vpp_event.get("end_h", 0.0) - vpp_event.get("trigger_h", 0.0))) if vpp_event else 1.0
             if _dkw:
                 _dtag = (
@@ -1521,7 +1542,7 @@ All times are hour-of-day (0–23.9)."""
                     break
         return_home_tag = ""
         if vpp_event and _calendar_return_home_sensitive(persona_config, vpp_event):
-            demand_kw = getattr(loop, "current_vpp_demand_kw", None)
+            demand_kw = prompt_vpp_demand_kw
             if _low_vpp_target_kw(demand_kw):
                 comfort_target = max(_ac_sp_min, min(_ac_sp_max, max(_ac_sp_default, _ac_sp_max - 0.5)))
                 return_home_action = f"prefer the normal comfort setpoint around {comfort_target:.1f}°C"
@@ -1544,11 +1565,11 @@ All times are hour-of-day (0–23.9)."""
             persona_config,
             appliance_config,
             vpp_event,
-            getattr(loop, "current_vpp_demand_kw", None),
+            prompt_vpp_demand_kw,
         )
         intensity_tag = _vpp_intensity_prompt_text(
             vpp_event,
-            getattr(loop, "current_vpp_demand_kw", None),
+            prompt_vpp_demand_kw,
         )
         # Current event: user expressed preference before agent acts
         user_now_tag = f"\n[User says NOW]: {user_pref_input}" if user_pref_input else ""
@@ -1822,7 +1843,7 @@ All times are hour-of-day (0–23.9)."""
                 persona_config,
                 appliance_config,
                 vpp_event,
-                getattr(loop, "current_vpp_demand_kw", None),
+                prompt_vpp_demand_kw,
             )
             # --- Independent appliance commands from LLM ---
             appl_actions = _filter_controllable_appliance_actions(
