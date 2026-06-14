@@ -1,5 +1,6 @@
 from experiments.benchmark.family_runner import (
     _ensure_price_sensitive_reason_estimate,
+    _learned_efficiency_floor_c,
     _requested_skip_devices,
 )
 
@@ -39,3 +40,48 @@ def test_price_sensitive_reason_requires_quantified_impact() -> None:
         demand_kw=3.077,
     )
     assert already_quantified == "Shifted about 3.0kW away from the event."
+
+
+def test_learned_efficiency_floor_requires_positive_history() -> None:
+    persona = {
+        "tags": {"comfort": "normal_comfort", "price": "price_sensitive", "control": "suggestion_first"},
+        "schedule": {},
+    }
+    events = [
+        {"score": 4, "comfort_score": 4, "comment": "Comfort stayed within range."},
+        {"score": 4, "comfort_score": 4, "comment": "Comfort stayed reasonable."},
+    ]
+
+    assert _learned_efficiency_floor_c(
+        events,
+        persona,
+        default_sp_c=25.0,
+        preferred_max_c=26.0,
+        vpp_active=False,
+    ) == 25.5
+    assert _learned_efficiency_floor_c(
+        events,
+        persona,
+        default_sp_c=25.0,
+        preferred_max_c=26.0,
+        vpp_active=True,
+    ) == 26.0
+
+
+def test_learned_efficiency_floor_disabled_for_confirmation_users() -> None:
+    persona = {
+        "tags": {"comfort": "normal_comfort", "price": "needs_explanation", "control": "confirm_required"},
+        "schedule": {},
+    }
+    events = [
+        {"score": 4, "comfort_score": 4, "comment": "Comfort stayed within range."},
+        {"score": 4, "comfort_score": 4, "comment": "Comfort stayed reasonable."},
+    ]
+
+    assert _learned_efficiency_floor_c(
+        events,
+        persona,
+        default_sp_c=25.0,
+        preferred_max_c=26.0,
+        vpp_active=True,
+    ) is None

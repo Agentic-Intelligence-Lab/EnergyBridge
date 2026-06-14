@@ -320,12 +320,55 @@ def build_vpp_preference_memory_notes(past_events: list | None, persona: dict | 
         return []
 
     notes: list[str] = []
+    persona = normalize_persona(persona or FAMILY_PERSONA)
+    tags = persona.get("tags", {}) or {}
+    fixed_appliances = set(_fixed_appliance_constraints(persona))
     comments = " ".join(str(e.get("comment", "")) for e in events).lower()
     user_inputs = " ".join(str(e.get("user_input", "")) for e in events).lower()
     low_scores = [e for e in events if int(e.get("score") or 3) <= 3]
     low_score_text = " ".join(
         (str(e.get("comment", "")) + " " + str(e.get("user_input", ""))).lower()
         for e in low_scores
+    )
+    recent = events[-3:]
+
+    def _score(event: dict, key: str, default: int = 3) -> int:
+        try:
+            return max(1, min(5, int(round(float(event.get(key, default))))))
+        except (TypeError, ValueError):
+            return default
+
+    def _has_controllable_service_issue(event: dict) -> bool:
+        summary = event.get("appliance_summary") or {}
+        if not isinstance(summary, dict):
+            return False
+        for name, info in summary.items():
+            if not isinstance(info, dict) or not bool(info.get("present")):
+                continue
+            if name in {"washer", "dishwasher", "dryer"} and bool(info.get("skipped")):
+                return True
+            if name not in fixed_appliances and bool(info.get("ran_during_vpp")):
+                return True
+        return False
+
+    recent_positive = (
+        len(recent) >= 2
+        and all(_score(e, "score") >= 4 for e in recent[-2:])
+        and all(_score(e, "comfort_score") >= 4 for e in recent[-2:])
+    )
+    recent_clean = recent_positive and not any(_has_controllable_service_issue(e) for e in recent[-2:])
+    any_too_warm = any(
+        word in comments + " " + user_inputs
+        for word in ("too warm", "above 26", "26.5", "hot", "uncomfortable", "temperature drift")
+    )
+    normal_comfort = tags.get("comfort") in {None, "", "normal_comfort"}
+    exploration_allowed = (
+        recent_clean
+        and not low_scores
+        and normal_comfort
+        and tags.get("control") not in {"confirm_required", "low_auto_accept", "privacy_sensitive"}
+        and not _low_disruption_strategy_language(persona)
+        and not any_too_warm
     )
 
     if _low_disruption_strategy_language(persona) or any(
@@ -360,6 +403,21 @@ def build_vpp_preference_memory_notes(past_events: list | None, persona: dict | 
     if any(word in comments for word in ("comfort stayed", "comfort kept", "within range", "acceptable")):
         notes.append(
             "Repeat the proven pattern: keep AC inside the preferred range and mention that comfort/routine are protected."
+        )
+    if exploration_allowed:
+        notes.append(
+            "Recent events scored well with comfort preserved; cautiously improve energy by using the warm edge of the preferred AC range during VPP, then restore without overcooling."
+        )
+        notes.append(
+            "For future daily planning, avoid unnecessary cooling below the user's comfortable mid-to-warm range unless safety or explicit feedback asks for colder air."
+        )
+    elif recent_positive and any_too_warm:
+        notes.append(
+            "Do not escalate energy-saving temperature exploration because prior feedback mentioned warmth; keep the next event closer to the normal comfort target."
+        )
+    if any(e.get("target_achieved") is False for e in recent) and recent_clean and not _low_disruption_strategy_language(persona):
+        notes.append(
+            "If a future VPP target is missed without comfort complaints, strengthen controllable load shifting and use the warmest still-comfortable AC setting inside the preferred range."
         )
 
     deduped: list[str] = []

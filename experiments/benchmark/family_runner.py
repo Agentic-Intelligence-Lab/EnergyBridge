@@ -847,6 +847,125 @@ def _price_sensitive_auto_saving_mode(persona_config: dict | None) -> bool:
     )
 
 
+def _event_score_int(event: dict, key: str, default: int = 3) -> int:
+    try:
+        return max(1, min(5, int(round(float(event.get(key, default))))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _event_has_controllable_service_issue(event: dict, persona_config: dict | None) -> bool:
+    """True when past feedback contains a controllable appliance violation."""
+    try:
+        from user_pref_scorer import _fixed_appliance_constraints
+        fixed = set(_fixed_appliance_constraints(persona_config or {}))
+    except Exception:
+        fixed = set()
+    summary = event.get("appliance_summary") or {}
+    if not isinstance(summary, dict):
+        return False
+    for name, info in summary.items():
+        if not isinstance(info, dict) or not bool(info.get("present")):
+            continue
+        if name in {"washer", "dishwasher", "dryer"} and bool(info.get("skipped")):
+            return True
+        if name not in fixed and bool(info.get("ran_during_vpp")):
+            return True
+    return False
+
+
+def _learned_efficiency_adaptation_enabled(
+    past_events: list[dict] | None,
+    persona_config: dict | None,
+) -> bool:
+    """Enable small energy-saving exploration only after positive feedback.
+
+    This is intentionally evidence-based rather than persona-id based. It lets
+    the Agent become slightly more efficient after the simulated user has
+    repeatedly accepted prior VPP actions, while automatically disabling the
+    behavior for protective/confirmation-heavy users or after negative feedback.
+    """
+    events = list(past_events or [])
+    if len(events) < 2:
+        return False
+    persona_config = persona_config or {}
+    tags = persona_config.get("tags", {}) or {}
+    schedule = persona_config.get("schedule", {}) or {}
+    if (
+        _protective_control_mode(persona_config)
+        or _low_dr_intrusion_sensitive_mode(persona_config)
+        or tags.get("comfort") == "temp_sensitive"
+        or tags.get("control") in {"confirm_required", "low_auto_accept", "privacy_sensitive"}
+        or bool(schedule.get("vulnerable_members"))
+    ):
+        return False
+    if any(_event_score_int(e, "score") <= 3 for e in events):
+        return False
+    recent = events[-2:]
+    if not all(_event_score_int(e, "score") >= 4 for e in recent):
+        return False
+    if not all(_event_score_int(e, "comfort_score") >= 4 for e in recent):
+        return False
+    if any(_event_has_controllable_service_issue(e, persona_config) for e in recent):
+        return False
+    feedback_text = " ".join(
+        (str(e.get("comment", "")) + " " + str(e.get("user_input", ""))).lower()
+        for e in events
+    )
+    if any(
+        token in feedback_text
+        for token in ("too warm", "above 26", "26.5", "hot", "uncomfortable", "temperature drift")
+    ):
+        return False
+    return True
+
+
+def _learned_efficiency_floor_c(
+    past_events: list[dict] | None,
+    persona_config: dict | None,
+    *,
+    default_sp_c: float,
+    preferred_max_c: float,
+    vpp_active: bool,
+) -> float | None:
+    """Return a learned lower bound for cooling setpoint, if safe to explore."""
+    if not _learned_efficiency_adaptation_enabled(past_events, persona_config):
+        return None
+    step_c = 1.0 if vpp_active else 0.5
+    return round(min(float(preferred_max_c), float(default_sp_c) + step_c), 1)
+
+
+def _learned_efficiency_prompt_text(
+    past_events: list[dict] | None,
+    persona_config: dict | None,
+    *,
+    default_sp_c: float,
+    preferred_max_c: float,
+) -> str:
+    floor = _learned_efficiency_floor_c(
+        past_events,
+        persona_config,
+        default_sp_c=default_sp_c,
+        preferred_max_c=preferred_max_c,
+        vpp_active=False,
+    )
+    vpp_floor = _learned_efficiency_floor_c(
+        past_events,
+        persona_config,
+        default_sp_c=default_sp_c,
+        preferred_max_c=preferred_max_c,
+        vpp_active=True,
+    )
+    if floor is None or vpp_floor is None:
+        return ""
+    return (
+        "\nLEARNED_EFFICIENCY_ADAPTATION: recent VPP feedback was satisfied and comfortable. "
+        f"For ordinary occupied planning, avoid cooling below about {floor:.1f}°C unless needed. "
+        f"During VPP, use about {vpp_floor:.1f}°C when it remains inside the user's preferred range, "
+        "then restore comfort without overcooling."
+    )
+
+
 def _comfort_reason_for_low_dr_user(reason: str, persona_config: dict | None) -> str:
     """Tone down VPP jargon for users who dislike intrusive DR framing."""
     if not _low_dr_intrusion_sensitive_mode(persona_config):
@@ -1567,6 +1686,12 @@ All times are hour-of-day (0–23.9)."""
             vpp_event,
             prompt_vpp_demand_kw,
         )
+        learned_efficiency_tag = _learned_efficiency_prompt_text(
+            loop.vpp_event_log,
+            persona_config,
+            default_sp_c=_ac_sp_default,
+            preferred_max_c=_ac_sp_max,
+        )
         intensity_tag = _vpp_intensity_prompt_text(
             vpp_event,
             prompt_vpp_demand_kw,
@@ -1584,7 +1709,7 @@ All times are hour-of-day (0–23.9)."""
         prompt = (f"sim_hour={sim_h:.1f}  clock={hh:02d}:00{vpp_tag}{upcoming_vpp_tag}{post_vpp_tag}{return_home_tag}\n"
                   f"zone_temp={temp:.1f}C  outdoor={out_t:.1f}C\n"
                   f"remaining_sim_hours={remaining_h:.0f}\n"
-                  f"user_pref: {user_pref}{user_now_tag}{price_tag}{benefit_tag}{intensity_tag}{appl_tag}{fixed_appliance_tag}{explicit_appliance_tag}{mem_tag}")
+                  f"user_pref: {user_pref}{user_now_tag}{price_tag}{benefit_tag}{learned_efficiency_tag}{intensity_tag}{appl_tag}{fixed_appliance_tag}{explicit_appliance_tag}{mem_tag}")
         if vpp_active:
             fb_sp = min(_run_sp_max, _ac_sp_default if _protective_mode else 26.5)
             fb_nch = None
@@ -1821,8 +1946,17 @@ All times are hour-of-day (0–23.9)."""
                     elif comfort_tag == "normal_comfort" and not _auto_saving_mode:
                         high_trust_cap = max(_ac_sp_min, _ac_sp_max - 0.5)
                     sp_upper = min(sp_upper, high_trust_cap)
+            learned_floor = _learned_efficiency_floor_c(
+                loop.vpp_event_log,
+                persona_config,
+                default_sp_c=_ac_sp_default,
+                preferred_max_c=_ac_sp_max,
+                vpp_active=bool(vpp_active),
+            )
             raw_sp = float(data.get("setpoint", fb_sp))
             sp_lower = locals().get("sp_lower", _energy_saving_sp_floor)
+            if learned_floor is not None:
+                sp_lower = max(sp_lower, learned_floor)
             if sp_lower > sp_upper:
                 sp_lower = sp_upper
             sp = round(max(sp_lower, min(sp_upper, raw_sp)), 1)
