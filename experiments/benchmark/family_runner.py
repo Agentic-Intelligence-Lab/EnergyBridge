@@ -1481,7 +1481,8 @@ All times are hour-of-day (0–23.9)."""
                     demand_kw = float(getattr(loop, "current_vpp_demand_kw", 0.0) or 0.0)
                     if demand_kw <= 0.5:
                         # Low-DR users should not feel a comfort sacrifice for a tiny/zero target.
-                        sp_upper = min(sp_upper, _ac_sp_default)
+                        small_target_cap = max(_energy_saving_sp_floor, _ac_sp_default)
+                        sp_upper = min(sp_upper, small_target_cap)
                 if _protective_mode:
                     sp_upper = min(sp_upper, _ac_sp_max)
                 elif (persona_config.get("tags", {}) or {}).get("control") == "high_trust_auto":
