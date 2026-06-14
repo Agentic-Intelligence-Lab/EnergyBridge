@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import numpy as np
 import pandas as pd
 
@@ -224,6 +225,19 @@ def _plot_report(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
         pivot.columns = [METHOD_LABEL[c] for c in pivot.columns]
         return pivot
 
+    def _soft_cmap(cmap_name: str) -> mcolors.Colormap:
+        base = plt.get_cmap(cmap_name)
+        # Avoid the darkest end of the palette so cell labels stay readable in reports.
+        colors = base(np.linspace(0.20, 0.72, 256))
+        return mcolors.LinearSegmentedColormap.from_list(f"{cmap_name}_soft", colors)
+
+    def _label_color(im: Any, value: float) -> str:
+        if np.isnan(value):
+            return "#6b7280"
+        rgba = im.cmap(im.norm(value))
+        luminance = 0.2126 * rgba[0] + 0.7152 * rgba[1] + 0.0722 * rgba[2]
+        return "#ffffff" if luminance < 0.48 else "#17202a"
+
     def _draw_metric_table(
         ax,
         pivot: pd.DataFrame,
@@ -239,7 +253,7 @@ def _plot_report(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
     ) -> None:
         data = pivot.to_numpy(dtype=float)
         cmap_name = f"{cmap}_r" if lower_is_better else cmap
-        im = ax.imshow(data, cmap=cmap_name, aspect="auto", vmin=vmin, vmax=vmax)
+        im = ax.imshow(data, cmap=_soft_cmap(cmap_name), aspect="auto", vmin=vmin, vmax=vmax)
         ax.set_title(title, fontsize=14, fontweight="bold")
         ax.set_xticks(np.arange(len(pivot.columns)))
         ax.set_xticklabels(list(pivot.columns), rotation=0)
@@ -258,7 +272,16 @@ def _plot_report(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
                     label = "N/A"
                 else:
                     label = f"{value:{fmt}}{suffix}"
-                ax.text(j, i, label, ha="center", va="center", color="#17202a", fontsize=9, fontweight="bold")
+                ax.text(
+                    j,
+                    i,
+                    label,
+                    ha="center",
+                    va="center",
+                    color=_label_color(im, value),
+                    fontsize=9,
+                    fontweight="bold",
+                )
         cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.02)
         cbar.set_label(cbar_label)
 
