@@ -677,10 +677,10 @@ def _persona_agent_policy_text(persona_config: dict | None) -> str:
         )
     if tags.get("price") in {"low_incentive", "price_indifferent"}:
         parts.append(
-            "This user is not motivated by small savings. Do not frame the plan as saving money; frame it as comfort-preserving, low-risk routine support."
+            "This user responds to comfort, consent, and routine stability rather than financial nudges. Keep the user-facing reason comfort-preserving and low-risk."
         )
         parts.append(
-            "If DAY_AHEAD_PRICE is provided, do not use price or bill savings as a user-facing reason. Use price only as a quiet secondary optimizer for truly controllable devices after comfort, consent, and routine stability."
+            "If DAY_AHEAD_PRICE is provided, use it only as a quiet secondary optimizer for truly controllable devices after comfort, consent, and routine stability."
         )
     if _low_dr_intrusion_sensitive_mode(persona_config):
         parts.append(

@@ -332,7 +332,7 @@ def build_vpp_preference_memory_notes(past_events: list | None, persona: dict | 
         word in comments for word in ("cost talk", "saving", "savings", "money", "irrelevant", "annoying")
     ):
         notes.append(
-            "Avoid cost/savings/money framing; describe comfort preservation, routine stability, and low-risk event support."
+            "Keep user-facing explanations centered on comfort preservation, routine stability, and low-risk event support."
         )
     if any(word in low_score_text for word in ("pointless", "weak", "limited", "not very useful", "partial")):
         notes.append(
@@ -447,7 +447,7 @@ def _strategy_appliance_pref_en(
     if fixed:
         text += " Keep fixed appliance routines unchanged: " + ", ".join(fixed) + "."
     if low_disruption:
-        text += " Do not frame this as bill savings."
+        text += " Keep the explanation centered on comfort and routine only."
     return text
 
 
@@ -516,7 +516,7 @@ def _align_candidates_to_appliance_profile(
                 c["tradeoff"] = "轻微调整，例行不变"
             else:
                 c["label"] = "低扰支援"
-                c["tradeoff"] = "支援更强，不谈小额节省"
+                c["tradeoff"] = "支援更强，仍以低打扰为主"
         desc = str(c.get("description", "")).strip()
         if fixed:
             fixed_note = "固定电器不动"
@@ -567,7 +567,7 @@ def get_user_preference_input(
             override_msg = (
                 "For this brief event, I only approve comfort-safe, routine-preserving actions: "
                 f"keep AC at or below {pref_max:.1f}°C, do not change fixed appliance routines, "
-                f"and avoid small bill-savings talk. If support is limited, just keep life smooth."
+                f"and keep the explanation about comfort and routine. If support is limited, just keep life smooth."
             )
         elif tags.get("control") == "confirm_required":
             override_msg = (
@@ -755,8 +755,8 @@ def generate_vpp_strategy_candidates(
         _tags = persona.get("tags", {}) or {}
         _style_notes = []
         if _tags.get("price") in {"low_incentive", "price_indifferent"}:
-            _style_notes.append("Do not emphasize small bill savings; emphasize comfort, routine preservation, and low-risk support.")
-            _style_notes.append("Avoid the words cost, savings, money, cheap, bill, and price in user_pref unless the user explicitly asks.")
+            _style_notes.append("Use comfort, routine preservation, and low-risk support as the only user-facing rationale.")
+            _style_notes.append("Write user_pref without financial or market language unless the user explicitly asks for it.")
         if _tags.get("control") == "confirm_required":
             _style_notes.append("Write each user_pref as an explicit event-level confirmation boundary, not as open-ended permission.")
         if _tags.get("comfort") == "temp_sensitive":
@@ -1062,8 +1062,8 @@ def score_user_preference(
             )
         if _low_disruption_strategy_language(persona):
             rationale += (
-                " | This is a low-incentive/low-disruption user: they dislike cost, bill-savings, or aggressive VPP sales pitches. "
-                "If the controller used comfort/routine-preserving wording and service was preserved, evaluate mainly comfort, consent, and routine smoothness; "
+                " | This is a low-disruption user: evaluate mainly comfort, consent, routine smoothness, and whether the explanation stayed low-pressure. "
+                "Do not invent a financial or market pitch if the controller explanation did not contain one. "
                 "weak VPP contribution from fixed loads is not by itself a communication failure."
             )
         if not washer_completed:

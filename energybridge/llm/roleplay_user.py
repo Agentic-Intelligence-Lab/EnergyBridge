@@ -161,7 +161,7 @@ class RoleplayUserSimulator:
             f"{zone_section}\n"
             "Scoring guidance:\n"
             "- Stay faithful to the persona's scoring_weights and tags, not the grid operator's goals.\n"
-            "- For low_incentive or price_indifferent users, small cost/bill savings should not dominate satisfaction; comfort, routine smoothness, and whether the controller avoided annoying savings pitches matter more.\n"
+            "- For low_incentive or price_indifferent users, satisfaction should be dominated by comfort, routine smoothness, and whether the controller stayed low-pressure. Do not invent a financial pitch if it is absent.\n"
             "- If the control plan says an appliance is fixed/non-DR-adjustable, do not treat that fixed operation as an agent scheduling violation.\n"
             "- If a required controllable task was skipped or an approved comfort boundary was exceeded, score harshly.\n\n"
             "Return a JSON object with EXACTLY these fields:\n"
