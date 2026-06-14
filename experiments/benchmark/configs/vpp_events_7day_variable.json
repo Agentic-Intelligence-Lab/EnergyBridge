@@ -1,0 +1,61 @@
+{
+  "description": "Example 7-day VPP schedule with varied windows and two events on Day 3.",
+  "events": [
+    {
+      "id": "vpp_d1_evening",
+      "day": 1,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "Day 1 evening peak"
+    },
+    {
+      "id": "vpp_d2_early_evening",
+      "day": 2,
+      "start_h": 17.5,
+      "duration_h": 1.0,
+      "label": "Day 2 early evening peak"
+    },
+    {
+      "id": "vpp_d3_noon",
+      "day": 3,
+      "start_h": 12.0,
+      "duration_minutes": 30,
+      "label": "Day 3 noon flexibility check"
+    },
+    {
+      "id": "vpp_d3_evening",
+      "day": 3,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "Day 3 evening peak"
+    },
+    {
+      "id": "vpp_d4_late_evening",
+      "day": 4,
+      "start_h": 19.0,
+      "end_h": 20.0,
+      "label": "Day 4 late evening peak"
+    },
+    {
+      "id": "vpp_d5_long",
+      "day": 5,
+      "start_h": 16.5,
+      "duration_h": 1.5,
+      "label": "Day 5 longer event"
+    },
+    {
+      "id": "vpp_d6_evening",
+      "day": 6,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "Day 6 evening peak"
+    },
+    {
+      "id": "vpp_d7_late",
+      "day": 7,
+      "start_h": 20.0,
+      "duration_h": 1.0,
+      "label": "Day 7 late event"
+    }
+  ]
+}
