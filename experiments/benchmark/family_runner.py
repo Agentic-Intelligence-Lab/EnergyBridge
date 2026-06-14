@@ -1002,10 +1002,18 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     # Override global SP_MIN based on persona comfort floor
     _run_sp_min = max(SP_MIN, _ac_sp_min - _ac_sp_tol)
     _run_sp_max = min(SP_MAX, _ac_sp_max + 2.0)  # allow VPP raise headroom
+    _energy_saving_sp_floor = _run_sp_min
     if _protective_mode:
         _run_sp_max = min(_run_sp_max, _ac_sp_max)
         _ac_sp_vpp_min = _ac_sp_default
         _ac_sp_vpp_max = _ac_sp_max
+        if (persona_config.get("tags", {}) or {}).get("control") in {"low_auto_accept", "privacy_sensitive"}:
+            _energy_saving_sp_floor = max(_energy_saving_sp_floor, min(_ac_sp_max, _ac_sp_max - 1.0))
+    elif (
+        (persona_config.get("tags", {}) or {}).get("control") == "high_trust_auto"
+        and (persona_config.get("tags", {}) or {}).get("comfort") == "normal_comfort"
+    ):
+        _energy_saving_sp_floor = max(_energy_saving_sp_floor, min(_ac_sp_max, _ac_sp_max - 0.5))
 
     _vpp_ac_strategy_text = (
         f"Protective strategy: keep setpoint within {_ac_sp_min:.1f}-{_ac_sp_max:.1f}°C; do not raise above preferred max for VPP."
@@ -1032,6 +1040,7 @@ Occupied hours: 08:00-22:00. Outside this window AC is automatically set to 28°
 User preferred comfort range: {_ac_sp_min:.1f}–{_ac_sp_max:.1f}°C (tolerance ±{_ac_sp_tol:.1f}°C).
 Normal setpoint target: ~{_ac_sp_default:.1f}°C. PMV near 0 at 25.5°C; >+0.5 when zone exceeds 27°C.
 Allowed setpoint range: {_run_sp_min:.1f}–{_run_sp_max:.1f}°C.
+Energy-conscious comfort floor: avoid cooling below {_energy_saving_sp_floor:.1f}°C unless the user explicitly asks for colder air or safety requires it.
 
 [VPP DEMAND RESPONSE]
 Goal: reduce total electricity consumption for 1 hour to support the grid.
@@ -1349,11 +1358,17 @@ All times are hour-of-day (0–23.9)."""
                         high_trust_cap = max(_ac_sp_min, _ac_sp_max - 0.5)
                     sp_upper = min(sp_upper, high_trust_cap)
             raw_sp = float(data.get("setpoint", fb_sp))
-            sp = round(max(_run_sp_min, min(sp_upper, raw_sp)), 1)
+            sp_lower = _energy_saving_sp_floor
+            sp = round(max(sp_lower, min(sp_upper, raw_sp)), 1)
             if sp < raw_sp:
                 data["reason"] = (
                     str(data.get("reason", ""))[:68]
                     + f" | capped at comfort guardrail {sp_upper:.1f}C"
+                )[:100]
+            elif sp > raw_sp:
+                data["reason"] = (
+                    str(data.get("reason", ""))[:66]
+                    + f" | raised to efficient comfort floor {sp_lower:.1f}C"
                 )[:100]
             nch = data.get("next_check_hour")
             if nch is not None:
