@@ -226,6 +226,25 @@ def _get_appliance_presence(vpp_context: dict) -> dict:
     return {k: bool((raw.get(k, False) if isinstance(raw, dict) else False)) for k in _APPLIANCE_KEYS}
 
 
+def _fixed_appliance_constraints(persona: dict | None) -> list[str]:
+    """Return present devices that the controller cannot shift for DR."""
+    app = (persona or {}).get("appliances", {}) or {}
+    fixed: list[str] = []
+    for name in ("washer", "dishwasher", "dryer"):
+        cfg = app.get(name, {}) or {}
+        if bool(cfg.get("present")) and (
+            not bool(cfg.get("shiftable", True)) or not bool(cfg.get("dr_adjustable", True))
+        ):
+            fixed.append(name)
+    wh = app.get("water_heater", {}) or {}
+    if bool(wh.get("present")) and not bool(wh.get("dr_adjustable", True)):
+        fixed.append("water_heater")
+    ev = app.get("ev", {}) or {}
+    if bool(ev.get("present")) and ev.get("dr_adjustable") is False:
+        fixed.append("ev")
+    return fixed
+
+
 def _strategy_appliance_plan_cn(strategy_id: str, presence: dict, vpp_context: dict | None = None) -> str:
     if not presence:
         return ""
@@ -498,6 +517,15 @@ def generate_vpp_strategy_candidates(
         _active_appliances_text = ",".join(_active_appliances) if _active_appliances else "none"
         _cal = calendar_context or calendar_context_for_event(persona, event_index, vpp_context)
         _cal_brief = calendar_brief_for_prompt(_cal)
+        _tags = persona.get("tags", {}) or {}
+        _style_notes = []
+        if _tags.get("price") in {"low_incentive", "price_indifferent"}:
+            _style_notes.append("Do not emphasize small bill savings; emphasize comfort, routine preservation, and low-risk support.")
+        if _tags.get("control") == "confirm_required":
+            _style_notes.append("Write each user_pref as an explicit event-level confirmation boundary, not as open-ended permission.")
+        if _tags.get("comfort") == "temp_sensitive":
+            _style_notes.append("Keep AC recommendations inside the preferred comfort range unless the user explicitly accepts a tiny drift.")
+        _style_text = " ".join(_style_notes) if _style_notes else "Use the persona's normal communication style."
 
         sys_prompt = (
             "You are an energy management strategy advisor for a smart home VPP demand-response system. "
@@ -507,6 +535,7 @@ def generate_vpp_strategy_candidates(
             "Use the user's calendar as a hard preference context: do not propose schedules that would miss "
             "appointments, return-home comfort needs, EV departure readiness, hot-water deadlines, or required chores. "
             "If appliances are available, mention how to handle washer, dishwasher, dryer, water heater, and EV in strategy text. "
+            "For fixed/non-DR-adjustable appliances, do not imply the controller can move them; describe them as fixed constraints. "
             'Return ONLY a JSON array of exactly 3 objects, each with keys: '
             '"id" ("A"/"B"/"C"), '
             '"label" (Chinese label ≤6 chars), '
@@ -519,6 +548,7 @@ def generate_vpp_strategy_candidates(
             f"Context: {json.dumps(vpp_context, ensure_ascii=False)}. "
             f"Active appliances: {_active_appliances_text}. "
             f"{_cal_brief} "
+            f"Style/control notes: {_style_text} "
             f"Persona: comfort_priority={sp.get('comfort_priority', 0.5)}, "
             f"preferred_range={sp.get('preferred_temp_min', 24)}-{sp.get('preferred_temp_max', 26)}°C. "
             f"Past events: {json.dumps(past_summary, ensure_ascii=False)}."
@@ -681,13 +711,15 @@ def score_user_preference(
     tags = persona.get("tags", {}) or {}
     schedule = persona.get("schedule", {}) or {}
     appliance_cfg = persona.get("appliances", {}) or {}
+    fixed_appliances = _fixed_appliance_constraints(persona)
     ac_cfg = appliance_cfg.get("ac", {}) or {}
     pref_min = float(ac_cfg.get("setpoint_preferred_min_c", persona.get("preferred_temp_min", 24.0)))
     pref_max = float(ac_cfg.get("setpoint_preferred_max_c", persona.get("preferred_temp_max", 26.0)))
     pref_tol = float(ac_cfg.get("temp_tolerance_c", persona.get("temp_tolerance", 1.0)))
     protective_user = (
         tags.get("schedule") == "caregiver"
-        or tags.get("control") in {"low_auto_accept", "privacy_sensitive"}
+        or tags.get("comfort") == "temp_sensitive"
+        or tags.get("control") in {"confirm_required", "low_auto_accept", "privacy_sensitive"}
         or bool(schedule.get("vulnerable_members"))
     )
 
@@ -728,6 +760,8 @@ def score_user_preference(
         "washer_during_vpp": washer_during_vpp,
         "calendar_context": calendar_context,
         "protective_user_mode": protective_user,
+        "fixed_non_dr_adjustable_appliances": fixed_appliances,
+        "event_preference_counts_as_confirmation": bool(user_preference_text),
     }
     appliance_summary = appliance_summary or {}
     skipped_devices = [
@@ -771,16 +805,26 @@ def score_user_preference(
         if calendar_context.get("available"):
             rationale += f" | User calendar context: {calendar_brief[:240]}"
         if user_preference_text:
-            rationale += f" | User had expressed: {user_preference_text[:80]}"
+            rationale += (
+                f" | User had expressed/confirmed for this event: {user_preference_text[:120]}. "
+                "Treat this as the event-specific confirmation boundary for confirm-required personas."
+            )
+        if fixed_appliances:
+            rationale += (
+                " | Fixed/non-DR-adjustable appliances that the controller cannot move: "
+                + ", ".join(fixed_appliances)
+                + ". Do not blame the controller for their fixed operation; evaluate whether controllable actions stayed within the user's consent and comfort."
+            )
         if not washer_completed:
             rationale += " | NOTE: washing machine task was NOT completed today."
         if washer_during_vpp:
             rationale += " | NOTE: washing machine ran DURING VPP window (added peak load)."
         if water_heater_during_vpp:
-            if protective_user:
+            if "water_heater" in fixed_appliances:
                 rationale += (
                     " | NOTE: water heater operated during the VPP window because this persona's "
-                    "bath routine is fixed/non-DR-adjustable; this preserves service but weakens grid response."
+                    "bath routine/device is fixed/non-DR-adjustable; this preserves service but weakens grid response. "
+                    "This is a fixed-load limitation, not an Agent scheduling violation."
                 )
             else:
                 rationale += " | NOTE: water heater ran DURING VPP window (added peak load)."
