@@ -41,9 +41,35 @@ if str(_BENCH_DIR) not in sys.path:
     sys.path.insert(0, str(_BENCH_DIR))
 
 import family_runner as fr
+from energybridge.data.day_ahead import (
+    DEFAULT_GERMANY_EPW,
+    DEFAULT_GERMANY_WEATHER_CSV,
+    generate_epw_from_openmeteo_csv,
+    generate_runperiod_idf,
+    maybe_load_price_profile,
+)
 from energybridge.roleplay.calendar import attach_calendar
 
 PERSONA_DIR = _PROJECT_ROOT / "energybridge" / "roleplay" / "personas"
+FAMILY_MODEL_DIR = _PROJECT_ROOT / "experiments" / "models" / "family_home"
+DEFAULT_FAMILY_IDF_BY_DAYS = {
+    3: FAMILY_MODEL_DIR / "family_simple_3day.idf",
+    7: FAMILY_MODEL_DIR / "family_simple_7day.idf",
+    14: FAMILY_MODEL_DIR / "family_simple_14day.idf",
+}
+EPW_DIR = _PROJECT_ROOT / "experiments" / "weather" / "epw"
+DEFAULT_EPW_BY_CITY = {
+    "tianjin": EPW_DIR / "CHN_TJ_Tianjin.545270_CSWD.epw",
+    "beijing": EPW_DIR / "CHN_BJ_Beijing.545110_CSWD.epw",
+    "shanghai": EPW_DIR / "CHN_SH_Shanghai.583620_CSWD.epw",
+    "germany": DEFAULT_GERMANY_EPW,
+}
+STANDARD_TIMEZONE_BY_CITY = {
+    "tianjin": 8.0,
+    "beijing": 8.0,
+    "shanghai": 8.0,
+    "germany": 1.0,
+}
 
 
 def _load_persona_json(persona_arg: str) -> dict:
@@ -127,6 +153,49 @@ def _prepare_default_output_dir(
     return output_dir
 
 
+def _default_days_for_city(city: str, requested_days: int | None) -> int:
+    if requested_days is not None:
+        return max(1, int(requested_days))
+    return 7 if city.lower() == "germany" else 3
+
+
+def _default_start_date_for_city(city: str, requested_start: str) -> str:
+    if requested_start:
+        return requested_start
+    return "2025-06-01" if city.lower() == "germany" else ""
+
+
+def _prepare_run_assets(args: argparse.Namespace, output_dir: Path, days: int, start_date: str):
+    city_key = args.city.lower()
+    epw_path = Path(args.epw) if args.epw else DEFAULT_EPW_BY_CITY[city_key]
+    price_profile = None
+    if city_key == "germany":
+        weather_csv = Path(args.weather_csv) if args.weather_csv else DEFAULT_GERMANY_WEATHER_CSV
+        if not epw_path.exists() or args.regenerate_epw:
+            print(f"[Germany] generating EPW from {weather_csv} -> {epw_path}")
+            generate_epw_from_openmeteo_csv(weather_csv, epw_path)
+    if args.price_csv:
+        price_profile = maybe_load_price_profile(
+            Path(args.price_csv),
+            standard_timezone_hours=STANDARD_TIMEZONE_BY_CITY.get(city_key),
+        )
+
+    template_idf = Path(args.idf) if args.idf else DEFAULT_FAMILY_IDF_BY_DAYS.get(
+        days,
+        DEFAULT_FAMILY_IDF_BY_DAYS[7] if days > 3 else DEFAULT_FAMILY_IDF_BY_DAYS[3],
+    )
+    idf_path = template_idf
+    if start_date:
+        assets_dir = output_dir.parent / "_run_assets" / output_dir.name
+        idf_path = generate_runperiod_idf(
+            template_idf,
+            assets_dir,
+            start_date=date.fromisoformat(start_date),
+            days=days,
+        )
+    return idf_path, epw_path, price_profile
+
+
 def _canonical_method(method: str) -> str:
     aliases = {
         "mpc": "mpc_dynamic",
@@ -157,12 +226,52 @@ def main() -> None:
     parser.add_argument(
         "--output", "-o", default=None,
         help="Directory for EnergyPlus output files. "
-             "Defaults to benchmark_results/<YYYY-MM-DD>/<role>_<method>[_Hn]_<city>_3days.",
+             "Defaults to benchmark_results/<YYYY-MM-DD>/<role>_<method>[_Hn]_<city>_<days>days.",
     )
     parser.add_argument(
         "--city", "-c", default="Tianjin",
-        choices=["Tianjin", "Beijing", "Shanghai"],
+        choices=["Tianjin", "Beijing", "Shanghai", "Germany"],
         help="Weather city label (default: Tianjin).",
+    )
+    parser.add_argument(
+        "--days", type=int, default=None,
+        help="Simulation length in days. Defaults to 3, or 7 for --city Germany.",
+    )
+    parser.add_argument(
+        "--start-date", default="",
+        help="RunPeriod start date YYYY-MM-DD. Defaults to 2025-06-01 for Germany; empty keeps template IDF date.",
+    )
+    parser.add_argument(
+        "--price-csv", default="",
+        help="Optional day-ahead price CSV. If omitted, price-aware planning is disabled for every city.",
+    )
+    parser.add_argument(
+        "--weather-csv", default="",
+        help="Optional real-weather CSV used to generate Germany EPW.",
+    )
+    parser.add_argument(
+        "--epw", default="",
+        help="Optional EPW override. Germany defaults to generated DEU_Germany_2025_real.epw.",
+    )
+    parser.add_argument(
+        "--idf", default="",
+        help="Optional family IDF template override. With --start-date, a run-specific copy is generated.",
+    )
+    parser.add_argument(
+        "--regenerate-epw", action="store_true",
+        help="Regenerate Germany EPW even if it already exists.",
+    )
+    parser.add_argument(
+        "--vpp-start-hour",
+        type=float,
+        default=18.0,
+        help="Daily VPP event start hour-of-day. Default: 18.0.",
+    )
+    parser.add_argument(
+        "--vpp-duration-hours",
+        type=float,
+        default=1.0,
+        help="Daily VPP event duration in hours. Default: 1.0.",
     )
     parser.add_argument(
         "--verbose", "-v", action="store_true",
@@ -198,12 +307,21 @@ def main() -> None:
     result_method = controller_method
     human_name = args.human_name.strip() if human_mode else ""
     mpc_horizon = max(1, int(args.mpc_horizon))
+    vpp_start_hour = float(args.vpp_start_hour) % 24.0
+    vpp_duration_hours = float(args.vpp_duration_hours)
+    if vpp_duration_hours <= 0:
+        raise SystemExit("--vpp-duration-hours must be > 0")
+    if vpp_start_hour + vpp_duration_hours > 24.0:
+        raise SystemExit("VPP windows crossing midnight are not supported yet; choose start+duration <= 24")
+    days = _default_days_for_city(args.city, args.days)
+    start_date = _default_start_date_for_city(args.city, args.start_date.strip())
     output_dir = (
         Path(args.output) if args.output
         else _prepare_default_output_dir(
-            pid, result_method, args.city, mpc_horizon=mpc_horizon, human_name=human_name
+            pid, result_method, args.city, days=days, mpc_horizon=mpc_horizon, human_name=human_name
         )
     )
+    idf_path, epw_path, price_profile = _prepare_run_assets(args, output_dir, days, start_date)
 
     print("=" * 70)
     print(f"PERSONA : {pid}")
@@ -211,10 +329,18 @@ def main() -> None:
         print(f"USER    : {human_name or 'human'} (human)")
     print(f"CITY    : {args.city}")
     print(f"METHOD  : {result_method}")
+    print(f"DAYS    : {days}")
+    print(f"START   : {start_date or '(template IDF)'}")
+    print(f"VPP     : daily {vpp_start_hour:.2f}h for {vpp_duration_hours:.2f}h")
+    print(f"IDF     : {idf_path}")
+    print(f"EPW     : {epw_path}")
+    print(f"PRICE   : {getattr(price_profile, 'source', '') or 'N/A'}")
     print(f"OUTPUT  : {output_dir}")
     print("=" * 70)
 
     result = fr.run_family_agent(
+        idf_path         = idf_path,
+        epw_path         = epw_path,
         user_pref        = persona["llm_prompts"]["system_prompt"],
         appliance_config = persona.get("appliances", {}),
         persona_config   = persona,
@@ -224,6 +350,11 @@ def main() -> None:
         human_mode       = human_mode,
         method           = controller_method,
         mpc_horizon_steps= mpc_horizon,
+        sim_days         = days,
+        start_date       = start_date or None,
+        day_ahead_price_profile = price_profile,
+        vpp_start_h      = vpp_start_hour,
+        vpp_duration_h   = vpp_duration_hours,
     )
     if human_mode:
         result.user_label = f"{_slug_label(human_name) or 'human'}_human"
@@ -403,12 +534,35 @@ def _vpp_ratio_str(result) -> str:
     ok = "✓达标" if ratio <= 1.0 else "✗超标"
     return f"{total_a:.3f}/{total_t:.3f}kWh = {ratio:.2f} {ok}  [{per_ev}]"
 
+
+def _fmt_num(value, digits: int = 3, suffix: str = "") -> str:
+    try:
+        number = float(value)
+        if number != number:
+            return "NaN"
+        return f"{number:.{digits}f}{suffix}"
+    except (TypeError, ValueError):
+        return "NaN"
+
+
+def _fmt_duration_h(hours: float) -> str:
+    try:
+        value = float(hours)
+    except (TypeError, ValueError):
+        value = 1.0
+    if abs(value - round(value)) < 1e-6:
+        return f"{int(round(value))}h"
+    return f"{value:.2f}h"
+
+
 def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Path:
     """Write a human-readable run_summary.txt (no LLM, pure algorithm)."""
     from datetime import datetime
     d = result.as_dict()
     appl = result.appliance_results   # dict: device -> list of day dicts
     evts = result.vpp_event_log       # list of scored VPP event dicts
+    sim_days = int(d.get("sim_days") or 3)
+    price_metrics = d.get("day_ahead_price_metrics") or {}
 
     scores = d.get("user_pref_scores") or []
     avg_score = d.get("user_pref_score")
@@ -445,15 +599,29 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
     ]
     # ── Section 1: VPP 事件详情 ──────────────────────────────────────
     lines += ["─" * 62, "  VPP 事件详情（电网事件 → 策略 → 执行结果）", "─" * 62]
-    vpp_defs = [
-        {"id": "vpp1", "trigger_h": 18, "end_h": 19, "day": 1},
-        {"id": "vpp2", "trigger_h": 42, "end_h": 43, "day": 2},
-        {"id": "vpp3", "trigger_h": 66, "end_h": 67, "day": 3},
-    ]
+    vpp_defs = sorted(
+        (
+            {
+                "id": e.get("id", f"vpp{i + 1}"),
+                "trigger_h": float(e.get("trigger_h", i * 24.0 + 18.0)),
+                "end_h": float(e.get("end_h", i * 24.0 + 19.0)),
+                "day": int(e.get("day", i + 1)),
+            }
+            for i, e in enumerate(evts)
+        ),
+        key=lambda item: item["trigger_h"],
+    )
+    if not vpp_defs:
+        vpp_defs = [
+            {"id": f"vpp{i + 1}", "trigger_h": i * 24.0 + 18.0, "end_h": i * 24.0 + 19.0, "day": i + 1}
+            for i in range(sim_days)
+        ]
     evt_by_id = {e["id"]: e for e in evts}
     for vdef in vpp_defs:
         vid = vdef["id"]
         ev_num = int(vid[3:])
+        event_duration_h = max(1e-6, float(vdef.get("end_h", 0.0)) - float(vdef.get("trigger_h", 0.0)))
+        event_duration_text = _fmt_duration_h(event_duration_h)
         e = evt_by_id.get(vid, {})
         score_str = f"{e['score']}/5 ({e.get('label','?')})" if e.get("score") is not None else "未评分"
         sp_str = f"{e['setpoint']:.1f}°C" if e.get("setpoint") else "N/A"
@@ -472,7 +640,7 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
                 if demand_t and actual_k is not None else ""
             )
             demand_str = (
-                f"目标削减≥{demand_kw:.3f}kW (1h={demand_shed_kwh:.3f}kWh)  "
+                f"目标削减≥{demand_kw:.3f}kW ({event_duration_text}={demand_shed_kwh:.3f}kWh)  "
                 f"实际削减{actual_shed:.3f}kWh  比率{ratio:.2f} {ok}{cap_part}"
             )
         elif demand_t and actual_k is not None:
@@ -543,9 +711,9 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
         _pdev = {k for k, v in e.get("appliance_summary", {}).items() if v.get("present")}
         strat_lines = _fmt_strategy(sp_str, trigger_actions, day_decisions, present_devices=_pdev)
         lines += [
-            f"  [事件{ev_num}] Day{vdef['day']} {int(vdef['trigger_h']%24):02d}:00-{int(vdef['end_h']%24):02d}:00"
-            f"  目标：需求侧削峰1小时",
-            f"    执行策略 ↓ (全天{len(day_decisions)}次LLM决策):",
+            f"  [事件{ev_num}] Day{vdef['day']} {_fmt_h(vdef['trigger_h'])}-{_fmt_h(vdef['end_h'])}"
+            f"  目标：需求侧削峰{event_duration_text}",
+            f"    执行策略 ↓ (全天{len(day_decisions)}次控制决策):",
         ] + strat_lines + [
             f"    VPP需求    : {demand_str}",
             f"    触发时容量 : {capacity_str}",
@@ -620,20 +788,40 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
 
     # ── Section 3: 关键 Metrics 汇总 ──────────────────────────────────
     score_per_event = "  ".join(f"VPP{i+1}:{s}" for i, s in enumerate(scores)) if scores else "N/A"
+    price_day_lines = []
+    for item in price_metrics.get("per_day", []) or []:
+        price_day_lines.append(
+            f"Day{item.get('day', '?')}:{_fmt_num(item.get('cost_eur'), 4, ' EUR')}"
+            f"@{_fmt_num(item.get('weighted_price_eur_per_kwh'), 5, ' EUR/kWh')}"
+        )
+    price_day_str = "  ".join(price_day_lines) if price_day_lines else "NaN"
+    total_vpp_duration_h = sum(
+        max(0.0, float(v.get("end_h", 0.0)) - float(v.get("trigger_h", 0.0)))
+        for v in vpp_defs
+    )
+    if vpp_defs and total_vpp_duration_h > 0:
+        avg_vpp_duration_text = _fmt_duration_h(total_vpp_duration_h / len(vpp_defs))
+        vpp_duration_summary = f"{len(vpp_defs)}个事件×{avg_vpp_duration_text}合计"
+    else:
+        vpp_duration_summary = "无VPP事件"
     lines += [
         "",
         "─" * 62,
         "  关键 Metrics 汇总",
         "─" * 62,
         f"  ▸ VPP削峰",
-        f"      VPP时段用电量: {d.get('vpp_window_energy_kwh', 0):.3f} kWh (3个事件×1h合计)",
+        f"      VPP时段用电量: {d.get('vpp_window_energy_kwh', 0):.3f} kWh ({vpp_duration_summary})",
         ("      需求达成比率 : " + _vpp_ratio_str(result)),
         f"      服务完成率   : {d.get('appliance_task_completion_rate', 1.0)*100:.0f}%"
         f"  (分母=在户可控电器；热水器=浴前就绪，EV=SOC达标)",
         f"      完成后避峰率 : {d.get('appliance_vpp_avoidance_rate', 0)*100:.0f}%"
         f"  (分母=已完成服务的可控电器；分子=未在VPP运行)",
+        f"  ▸ 次日电价",
+        f"      加权电费     : {_fmt_num(price_metrics.get('total_cost_eur'), 4, ' EUR')}",
+        f"      加权均价     : {_fmt_num(price_metrics.get('weighted_price_eur_per_kwh'), 5, ' EUR/kWh')}",
+        f"      逐日         : {price_day_str}",
         f"  ▸ 用电量",
-        f"      总能耗       : {d.get('energy_kwh_total', 0):.2f} kWh (3天)",
+        f"      总能耗       : {d.get('energy_kwh_total', 0):.2f} kWh ({sim_days}天)",
         f"      日均          : {d.get('energy_kwh_per_day', 0):.2f} kWh/天",
         f"  ▸ 用户舒适度",
         f"      满意度均分   : {avg_score_str}",

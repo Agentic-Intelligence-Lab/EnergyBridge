@@ -48,6 +48,11 @@ class Job:
     method: str
     city: str
     mpc_horizon: int
+    days: int
+    start_date: str
+    price_csv: str
+    vpp_start_hour: float
+    vpp_duration_hours: float
     output_dir: Path
     log_file: Path
 
@@ -109,14 +114,16 @@ def _first_metric(data: dict[str, Any], keys: tuple[str, ...], default: Any = ""
 def _make_jobs(args: argparse.Namespace) -> list[Job]:
     run_date = args.date
     date_dir = Path(args.results_root) / run_date
-    log_dir = date_dir / "_batch_logs" / f"baseline_matrix_{args.city.lower()}_H{args.mpc_horizon}"
+    days = args.days if args.days is not None else (7 if args.city.lower() == "germany" else 3)
+    start_date = args.start_date or ("2025-06-01" if args.city.lower() == "germany" else "")
+    log_dir = date_dir / "_batch_logs" / f"baseline_matrix_{args.city.lower()}_{days}days_H{args.mpc_horizon}"
     personas = args.personas or list_personas(approved_only=True)
     methods = args.methods or list(DEFAULT_METHODS)
 
     jobs: list[Job] = []
     for persona_id in personas:
         for method in methods:
-            run_name = _run_name(persona_id, method, args.city, args.mpc_horizon)
+            run_name = _run_name(persona_id, method, args.city, args.mpc_horizon, days=days)
             output_dir = date_dir / run_name
             log_file = log_dir / f"{run_name}.log"
             jobs.append(
@@ -125,6 +132,11 @@ def _make_jobs(args: argparse.Namespace) -> list[Job]:
                     method=method,
                     city=args.city,
                     mpc_horizon=args.mpc_horizon,
+                    days=days,
+                    start_date=start_date,
+                    price_csv=args.price_csv,
+                    vpp_start_hour=float(args.vpp_start_hour) % 24.0,
+                    vpp_duration_hours=float(args.vpp_duration_hours),
                     output_dir=output_dir,
                     log_file=log_file,
                 )
@@ -142,8 +154,20 @@ def _command_for(job: Job) -> list[str]:
         job.method,
         "--city",
         job.city,
+        "--days",
+        str(job.days),
         "--output",
         str(job.output_dir),
+    ]
+    if job.start_date:
+        cmd += ["--start-date", job.start_date]
+    if job.price_csv:
+        cmd += ["--price-csv", job.price_csv]
+    cmd += [
+        "--vpp-start-hour",
+        str(job.vpp_start_hour),
+        "--vpp-duration-hours",
+        str(job.vpp_duration_hours),
     ]
     if job.method in ("mpc_dynamic", "mpc_ep"):
         cmd += ["--mpc-horizon", str(job.mpc_horizon)]
@@ -156,6 +180,11 @@ def _summarize_job(job: Job, status: str, return_code: int | None, elapsed_s: fl
         "persona_id": job.persona_id,
         "method": job.method,
         "city": job.city,
+        "days": job.days,
+        "start_date": job.start_date,
+        "price_csv": job.price_csv,
+        "vpp_start_hour": round(job.vpp_start_hour, 6),
+        "vpp_duration_hours": round(job.vpp_duration_hours, 6),
         "mpc_horizon": job.mpc_horizon if job.method in ("mpc_dynamic", "mpc_ep") else "",
         "status": status,
         "return_code": return_code,
@@ -252,8 +281,36 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--city",
         default="Tianjin",
-        choices=["Tianjin", "Beijing", "Shanghai"],
+        choices=["Tianjin", "Beijing", "Shanghai", "Germany"],
         help="Weather city label. Default: Tianjin.",
+    )
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=None,
+        help="Simulation length in days. Defaults to 3, or 7 for --city Germany.",
+    )
+    parser.add_argument(
+        "--start-date",
+        default="",
+        help="RunPeriod start date YYYY-MM-DD. Defaults to 2025-06-01 for Germany.",
+    )
+    parser.add_argument(
+        "--price-csv",
+        default="",
+        help="Optional day-ahead price CSV. If omitted, price-aware planning is disabled.",
+    )
+    parser.add_argument(
+        "--vpp-start-hour",
+        type=float,
+        default=18.0,
+        help="Daily VPP event start hour-of-day. Default: 18.0.",
+    )
+    parser.add_argument(
+        "--vpp-duration-hours",
+        type=float,
+        default=1.0,
+        help="Daily VPP event duration in hours. Default: 1.0.",
     )
     parser.add_argument(
         "--mpc-horizon",
@@ -299,12 +356,20 @@ def main() -> None:
     args = parse_args()
     if args.mpc_horizon < 1:
         raise SystemExit("--mpc-horizon must be >= 1")
+    if args.days is not None and args.days < 1:
+        raise SystemExit("--days must be >= 1")
+    if args.vpp_duration_hours <= 0:
+        raise SystemExit("--vpp-duration-hours must be > 0")
+    if (float(args.vpp_start_hour) % 24.0) + float(args.vpp_duration_hours) > 24.0:
+        raise SystemExit("VPP windows crossing midnight are not supported yet; choose start+duration <= 24")
+    days = args.days if args.days is not None else (7 if args.city.lower() == "germany" else 3)
+    start_date = args.start_date or ("2025-06-01" if args.city.lower() == "germany" else "")
     jobs = _make_jobs(args)
     if args.max_runs:
         jobs = jobs[: args.max_runs]
 
     summary_dir = Path(args.results_root) / args.date / "_batch_logs"
-    suffix = f"{args.city.lower()}_H{args.mpc_horizon}"
+    suffix = f"{args.city.lower()}_{days}days_H{args.mpc_horizon}"
     summary_json = summary_dir / f"baseline_matrix_summary_{suffix}.json"
     summary_csv = summary_dir / f"baseline_matrix_summary_{suffix}.csv"
 
@@ -314,6 +379,10 @@ def main() -> None:
     print(f"  methods  : {', '.join(dict.fromkeys(j.method for j in jobs))}")
     print(f"  jobs     : {len(jobs)}")
     print(f"  city     : {args.city}")
+    print(f"  days     : {days}")
+    print(f"  start    : {start_date or '(template IDF)'}")
+    print(f"  price    : {args.price_csv or 'N/A'}")
+    print(f"  vpp      : daily {float(args.vpp_start_hour) % 24.0:.2f}h for {float(args.vpp_duration_hours):.2f}h")
     print(f"  horizon  : H={args.mpc_horizon}")
     print(f"  summary  : {summary_json}")
     print("=" * 88)
