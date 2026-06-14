@@ -59,11 +59,13 @@ def calendar_context_for_event(
     """
     calendar = persona.get("calendar") or {}
     days = calendar.get("days") or []
-    day = next((item for item in days if int(item.get("day", -1)) == int(event_index)), None)
+    vpp = vpp_context or {}
+    calendar_day_index = int(vpp.get("day", event_index) or event_index)
+    day = next((item for item in days if int(item.get("day", -1)) == calendar_day_index), None)
     if day is None and days:
         # For runs longer than the calendar horizon, cycle weekly while keeping
         # Day1 aligned to Sunday.
-        weekly_day = ((int(event_index) - 1) % len(days)) + 1
+        weekly_day = ((calendar_day_index - 1) % len(days)) + 1
         day = next((item for item in days if int(item.get("day", -1)) == weekly_day), None)
     if day is None:
         return {
@@ -72,8 +74,7 @@ def calendar_context_for_event(
             "note": "No paired calendar found for this persona/event.",
         }
 
-    vpp = vpp_context or {}
-    vpp_start = float(vpp.get("hour", 18.0) % 24.0)
+    vpp_start = float(vpp.get("trigger_h", vpp.get("hour", 18.0)) % 24.0)
     duration_h = float(vpp.get("duration_h", 1.0) or 1.0)
     vpp_end = vpp_start + duration_h
 
@@ -107,6 +108,7 @@ def calendar_context_for_event(
         "available": True,
         "source": calendar.get("source", "persona_calendar"),
         "event_index": event_index,
+        "day": calendar_day_index,
         "weekday": day.get("weekday", ""),
         "day_type": day.get("day_type", "weekday"),
         "summary": day.get("summary", ""),
