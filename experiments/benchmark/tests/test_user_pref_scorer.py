@@ -59,3 +59,31 @@ def test_memory_notes_do_not_escalate_after_warmth_feedback() -> None:
     joined = " ".join(notes).lower()
     assert "warm edge" not in joined
     assert "do not escalate" in joined
+
+
+def test_memory_notes_learn_fixed_vpp_overlap_as_constraint() -> None:
+    persona = {
+        "id": "fixed_water_heater_user",
+        "tags": {"comfort": "normal_comfort", "price": "price_indifferent", "control": "low_auto_accept"},
+        "appliances": {
+            "water_heater": {"present": True, "dr_adjustable": False},
+            "washer": {"present": True, "dr_adjustable": True},
+        },
+    }
+    events = [
+        {
+            "score": 4,
+            "comfort_score": 4,
+            "comment": "Comfort and routine were preserved.",
+            "appliance_summary": {
+                "water_heater": {"present": True, "ran_during_vpp": True},
+                "washer": {"present": True, "ran_during_vpp": False},
+            },
+        }
+    ]
+
+    notes = build_vpp_preference_memory_notes(events, persona)
+
+    joined = " ".join(notes).lower()
+    assert "fixed appliances overlap" in joined
+    assert "controllable devices" in joined

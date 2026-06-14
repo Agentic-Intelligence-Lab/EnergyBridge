@@ -351,6 +351,20 @@ def build_vpp_preference_memory_notes(past_events: list | None, persona: dict | 
                 return True
         return False
 
+    def _has_fixed_vpp_overlap(event: dict) -> bool:
+        summary = event.get("appliance_summary") or {}
+        if not isinstance(summary, dict):
+            return False
+        for name, info in summary.items():
+            if (
+                name in fixed_appliances
+                and isinstance(info, dict)
+                and bool(info.get("present"))
+                and bool(info.get("ran_during_vpp"))
+            ):
+                return True
+        return False
+
     recent_positive = (
         len(recent) >= 2
         and all(_score(e, "score") >= 4 for e in recent[-2:])
@@ -395,6 +409,10 @@ def build_vpp_preference_memory_notes(past_events: list | None, persona: dict | 
     if any(word in comments for word in ("fixed load", "fixed loads", "fixed hot-water", "routine unchanged")):
         notes.append(
             "Treat fixed/non-DR-adjustable appliances as constraints, not controllable levers."
+        )
+    if any(_has_fixed_vpp_overlap(e) for e in recent):
+        notes.append(
+            "When fixed appliances overlap the event, acknowledge the constraint and focus future actions on controllable devices and comfort-safe HVAC only."
         )
     if any(word in user_inputs + comments for word in ("confirm", "only", "comfort-safe", "tiny adjustment")):
         notes.append(
