@@ -4,9 +4,11 @@ EnergyBridge is a home-grid coordination benchmark for comparing an LLM
 home-energy Agent against MPC baselines under persona preferences, calendars,
 VPP demand-response events, EnergyPlus co-simulation, and role-play scoring.
 
-The current main benchmark is the **3-day family-home VPP evaluation** in
-Tianjin. It uses 10 persona users, 7-day synthetic calendars, capacity
-quantification, EnergyPlus execution, and post-event role-play scoring.
+The current main benchmark is the **family-home VPP evaluation**. The default
+comparison is Tianjin for 3 days; a Germany real-data variant runs from
+2025-06-01 for 7 days with real weather. Day-ahead prices are an optional
+advanced input for any city. All paths use persona users, 7-day calendars,
+capacity quantification, EnergyPlus execution, and post-event role-play scoring.
 
 ---
 
@@ -128,6 +130,86 @@ python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_coo
   --city Tianjin --method agent --user-mode human --human-name alice
 ```
 
+### Germany Real-Data Variant
+
+Germany uses real weather and a 7-day date range:
+
+```text
+weather: experiments/real_data/germany_2025_weather.csv
+EPW    : experiments/weather/epw/DEU_Germany_2025_real.epw
+start  : 2025-06-01
+days   : 7
+```
+
+The daily planning decision is at **00:00** for all cities. Day-ahead price is
+not a separate Agent or city mode. It is enabled only when `--price-csv` is
+provided. If omitted, the benchmark falls back to the normal policy and price
+metrics are reported as `NaN`.
+
+Run Germany Agent:
+
+```bash
+python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
+  --city Germany --method agent
+```
+
+Enable day-ahead price optimization for Germany:
+
+```bash
+python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
+  --city Germany --method agent \
+  --price-csv experiments/real_data/germany_2025_price.csv
+```
+
+The same price-aware path works for Tianjin or any other city if a compatible
+price CSV is supplied:
+
+```bash
+python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
+  --city Tianjin --method agent \
+  --price-csv /path/to/tianjin_day_ahead_price.csv
+```
+
+Regenerate the EPW from the real-weather CSV:
+
+```bash
+python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
+  --city Germany --method agent --regenerate-epw
+```
+
+Run Germany MPC baselines:
+
+```bash
+python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
+  --city Germany --method mpc_dynamic --mpc-horizon 6
+
+python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
+  --city Germany --method mpc_ep --mpc-horizon 6
+```
+
+Override the default date range if needed:
+
+```bash
+python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
+  --city Germany --method agent --days 7 --start-date 2025-06-01
+```
+
+If no price CSV is provided, the run still works and the price metrics are
+reported as `NaN`.
+
+VPP windows are parameterized. The default is one event per day from 18:00 to
+19:00. Change the start time or duration with:
+
+```bash
+python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
+  --city Tianjin --method agent \
+  --vpp-start-hour 17 --vpp-duration-hours 2
+```
+
+Current VPP windows must stay within a single simulation day
+(`start + duration <= 24`). Cross-midnight VPP events need a separate absolute
+time-window pass.
+
 ### Run The 10-Persona Matrix
 
 This is the main comparable experiment:
@@ -135,6 +217,21 @@ This is the main comparable experiment:
 ```bash
 python experiments/benchmark/run_baseline_matrix.py \
   --city Tianjin --mpc-horizon 6
+```
+
+Germany 7-day matrix:
+
+```bash
+python experiments/benchmark/run_baseline_matrix.py \
+  --city Germany --days 7 --start-date 2025-06-01 --mpc-horizon 6
+```
+
+Germany 7-day matrix with day-ahead price enabled:
+
+```bash
+python experiments/benchmark/run_baseline_matrix.py \
+  --city Germany --days 7 --start-date 2025-06-01 --mpc-horizon 6 \
+  --price-csv experiments/real_data/germany_2025_price.csv
 ```
 
 Default matrix:
@@ -168,6 +265,10 @@ python experiments/benchmark/run_baseline_matrix.py \
 
 # Smoke test one job
 python experiments/benchmark/run_baseline_matrix.py --max-runs 1
+
+# Sweep a longer VPP window
+python experiments/benchmark/run_baseline_matrix.py \
+  --city Tianjin --vpp-start-hour 17 --vpp-duration-hours 2 --max-runs 1
 ```
 
 ### Generate The Matrix Report
@@ -224,7 +325,7 @@ benchmark_results/<YYYY-MM-DD>/
 Single-user role-play runs:
 
 ```text
-benchmark_results/<YYYY-MM-DD>/<role>_<method>[_Hn]_<city>_3days/
+benchmark_results/<YYYY-MM-DD>/<role>_<method>[_Hn]_<city>_<days>days/
 ├── run_summary.txt          # read this first
 ├── benchmark_result.json    # machine-readable metrics
 └── eplusout.*               # EnergyPlus outputs
@@ -236,6 +337,7 @@ Examples:
 benchmark_results/2026-06-14/role_a_agent_tianjin_3days/
 benchmark_results/2026-06-14/role_a_mpc_dynamic_H6_tianjin_3days/
 benchmark_results/2026-06-14/role_a_mpc_ep_H6_tianjin_3days/
+benchmark_results/2026-06-14/role_a_agent_germany_7days/
 ```
 
 Human runs use the custom name:
@@ -270,6 +372,7 @@ Key metrics:
 | `appliance_task_completion_rate` | Present shiftable tasks completed |
 | `ev_target_reached_rate` | EV service target success rate |
 | `ewh_preheat_used_rate` | Water-heater preheat usage/readiness metric |
+| `day_ahead_price_metrics` | Price-weighted EnergyPlus consumption; `NaN` when no price data is available |
 
 ---
 
@@ -330,6 +433,7 @@ The EnergyBridge Agent receives:
 - paired calendar
 - VPP event window
 - capacity-quantified VPP target
+- day-ahead price context when available
 - live EnergyPlus state
 - appliance state
 
@@ -378,6 +482,7 @@ baselines/rl_typical_human/
 EnergyBridge/
 ├── energybridge/
 │   ├── agent/                         # LangGraph agent pieces
+│   ├── data/                          # real-weather, EPW, and day-ahead price helpers
 │   ├── llm/                           # OpenAI-compatible client + key rotation
 │   ├── quantification/                # VPP capacity quantification helpers
 │   ├── roleplay/
@@ -395,6 +500,7 @@ EnergyBridge/
 │   ├── baselines/mpc/                 # MPC planner, dynamic model, EP predictor
 │   ├── models/family_home/            # family IDF models
 │   └── weather/epw/                   # weather files
+├── experiments/real_data/             # Germany 2025 weather and price CSVs
 ├── baselines/
 │   ├── rl_energyplus_3day/            # PPO baseline against EnergyPlus
 │   └── rl_typical_human/              # lightweight RL environment
