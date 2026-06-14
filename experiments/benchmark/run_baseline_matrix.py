@@ -53,6 +53,7 @@ class Job:
     price_csv: str
     vpp_start_hour: float
     vpp_duration_hours: float
+    vpp_events_json: str
     output_dir: Path
     log_file: Path
 
@@ -137,6 +138,7 @@ def _make_jobs(args: argparse.Namespace) -> list[Job]:
                     price_csv=args.price_csv,
                     vpp_start_hour=float(args.vpp_start_hour) % 24.0,
                     vpp_duration_hours=float(args.vpp_duration_hours),
+                    vpp_events_json=args.vpp_events_json,
                     output_dir=output_dir,
                     log_file=log_file,
                 )
@@ -169,6 +171,8 @@ def _command_for(job: Job) -> list[str]:
         "--vpp-duration-hours",
         str(job.vpp_duration_hours),
     ]
+    if job.vpp_events_json:
+        cmd += ["--vpp-events-json", job.vpp_events_json]
     if job.method in ("mpc_dynamic", "mpc_ep"):
         cmd += ["--mpc-horizon", str(job.mpc_horizon)]
     return cmd
@@ -185,6 +189,7 @@ def _summarize_job(job: Job, status: str, return_code: int | None, elapsed_s: fl
         "price_csv": job.price_csv,
         "vpp_start_hour": round(job.vpp_start_hour, 6),
         "vpp_duration_hours": round(job.vpp_duration_hours, 6),
+        "vpp_events_json": job.vpp_events_json,
         "mpc_horizon": job.mpc_horizon if job.method in ("mpc_dynamic", "mpc_ep") else "",
         "status": status,
         "return_code": return_code,
@@ -313,6 +318,11 @@ def parse_args() -> argparse.Namespace:
         help="Daily VPP event duration in hours. Default: 1.0.",
     )
     parser.add_argument(
+        "--vpp-events-json",
+        default="",
+        help="Optional JSON file defining VPP events. Overrides the daily start/duration schedule.",
+    )
+    parser.add_argument(
         "--mpc-horizon",
         type=int,
         default=6,
@@ -360,7 +370,7 @@ def main() -> None:
         raise SystemExit("--days must be >= 1")
     if args.vpp_duration_hours <= 0:
         raise SystemExit("--vpp-duration-hours must be > 0")
-    if (float(args.vpp_start_hour) % 24.0) + float(args.vpp_duration_hours) > 24.0:
+    if not args.vpp_events_json and (float(args.vpp_start_hour) % 24.0) + float(args.vpp_duration_hours) > 24.0:
         raise SystemExit("VPP windows crossing midnight are not supported yet; choose start+duration <= 24")
     days = args.days if args.days is not None else (7 if args.city.lower() == "germany" else 3)
     start_date = args.start_date or ("2025-06-01" if args.city.lower() == "germany" else "")
@@ -382,7 +392,7 @@ def main() -> None:
     print(f"  days     : {days}")
     print(f"  start    : {start_date or '(template IDF)'}")
     print(f"  price    : {args.price_csv or 'N/A'}")
-    print(f"  vpp      : daily {float(args.vpp_start_hour) % 24.0:.2f}h for {float(args.vpp_duration_hours):.2f}h")
+    print(f"  vpp      : {args.vpp_events_json or f'daily {float(args.vpp_start_hour) % 24.0:.2f}h for {float(args.vpp_duration_hours):.2f}h'}")
     print(f"  horizon  : H={args.mpc_horizon}")
     print(f"  summary  : {summary_json}")
     print("=" * 88)

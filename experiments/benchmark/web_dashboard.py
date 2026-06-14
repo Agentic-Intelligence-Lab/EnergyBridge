@@ -572,6 +572,7 @@ INDEX_HTML = r"""<!doctype html>
       priceCsv: '',
       vppStartHour: 18,
       vppDurationHours: 1,
+      vppEventsJson: '',
       userMode: 'roleplay',
       humanName: 'human_user'
     };
@@ -849,7 +850,8 @@ INDEX_HTML = r"""<!doctype html>
       const start = state.startDate ? ` --start-date ${shellQuote(state.startDate)}` : '';
       const price = state.priceCsv ? ` --price-csv ${shellQuote(state.priceCsv)}` : '';
       const vpp = ` --vpp-start-hour ${Number(state.vppStartHour || 18)} --vpp-duration-hours ${Number(state.vppDurationHours || 1)}`;
-      return `${base} --method ${controllerMethod}${horizon}${human}${city}${start}${price}${vpp}`;
+      const vppJson = state.vppEventsJson ? ` --vpp-events-json ${shellQuote(state.vppEventsJson)}` : '';
+      return `${base} --method ${controllerMethod}${horizon}${human}${city}${start}${price}${vpp}${vppJson}`;
     }
 
     function methodLabel(method) {
@@ -1135,6 +1137,10 @@ INDEX_HTML = r"""<!doctype html>
                 <input id="vppDurationHoursInput" type="number" step="0.25" min="0.25" value="${Number(state.vppDurationHours || 1)}">
               </div>
             </div>
+            <div class="field-row">
+              <label for="vppEventsJsonInput">进阶：VPP事件 JSON</label>
+              <input id="vppEventsJsonInput" value="${state.vppEventsJson}" placeholder="可留空；例如 experiments/benchmark/configs/vpp_events_7day_variable.json">
+            </div>
             <h3>4. 方法</h3>
             <div class="preset-grid">
               ${methods.map(m => `<button class="${state.selectedMethod === m ? '' : 'secondary'}" data-method="${m}">${methodLabel(m)}</button>`).join('')}
@@ -1280,6 +1286,13 @@ INDEX_HTML = r"""<!doctype html>
       if (vppDurationHoursInput) {
         vppDurationHoursInput.oninput = (e) => {
           state.vppDurationHours = Math.max(0.25, Number(e.target.value || 1));
+          syncCommandFromSelections();
+        };
+      }
+      const vppEventsJsonInput = $('vppEventsJsonInput');
+      if (vppEventsJsonInput) {
+        vppEventsJsonInput.oninput = (e) => {
+          state.vppEventsJson = e.target.value.trim();
           syncCommandFromSelections();
         };
       }
