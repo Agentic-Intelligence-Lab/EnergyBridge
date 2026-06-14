@@ -46,10 +46,11 @@ def quantify_agent_vpp_events(
     strategy = json.loads(strategy_path.read_text(encoding="utf-8"))
     source_dates = sorted({datetime.fromisoformat(row["timestamp"]).date() for row in predictions})
     output: dict[str, dict[str, Any]] = {}
+    if not source_dates:
+        return output
     for index, event in enumerate(vpp_events):
-        if index >= len(source_dates):
-            break
-        source_start = datetime.combine(source_dates[index], datetime.min.time()) + timedelta(
+        source_index = index % len(source_dates)
+        source_start = datetime.combine(source_dates[source_index], datetime.min.time()) + timedelta(
             hours=float(event["trigger_h"]) % 24
         )
         duration_h = float(event["end_h"]) - float(event["trigger_h"])
@@ -59,7 +60,12 @@ def quantify_agent_vpp_events(
             if source_start <= datetime.fromisoformat(row["timestamp"]) < source_end
         ]
         quantified = [_quantify_row(row, strategy.get("actions", [])) for row in event_rows]
-        output[str(event["id"])] = _summarize_event(quantified, source_start, source_end)
+        summary = _summarize_event(quantified, source_start, source_end)
+        if index >= len(source_dates):
+            summary["source_reused"] = True
+            summary["source_cycle_index"] = source_index + 1
+            summary["source_cycle_size"] = len(source_dates)
+        output[str(event["id"])] = summary
     return output
 
 
