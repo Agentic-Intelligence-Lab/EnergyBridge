@@ -302,10 +302,72 @@ def _fixed_appliance_constraints(persona: dict | None) -> list[str]:
     return fixed
 
 
-def _strategy_appliance_plan_cn(strategy_id: str, presence: dict, vpp_context: dict | None = None) -> str:
+def _low_disruption_strategy_language(persona: dict | None) -> bool:
+    """True when strategy text should avoid cost/savings/DR-push framing."""
+    tags = (persona or {}).get("tags", {}) or {}
+    return (
+        tags.get("price") in {"low_incentive", "price_indifferent"}
+        or tags.get("grid_value") in {"low_value", "uncertain_flex"}
+        or tags.get("control") in {"confirm_required", "low_auto_accept", "privacy_sensitive"}
+        or tags.get("task") in {"rigid", "semi_rigid"}
+    )
+
+
+def build_vpp_preference_memory_notes(past_events: list | None, persona: dict | None = None) -> list[str]:
+    """Extract compact, reusable strategy-generation rules from past feedback."""
+    events = list(past_events or [])
+    if not events:
+        return []
+
+    notes: list[str] = []
+    comments = " ".join(str(e.get("comment", "")) for e in events).lower()
+    user_inputs = " ".join(str(e.get("user_input", "")) for e in events).lower()
+    low_scores = [e for e in events if int(e.get("score") or 3) <= 3]
+    low_score_text = " ".join(
+        (str(e.get("comment", "")) + " " + str(e.get("user_input", ""))).lower()
+        for e in low_scores
+    )
+
+    if _low_disruption_strategy_language(persona) or any(
+        word in comments for word in ("cost talk", "saving", "savings", "money", "irrelevant", "annoying")
+    ):
+        notes.append(
+            "Avoid cost/savings/money framing; describe comfort preservation, routine stability, and low-risk event support."
+        )
+    if any(word in low_score_text for word in ("pointless", "weak", "limited", "not very useful", "partial")):
+        notes.append(
+            "Set expectations that fixed routines can limit VPP impact; do not overpromise grid response."
+        )
+    if any(word in comments for word in ("fixed load", "fixed loads", "fixed hot-water", "routine unchanged")):
+        notes.append(
+            "Treat fixed/non-DR-adjustable appliances as constraints, not controllable levers."
+        )
+    if any(word in user_inputs + comments for word in ("confirm", "only", "comfort-safe", "tiny adjustment")):
+        notes.append(
+            "Keep each event within the selected confirmation boundary; avoid stronger actions than the user approved."
+        )
+    if any(word in comments for word in ("comfort stayed", "comfort kept", "within range", "acceptable")):
+        notes.append(
+            "Repeat the proven pattern: keep AC inside the preferred range and mention that comfort/routine are protected."
+        )
+
+    deduped: list[str] = []
+    for note in notes:
+        if note not in deduped:
+            deduped.append(note)
+    return deduped[:5]
+
+
+def _strategy_appliance_plan_cn(
+    strategy_id: str,
+    presence: dict,
+    vpp_context: dict | None = None,
+    persona: dict | None = None,
+) -> str:
     if not presence:
         return ""
     start_h, _, window_text = _vpp_window_from_context(vpp_context)
+    low_disruption = _low_disruption_strategy_language(persona)
     parts = []
     if _profile_controllable(presence, "washer"):
         parts.append("洗衣机错峰")
@@ -321,7 +383,14 @@ def _strategy_appliance_plan_cn(strategy_id: str, presence: dict, vpp_context: d
     if not parts and not fixed:
         return ""
 
-    if strategy_id == "A":
+    if low_disruption:
+        if strategy_id == "A":
+            head = "优先保舒适和例行安排"
+        elif strategy_id == "B":
+            head = "只做低打扰的温和支援"
+        else:
+            head = "在不打扰例行的前提下支援"
+    elif strategy_id == "A":
         head = "尽量保舒适，电器以温和错峰为主"
     elif strategy_id == "B":
         head = "舒适与削峰平衡，电器主动错峰"
@@ -333,10 +402,16 @@ def _strategy_appliance_plan_cn(strategy_id: str, presence: dict, vpp_context: d
     return text
 
 
-def _strategy_appliance_pref_en(strategy_id: str, presence: dict, vpp_context: dict | None = None) -> str:
+def _strategy_appliance_pref_en(
+    strategy_id: str,
+    presence: dict,
+    vpp_context: dict | None = None,
+    persona: dict | None = None,
+) -> str:
     if not presence:
         return ""
     start_h, _, window_text = _vpp_window_from_context(vpp_context)
+    low_disruption = _low_disruption_strategy_language(persona)
     actions = []
     if _profile_controllable(presence, "washer"):
         actions.append(f"shift washer away from {window_text}")
@@ -352,7 +427,14 @@ def _strategy_appliance_pref_en(strategy_id: str, presence: dict, vpp_context: d
     if not actions and not fixed:
         return ""
 
-    if strategy_id == "A":
+    if low_disruption:
+        if strategy_id == "A":
+            prefix = "Protect comfort and routine while"
+        elif strategy_id == "B":
+            prefix = "Make only low-disruption event support by"
+        else:
+            prefix = "Use the strongest still-routine-safe support by"
+    elif strategy_id == "A":
         prefix = "Keep comfort as priority while"
     elif strategy_id == "B":
         prefix = "Balance comfort and demand response by"
@@ -363,7 +445,9 @@ def _strategy_appliance_pref_en(strategy_id: str, presence: dict, vpp_context: d
     else:
         text = "Use only comfort-safe controllable actions."
     if fixed:
-        text += " Do not change fixed appliance routines: " + ", ".join(fixed) + "."
+        text += " Keep fixed appliance routines unchanged: " + ", ".join(fixed) + "."
+    if low_disruption:
+        text += " Do not frame this as bill savings."
     return text
 
 
@@ -391,13 +475,21 @@ def _strategy_user_pref_for_profile(
     sp = (persona or {}).get("stable_preferences", {}) or {}
     pref_min = float(sp.get("preferred_temp_min", 24.0))
     pref_max = float(sp.get("preferred_temp_max", 26.0))
-    if sid == "A":
+    low_disruption = _low_disruption_strategy_language(persona)
+    if low_disruption:
+        if sid == "A":
+            base = f"Comfort first: keep AC within {pref_min:.1f}-{pref_max:.1f}°C and protect routine."
+        elif sid == "B":
+            base = f"Low-disruption support: allow only a tiny AC adjustment within {pref_min:.1f}-{pref_max:.1f}°C."
+        else:
+            base = f"Routine-safe support: use the warmest comfortable AC setting within {pref_min:.1f}-{pref_max:.1f}°C."
+    elif sid == "A":
         base = f"Comfort first: keep AC within {pref_min:.1f}-{pref_max:.1f}°C."
     elif sid == "B":
         base = f"Balanced: allow only a brief AC adjustment within {pref_min:.1f}-{pref_max:.1f}°C."
     else:
         base = f"Energy-aware: use the warmest still-comfortable AC setting within {pref_min:.1f}-{pref_max:.1f}°C."
-    tail = _strategy_appliance_pref_en(sid, profile, vpp_context)
+    tail = _strategy_appliance_pref_en(sid, profile, vpp_context, persona)
     return f"{base} {tail}".strip()[:180]
 
 
@@ -410,16 +502,29 @@ def _align_candidates_to_appliance_profile(
     """Make strategy candidates consistent with appliance controllability."""
     fixed = _profile_fixed_names(profile)
     controllable = _profile_controllable_names(profile)
+    low_disruption = _low_disruption_strategy_language(persona)
     aligned: list[dict] = []
     for raw in candidates:
         c = dict(raw)
         c["user_pref"] = _strategy_user_pref_for_profile(c, profile, vpp_context, persona)
+        if low_disruption:
+            if str(c.get("id", "")).upper() == "A":
+                c["label"] = "舒适优先"
+                c["tradeoff"] = "打扰最少，支援有限"
+            elif str(c.get("id", "")).upper() == "B":
+                c["label"] = "温和支援"
+                c["tradeoff"] = "轻微调整，例行不变"
+            else:
+                c["label"] = "低扰支援"
+                c["tradeoff"] = "支援更强，不谈小额节省"
         desc = str(c.get("description", "")).strip()
         if fixed:
             fixed_note = "固定电器不动"
             desc = f"{desc}；{fixed_note}" if desc else fixed_note
         if not controllable and fixed:
             desc = "只做舒适安全的空调调整；固定电器不动"
+        if low_disruption and str(c.get("id", "")).upper() == "C":
+            desc = "在舒适范围内温和支援；不改变固定例行"
         c["description"] = desc[:64]
         c["_profile_aligned"] = True
         aligned.append(c)
@@ -458,7 +563,13 @@ def get_user_preference_input(
         ac_cfg = (persona.get("appliances", {}) or {}).get("ac", {}) or {}
         pref_max = float(ac_cfg.get("setpoint_preferred_max_c", persona.get("preferred_temp_max", 26.0)))
         _, _, window_text = _vpp_window_from_context(vpp_context)
-        if tags.get("control") == "confirm_required":
+        if _low_disruption_strategy_language(persona):
+            override_msg = (
+                "For this brief event, I only approve comfort-safe, routine-preserving actions: "
+                f"keep AC at or below {pref_max:.1f}°C, do not change fixed appliance routines, "
+                f"and avoid small bill-savings talk. If support is limited, just keep life smooth."
+            )
+        elif tags.get("control") == "confirm_required":
             override_msg = (
                 "For this event, I confirm only a comfort-first or tiny adjustment plan: "
                 f"keep the AC at or below {pref_max:.1f}°C, avoid noticeable temperature drift, "
@@ -484,7 +595,9 @@ def get_user_preference_input(
     print(f"  ┌─[Strategy Candidates | VPP event {event_index}]{'─'*30}")
     for c in candidates:
         print(f"  │  [{c['id']}] {c['label']}  —  {c['description']}  ({c['tradeoff']})")
-        plan_cn = _strategy_appliance_plan_cn(str(c.get('id', '')).upper(), appliance_presence, vpp_context)
+        plan_cn = _strategy_appliance_plan_cn(
+            str(c.get('id', '')).upper(), appliance_presence, vpp_context, persona
+        )
         if plan_cn:
             print(f"  │      电器控制: {plan_cn}")
     print(f"  └{'─'*56}")
@@ -643,11 +756,14 @@ def generate_vpp_strategy_candidates(
         _style_notes = []
         if _tags.get("price") in {"low_incentive", "price_indifferent"}:
             _style_notes.append("Do not emphasize small bill savings; emphasize comfort, routine preservation, and low-risk support.")
+            _style_notes.append("Avoid the words cost, savings, money, cheap, bill, and price in user_pref unless the user explicitly asks.")
         if _tags.get("control") == "confirm_required":
             _style_notes.append("Write each user_pref as an explicit event-level confirmation boundary, not as open-ended permission.")
         if _tags.get("comfort") == "temp_sensitive":
             _style_notes.append("Keep AC recommendations inside the preferred comfort range unless the user explicitly accepts a tiny drift.")
         _style_text = " ".join(_style_notes) if _style_notes else "Use the persona's normal communication style."
+        _learned_notes = build_vpp_preference_memory_notes(past_events, persona)
+        _learned_text = " ".join(f"- {note}" for note in _learned_notes) if _learned_notes else "No learned feedback rules yet."
 
         sys_prompt = (
             "You are an energy management strategy advisor for a smart home VPP demand-response system. "
@@ -671,6 +787,7 @@ def generate_vpp_strategy_candidates(
             f"Active appliances: {_active_appliances_text}. "
             f"{_cal_brief} "
             f"Style/control notes: {_style_text} "
+            f"Learned feedback rules from past events: {_learned_text} "
             f"Persona: comfort_priority={sp.get('comfort_priority', 0.5)}, "
             f"preferred_range={sp.get('preferred_temp_min', 24)}-{sp.get('preferred_temp_max', 26)}°C. "
             f"Past events: {json.dumps(past_summary, ensure_ascii=False)}."
@@ -734,10 +851,10 @@ def _roleplay_select_strategy(
             "tradeoff": candidate.get("tradeoff"),
             "user_pref": candidate.get("user_pref"),
             "appliance_plan_cn": _strategy_appliance_plan_cn(
-                str(candidate.get("id", "")).upper(), appliance_presence, vpp_context
+                str(candidate.get("id", "")).upper(), appliance_presence, vpp_context, persona
             ),
             "appliance_pref_en": _strategy_appliance_pref_en(
-                str(candidate.get("id", "")).upper(), appliance_presence, vpp_context
+                str(candidate.get("id", "")).upper(), appliance_presence, vpp_context, persona
             ),
         })
     scenario = {
@@ -758,6 +875,7 @@ def _roleplay_select_strategy(
             }
             for e in (past_events or [])
         ],
+        "learned_preference_rules": build_vpp_preference_memory_notes(past_events, persona),
         "instruction": (
             "Choose the option this home user would approve before the VPP event. "
             "The returned choice will be injected into the home agent prompt as the user's live preference."
@@ -941,6 +1059,12 @@ def score_user_preference(
                 " | Fixed/non-DR-adjustable appliances that the controller cannot move: "
                 + ", ".join(fixed_appliances)
                 + ". Do not blame the controller for their fixed operation; evaluate whether controllable actions stayed within the user's consent and comfort."
+            )
+        if _low_disruption_strategy_language(persona):
+            rationale += (
+                " | This is a low-incentive/low-disruption user: they dislike cost, bill-savings, or aggressive VPP sales pitches. "
+                "If the controller used comfort/routine-preserving wording and service was preserved, evaluate mainly comfort, consent, and routine smoothness; "
+                "weak VPP contribution from fixed loads is not by itself a communication failure."
             )
         if not washer_completed:
             rationale += " | NOTE: washing machine task was NOT completed today."

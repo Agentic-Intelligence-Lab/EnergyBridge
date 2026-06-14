@@ -649,6 +649,12 @@ def _comfort_reason_for_low_dr_user(reason: str, persona_config: dict | None) ->
         "shed load": "reduce load gently",
         "saving money": "low-risk routine support",
         "savings": "routine support",
+        "cost optimized": "routine kept stable",
+        "costs optimized": "routine kept stable",
+        "cost": "routine",
+        "price": "routine",
+        "bill": "routine",
+        "money": "routine",
     }
     text = reason
     for old, new in replacements.items():
@@ -672,6 +678,9 @@ def _persona_agent_policy_text(persona_config: dict | None) -> str:
     if tags.get("price") in {"low_incentive", "price_indifferent"}:
         parts.append(
             "This user is not motivated by small savings. Do not frame the plan as saving money; frame it as comfort-preserving, low-risk routine support."
+        )
+        parts.append(
+            "If DAY_AHEAD_PRICE is provided, do not use price or bill savings as a user-facing reason. Use price only as a quiet secondary optimizer for truly controllable devices after comfort, consent, and routine stability."
         )
     if _low_dr_intrusion_sensitive_mode(persona_config):
         parts.append(
@@ -1947,14 +1956,32 @@ All times are hour-of-day (0–23.9)."""
                         result["appliance_summary"] = loop.appliance_suite.vpp_day_summary(_event_day_idx)
                     loop.vpp_event_log.append(result)
                     loop.vpp_scored.add(ev["id"])
-                    # Update memory context for subsequent LLM calls
+                    # Update memory context for subsequent LLM calls.
+                    # Keep it compact, but convert repeated feedback into
+                    # actionable rules so the next strategy does not relearn
+                    # the same preference from scratch.
                     mem_entries = [{"event": e["id"], "sp": e["setpoint"],
                                     "score": e["score"],
                                     "user_said": e.get("user_input","")[:50],
                                     "feedback": e["comment"][:60]}
                                    for e in loop.vpp_event_log]
-                    loop.vpp_mem_ctx = ("\nPast VPP responses (user in the loop): "
-                                        + json.dumps(mem_entries, ensure_ascii=False))
+                    try:
+                        from user_pref_scorer import build_vpp_preference_memory_notes
+                        mem_rules = build_vpp_preference_memory_notes(
+                            loop.vpp_event_log,
+                            persona_config,
+                        )
+                    except Exception:
+                        mem_rules = []
+                    loop.vpp_mem_ctx = (
+                        "\nPast VPP responses (user in the loop): "
+                        + json.dumps(mem_entries, ensure_ascii=False)
+                    )
+                    if mem_rules:
+                        loop.vpp_mem_ctx += (
+                            "\nLearned preference rules for next decisions: "
+                            + json.dumps(mem_rules, ensure_ascii=False)
+                        )
 
         if loop.h_cool != -1: ex.set_actuator_value(s, loop.h_cool, loop.sp)
         if loop.h_heat != -1: ex.set_actuator_value(s, loop.h_heat, HTG_SP)
