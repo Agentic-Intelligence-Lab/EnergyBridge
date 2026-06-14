@@ -130,6 +130,13 @@ python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_coo
   --city Tianjin --method agent --user-mode human --human-name alice
 ```
 
+Tianjin 7-day Agent run using the existing 7-day IDF:
+
+```bash
+python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
+  --city Tianjin --method agent --days 7
+```
+
 ### Germany Real-Data Variant
 
 Germany uses real weather and a 7-day date range:
@@ -210,6 +217,31 @@ Current VPP windows must stay within a single simulation day
 (`start + duration <= 24`). Cross-midnight VPP events need a separate absolute
 time-window pass.
 
+For varied windows or multiple events per day, pass a JSON schedule:
+
+```bash
+python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
+  --city Tianjin --method agent --days 7 \
+  --vpp-events-json experiments/benchmark/configs/vpp_events_7day_variable.json
+```
+
+Supported JSON shape:
+
+```json
+{
+  "events": [
+    {"day": 1, "start_h": 18.0, "duration_h": 1.0},
+    {"day": 3, "start_h": 12.0, "duration_minutes": 30},
+    {"day": 3, "start_h": 18.0, "end_h": 19.0}
+  ]
+}
+```
+
+Each event wakes the controller at VPP start. The runner forces another wake-up
+at the event end so the Agent can restore comfort and the role-play user can
+score the result. The Agent can still request additional future wake-ups with
+`next_check_hour`.
+
 ### Run The 10-Persona Matrix
 
 This is the main comparable experiment:
@@ -224,6 +256,13 @@ Germany 7-day matrix:
 ```bash
 python experiments/benchmark/run_baseline_matrix.py \
   --city Germany --days 7 --start-date 2025-06-01 --mpc-horizon 6
+```
+
+Tianjin 7-day matrix:
+
+```bash
+python experiments/benchmark/run_baseline_matrix.py \
+  --city Tianjin --days 7 --mpc-horizon 6
 ```
 
 Germany 7-day matrix with day-ahead price enabled:
@@ -269,6 +308,12 @@ python experiments/benchmark/run_baseline_matrix.py --max-runs 1
 # Sweep a longer VPP window
 python experiments/benchmark/run_baseline_matrix.py \
   --city Tianjin --vpp-start-hour 17 --vpp-duration-hours 2 --max-runs 1
+
+# Run a custom 7-day VPP schedule
+python experiments/benchmark/run_baseline_matrix.py \
+  --city Tianjin --days 7 \
+  --vpp-events-json experiments/benchmark/configs/vpp_events_7day_variable.json \
+  --max-runs 1
 ```
 
 ### Generate The Matrix Report
@@ -497,6 +542,7 @@ EnergyBridge/
 │   ├── diagnose_mpc_ep_predictor.py
 │   ├── web_dashboard.py               # browser UI
 │   ├── user_pref_scorer.py            # role-play/human event scoring
+│   ├── configs/                       # VPP event schedule JSON examples
 │   ├── baselines/mpc/                 # MPC planner, dynamic model, EP predictor
 │   ├── models/family_home/            # family IDF models
 │   └── weather/epw/                   # weather files
