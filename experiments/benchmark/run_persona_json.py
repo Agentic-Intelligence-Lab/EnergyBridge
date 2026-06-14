@@ -48,6 +48,11 @@ from energybridge.data.day_ahead import (
     generate_runperiod_idf,
     maybe_load_price_profile,
 )
+from energybridge.data.vpp_events import (
+    describe_vpp_events,
+    load_vpp_events_config,
+    make_daily_vpp_events,
+)
 from energybridge.roleplay.calendar import attach_calendar
 
 PERSONA_DIR = _PROJECT_ROOT / "energybridge" / "roleplay" / "personas"
@@ -274,6 +279,11 @@ def main() -> None:
         help="Daily VPP event duration in hours. Default: 1.0.",
     )
     parser.add_argument(
+        "--vpp-events-json",
+        default="",
+        help="Optional JSON file defining VPP events. Overrides the daily start/duration schedule.",
+    )
+    parser.add_argument(
         "--verbose", "-v", action="store_true",
         help="Print full LLM prompt + raw JSON response for each agent call.",
     )
@@ -311,10 +321,21 @@ def main() -> None:
     vpp_duration_hours = float(args.vpp_duration_hours)
     if vpp_duration_hours <= 0:
         raise SystemExit("--vpp-duration-hours must be > 0")
-    if vpp_start_hour + vpp_duration_hours > 24.0:
-        raise SystemExit("VPP windows crossing midnight are not supported yet; choose start+duration <= 24")
     days = _default_days_for_city(args.city, args.days)
     start_date = _default_start_date_for_city(args.city, args.start_date.strip())
+    if args.vpp_events_json:
+        vpp_events = load_vpp_events_config(
+            args.vpp_events_json,
+            sim_days=days,
+            default_start_h=vpp_start_hour,
+            default_duration_h=vpp_duration_hours,
+        )
+        vpp_schedule_source = str(Path(args.vpp_events_json))
+    else:
+        if vpp_start_hour + vpp_duration_hours > 24.0:
+            raise SystemExit("VPP windows crossing midnight are not supported yet; choose start+duration <= 24")
+        vpp_events = make_daily_vpp_events(days, start_h=vpp_start_hour, duration_h=vpp_duration_hours)
+        vpp_schedule_source = "daily_default"
     output_dir = (
         Path(args.output) if args.output
         else _prepare_default_output_dir(
@@ -331,7 +352,8 @@ def main() -> None:
     print(f"METHOD  : {result_method}")
     print(f"DAYS    : {days}")
     print(f"START   : {start_date or '(template IDF)'}")
-    print(f"VPP     : daily {vpp_start_hour:.2f}h for {vpp_duration_hours:.2f}h")
+    print(f"VPP     : {describe_vpp_events(vpp_events)}")
+    print(f"VPP SRC : {vpp_schedule_source}")
     print(f"IDF     : {idf_path}")
     print(f"EPW     : {epw_path}")
     print(f"PRICE   : {getattr(price_profile, 'source', '') or 'N/A'}")
@@ -355,6 +377,8 @@ def main() -> None:
         day_ahead_price_profile = price_profile,
         vpp_start_h      = vpp_start_hour,
         vpp_duration_h   = vpp_duration_hours,
+        vpp_events_config= vpp_events,
+        vpp_schedule_source = vpp_schedule_source,
     )
     if human_mode:
         result.user_label = f"{_slug_label(human_name) or 'human'}_human"
@@ -386,7 +410,13 @@ def _fmt_h(h) -> str:
     """Float hour → 'HH:MM' string."""
     if h is None:
         return "?"
-    return f"{int(h) % 24:02d}:{int((h % 1) * 60):02d}"
+    hour = float(h) % 24.0
+    hh = int(hour)
+    mm = int(round((hour - hh) * 60))
+    if mm >= 60:
+        hh = (hh + 1) % 24
+        mm = 0
+    return f"{hh:02d}:{mm:02d}"
 
 
 def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
@@ -580,6 +610,7 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
         f"  名称       : {persona.get('name', '')}",
         f"  方法       : {_method_label(d.get('method', ''))}  ({d.get('method', 'unknown')})",
         f"  城市       : {city}",
+        f"  VPP日程    : {d.get('vpp_schedule_source') or 'daily_default'}",
         f"  生成时间   : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"  输出目录   : {output_dir}",
         "",
@@ -617,9 +648,8 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
             for i in range(sim_days)
         ]
     evt_by_id = {e["id"]: e for e in evts}
-    for vdef in vpp_defs:
+    for ev_num, vdef in enumerate(vpp_defs, start=1):
         vid = vdef["id"]
-        ev_num = int(vid[3:])
         event_duration_h = max(1e-6, float(vdef.get("end_h", 0.0)) - float(vdef.get("trigger_h", 0.0)))
         event_duration_text = _fmt_duration_h(event_duration_h)
         e = evt_by_id.get(vid, {})
@@ -795,13 +825,18 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
             f"@{_fmt_num(item.get('weighted_price_eur_per_kwh'), 5, ' EUR/kWh')}"
         )
     price_day_str = "  ".join(price_day_lines) if price_day_lines else "NaN"
-    total_vpp_duration_h = sum(
+    vpp_durations = [
         max(0.0, float(v.get("end_h", 0.0)) - float(v.get("trigger_h", 0.0)))
         for v in vpp_defs
-    )
+    ]
+    total_vpp_duration_h = sum(vpp_durations)
     if vpp_defs and total_vpp_duration_h > 0:
-        avg_vpp_duration_text = _fmt_duration_h(total_vpp_duration_h / len(vpp_defs))
-        vpp_duration_summary = f"{len(vpp_defs)}个事件×{avg_vpp_duration_text}合计"
+        unique_durations = {round(value, 6) for value in vpp_durations}
+        if len(unique_durations) == 1:
+            avg_vpp_duration_text = _fmt_duration_h(total_vpp_duration_h / len(vpp_defs))
+            vpp_duration_summary = f"{len(vpp_defs)}个事件×{avg_vpp_duration_text}合计"
+        else:
+            vpp_duration_summary = f"{len(vpp_defs)}个事件，总窗口{_fmt_duration_h(total_vpp_duration_h)}"
     else:
         vpp_duration_summary = "无VPP事件"
     lines += [
