@@ -620,6 +620,18 @@ def _low_dr_intrusion_sensitive_mode(persona_config: dict | None) -> bool:
     )
 
 
+def _price_sensitive_auto_saving_mode(persona_config: dict | None) -> bool:
+    """True when a user explicitly trusts automation for price/grid savings."""
+    persona_config = persona_config or {}
+    tags = persona_config.get("tags", {}) or {}
+    schedule = persona_config.get("schedule", {}) or {}
+    return (
+        tags.get("price") == "price_sensitive"
+        and tags.get("control") == "high_trust_auto"
+        and not bool(schedule.get("vulnerable_members"))
+    )
+
+
 def _comfort_reason_for_low_dr_user(reason: str, persona_config: dict | None) -> str:
     """Tone down VPP jargon for users who dislike intrusive DR framing."""
     if not _low_dr_intrusion_sensitive_mode(persona_config):
@@ -668,6 +680,10 @@ def _persona_agent_policy_text(persona_config: dict | None) -> str:
     if tags.get("control") == "high_trust_auto":
         parts.append(
             "This user accepts automation within comfort bounds, not unlimited discomfort. During an occupied or return-home VPP window, keep AC below the warm edge of the preferred range and prioritize reliable appliance shifting."
+        )
+    if _price_sensitive_auto_saving_mode(persona_config):
+        parts.append(
+            "This user is price-sensitive and explicitly trusts automation. For a real VPP target, use the warm but still preferred edge of the comfort range before asking for extra discomfort."
         )
     if not parts:
         return ""
@@ -1106,6 +1122,7 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     _ac_sp_tol    = float(_ac_cfg.get("temp_tolerance_c", 1.0))
     _ac_sp_default = round((_ac_sp_min + _ac_sp_max) / 2, 1)
     _protective_mode = _protective_control_mode(persona_config)
+    _auto_saving_mode = _price_sensitive_auto_saving_mode(persona_config)
     _ac_sp_vpp_min = round(_ac_sp_max + 0.5, 1)   # minimum raise during VPP
     _ac_sp_vpp_max = round(_ac_sp_max + 1.5, 1)   # typical VPP raise ceiling
     # Override global SP_MIN based on persona comfort floor
@@ -1488,7 +1505,7 @@ All times are hour-of-day (0–23.9)."""
                 elif (persona_config.get("tags", {}) or {}).get("control") == "high_trust_auto":
                     comfort_tag = (persona_config.get("tags", {}) or {}).get("comfort")
                     high_trust_cap = _ac_sp_max
-                    if comfort_tag == "normal_comfort":
+                    if comfort_tag == "normal_comfort" and not _auto_saving_mode:
                         high_trust_cap = max(_ac_sp_min, _ac_sp_max - 0.5)
                     sp_upper = min(sp_upper, high_trust_cap)
             raw_sp = float(data.get("setpoint", fb_sp))
