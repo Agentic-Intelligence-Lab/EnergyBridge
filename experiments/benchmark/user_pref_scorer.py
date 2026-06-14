@@ -1036,6 +1036,14 @@ def score_user_preference(
     water_heater_during_vpp = bool(wh_info.get("present") and wh_info.get("ran_during_vpp"))
     if water_heater_during_vpp:
         home_state["water_heater_during_vpp"] = True
+    nonfixed_appliances_during_vpp = [
+        name
+        for name, info in appliance_summary.items()
+        if name in {"washer", "dishwasher", "dryer", "water_heater", "ev"}
+        and bool(info.get("present"))
+        and bool(info.get("ran_during_vpp"))
+        and name not in fixed_appliances
+    ]
 
     if method in ("agent", "agent_pmv", "rl", "mpc", "mpc_dynamic", "mpc_ep") and agent_setpoint_c:
         if method == "rl":
@@ -1177,10 +1185,7 @@ def score_user_preference(
                 token in comment_lower
                 for token in ("missed", "failed", "not met", "not achieved")
             )
-            severe_service_issue = bool(
-                skipped_task_count
-                or (water_heater_during_vpp and "water_heater" not in fixed_appliances)
-            )
+            severe_service_issue = bool(skipped_task_count or nonfixed_appliances_during_vpp)
             if (misleading_miss or result["vpp_score"] <= 2) and not severe_service_issue:
                 result["vpp_score"] = max(result["vpp_score"], 4)
                 result["energy_score"] = max(result["energy_score"], 3)
@@ -1209,10 +1214,10 @@ def score_user_preference(
             and result["score"] < 4
             and result["comfort_score"] >= 4
             and agent_setpoint_c is not None
-            and float(agent_setpoint_c) >= pref_max - 0.1
+            and pref_min - pref_tol <= float(agent_setpoint_c) <= pref_max + pref_tol
             and vpp_result_context
             and vpp_result_context.get("achieved") is False
-            and not (water_heater_during_vpp and "water_heater" not in fixed_appliances)
+            and not nonfixed_appliances_during_vpp
         ):
             result["score"] = 4
             result["label"] = "satisfied"

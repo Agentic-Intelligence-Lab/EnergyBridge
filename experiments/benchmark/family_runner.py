@@ -1328,7 +1328,10 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
         _ac_sp_vpp_min = _ac_sp_default
         _ac_sp_vpp_max = _ac_sp_max
         if (persona_config.get("tags", {}) or {}).get("control") in {"low_auto_accept", "privacy_sensitive"}:
-            _energy_saving_sp_floor = max(_energy_saving_sp_floor, min(_ac_sp_max, _ac_sp_max - 1.0))
+            # Protective users value stability, but stability should not mean
+            # unnecessary over-cooling. Stay near the warm half of the approved
+            # comfort band unless the user explicitly asks for colder air.
+            _energy_saving_sp_floor = max(_energy_saving_sp_floor, min(_ac_sp_max, _ac_sp_max - 0.5))
     elif (
         (persona_config.get("tags", {}) or {}).get("control") == "high_trust_auto"
         and (persona_config.get("tags", {}) or {}).get("comfort") == "normal_comfort"
