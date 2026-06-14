@@ -564,7 +564,7 @@ def _vpp_safe_appliance_actions(appliance_config: dict | None, event: dict | Non
         })
     if "ev" in present:
         vpp_end = _event_end_hod(event)
-        charge_start = max(22.0, vpp_end)
+        charge_start = vpp_end
         actions.update({
             "ev_mode": "delay",
             "ev_charge_start_h": float(charge_start % 24.0),
@@ -580,9 +580,36 @@ def _protective_control_mode(persona_config: dict | None) -> bool:
     schedule = persona_config.get("schedule", {}) or {}
     return (
         tags.get("schedule") == "caregiver"
-        or tags.get("control") in {"low_auto_accept", "privacy_sensitive"}
+        or tags.get("comfort") == "temp_sensitive"
+        or tags.get("control") in {"confirm_required", "low_auto_accept", "privacy_sensitive"}
         or bool(schedule.get("vulnerable_members"))
     )
+
+
+def _persona_agent_policy_text(persona_config: dict | None) -> str:
+    """Add persona-specific communication/control constraints to the Agent prompt."""
+    persona_config = persona_config or {}
+    tags = persona_config.get("tags", {}) or {}
+    parts: List[str] = []
+    if tags.get("control") == "confirm_required":
+        parts.append(
+            "This user requires explicit event-level confirmation. Treat the role-play user's selected strategy/preference as the only allowed scope. Do not exceed it."
+        )
+    if tags.get("comfort") == "temp_sensitive":
+        parts.append(
+            "This user is temperature-sensitive. Keep the AC inside the preferred range; avoid raising the setpoint just to chase grid benefit."
+        )
+    if tags.get("price") in {"low_incentive", "price_indifferent"}:
+        parts.append(
+            "This user is not motivated by small savings. Do not frame the plan as saving money; frame it as comfort-preserving, low-risk grid support."
+        )
+    if tags.get("control") == "high_trust_auto":
+        parts.append(
+            "This user accepts automation within comfort bounds, not unlimited discomfort. During an occupied or return-home VPP window, keep AC below the warm edge of the preferred range and prioritize reliable appliance shifting."
+        )
+    if not parts:
+        return ""
+    return "\n[PERSONA-SPECIFIC AGENT POLICY]\n" + "\n".join(f"- {part}" for part in parts)
 
 
 def _missing_explicit_appliance_actions(actions: dict | None, appliance_config: dict | None) -> List[str]:
@@ -649,7 +676,10 @@ def _interval_overlaps(start: float, end: float, window_start: float, window_end
 
 
 def _vpp_appliance_conflicts(
-    actions: dict | None, appliance_config: dict | None, event: dict | None = None
+    actions: dict | None,
+    appliance_config: dict | None,
+    event: dict | None = None,
+    current_hod: float | None = None,
 ) -> List[str]:
     """Find Agent appliance commands that would place controllable load in the VPP window."""
     actions = actions or {}
@@ -667,9 +697,20 @@ def _vpp_appliance_conflicts(
             continue
         duration_h = float((cfg.get(name, {}) or {}).get("duration_h", 1.0))
         try:
-            if _interval_overlaps(float(start), float(start) + duration_h, vpp_start, vpp_end):
+            start_f = float(start)
+            end_f = start_f + duration_h
+            if (
+                current_hod is not None
+                and vpp_start <= float(current_hod) < vpp_end
+                and start_f < float(current_hod)
+                and end_f >= vpp_start
+            ):
                 conflicts.append(
-                    f"{name}: scheduled {_fmt_clock_h(float(start))}-{_fmt_clock_h(float(start) + duration_h)} overlaps VPP {window_text}"
+                    f"{name}: start {_fmt_clock_h(start_f)} is in the past at current VPP clock {_fmt_clock_h(float(current_hod))}; use a future non-overlapping time"
+                )
+            elif _interval_overlaps(start_f, end_f, vpp_start, vpp_end):
+                conflicts.append(
+                    f"{name}: scheduled {_fmt_clock_h(start_f)}-{_fmt_clock_h(end_f)} overlaps VPP {window_text}"
                 )
         except (TypeError, ValueError):
             continue
@@ -976,10 +1017,11 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     if _protective_mode:
         _protective_policy = f"""
 [PROTECTIVE USER MODE]
-This persona has vulnerable household members or very low acceptance of automation.
+This persona has tight comfort bounds, explicit-confirmation needs, vulnerable household members, or very low acceptance of automation.
 Treat DR as advisory/minimal-control: keep HVAC within {_ac_sp_min:.1f}-{_ac_sp_max:.1f}°C, do not raise above the preferred max for VPP, and preserve fixed care routines.
 If grid goals conflict with comfort, safety, consent, or caregiving routines, choose comfort/safety and explain that only low-risk actions were taken.
 """
+    _persona_policy = _persona_agent_policy_text(persona_config)
 
     _LLM_SYS_FAM = f"""You are an autonomous AC (air conditioning) and appliance agent for a family home.
 SIMULATION: 3 days in July (Tianjin, China). Timestep 10 min. Total 72 hours.
@@ -1000,13 +1042,16 @@ IMPORTANT: control each appliance independently. Decisions persist until you cha
 HARD APPLIANCE RULE: on every VPP day, no present controllable appliance may draw controllable load during VPP_WINDOW.
 This means washer/dishwasher/dryer cycles must not overlap VPP_WINDOW, water-heater preheat must avoid VPP_WINDOW, and EV charging must use smart/delay or an explicit non-overlapping window.
 Plan appliance schedules before the event. Waiting until the VPP start time is too late for preheating or long-cycle tasks.
+All schedule commands must be executable from the CURRENT clock time. Do not "fix" an active VPP event by assigning a washer/dishwasher/dryer start time in the past; if a cycle was not already safely completed, move it after VPP_WINDOW.
 {_protective_policy}
+{_persona_policy}
 
 [APPLIANCE CONTROL — default strategy & available parameters]
 
 WASHER / DISHWASHER / DRYER (run once per day)
   Default: run at 14:00 (well before VPP window). Shift earlier or later as needed.
-  On VPP days: choose a start time so the full cycle does not overlap VPP_WINDOW.
+  On VPP days: choose a start time so the full cycle [start_h, start_h+duration_h] does not overlap VPP_WINDOW.
+  If the current clock is already at/inside VPP_WINDOW, do not choose a past start_h as a workaround; schedule after VPP_WINDOW unless the appliance status already says the task is finished.
   Service rule: these tasks should normally still be completed the same day.
   Skip is an exception only when the task is truly unnecessary that day. If you choose skip,
   the system may ask you once to confirm; otherwise reschedule instead.
@@ -1025,12 +1070,13 @@ WATER HEATER (electric tank, thermal storage)
     water_heater_preheat_temp_c  : float  — tank setpoint during preheat, 45–75°C (default 65.0).
     water_heater_preheat         : bool   — true = activate, false = disable (you can omit if setting times).
 
-EV CHARGER (home charger, arrives 18:00, departs 07:30)
+EV CHARGER (home charger, arrival/departure shown in status)
   Default (smart mode): charge immediately on arrival, skip VPP window automatically.
   On VPP days: use smart/delay mode OR set an explicit charge window that does not overlap VPP_WINDOW.
+  For EV-constrained users, start charging as soon as VPP_WINDOW ends if needed for departure SOC; do not wait until 22:00 by default.
   SOC and arrival time shown in status each step.
   Parameters:
-    ev_mode             : "smart"|"delay"|"normal"  — smart=avoid-VPP, delay=after-22:00, normal=immediate.
+    ev_mode             : "smart"|"delay"|"normal"  — smart=avoid-VPP, delay=defer with explicit safe window, normal=immediate.
     ev_charge_start_h   : float  — override: begin charging at this hour (e.g. 22.0).
     ev_charge_end_h     : float  — override: stop  charging at this hour (e.g. 7.0 = 07:00 next morning).
     (window override takes priority over ev_mode when set)
@@ -1220,7 +1266,12 @@ All times are hour-of-day (0–23.9)."""
                 else:
                     print("  [Service Rule] skip revised to schedule/action")
             if vpp_event:
-                vpp_conflicts = _vpp_appliance_conflicts(data.get("appliances", {}), appliance_config, vpp_event)
+                vpp_conflicts = _vpp_appliance_conflicts(
+                    data.get("appliances", {}),
+                    appliance_config,
+                    vpp_event,
+                    current_hod=hod if vpp_active else None,
+                )
                 if vpp_conflicts:
                     vpp_repair_prompt = (
                         f"{prompt}\n\n"
@@ -1229,6 +1280,7 @@ All times are hour-of-day (0–23.9)."""
                         + "\n".join(f"- {item}" for item in vpp_conflicts)
                         + "\nReturn the full JSON again. Keep the same AC setpoint if still appropriate, but rewrite appliance commands so:\n"
                         "- washer/dishwasher/dryer cycles do not overlap VPP_WINDOW;\n"
+                        "- if VPP is already active, do not use a start time earlier than the current clock; schedule future work after VPP_WINDOW;\n"
                         "- water-heater preheat does not overlap VPP_WINDOW and preferably ends before the event;\n"
                         "- EV uses smart/delay or an explicit non-overlapping window.\n"
                         "Use the VPP-safe defaults from the prompt if uncertain. Return full JSON only."
@@ -1243,7 +1295,12 @@ All times are hour-of-day (0–23.9)."""
                             print(f"  │ {_line}")
                         print(f"  └{'─'*56}")
                     data = _call_llm_json(vpp_repair_prompt)
-                    remaining_conflicts = _vpp_appliance_conflicts(data.get("appliances", {}), appliance_config, vpp_event)
+                    remaining_conflicts = _vpp_appliance_conflicts(
+                        data.get("appliances", {}),
+                        appliance_config,
+                        vpp_event,
+                        current_hod=hod if vpp_active else None,
+                    )
                     if remaining_conflicts:
                         print(
                             "  [VPP Appliance Rule] conflicts remained; applying VPP-safe appliance defaults: "
@@ -1268,7 +1325,12 @@ All times are hour-of-day (0–23.9)."""
                         repaired_actions[key] = value
                 data["appliances"] = repaired_actions
                 if vpp_event:
-                    remaining_conflicts = _vpp_appliance_conflicts(data.get("appliances", {}), appliance_config, vpp_event)
+                    remaining_conflicts = _vpp_appliance_conflicts(
+                        data.get("appliances", {}),
+                        appliance_config,
+                        vpp_event,
+                        current_hod=hod if vpp_active else None,
+                    )
                     if remaining_conflicts:
                         print(
                             "  [VPP Appliance Rule] missing-field repair still conflicts; applying VPP-safe appliance defaults: "
@@ -1276,7 +1338,23 @@ All times are hour-of-day (0–23.9)."""
                         )
                         data["appliances"] = _vpp_safe_appliance_actions(appliance_config, vpp_event)
                         data["reason"] = (str(data.get("reason", ""))[:72] + " | VPP-safe appliance repair")[:100]
-            sp = round(max(_run_sp_min, min(_run_sp_max, float(data.get("setpoint", fb_sp)))), 1)
+            sp_upper = _run_sp_max
+            if vpp_active:
+                if _protective_mode:
+                    sp_upper = min(sp_upper, _ac_sp_max)
+                elif (persona_config.get("tags", {}) or {}).get("control") == "high_trust_auto":
+                    comfort_tag = (persona_config.get("tags", {}) or {}).get("comfort")
+                    high_trust_cap = _ac_sp_max
+                    if comfort_tag == "normal_comfort":
+                        high_trust_cap = max(_ac_sp_min, _ac_sp_max - 0.5)
+                    sp_upper = min(sp_upper, high_trust_cap)
+            raw_sp = float(data.get("setpoint", fb_sp))
+            sp = round(max(_run_sp_min, min(sp_upper, raw_sp)), 1)
+            if sp < raw_sp:
+                data["reason"] = (
+                    str(data.get("reason", ""))[:68]
+                    + f" | capped at comfort guardrail {sp_upper:.1f}C"
+                )[:100]
             nch = data.get("next_check_hour")
             if nch is not None:
                 nch = float(nch)
