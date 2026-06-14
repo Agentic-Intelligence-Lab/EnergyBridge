@@ -338,6 +338,17 @@ def build_vpp_preference_memory_notes(past_events: list | None, persona: dict | 
         notes.append(
             "Set expectations that fixed routines can limit VPP impact; do not overpromise grid response."
         )
+    if (
+        any(word in low_score_text for word in ("return home", "home arrival", "commute home", "arrive home"))
+        and any(word in low_score_text for word in ("warm", "26.5", "above 26", "temperature drift"))
+    ):
+        notes.append(
+            "For events near return-home or dinner time, avoid the warm edge of the comfort range and restore comfort immediately after the event."
+        )
+    if any(word in low_score_text for word in ("above 26", "26.5", "too warm")):
+        notes.append(
+            "Treat 26C as the practical comfort ceiling unless the user explicitly accepts a warmer setting for that event."
+        )
     if any(word in comments for word in ("fixed load", "fixed loads", "fixed hot-water", "routine unchanged")):
         notes.append(
             "Treat fixed/non-DR-adjustable appliances as constraints, not controllable levers."

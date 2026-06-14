@@ -78,6 +78,36 @@ def _event_preheat_safe_end_hod(event: dict | None) -> float:
     return (_event_start_hod(event) - 1.0) % 24.0
 
 
+def _calendar_return_home_sensitive(persona_config: dict | None, event: dict | None, *, margin_h: float = 0.5) -> bool:
+    """True when a VPP window is close enough to home arrival to protect comfort."""
+    if not persona_config or not event:
+        return False
+    calendar = persona_config.get("calendar") or {}
+    days = calendar.get("days") or []
+    if not days:
+        return False
+    try:
+        event_day = int(event.get("day", 1) or 1)
+    except (TypeError, ValueError):
+        event_day = 1
+    day = next((item for item in days if int(item.get("day", -1)) == event_day), None)
+    if day is None:
+        weekly_day = ((event_day - 1) % len(days)) + 1
+        day = next((item for item in days if int(item.get("day", -1)) == weekly_day), None)
+    if day is None:
+        return False
+    arrival = (day.get("constraints") or {}).get("home_arrival_h")
+    if arrival is None:
+        return False
+    try:
+        arrival_h = float(arrival) % 24.0
+    except (TypeError, ValueError):
+        return False
+    start_h = _event_start_hod(event)
+    end_h = _event_end_hod(event)
+    return (start_h - margin_h) <= arrival_h <= (end_h + margin_h)
+
+
 def _find_active_or_upcoming_vpp_event(
     sim_h: float,
     *,
@@ -594,6 +624,76 @@ def _vpp_safe_appliance_actions(appliance_config: dict | None, event: dict | Non
             "ev_charge_end_h": 7.0,
         })
     return actions
+
+
+def _price_sensitive_explanation_mode(persona_config: dict | None) -> bool:
+    """True when the user expects a short benefit/impact estimate with suggestions."""
+    tags = (persona_config or {}).get("tags", {}) or {}
+    if tags.get("price") in {"price_sensitive", "price_driven"}:
+        return True
+    weights = ((persona_config or {}).get("preferences", {}) or {}).get("scoring_weights", {}) or {}
+    try:
+        return float(weights.get("energy", 0.0)) >= 0.4 and tags.get("price") not in {"low_incentive", "price_indifferent"}
+    except (TypeError, ValueError):
+        return False
+
+
+def _controllable_vpp_load_estimate_kw(appliance_config: dict | None) -> float:
+    """Rough controllable appliance load useful for user-facing DR impact estimates."""
+    cfg = appliance_config or {}
+    total = 0.0
+    for name in ("washer", "dishwasher", "dryer"):
+        dev_cfg = cfg.get(name, {}) or {}
+        if dev_cfg.get("present") and dev_cfg.get("dr_adjustable", dev_cfg.get("shiftable", True)) is not False:
+            total += float(dev_cfg.get("power_kw", 0.0) or 0.0)
+    wh_cfg = cfg.get("water_heater", {}) or {}
+    if wh_cfg.get("present") and wh_cfg.get("dr_adjustable", True) is not False:
+        total += float(wh_cfg.get("rated_kw", 0.0) or 0.0)
+    ev_cfg = cfg.get("ev", {}) or {}
+    if ev_cfg.get("present") and ev_cfg.get("dr_adjustable", True) is not False:
+        total += float(ev_cfg.get("power_kw", ev_cfg.get("charger_kw", 0.0)) or 0.0)
+    return max(0.0, total)
+
+
+def _benefit_explanation_prompt_text(
+    persona_config: dict | None,
+    appliance_config: dict | None,
+    event: dict | None,
+    demand_kw: float | None = None,
+) -> str:
+    """Prompt hint for users who want quantified savings/impact explanations."""
+    if not event or not _price_sensitive_explanation_mode(persona_config):
+        return ""
+    estimate_kw = _controllable_vpp_load_estimate_kw(appliance_config)
+    target_text = ""
+    if demand_kw is not None and demand_kw > 0:
+        target_text = f" VPP target is about {demand_kw:.2f} kW."
+    return (
+        "\nBENEFIT_EXPLANATION: this price/energy-sensitive user expects a brief quantified reason. "
+        f"If no price file is available, estimate impact as controllable load shifted away from VPP_WINDOW "
+        f"(roughly {estimate_kw:.1f} kW when all flexible devices are relevant).{target_text} "
+        "Do not invent money saved; use a compact load/impact estimate in reason."
+    )
+
+
+def _ensure_price_sensitive_reason_estimate(
+    reason: str,
+    persona_config: dict | None,
+    appliance_config: dict | None,
+    event: dict | None,
+) -> str:
+    """Add a compact impact estimate when a price-sensitive reason omits it."""
+    text = str(reason or "")
+    if not event or not _price_sensitive_explanation_mode(persona_config):
+        return text[:100]
+    lowered = text.lower()
+    if any(token in lowered for token in ("est.", "estimate", "roughly", "kw", "kwh", "saved", "shifted")):
+        return text[:100]
+    estimate_kw = _controllable_vpp_load_estimate_kw(appliance_config)
+    if estimate_kw <= 0:
+        return text[:100]
+    suffix = f" | est. shifted ~{estimate_kw:.1f}kW"
+    return (text[: max(0, 100 - len(suffix))] + suffix)[:100]
 
 
 def _protective_control_mode(persona_config: dict | None) -> bool:
@@ -1303,6 +1403,13 @@ All times are hour-of-day (0–23.9)."""
                                     f" ({_ac_sp_min:.1f}-{_ac_sp_max:.1f}\u00b0C) immediately."
                                     f" Normal operations resume. ***")
                     break
+        return_home_tag = ""
+        if vpp_event and _calendar_return_home_sensitive(persona_config, vpp_event):
+            return_home_tag = (
+                f"\n  *** RETURN_HOME_COMFORT: this VPP window is close to home arrival. "
+                f"Keep active-event AC setpoint at or below the preferred max ({_ac_sp_max:.1f}°C), "
+                "and restore comfort immediately when the event ends. ***"
+            )
         mem_tag = loop.vpp_mem_ctx  # contains past event scores + user feedback
         price_tag = "\nDAY_AHEAD_PRICE: unavailable."
         if run_start_date is not None and day_ahead_price_profile is not None:
@@ -1311,6 +1418,12 @@ All times are hour-of-day (0–23.9)."""
                 price_tag = "\n" + day_ahead_price_profile.prompt_context_for_day(current_day)
             except Exception as _pe:
                 price_tag = f"\nDAY_AHEAD_PRICE: unavailable ({str(_pe)[:80]})."
+        benefit_tag = _benefit_explanation_prompt_text(
+            persona_config,
+            appliance_config,
+            vpp_event,
+            getattr(loop, "current_vpp_demand_kw", None),
+        )
         # Current event: user expressed preference before agent acts
         user_now_tag = f"\n[User says NOW]: {user_pref_input}" if user_pref_input else ""
         # Per-appliance status (independent devices)
@@ -1321,10 +1434,10 @@ All times are hour-of-day (0–23.9)."""
             appl_tag = ""
         fixed_appliance_tag = _fixed_appliance_constraint_text(appliance_config)
         explicit_appliance_tag = _explicit_appliance_requirement_text(appliance_config, vpp_event=vpp_event)
-        prompt = (f"sim_hour={sim_h:.1f}  clock={hh:02d}:00{vpp_tag}{upcoming_vpp_tag}{post_vpp_tag}\n"
+        prompt = (f"sim_hour={sim_h:.1f}  clock={hh:02d}:00{vpp_tag}{upcoming_vpp_tag}{post_vpp_tag}{return_home_tag}\n"
                   f"zone_temp={temp:.1f}C  outdoor={out_t:.1f}C\n"
                   f"remaining_sim_hours={remaining_h:.0f}\n"
-                  f"user_pref: {user_pref}{user_now_tag}{price_tag}{appl_tag}{fixed_appliance_tag}{explicit_appliance_tag}{mem_tag}")
+                  f"user_pref: {user_pref}{user_now_tag}{price_tag}{benefit_tag}{appl_tag}{fixed_appliance_tag}{explicit_appliance_tag}{mem_tag}")
         if vpp_active:
             fb_sp = min(_run_sp_max, _ac_sp_default if _protective_mode else 26.5)
             fb_nch = None
@@ -1503,6 +1616,8 @@ All times are hour-of-day (0–23.9)."""
             if vpp_event and _low_dr_intrusion_sensitive_mode(persona_config):
                 sp_upper = min(sp_upper, _ac_sp_max)
             if vpp_active:
+                if _calendar_return_home_sensitive(persona_config, vpp_event):
+                    sp_upper = min(sp_upper, _ac_sp_max)
                 if _low_dr_intrusion_sensitive_mode(persona_config):
                     demand_kw = float(getattr(loop, "current_vpp_demand_kw", 0.0) or 0.0)
                     if demand_kw <= 0.5:
@@ -1532,6 +1647,12 @@ All times are hour-of-day (0–23.9)."""
                 if nch <= sim_h + 0.25 or nch > total_sim_hours:
                     nch = None
             reason = _comfort_reason_for_low_dr_user(str(data.get("reason", "")), persona_config)
+            reason = _ensure_price_sensitive_reason_estimate(
+                reason,
+                persona_config,
+                appliance_config,
+                vpp_event,
+            )
             # --- Independent appliance commands from LLM ---
             appl_actions = _filter_controllable_appliance_actions(
                 data.get("appliances", {}), appliance_config
