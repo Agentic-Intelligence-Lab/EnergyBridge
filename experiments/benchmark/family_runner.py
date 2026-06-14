@@ -263,6 +263,7 @@ class _FamilyLoop:
         self.vpp_user_input: str = ""               # roleplay user preference before agent acts
         self.vpp_user_input_by_id: Dict[str, str] = {}
         self.vpp_last_reason: str = ""              # agent reason from last LLM call
+        self.vpp_trigger_reason_by_id: Dict[str, str] = {}  # reason from the event-start control action
         # Per-event VPP energy tracking and demand-agent outputs
         self.vpp_event_energy_wh: Dict[str, float] = {}   # {event_id: Wh} accumulated per event
         self.vpp_demand_by_id: Dict[str, dict] = {}        # {event_id: {target_kwh, reason}}
@@ -2119,7 +2120,7 @@ All times are hour-of-day (0–23.9)."""
                 energy_kwh_per_day=e_day, agent_setpoint_c=sp_w,
                 event_index=event_index,
                 user_preference_text=loop_ref.vpp_user_input_by_id.get(ev["id"], loop_ref.vpp_user_input),
-                agent_reason=loop_ref.vpp_last_reason,
+                agent_reason=loop_ref.vpp_trigger_reason_by_id.get(ev["id"], loop_ref.vpp_last_reason),
                 persona=persona_config,
                 appliance_summary=appliance_summary,
                 vpp_context=ev,
@@ -2149,7 +2150,8 @@ All times are hour-of-day (0–23.9)."""
                     "demand_achievement_ratio": _achieve_ratio,
                     "comment": cmt,
                     "user_input": loop_ref.vpp_user_input_by_id.get(ev["id"], loop_ref.vpp_user_input)[:80],
-                    "reason": loop_ref.vpp_last_reason[:120], "source": src}
+                    "reason": loop_ref.vpp_trigger_reason_by_id.get(ev["id"], loop_ref.vpp_last_reason)[:120],
+                    "source": src}
         except Exception as e:
             print(f"  [VPP score {ev['id']}] error: {e}")
             return {"id": ev["id"], "setpoint": loop_ref.sp, "score": None, "label": "?",
@@ -2364,6 +2366,7 @@ All times are hour-of-day (0–23.9)."""
                 loop.day_agent_decisions[_day_i].append(_decision_log)
                 if is_vpp and triggered_vpp is not None:
                     loop.vpp_trigger_actions[vid] = res.get("appliance_actions", {})
+                    loop.vpp_trigger_reason_by_id[vid] = res.get("reason", "")
                 if loop.appliance_suite is not None:
                     _apply_appliance_actions(
                         loop.appliance_suite,
