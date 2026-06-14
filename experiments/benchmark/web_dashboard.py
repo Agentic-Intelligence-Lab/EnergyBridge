@@ -450,6 +450,7 @@ INDEX_HTML = r"""<!doctype html>
     .preset-grid button { padding: 9px; }
     .field-row { margin: 0 0 12px; }
     .field-row label { display: block; color: var(--muted); font-size: 12px; font-weight: 800; margin-bottom: 6px; }
+    .inline-fields { display: grid; grid-template-columns: 120px 1fr; gap: 8px; }
     .live-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0; }
     .live-card { background: #f8faf9; border: 1px solid #edf0f2; border-radius: 7px; padding: 9px; }
     .live-card span { display: block; color: var(--muted); font-size: 11px; margin-bottom: 3px; }
@@ -565,6 +566,12 @@ INDEX_HTML = r"""<!doctype html>
       selectedDate: '',
       selectedMethod: 'agent',
       selectedPersona: 'basic_role_a_commuter_price_cooperative',
+      selectedCity: 'Tianjin',
+      selectedDays: 3,
+      startDate: '',
+      priceCsv: '',
+      vppStartHour: 18,
+      vppDurationHours: 1,
       userMode: 'roleplay',
       humanName: 'human_user'
     };
@@ -676,7 +683,7 @@ INDEX_HTML = r"""<!doctype html>
       const prefix = state.userMode === 'human'
         ? `${slug(state.humanName) || 'human'}_human`
         : personaRunLabel(state.selectedPersona);
-      return `${todayIso()}/${prefix}_${methodRunToken(state.selectedMethod)}_tianjin_3days`;
+      return `${todayIso()}/${prefix}_${methodRunToken(state.selectedMethod)}_${String(state.selectedCity || 'Tianjin').toLowerCase()}_${Number(state.selectedDays || 3)}days`;
     }
 
     function runNameFromOutput(outputDir) {
@@ -838,7 +845,11 @@ INDEX_HTML = r"""<!doctype html>
       const human = userMode === 'human'
         ? ` --user-mode human --human-name ${shellQuote(humanName || 'human')}`
         : ' --user-mode roleplay';
-      return `${base} --method ${controllerMethod}${horizon}${human}`;
+      const city = ` --city ${state.selectedCity || 'Tianjin'} --days ${Number(state.selectedDays || 3)}`;
+      const start = state.startDate ? ` --start-date ${shellQuote(state.startDate)}` : '';
+      const price = state.priceCsv ? ` --price-csv ${shellQuote(state.priceCsv)}` : '';
+      const vpp = ` --vpp-start-hour ${Number(state.vppStartHour || 18)} --vpp-duration-hours ${Number(state.vppDurationHours || 1)}`;
+      return `${base} --method ${controllerMethod}${horizon}${human}${city}${start}${price}${vpp}`;
     }
 
     function methodLabel(method) {
@@ -882,8 +893,8 @@ INDEX_HTML = r"""<!doctype html>
         const matches = [...text.matchAll(pattern)];
         return matches.length ? matches[matches.length - 1] : null;
       };
-      const day = latest(/\[(?:AC|MPC) Agent[^\]]*Day(\d+)/g)?.[1] || latest(/--- Day\s+(\d+)\s+start/g)?.[1] || '—';
-      const event = latest(/VPP Demand-Response Event\s+(\d+)\/3/g)?.[1] || '—';
+      const day = latest(/\[(?:AC|MPC) Agent[^\]]*Day(\d+)/g)?.[1] || latest(/--- Day\s+(\d+)\s+(?:start|daily plan)/g)?.[1] || '—';
+      const event = latest(/VPP Demand-Response Event\s+(\d+)\/\d+/g)?.[1] || '—';
       const energy = latest(/\[family\/[^\]]+\]\s+exit=\d+\s+energy=([0-9.]+)kWh\s+vpp_window=([0-9.]+)kWh/g);
       const score = latest(/User score:\s*([0-9.]+)\/5\s+\(([^)]+)\)/g);
       const sp = latest(/\[(?:AC|MPC) Agent[^\]]*\].*?setpoint(?:→|->)([0-9.]+)/g);
@@ -897,7 +908,7 @@ INDEX_HTML = r"""<!doctype html>
       for (const raw of logs || []) {
         const line = raw.trim();
         if (!line) continue;
-        const dayMatch = line.match(/--- Day\s+(\d+)\s+start/);
+        const dayMatch = line.match(/--- Day\s+(\d+)\s+(?:start|daily plan)/);
         if (dayMatch) {
           currentDay = dayMatch[1];
         }
@@ -909,7 +920,7 @@ INDEX_HTML = r"""<!doctype html>
           dayEv.day = currentDay;
           dayEv.status = 'active';
         }
-        const eventMatch = line.match(/VPP Demand-Response Event\s+(\d+)\/3/);
+        const eventMatch = line.match(/VPP Demand-Response Event\s+(\d+)\/\d+/);
         if (eventMatch) {
           currentKey = currentDay !== '—' ? currentDay : eventMatch[1];
           const ev = ensureProgressEvent(progressEvents, currentKey);
@@ -938,7 +949,7 @@ INDEX_HTML = r"""<!doctype html>
             ev.strategies.push(`电器控制: ${candidateApplianceMatch[1].trim()}`);
           }
         }
-        const resultMatch = line.match(/\[VPP Result \| Event\s+(\d+)\/3/);
+        const resultMatch = line.match(/\[VPP Result \| Event\s+(\d+)\/\d+/);
         if (resultMatch) {
           currentKey = resultMatch[1];
           const ev = ensureProgressEvent(progressEvents, currentKey);
@@ -1100,7 +1111,31 @@ INDEX_HTML = r"""<!doctype html>
               <button class="${state.userMode === 'human' ? '' : 'secondary'}" data-user-mode="human">Human</button>
             </div>
             ${userTypeField}
-            <h3>3. 方法</h3>
+            <div class="field-row">
+              <label for="citySelect">3. 场景</label>
+              <select id="citySelect">
+                ${['Tianjin', 'Beijing', 'Shanghai', 'Germany'].map(c => `<option value="${c}" ${state.selectedCity === c ? 'selected' : ''}>${c}</option>`).join('')}
+              </select>
+            </div>
+            <div class="field-row">
+              <label for="daysInput">天数 / 起始日期</label>
+              <div class="inline-fields">
+                <input id="daysInput" type="number" min="1" value="${Number(state.selectedDays || 3)}">
+                <input id="startDateInput" value="${state.startDate}" placeholder="YYYY-MM-DD，可留空">
+              </div>
+            </div>
+            <div class="field-row">
+              <label for="priceCsvInput">进阶：日前电价 CSV</label>
+              <input id="priceCsvInput" value="${state.priceCsv}" placeholder="可留空；例如 experiments/real_data/germany_2025_price.csv">
+            </div>
+            <div class="field-row">
+              <label for="vppStartHourInput">VPP窗口：开始 / 时长(小时)</label>
+              <div class="inline-fields">
+                <input id="vppStartHourInput" type="number" step="0.25" min="0" max="23.99" value="${Number(state.vppStartHour || 18)}">
+                <input id="vppDurationHoursInput" type="number" step="0.25" min="0.25" value="${Number(state.vppDurationHours || 1)}">
+              </div>
+            </div>
+            <h3>4. 方法</h3>
             <div class="preset-grid">
               ${methods.map(m => `<button class="${state.selectedMethod === m ? '' : 'secondary'}" data-method="${m}">${methodLabel(m)}</button>`).join('')}
             </div>
@@ -1197,6 +1232,54 @@ INDEX_HTML = r"""<!doctype html>
       if (humanNameInput) {
         humanNameInput.oninput = (e) => {
           state.humanName = e.target.value;
+          syncCommandFromSelections();
+        };
+      }
+      const citySelect = $('citySelect');
+      if (citySelect) {
+        citySelect.onchange = (e) => {
+          state.selectedCity = e.target.value;
+          if (state.selectedCity === 'Germany') {
+            state.selectedDays = 7;
+            state.startDate = state.startDate || '2025-06-01';
+          } else if (!state.startDate) {
+            state.selectedDays = 3;
+          }
+          render();
+        };
+      }
+      const daysInput = $('daysInput');
+      if (daysInput) {
+        daysInput.oninput = (e) => {
+          state.selectedDays = Math.max(1, Number(e.target.value || 1));
+          syncCommandFromSelections();
+        };
+      }
+      const startDateInput = $('startDateInput');
+      if (startDateInput) {
+        startDateInput.oninput = (e) => {
+          state.startDate = e.target.value.trim();
+          syncCommandFromSelections();
+        };
+      }
+      const priceCsvInput = $('priceCsvInput');
+      if (priceCsvInput) {
+        priceCsvInput.oninput = (e) => {
+          state.priceCsv = e.target.value.trim();
+          syncCommandFromSelections();
+        };
+      }
+      const vppStartHourInput = $('vppStartHourInput');
+      if (vppStartHourInput) {
+        vppStartHourInput.oninput = (e) => {
+          state.vppStartHour = Number(e.target.value || 18);
+          syncCommandFromSelections();
+        };
+      }
+      const vppDurationHoursInput = $('vppDurationHoursInput');
+      if (vppDurationHoursInput) {
+        vppDurationHoursInput.oninput = (e) => {
+          state.vppDurationHours = Math.max(0.25, Number(e.target.value || 1));
           syncCommandFromSelections();
         };
       }
@@ -1517,7 +1600,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     @staticmethod
     def _infer_city_from_run_name(name: str) -> str:
         parts = name.split("_")
-        for city in ("tianjin", "beijing", "shanghai"):
+        for city in ("tianjin", "beijing", "shanghai", "germany"):
             if city in parts:
                 return city
         return ""
