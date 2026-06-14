@@ -609,6 +609,41 @@ def _protective_control_mode(persona_config: dict | None) -> bool:
     )
 
 
+def _low_dr_intrusion_sensitive_mode(persona_config: dict | None) -> bool:
+    """True when DR should be framed as low-disruption comfort preservation."""
+    persona_config = persona_config or {}
+    tags = persona_config.get("tags", {}) or {}
+    return (
+        tags.get("price") in {"low_incentive", "price_indifferent"}
+        or tags.get("grid_value") in {"low_value", "uncertain_flex"}
+        or tags.get("task") in {"rigid", "semi_rigid"}
+    )
+
+
+def _comfort_reason_for_low_dr_user(reason: str, persona_config: dict | None) -> str:
+    """Tone down VPP jargon for users who dislike intrusive DR framing."""
+    if not _low_dr_intrusion_sensitive_mode(persona_config):
+        return reason[:100]
+    replacements = {
+        "VPP event": "brief event",
+        "VPP active": "brief event active",
+        "VPP over": "event over",
+        "VPP ended": "event ended",
+        "during VPP": "during the event",
+        "through VPP": "through the event",
+        "VPP": "event",
+        "grid-supportive": "low-risk",
+        "grid support": "low-risk support",
+        "shed load": "reduce load gently",
+        "saving money": "low-risk routine support",
+        "savings": "routine support",
+    }
+    text = reason
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text[:100]
+
+
 def _persona_agent_policy_text(persona_config: dict | None) -> str:
     """Add persona-specific communication/control constraints to the Agent prompt."""
     persona_config = persona_config or {}
@@ -624,7 +659,11 @@ def _persona_agent_policy_text(persona_config: dict | None) -> str:
         )
     if tags.get("price") in {"low_incentive", "price_indifferent"}:
         parts.append(
-            "This user is not motivated by small savings. Do not frame the plan as saving money; frame it as comfort-preserving, low-risk grid support."
+            "This user is not motivated by small savings. Do not frame the plan as saving money; frame it as comfort-preserving, low-risk routine support."
+        )
+    if _low_dr_intrusion_sensitive_mode(persona_config):
+        parts.append(
+            "Use low-disruption wording in the reason field. Avoid repeated VPP/grid jargon; describe the action as holding comfort and preserving routine unless a strong grid action was explicitly accepted."
         )
     if tags.get("control") == "high_trust_auto":
         parts.append(
@@ -1435,7 +1474,14 @@ All times are hour-of-day (0–23.9)."""
                         data["appliances"] = _vpp_safe_appliance_actions(appliance_config, vpp_event)
                         data["reason"] = (str(data.get("reason", ""))[:72] + " | VPP-safe appliance repair")[:100]
             sp_upper = _run_sp_max
+            if vpp_event and _low_dr_intrusion_sensitive_mode(persona_config):
+                sp_upper = min(sp_upper, _ac_sp_max)
             if vpp_active:
+                if _low_dr_intrusion_sensitive_mode(persona_config):
+                    demand_kw = float(getattr(loop, "current_vpp_demand_kw", 0.0) or 0.0)
+                    if demand_kw <= 0.5:
+                        # Low-DR users should not feel a comfort sacrifice for a tiny/zero target.
+                        sp_upper = min(sp_upper, _ac_sp_default)
                 if _protective_mode:
                     sp_upper = min(sp_upper, _ac_sp_max)
                 elif (persona_config.get("tags", {}) or {}).get("control") == "high_trust_auto":
@@ -1448,21 +1494,17 @@ All times are hour-of-day (0–23.9)."""
             sp_lower = _energy_saving_sp_floor
             sp = round(max(sp_lower, min(sp_upper, raw_sp)), 1)
             if sp < raw_sp:
-                data["reason"] = (
-                    str(data.get("reason", ""))[:68]
-                    + f" | capped at comfort guardrail {sp_upper:.1f}C"
-                )[:100]
+                suffix = f" | comfort cap {sp_upper:.1f}C"
+                data["reason"] = (str(data.get("reason", ""))[: max(0, 100 - len(suffix))] + suffix)[:100]
             elif sp > raw_sp:
-                data["reason"] = (
-                    str(data.get("reason", ""))[:66]
-                    + f" | raised to efficient comfort floor {sp_lower:.1f}C"
-                )[:100]
+                suffix = f" | efficient floor {sp_lower:.1f}C"
+                data["reason"] = (str(data.get("reason", ""))[: max(0, 100 - len(suffix))] + suffix)[:100]
             nch = data.get("next_check_hour")
             if nch is not None:
                 nch = float(nch)
                 if nch <= sim_h + 0.25 or nch > total_sim_hours:
                     nch = None
-            reason = str(data.get("reason", ""))[:100]
+            reason = _comfort_reason_for_low_dr_user(str(data.get("reason", "")), persona_config)
             # --- Independent appliance commands from LLM ---
             appl_actions = _filter_controllable_appliance_actions(
                 data.get("appliances", {}), appliance_config

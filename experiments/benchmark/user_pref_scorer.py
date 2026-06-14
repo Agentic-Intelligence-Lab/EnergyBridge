@@ -226,6 +226,63 @@ def _get_appliance_presence(vpp_context: dict) -> dict:
     return {k: bool((raw.get(k, False) if isinstance(raw, dict) else False)) for k in _APPLIANCE_KEYS}
 
 
+def _appliance_control_profile(persona: dict | None, vpp_context: dict | None) -> dict:
+    """Return present/controllable/fixed status for each appliance.
+
+    VPP runtime context only tells the role-play layer whether a device exists.
+    The persona JSON carries the critical second bit: whether the agent is
+    allowed to shift/control that device. Strategy text must not promise control
+    over fixed routines, or low-DR users will reasonably punish the agent.
+    """
+    presence = _get_appliance_presence(vpp_context or {})
+    app_cfg = (persona or {}).get("appliances", {}) or {}
+    profile: dict = {}
+    for name in _APPLIANCE_KEYS:
+        cfg = app_cfg.get(name, {}) or {}
+        present = bool(presence.get(name, False) or cfg.get("present", False))
+        if name in {"washer", "dishwasher", "dryer"}:
+            controllable = present and bool(cfg.get("shiftable", True)) and bool(cfg.get("dr_adjustable", True))
+        elif name == "water_heater":
+            controllable = present and bool(cfg.get("dr_adjustable", True))
+        elif name == "ev":
+            controllable = present and cfg.get("dr_adjustable") is not False
+        else:
+            controllable = present
+        profile[name] = {
+            "present": present,
+            "controllable": bool(controllable),
+            "fixed": bool(present and not controllable),
+        }
+    return profile
+
+
+def _profile_present(profile: dict, name: str) -> bool:
+    raw = profile.get(name, False)
+    if isinstance(raw, dict):
+        return bool(raw.get("present", False))
+    return bool(raw)
+
+
+def _profile_controllable(profile: dict, name: str) -> bool:
+    raw = profile.get(name, False)
+    if isinstance(raw, dict):
+        return bool(raw.get("present", False) and raw.get("controllable", False))
+    return bool(raw)
+
+
+def _profile_fixed_names(profile: dict) -> list[str]:
+    names: list[str] = []
+    for name in _APPLIANCE_KEYS:
+        raw = profile.get(name, False)
+        if isinstance(raw, dict) and raw.get("present") and raw.get("fixed"):
+            names.append(name)
+    return names
+
+
+def _profile_controllable_names(profile: dict) -> list[str]:
+    return [name for name in _APPLIANCE_KEYS if _profile_controllable(profile, name)]
+
+
 def _fixed_appliance_constraints(persona: dict | None) -> list[str]:
     """Return present devices that the controller cannot shift for DR."""
     app = (persona or {}).get("appliances", {}) or {}
@@ -250,17 +307,18 @@ def _strategy_appliance_plan_cn(strategy_id: str, presence: dict, vpp_context: d
         return ""
     start_h, _, window_text = _vpp_window_from_context(vpp_context)
     parts = []
-    if presence.get("washer"):
+    if _profile_controllable(presence, "washer"):
         parts.append("洗衣机错峰")
-    if presence.get("dishwasher"):
+    if _profile_controllable(presence, "dishwasher"):
         parts.append("洗碗机错峰")
-    if presence.get("dryer"):
+    if _profile_controllable(presence, "dryer"):
         parts.append("烘干机错峰")
-    if presence.get("water_heater"):
+    if _profile_controllable(presence, "water_heater"):
         parts.append(f"热水器{_fmt_hour_for_window(start_h)}前预热")
-    if presence.get("ev"):
+    if _profile_controllable(presence, "ev"):
         parts.append(f"EV避开{window_text}")
-    if not parts:
+    fixed = _profile_fixed_names(presence)
+    if not parts and not fixed:
         return ""
 
     if strategy_id == "A":
@@ -269,7 +327,10 @@ def _strategy_appliance_plan_cn(strategy_id: str, presence: dict, vpp_context: d
         head = "舒适与削峰平衡，电器主动错峰"
     else:
         head = "优先削峰，电器尽量后移"
-    return f"{head}：" + "，".join(parts)
+    text = f"{head}：" + ("，".join(parts) if parts else "仅调整可控空调/负荷")
+    if fixed:
+        text += "；固定电器不调整(" + "，".join(fixed) + ")"
+    return text
 
 
 def _strategy_appliance_pref_en(strategy_id: str, presence: dict, vpp_context: dict | None = None) -> str:
@@ -277,17 +338,18 @@ def _strategy_appliance_pref_en(strategy_id: str, presence: dict, vpp_context: d
         return ""
     start_h, _, window_text = _vpp_window_from_context(vpp_context)
     actions = []
-    if presence.get("washer"):
+    if _profile_controllable(presence, "washer"):
         actions.append(f"shift washer away from {window_text}")
-    if presence.get("dishwasher"):
+    if _profile_controllable(presence, "dishwasher"):
         actions.append(f"shift dishwasher away from {window_text}")
-    if presence.get("dryer"):
+    if _profile_controllable(presence, "dryer"):
         actions.append(f"shift dryer away from {window_text}")
-    if presence.get("water_heater"):
+    if _profile_controllable(presence, "water_heater"):
         actions.append(f"finish water-heater preheat before {_fmt_hour_for_window(start_h)}")
-    if presence.get("ev"):
+    if _profile_controllable(presence, "ev"):
         actions.append(f"keep EV charging out of {window_text}")
-    if not actions:
+    fixed = _profile_fixed_names(presence)
+    if not actions and not fixed:
         return ""
 
     if strategy_id == "A":
@@ -296,11 +358,19 @@ def _strategy_appliance_pref_en(strategy_id: str, presence: dict, vpp_context: d
         prefix = "Balance comfort and demand response by"
     else:
         prefix = "Prioritize peak reduction by"
-    return f"{prefix} " + ", ".join(actions) + "."
+    if actions:
+        text = f"{prefix} " + ", ".join(actions) + "."
+    else:
+        text = "Use only comfort-safe controllable actions."
+    if fixed:
+        text += " Do not change fixed appliance routines: " + ", ".join(fixed) + "."
+    return text
 
 
 def _compose_pref_with_appliances(selected: dict, presence: dict, vpp_context: dict | None = None) -> str:
     base = selected.get("user_pref", selected.get("description", "")).strip()
+    if selected.get("_profile_aligned"):
+        return base
     sid = str(selected.get("id", "")).upper()
     tail = _strategy_appliance_pref_en(sid, presence, vpp_context).strip()
     if not tail:
@@ -308,6 +378,52 @@ def _compose_pref_with_appliances(selected: dict, presence: dict, vpp_context: d
     if not base:
         return tail
     return f"{base} {tail}"
+
+
+def _strategy_user_pref_for_profile(
+    candidate: dict,
+    profile: dict,
+    vpp_context: dict | None,
+    persona: dict | None,
+) -> str:
+    """Build a concise user preference that only promises controllable actions."""
+    sid = str(candidate.get("id", "")).upper()
+    sp = (persona or {}).get("stable_preferences", {}) or {}
+    pref_min = float(sp.get("preferred_temp_min", 24.0))
+    pref_max = float(sp.get("preferred_temp_max", 26.0))
+    if sid == "A":
+        base = f"Comfort first: keep AC within {pref_min:.1f}-{pref_max:.1f}°C."
+    elif sid == "B":
+        base = f"Balanced: allow only a brief AC adjustment within {pref_min:.1f}-{pref_max:.1f}°C."
+    else:
+        base = f"Energy-aware: use the warmest still-comfortable AC setting within {pref_min:.1f}-{pref_max:.1f}°C."
+    tail = _strategy_appliance_pref_en(sid, profile, vpp_context)
+    return f"{base} {tail}".strip()[:180]
+
+
+def _align_candidates_to_appliance_profile(
+    candidates: list[dict],
+    profile: dict,
+    vpp_context: dict | None,
+    persona: dict | None,
+) -> list[dict]:
+    """Make strategy candidates consistent with appliance controllability."""
+    fixed = _profile_fixed_names(profile)
+    controllable = _profile_controllable_names(profile)
+    aligned: list[dict] = []
+    for raw in candidates:
+        c = dict(raw)
+        c["user_pref"] = _strategy_user_pref_for_profile(c, profile, vpp_context, persona)
+        desc = str(c.get("description", "")).strip()
+        if fixed:
+            fixed_note = "固定电器不动"
+            desc = f"{desc}；{fixed_note}" if desc else fixed_note
+        if not controllable and fixed:
+            desc = "只做舒适安全的空调调整；固定电器不动"
+        c["description"] = desc[:64]
+        c["_profile_aligned"] = True
+        aligned.append(c)
+    return aligned
 
 def get_user_preference_input(
     building: str,
@@ -364,7 +480,7 @@ def get_user_preference_input(
     )
 
     # Step 2: Display all strategies
-    appliance_presence = _get_appliance_presence(vpp_context)
+    appliance_presence = _appliance_control_profile(persona, vpp_context)
     print(f"  ┌─[Strategy Candidates | VPP event {event_index}]{'─'*30}")
     for c in candidates:
         print(f"  │  [{c['id']}] {c['label']}  —  {c['description']}  ({c['tradeoff']})")
@@ -512,9 +628,15 @@ def generate_vpp_strategy_candidates(
             {"event": e["id"], "score": e.get("score"), "comment": e.get("comment", "")[:50]}
             for e in (past_events or [])
         ]
-        _ap = _get_appliance_presence(vpp_context)
-        _active_appliances = [k for k, v in _ap.items() if v]
-        _active_appliances_text = ",".join(_active_appliances) if _active_appliances else "none"
+        _ap = _appliance_control_profile(persona, vpp_context)
+        _present_appliances = [k for k in _APPLIANCE_KEYS if _profile_present(_ap, k)]
+        _controllable_appliances = _profile_controllable_names(_ap)
+        _fixed_appliances = _profile_fixed_names(_ap)
+        _active_appliances_text = (
+            "present=" + (",".join(_present_appliances) if _present_appliances else "none")
+            + "; controllable=" + (",".join(_controllable_appliances) if _controllable_appliances else "none")
+            + "; fixed=" + (",".join(_fixed_appliances) if _fixed_appliances else "none")
+        )
         _cal = calendar_context or calendar_context_for_event(persona, event_index, vpp_context)
         _cal_brief = calendar_brief_for_prompt(_cal)
         _tags = persona.get("tags", {}) or {}
@@ -565,11 +687,14 @@ def generate_vpp_strategy_candidates(
             for c in candidates:
                 if not all(k in c for k in required):
                     raise ValueError(f"missing keys in candidate: {c}")
-            return candidates
+            return _align_candidates_to_appliance_profile(candidates, _ap, vpp_context, persona)
         raise ValueError(f"unexpected shape: {type(candidates)}")
     except Exception as e:
         print(f"  [StrategyGen] LLM failed ({e}), using defaults")
-        return list(_STRATEGY_DEFAULTS)  # copy so mutations don't affect template
+        _ap = _appliance_control_profile(persona, vpp_context)
+        return _align_candidates_to_appliance_profile(
+            list(_STRATEGY_DEFAULTS), _ap, vpp_context, persona
+        )  # copy so mutations don't affect template
 
 
 def _auto_select_strategy(candidates: list[dict], persona: dict) -> dict:
@@ -620,7 +745,9 @@ def _roleplay_select_strategy(
         "event_index": event_index,
         "vpp_context": vpp_context,
         "calendar_context": calendar_context or calendar_context_for_event(persona, event_index, vpp_context),
-        "active_appliances": [k for k, v in appliance_presence.items() if v],
+        "active_appliances": [k for k in _APPLIANCE_KEYS if _profile_present(appliance_presence, k)],
+        "controllable_appliances": _profile_controllable_names(appliance_presence),
+        "fixed_non_dr_adjustable_appliances": _profile_fixed_names(appliance_presence),
         "past_events": [
             {
                 "id": e.get("id"),
