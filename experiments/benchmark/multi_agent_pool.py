@@ -34,7 +34,7 @@ class PersonaAgent:
 
     @property
     def name(self) -> str:
-        return self.persona.get("display_name", self.persona.get("id", "家庭成员"))
+        return self.persona.get("display_name", self.persona.get("id", "household member"))
 
     @property
     def system_prompt(self) -> str:
@@ -64,28 +64,28 @@ class PersonaAgent:
             context: Background situation text (shared for all agents).
 
         Returns:
-            A natural-language Chinese reply (1-3 sentences).
+            A natural-language English reply (1-3 sentences).
         """
         from energybridge.llm.client import LLMClient
 
         sys_prompt = (
-            f"你是家庭成员「{self.name}」，正在与家人讨论家庭用电策略。\n"
-            f"你的个人偏好背景：{self.system_prompt}\n"
-            f"请用中文回答（1-3句话）。直接表达你的意见，不要重复别人说的话。"
+            f"You are household member \"{self.name}\" discussing home energy strategy with your family.\n"
+            f"Your personal preference background: {self.system_prompt}\n"
+            f"Reply in English in 1-3 sentences. State your view directly and do not repeat others."
         )
         parts: list[str] = []
         if self.memory:
-            parts.append("【你的历史记忆（真实经历过的事件）】")
+            parts.append("[Your memory from real past events]")
             for m in self.memory:
-                parts.append(f"  {m['label']}：{m['text']}")
+                parts.append(f"  {m['label']}: {m['text']}")
         if context:
-            parts.append(f"【当前情况】{context}")
+            parts.append(f"[Current situation] {context}")
         if history:
-            parts.append("【已有发言】")
+            parts.append("[Existing statements]")
             for h in history:
-                parts.append(f"  {h['name']}：{h['text']}")
-        parts.append(f"【议题】{topic}")
-        parts.append(f"请以「{self.name}」的身份发言：")
+                parts.append(f"  {h['name']}: {h['text']}")
+        parts.append(f"[Topic] {topic}")
+        parts.append(f"Speak as \"{self.name}\":")
 
         user_msg = "\n".join(parts)
         try:
@@ -94,7 +94,7 @@ class PersonaAgent:
             )
             return r["text"].strip()
         except Exception as e:
-            return f"（{self.name}发言失败: {e}）"
+            return f"({self.name} failed to speak: {e})"
 
 
 # ---------------------------------------------------------------------------
@@ -134,10 +134,10 @@ class DiscussionPool:
         dur     = float(vpp_context.get("duration_h", 1.0))
 
         context_lines = [
-            f"第{event_index}次VPP需求响应事件：Day{day} {clock_h:02d}:00-{int(clock_h+dur):02d}:00，"
-            f"持续{int(dur*60)}分钟。",
-            "电网要求我们在这段时间内尽量减少家庭用电。",
-            "空调可能需要升高设定温度，可转移的家电（洗衣机、洗碗机等）应避开这段时间运行。",
+            f"VPP demand-response event {event_index}: Day {day} {clock_h:02d}:00-{int(clock_h+dur):02d}:00.",
+            f"Duration: {int(dur*60)} minutes.",
+            "The grid asks the household to reduce electricity use during this window.",
+            "The AC setpoint may need to rise, and shiftable appliances such as washer or dishwasher should avoid this window.",
         ]
         if past_events:
             prev_parts = []
@@ -145,22 +145,22 @@ class DiscussionPool:
                 sc  = pe.get("score")
                 cmt = pe.get("comment", pe.get("reason", ""))[:50]
                 if sc is not None:
-                    prev_parts.append(f"事件{pe.get('id','?')}得分{sc:.1f}分: {cmt}")
+                    prev_parts.append(f"event {pe.get('id','?')} score {sc:.1f}: {cmt}")
             if prev_parts:
-                context_lines.append("过往VPP事件结果：" + "；".join(prev_parts))
+                context_lines.append("Past VPP event outcomes: " + "; ".join(prev_parts))
 
         context = "\n".join(context_lines)
         topic = (
-            "面对即将开始的VPP事件，你希望智能控制系统采取什么策略？"
-            "（例如：空调调到多少度？家电怎么安排？舒适和节能哪个优先？）"
+            "What strategy do you want the smart control system to take for the upcoming VPP event? "
+            "For example: AC setpoint, appliance timing, and whether comfort or savings should take priority."
         )
 
-        transcript = self._run_rounds(topic, context, label_prefix=f"策略讨论·事件{event_index}")
+        transcript = self._run_rounds(topic, context, label_prefix=f"strategy discussion event {event_index}")
         consensus  = self._synthesize_strategy(transcript, context, event_index)
         # Store synthesized consensus (not raw dialogue) in each agent's memory
-        mem_text = f"共识策略：{consensus[:80]}"
+        mem_text = f"Consensus strategy: {consensus[:80]}"
         for agent in self.agents:
-            agent.update_memory(label=f"事件{event_index}策略讨论", text=mem_text)
+            agent.update_memory(label=f"event {event_index} strategy discussion", text=mem_text)
         return consensus, transcript
 
     def discuss_score(
@@ -179,33 +179,33 @@ class DiscussionPool:
         agent_reason = str(event_outcome.get("agent_reason", ""))[:80]
 
         context_lines = [
-            f"第{event_index}次VPP事件已结束。",
-            f"空调设定点：{sp:.1f}°C，VPP期间室内平均温度：{mean_t:.1f}°C。",
+            f"VPP event {event_index} has ended.",
+            f"AC setpoint: {sp:.1f}°C. VPP-window mean indoor temperature: {mean_t:.1f}°C.",
         ]
         if isinstance(e_day, (int, float)):
-            context_lines.append(f"本日累计用电约{e_day:.2f} kWh。")
+            context_lines.append(f"Today's cumulative electricity use was about {e_day:.2f} kWh.")
         if target not in ("?", None):
-            context_lines.append(f"VPP需求目标：≤{target} kWh。")
+            context_lines.append(f"VPP demand target: <= {target} kWh.")
         if agent_reason:
-            context_lines.append(f"智能代理的决策理由：{agent_reason}")
+            context_lines.append(f"Agent decision rationale: {agent_reason}")
 
         context = "\n".join(context_lines)
         topic = (
-            "你对这次VPP事件的处理结果满意吗？"
-            "请给出1-5分的评价（1=非常不满，5=非常满意）并简短说明原因。"
+            "Are you satisfied with how this VPP event was handled? "
+            "Give a 1-5 score (1=very dissatisfied, 5=very satisfied) and briefly explain why."
         )
 
-        transcript = self._run_rounds(topic, context, label_prefix=f"评分讨论·事件{event_index}")
+        transcript = self._run_rounds(topic, context, label_prefix=f"score discussion event {event_index}")
         score, reason = self._synthesize_score(transcript, context, event_index)
         # Store event outcome (setpoint + consensus score) in each agent's memory
-        mem_text = f"空调{sp:.1f}°C，共识评分{score:.1f}分：{reason}"
+        mem_text = f"AC {sp:.1f}°C, consensus score {score:.1f}: {reason}"
         for agent in self.agents:
-            agent.update_memory(label=f"事件{event_index}结果", text=mem_text)
+            agent.update_memory(label=f"event {event_index} outcome", text=mem_text)
         return score, reason, transcript
 
     # -- Internal helpers -----------------------------------------------------
 
-    def _run_rounds(self, topic: str, context: str, label_prefix: str = "讨论") -> list:
+    def _run_rounds(self, topic: str, context: str, label_prefix: str = "discussion") -> list:
         """Run up to self.max_rounds discussion rounds with consensus check after each round.
 
         After each round (except the last), a neutral synthesis LLM judges whether
@@ -214,8 +214,8 @@ class DiscussionPool:
         """
         history: list[dict] = []
         for round_i in range(self.max_rounds):
-            label = "初始意见" if round_i == 0 else f"第{round_i + 1}轮"
-            print(f"  ┌─[多用户{label_prefix} {label}]{'─'*28}")
+            label = "initial opinions" if round_i == 0 else f"round {round_i + 1}"
+            print(f"  ┌─[Multi-user {label_prefix} {label}]{'─'*28}")
             for agent in self.agents:
                 text = agent.speak(topic, history, context)
                 print(f"  │  [{agent.name}] {text}")
@@ -224,16 +224,16 @@ class DiscussionPool:
 
             # After the last round: skip check, force-summarize
             if round_i == self.max_rounds - 1:
-                print(f"  [合成LLM裁定] 已达最大轮次({self.max_rounds})，强行总结")
+                print(f"  [Synthesis LLM] reached max rounds ({self.max_rounds}); forcing summary")
                 break
 
             # Consensus check — synthesis LLM observes, does NOT participate
             reached, reason = self._check_consensus(history, context, round_i + 1)
             if reached:
-                print(f"  [合成LLM裁定] 第{round_i + 1}轮后达成共识 → {reason}")
+                print(f"  [Synthesis LLM] consensus after round {round_i + 1} -> {reason}")
                 break
             else:
-                print(f"  [合成LLM裁定] 第{round_i + 1}轮尚存分歧，进入下一轮 → {reason}")
+                print(f"  [Synthesis LLM] disagreement after round {round_i + 1}; entering next round -> {reason}")
 
         return history
 
@@ -242,7 +242,7 @@ class DiscussionPool:
 
         The LLM is explicitly told NOT to add opinions — only to observe and judge.
         Returns: (consensus_reached: bool, reason: str)
-        Fail-safe: on any error, returns (True, "判断失败") to avoid infinite loops.
+        Fail-safe: on any error, returns (True, "judgment failed") to avoid infinite loops.
         """
         from energybridge.llm.client import LLMClient
 
@@ -278,7 +278,7 @@ class DiscussionPool:
             reason  = str(data.get("reason", ""))[:40]
             return reached, reason
         except Exception as e:
-            return True, f"判断失败({str(e)[:20]})"
+            return True, f"judgment failed ({str(e)[:20]})"
 
     def _synthesize_strategy(self, transcript: list, context: str, event_index: int) -> str:
         """Synthesize discussion transcript -> one user_pref string for AC agent."""
@@ -310,13 +310,13 @@ class DiscussionPool:
                     l for l in result.splitlines()
                     if not l.strip().startswith("```")
                 ).strip()
-            print(f"  [共识策略·事件{event_index}] {result[:120]}")
+            print(f"  [Consensus Strategy | event {event_index}] {result[:120]}")
             return result
         except Exception as e:
             fallback = self.agents[0].system_prompt if self.agents else (
                 "Please balance comfort and energy savings."
             )
-            print(f"  [共识策略·合成失败] {e} — 使用第一位成员偏好")
+            print(f"  [Consensus Strategy | synthesis failed] {e} - using the first member preference")
             return fallback
 
     def _synthesize_score(self, transcript: list, context: str, event_index: int) -> Tuple[float, str]:
@@ -351,8 +351,8 @@ class DiscussionPool:
             score = float(data.get("score", 3.0))
             score = max(1.0, min(5.0, round(score * 2) / 2))  # round to nearest 0.5
             reason = str(data.get("reason", ""))[:60]
-            print(f"  [共识评分·事件{event_index}] {score}/5 — {reason}")
+            print(f"  [Consensus Score | event {event_index}] {score}/5 - {reason}")
             return score, reason
         except Exception as e:
-            print(f"  [共识评分·合成失败] {e} — 回退到3.0分")
+            print(f"  [Consensus Score | synthesis failed] {e} - falling back to 3.0")
             return 3.0, f"synthesis error: {e}"

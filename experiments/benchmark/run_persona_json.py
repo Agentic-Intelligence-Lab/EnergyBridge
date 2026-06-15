@@ -456,13 +456,13 @@ def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
     # ── AC ──
     # Gather all setpoints used across the day
     day_sps = [f"→{d['sp']:.1f}°C@{_fmt_h(d['h'])}" for d in day_decisions]
-    ac_line = f"    ├ 空调     : {sp_str} (VPP触发)  全天调整: {', '.join(day_sps) if day_sps else '仅1次'}"
+    ac_line = f"    ├ AC       : {sp_str} (VPP trigger)  daily adjustments: {', '.join(day_sps) if day_sps else 'single decision'}"
 
     lines = [ac_line]
 
     # ── Shiftable appliances ──
     pd = present_devices or set()
-    for dev, label in [("washer", "洗衣机"), ("dishwasher", "洗碗机"), ("dryer", "烘干机")]:
+    for dev, label in [("washer", "washer"), ("dishwasher", "dishwasher"), ("dryer", "dryer")]:
         if pd and dev not in pd:
             continue  # skip appliances not installed in this household
         start_k = f"{dev}_start_h"
@@ -474,15 +474,15 @@ def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
         default_start_h = _first_day_action(start_k)
         default_skip = _first_day_action(skip_k)
         if skip:
-            lines.append(f"    ├ {label:<5}: 跳过 (agent指令skip)")
+            lines.append(f"    ├ {label:<10}: skipped (agent skip command)")
         elif start_h is not None:
-            lines.append(f"    ├ {label:<5}: 排程@{_fmt_h(start_h)}")
+            lines.append(f"    ├ {label:<10}: scheduled@{_fmt_h(start_h)}")
         elif default_skip:
-            lines.append(f"    ├ {label:<5}: 跳过（默认）")
+            lines.append(f"    ├ {label:<10}: skipped (default)")
         elif default_start_h is not None:
-            lines.append(f"    ├ {label:<5}: 排程@{_fmt_h(default_start_h)}（默认）")
+            lines.append(f"    ├ {label:<10}: scheduled@{_fmt_h(default_start_h)} (default)")
         else:
-            lines.append(f"    ├ {label:<5}: 保持原计划（默认）")
+            lines.append(f"    ├ {label:<10}: keep baseline routine (default)")
 
     # ── Water heater ──
     if not pd or "water_heater" in pd:
@@ -495,22 +495,22 @@ def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
         default_wh_end = _first_day_action("water_heater_preheat_end_h")
         default_wh_temp = _first_day_action("water_heater_preheat_temp_c")
         if wh_preheat is False:
-            wh_str = "关闭预热"
+            wh_str = "preheat off"
         elif wh_start is not None and wh_end is not None:
             temp_s = f" @ {wh_temp:.0f}°C" if wh_temp else ""
-            wh_str = f"预热 {_fmt_h(wh_start)}-{_fmt_h(wh_end)}{temp_s}"
+            wh_str = f"preheat {_fmt_h(wh_start)}-{_fmt_h(wh_end)}{temp_s}"
         elif wh_start is not None:
-            wh_str = f"预热开始@{_fmt_h(wh_start)}"
+            wh_str = f"preheat starts@{_fmt_h(wh_start)}"
         elif default_wh_preheat is False:
-            wh_str = "关闭预热（默认）"
+            wh_str = "preheat off (default)"
         elif default_wh_start is not None and default_wh_end is not None:
             temp_s = f" @ {default_wh_temp:.0f}°C" if default_wh_temp else ""
-            wh_str = f"预热 {_fmt_h(default_wh_start)}-{_fmt_h(default_wh_end)}{temp_s}（默认）"
+            wh_str = f"preheat {_fmt_h(default_wh_start)}-{_fmt_h(default_wh_end)}{temp_s} (default)"
         elif default_wh_start is not None:
-            wh_str = f"预热开始@{_fmt_h(default_wh_start)}（默认）"
+            wh_str = f"preheat starts@{_fmt_h(default_wh_start)} (default)"
         else:
-            wh_str = "保持预热策略（默认）"
-        lines.append(f"    ├ 热水器  : {wh_str}")
+            wh_str = "keep preheat policy (default)"
+        lines.append(f"    ├ water_heater: {wh_str}")
 
     # ── EV ──
     if not pd or "ev" in pd:
@@ -521,27 +521,27 @@ def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
         default_ev_start = _first_day_action("ev_charge_start_h")
         default_ev_end = _first_day_action("ev_charge_end_h")
         if ev_mode == "delay":
-            ev_str = f"delay模式 (22:00后充电)"
+            ev_str = "delay mode (charge after 22:00)"
         elif ev_mode == "smart":
-            ev_str = "smart模式 (自动避峰)"
+            ev_str = "smart mode (avoid peak automatically)"
         elif ev_mode == "normal":
-            ev_str = "normal模式 (立即充电)"
+            ev_str = "normal mode (charge immediately)"
         elif ev_start is not None and ev_end is not None:
-            ev_str = f"充电窗口 {_fmt_h(ev_start)}-{_fmt_h(ev_end)}"
+            ev_str = f"charging window {_fmt_h(ev_start)}-{_fmt_h(ev_end)}"
         elif ev_start is not None:
-            ev_str = f"充电开始@{_fmt_h(ev_start)}"
+            ev_str = f"charge starts@{_fmt_h(ev_start)}"
         elif default_ev_mode == "delay":
-            ev_str = "delay模式（默认）"
+            ev_str = "delay mode (default)"
         elif default_ev_mode == "smart":
-            ev_str = "smart模式（默认）"
+            ev_str = "smart mode (default)"
         elif default_ev_mode == "normal":
-            ev_str = "normal模式（默认）"
+            ev_str = "normal mode (default)"
         elif default_ev_start is not None and default_ev_end is not None:
-            ev_str = f"充电窗口 {_fmt_h(default_ev_start)}-{_fmt_h(default_ev_end)}（默认）"
+            ev_str = f"charging window {_fmt_h(default_ev_start)}-{_fmt_h(default_ev_end)} (default)"
         elif default_ev_start is not None:
-            ev_str = f"充电开始@{_fmt_h(default_ev_start)}（默认）"
+            ev_str = f"charge starts@{_fmt_h(default_ev_start)} (default)"
         else:
-            ev_str = "smart模式（默认）"
+            ev_str = "smart mode (default)"
         lines.append(f"    └ EV      : {ev_str}")
 
     # Fix tree connector: last line should use └ instead of ├
@@ -564,8 +564,8 @@ def _vpp_ratio_str(result) -> str:
         per_ev = "  ".join(
             f"VPP{i+1}:{a:.3f}/{t:.3f}" for i, (a, t) in enumerate(zip(actual_sheds, shed_targets))
         )
-        ok = "✓达标" if ratio >= 1.0 else "✗未达标"
-        return f"削减{total_a:.3f}/{total_t:.3f}kWh = {ratio:.2f} {ok}  [{per_ev}]"
+        ok = "met" if ratio >= 1.0 else "not met"
+        return f"shed {total_a:.3f}/{total_t:.3f}kWh = {ratio:.2f} {ok}  [{per_ev}]"
     actuals = [e.get("actual_kwh", 0.0) for e in events if e.get("demand_target_kwh")]
     targets = [e.get("demand_target_kwh", 0.0) for e in events if e.get("demand_target_kwh")]
     if not targets or sum(targets) == 0:
@@ -574,7 +574,7 @@ def _vpp_ratio_str(result) -> str:
     total_t = sum(targets)
     ratio = total_a / total_t
     per_ev = "  ".join(f"VPP{i+1}:{a:.3f}/{t:.2f}" for i, (a, t) in enumerate(zip(actuals, targets)))
-    ok = "✓达标" if ratio <= 1.0 else "✗超标"
+    ok = "met" if ratio <= 1.0 else "exceeded"
     return f"{total_a:.3f}/{total_t:.3f}kWh = {ratio:.2f} {ok}  [{per_ev}]"
 
 
@@ -612,37 +612,37 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
     avg_score_str = f"{avg_score:.1f}/5" if avg_score is not None else "N/A"
     llm_avg_lat = (d["llm_latency_total_s"] / d["llm_call_count"]
                    if d.get("llm_call_count") else 0.0)
-    ep_ok = "成功 ✓" if d.get("exit_code") == 0 else f"失败 (exit={d.get('exit_code')})"
+    ep_ok = "success" if d.get("exit_code") == 0 else f"failed (exit={d.get('exit_code')})"
 
     lines = [
         "=" * 62,
-        "  EnergyBridge 运行摘要  (run_summary.txt)",
+        "  EnergyBridge Run Summary  (run_summary.txt)",
         "=" * 62,
         f"  Persona    : {persona.get('id', '?')}",
-        f"  用户       : {d.get('user_label') or persona.get('id', '?')}",
-        f"  名称       : {persona.get('name', '')}",
-        f"  方法       : {_method_label(d.get('method', ''))}  ({d.get('method', 'unknown')})",
-        f"  城市       : {city}",
-        f"  VPP日程    : {d.get('vpp_schedule_source') or 'daily_default'}",
-        f"  生成时间   : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        f"  输出目录   : {output_dir}",
+        f"  User       : {d.get('user_label') or persona.get('id', '?')}",
+        f"  Name       : {persona.get('name', '')}",
+        f"  Method     : {_method_label(d.get('method', ''))}  ({d.get('method', 'unknown')})",
+        f"  City       : {city}",
+        f"  VPP schedule: {d.get('vpp_schedule_source') or 'daily_default'}",
+        f"  Generated  : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"  Output dir : {output_dir}",
         "",
     ]
 
-    # ── 页头：电器配置 ─────────────────────────────────────────────────
-    _appl_names = {"washer": "洗衣机", "dishwasher": "洗碗机", "dryer": "烘干机",
-                   "water_heater": "热水器", "ev": "EV充电桩"}
+    # ── Header: appliance profile ─────────────────────────────────────
+    _appl_names = {"washer": "washer", "dishwasher": "dishwasher", "dryer": "dryer",
+                   "water_heater": "water_heater", "ev": "EV charger"}
     _first_summ = evts[0].get("appliance_summary", {}) if evts else {}
     _present = [_appl_names.get(k, k) for k, v in _first_summ.items() if v.get("present")]
     _absent  = [_appl_names.get(k, k) for k, v in _first_summ.items() if not v.get("present")]
-    _present_str = " | ".join(_present) if _present else "(无)"
-    _absent_str  = " | ".join(_absent)  if _absent  else "(无)"
+    _present_str = " | ".join(_present) if _present else "(none)"
+    _absent_str  = " | ".join(_absent)  if _absent  else "(none)"
     lines += [
-        f"  本户电器  : ✓ 已有: {_present_str}   ✗ 未配置: {_absent_str}",
+        f"  Appliances : present: {_present_str}   not configured: {_absent_str}",
         "",
     ]
-    # ── Section 1: VPP 事件详情 ──────────────────────────────────────
-    lines += ["─" * 62, "  VPP 事件详情（电网事件 → 策略 → 执行结果）", "─" * 62]
+    # ── Section 1: VPP event details ─────────────────────────────────
+    lines += ["─" * 62, "  VPP Event Details (grid event -> strategy -> outcome)", "─" * 62]
     vpp_defs = sorted(
         (
             {
@@ -666,7 +666,7 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
         event_duration_h = max(1e-6, float(vdef.get("end_h", 0.0)) - float(vdef.get("trigger_h", 0.0)))
         event_duration_text = _fmt_duration_h(event_duration_h)
         e = evt_by_id.get(vid, {})
-        score_str = f"{e['score']}/5 ({e.get('label','?')})" if e.get("score") is not None else "未评分"
+        score_str = f"{e['score']}/5 ({e.get('label','?')})" if e.get("score") is not None else "not scored"
         sp_str = f"{e['setpoint']:.1f}°C" if e.get("setpoint") else "N/A"
         # VPP demand: shed target from capacity quantification, plus the
         # equivalent consumption cap used by controller objectives.
@@ -677,19 +677,19 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
         actual_k = e.get("actual_kwh")
         if demand_kw and demand_shed_kwh and actual_shed is not None:
             ratio = actual_shed / demand_shed_kwh if demand_shed_kwh > 0 else 0
-            ok = "✓达标" if ratio >= 1.0 else "✗未达标"
+            ok = "met" if ratio >= 1.0 else "not met"
             cap_part = (
-                f"  等价用电上限≤{demand_t:.2f}kWh  实际用电{actual_k:.3f}kWh"
+                f"  equivalent consumption cap<={demand_t:.2f}kWh  actual consumption={actual_k:.3f}kWh"
                 if demand_t and actual_k is not None else ""
             )
             demand_str = (
-                f"目标削减≥{demand_kw:.3f}kW ({event_duration_text}={demand_shed_kwh:.3f}kWh)  "
-                f"实际削减{actual_shed:.3f}kWh  比率{ratio:.2f} {ok}{cap_part}"
+                f"shed target>={demand_kw:.3f}kW ({event_duration_text}={demand_shed_kwh:.3f}kWh)  "
+                f"actual shed={actual_shed:.3f}kWh  ratio={ratio:.2f} {ok}{cap_part}"
             )
         elif demand_t and actual_k is not None:
             ratio = actual_k / demand_t if demand_t > 0 else 0
-            ok = "✓达标" if ratio <= 1.0 else "✗超标"
-            demand_str = f"目标≤{demand_t:.2f}kWh  实际{actual_k:.3f}kWh  比率{ratio:.2f} {ok}"
+            ok = "met" if ratio <= 1.0 else "exceeded"
+            demand_str = f"target<={demand_t:.2f}kWh  actual={actual_k:.3f}kWh  ratio={ratio:.2f} {ok}"
         else:
             demand_str = "(demand agent not run for this event)"
         reason = e.get("reason", "")
@@ -702,34 +702,34 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
                 continue
             if nm in ("water_heater", "ev"):
                 avoided = not info.get("ran_during_vpp", False)
-                appl_avoid_parts.append(f"{nm}:{'✓避峰' if avoided else '✗VPP中运行'}")
+                appl_avoid_parts.append(f"{nm}:{'avoided VPP' if avoided else 'ran in VPP'}")
             else:
                 # shiftable appliances: skip != avoidance
                 if info.get("skipped"):
-                    appl_avoid_parts.append(f"{nm}:✗跳过任务")
+                    appl_avoid_parts.append(f"{nm}:skipped task")
                 elif info.get("ran_during_vpp"):
-                    appl_avoid_parts.append(f"{nm}:✗VPP中运行")
+                    appl_avoid_parts.append(f"{nm}:ran in VPP")
                 else:
-                    appl_avoid_parts.append(f"{nm}:✓错峰完成")
-        appl_avoid_str = "  ".join(appl_avoid_parts) if appl_avoid_parts else "无可控电器"
+                    appl_avoid_parts.append(f"{nm}:shifted away")
+        appl_avoid_str = "  ".join(appl_avoid_parts) if appl_avoid_parts else "no controllable appliances"
         capacity = e.get("capacity_assessment", {}).get("assessment", {})
         if capacity:
-            constraints = ", ".join(capacity.get("main_constraints", [])) or "无"
+            constraints = ", ".join(capacity.get("main_constraints", [])) or "none"
             capacity_str = (
-                f"可承诺{capacity.get('committable_kw', 0):.3f}kW  "
-                f"建议上报{capacity.get('recommended_bid_kw', 0):.3f}kW  "
-                f"成功率{capacity.get('success_probability', 0)*100:.1f}%  "
-                f"约束: {constraints}"
+                f"committable={capacity.get('committable_kw', 0):.3f}kW  "
+                f"recommended_bid={capacity.get('recommended_bid_kw', 0):.3f}kW  "
+                f"success_prob={capacity.get('success_probability', 0)*100:.1f}%  "
+                f"constraints: {constraints}"
             )
         else:
             capacity_str = "(capacity assessment not run)"
         capacity_window = e.get("capacity_window_summary", {})
         if capacity_window:
             capacity_window_str = (
-                f"平均可承诺{capacity_window.get('avg_committable_kw', 0):.3f}kW  "
-                f"最小持续{capacity_window.get('firm_min_committable_kw', 0):.3f}kW  "
-                f"可承诺电量{capacity_window.get('committable_energy_kwh', 0):.3f}kWh  "
-                f"建议上报电量{capacity_window.get('recommended_bid_energy_kwh', 0):.3f}kWh"
+                f"avg_committable={capacity_window.get('avg_committable_kw', 0):.3f}kW  "
+                f"firm_min={capacity_window.get('firm_min_committable_kw', 0):.3f}kW  "
+                f"committable_energy={capacity_window.get('committable_energy_kwh', 0):.3f}kWh  "
+                f"recommended_bid_energy={capacity_window.get('recommended_bid_energy_kwh', 0):.3f}kWh"
             )
         else:
             capacity_window_str = "(capacity window assessment not run)"
@@ -746,38 +746,38 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
             )
         else:
             total_q90_str = (
-                "N/A（未运行Total_Quantification；"
-                + total_q90.get("reason", "缺少A3 conformal P_base输入") + "）"
+                "N/A (Total_Quantification not run; "
+                + total_q90.get("reason", "missing A3 conformal P_base input") + ")"
             )
         trigger_actions = e.get("vpp_trigger_actions", {})
         day_decisions   = e.get("day_decisions", [])
         _pdev = {k for k, v in e.get("appliance_summary", {}).items() if v.get("present")}
         strat_lines = _fmt_strategy(sp_str, trigger_actions, day_decisions, present_devices=_pdev)
         lines += [
-            f"  [事件{ev_num}] Day{vdef['day']} {_fmt_h(vdef['trigger_h'])}-{_fmt_h(vdef['end_h'])}"
-            f"  目标：需求侧削峰{event_duration_text}",
-            f"    执行策略 ↓ (全天{len(day_decisions)}次控制决策):",
+            f"  [Event {ev_num}] Day{vdef['day']} {_fmt_h(vdef['trigger_h'])}-{_fmt_h(vdef['end_h'])}"
+            f"  objective: demand-side peak shaving for {event_duration_text}",
+            f"    Executed strategy ({len(day_decisions)} control decisions today):",
         ] + strat_lines + [
-            f"    VPP需求    : {demand_str}",
-            f"    触发时容量 : {capacity_str}",
-            f"    窗口容量   : {capacity_window_str}",
-            f"    90%可信容量: {total_q90_str}",
-            f"    Agent理由  : {reason}" if reason else "",
-            f"    电器避峰   : {appl_avoid_str}",
-            f"    用户评分   : {score_str}",
-            f"    评分说明   : {comment[:100]}" if comment else "",
+            f"    VPP demand       : {demand_str}",
+            f"    Trigger capacity : {capacity_str}",
+            f"    Window capacity  : {capacity_window_str}",
+            f"    90% firm capacity: {total_q90_str}",
+            f"    Agent rationale  : {reason}" if reason else "",
+            f"    Appliance VPP use: {appl_avoid_str}",
+            f"    User score       : {score_str}",
+            f"    Score comment    : {comment[:100]}" if comment else "",
             "",
         ]
     lines = [l for l in lines if l != ""]  # drop blank-only lines from empty fields
 
-    # ── Section 2: 电器调度目标达成 ──────────────────────────────────
-    lines += ["", "─" * 62, "  电器调度目标达成", "─" * 62]
+    # ── Section 2: Appliance scheduling goals ────────────────────────
+    lines += ["", "─" * 62, "  Appliance Scheduling Goals", "─" * 62]
 
     def _goal_flag(completed, skipped, ran_vpp):
-        if skipped:       return "✗跳过(未完成)"
-        if not completed: return "✗未完成"
-        if ran_vpp:       return "⚠ 完成(VPP中)"
-        return "✓ 完成"
+        if skipped:       return "skipped (not done)"
+        if not completed: return "not done"
+        if ran_vpp:       return "done (inside VPP)"
+        return "done"
 
     shiftable_order = ["washer", "dishwasher", "dryer"]
     has_shiftable = False
@@ -800,19 +800,19 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
     per_day_shift = d.get("task_shift_success_per_day", [])
     if per_day:
         day_strs = "  ".join(f"Day{i+1}:{int(v*100)}%" for i, v in enumerate(per_day))
-        lines.append(f"  {'服务完成率(逐天)':<14}: {day_strs}")
+        lines.append(f"  {'Service completion/day':<24}: {day_strs}")
     if per_day_shift:
         day_strs_shift = "  ".join(f"Day{i+1}:{int(v*100)}%" for i, v in enumerate(per_day_shift))
-        lines.append(f"  {'完成后避峰率(逐天)':<14}: {day_strs_shift}")
+        lines.append(f"  {'Post-completion VPP avoidance/day':<34}: {day_strs_shift}")
 
     # Water heater (only if present)
     wh_days = appl.get("water_heater", [])
     if wh_days and wh_days[0].get("present", False):
         parts = []
         for day_d in wh_days:
-            ph = "预热✓" if day_d.get("preheat_used") else "预热✗"
-            bath = "浴前就绪✓" if day_d.get("ready_at_bath", True) else "浴前就绪✗"
-            vpp_flag = "⚠VPP中加热" if day_d.get("ran_during_vpp") else ""
+            ph = "preheat=yes" if day_d.get("preheat_used") else "preheat=no"
+            bath = "ready_before_bath=yes" if day_d.get("ready_at_bath", True) else "ready_before_bath=no"
+            vpp_flag = "heated_in_VPP" if day_d.get("ran_during_vpp") else ""
             ekwh = day_d.get("energy_kwh", 0)
             parts.append(f"Day{day_d['day']+1}[{ph} {bath} {vpp_flag} {ekwh:.1f}kWh]")
         lines.append(f"  {'water_heater':<14}: " + "  ".join(parts))
@@ -822,14 +822,14 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
     if ev_days and ev_days[0].get("present", False):
         parts = []
         for day_d in ev_days:
-            tgt = "SOC达标✓" if day_d.get("target_reached") else "SOC未达标✗"
-            vpp_flag = "⚠VPP中充电" if day_d.get("ran_during_vpp") else ""
+            tgt = "SOC_target_met" if day_d.get("target_reached") else "SOC_target_missed"
+            vpp_flag = "charged_in_VPP" if day_d.get("ran_during_vpp") else ""
             ekwh = day_d.get("energy_kwh", 0)
             soc = day_d.get("soc_end", 0)
             parts.append(f"Day{day_d['day']+1}[{tgt} SOC={soc:.0%} {ekwh:.1f}kWh {vpp_flag}]")
         lines.append(f"  {'ev':<14}: " + "  ".join(parts))
 
-    # ── Section 3: 关键 Metrics 汇总 ──────────────────────────────────
+    # Section 3: Key metrics summary
     score_per_event = "  ".join(f"VPP{i+1}:{s}" for i, s in enumerate(scores)) if scores else "N/A"
     price_day_lines = []
     for item in price_metrics.get("per_day", []) or []:
@@ -847,50 +847,50 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
         unique_durations = {round(value, 6) for value in vpp_durations}
         if len(unique_durations) == 1:
             avg_vpp_duration_text = _fmt_duration_h(total_vpp_duration_h / len(vpp_defs))
-            vpp_duration_summary = f"{len(vpp_defs)}个事件×{avg_vpp_duration_text}合计"
+            vpp_duration_summary = f"{len(vpp_defs)} events x {avg_vpp_duration_text} total"
         else:
-            vpp_duration_summary = f"{len(vpp_defs)}个事件，总窗口{_fmt_duration_h(total_vpp_duration_h)}"
+            vpp_duration_summary = f"{len(vpp_defs)} events, total window {_fmt_duration_h(total_vpp_duration_h)}"
     else:
-        vpp_duration_summary = "无VPP事件"
+        vpp_duration_summary = "no VPP events"
     lines += [
         "",
         "─" * 62,
-        "  关键 Metrics 汇总",
+        "  Key Metrics Summary",
         "─" * 62,
-        f"  ▸ VPP削峰",
-        f"      VPP时段用电量: {d.get('vpp_window_energy_kwh', 0):.3f} kWh ({vpp_duration_summary})",
-        ("      需求达成比率 : " + _vpp_ratio_str(result)),
-        f"      服务完成率   : {d.get('appliance_task_completion_rate', 1.0)*100:.0f}%"
-        f"  (分母=在户可控电器；热水器=浴前就绪，EV=SOC达标)",
-        f"      完成后避峰率 : {d.get('appliance_vpp_avoidance_rate', 0)*100:.0f}%"
-        f"  (分母=已完成服务的可控电器；分子=未在VPP运行)",
-        f"  ▸ 次日电价",
-        f"      加权电费     : {_fmt_num(price_metrics.get('total_cost_eur'), 4, ' EUR')}",
-        f"      加权均价     : {_fmt_num(price_metrics.get('weighted_price_eur_per_kwh'), 5, ' EUR/kWh')}",
-        f"      逐日         : {price_day_str}",
-        f"  ▸ 用电量",
-        f"      总能耗       : {d.get('energy_kwh_total', 0):.2f} kWh ({sim_days}天)",
-        f"      日均          : {d.get('energy_kwh_per_day', 0):.2f} kWh/天",
-        f"  ▸ 用户舒适度",
-        f"      满意度均分   : {avg_score_str}",
-        f"      逐事件       : {score_per_event}",
-        f"      区域均温     : {d.get('mean_temp_c', 0):.2f} °C",
-        f"      PMV达标率    : {d.get('pmv_ok_fraction', 0)*100:.1f}%",
-        f"      舒适区达标率 : {d.get('comfort_ok_fraction', 0)*100:.1f}% (23-26°C)",
-        f"      未满足制冷   : {d.get('unmet_cooling_h', 0):.1f} h",
-        f"  ▸ 电器目标达成",
-        f"      EV充电达标   : {d.get('ev_target_reached_rate', 0)*100:.0f}%",
-        f"      热水器预热   : {d.get('ewh_preheat_used_rate', 0)*100:.0f}%",
-        f"  ▸ Token消耗",
-        f"      LLM调用      : {d.get('llm_call_count', 0)} 次 (失败 {d.get('llm_call_failures', 0)})",
-        f"      平均延迟     : {llm_avg_lat:.2f} s/次",
-        f"      Token总量    : {d.get('llm_tokens_prompt', 0)} prompt + {d.get('llm_tokens_completion', 0)} completion",
+        f"  - VPP peak shaving",
+        f"      VPP-window electricity : {d.get('vpp_window_energy_kwh', 0):.3f} kWh ({vpp_duration_summary})",
+        ("      Demand achievement    : " + _vpp_ratio_str(result)),
+        f"      Service completion    : {d.get('appliance_task_completion_rate', 1.0)*100:.0f}%"
+        f"  (denominator=present controllable services; water heater=ready before bath, EV=SOC target met)",
+        f"      Post-completion VPP avoidance: {d.get('appliance_vpp_avoidance_rate', 0)*100:.0f}%"
+        f"  (denominator=completed controllable services; numerator=not running in VPP)",
+        f"  - Day-ahead price",
+        f"      Weighted cost         : {_fmt_num(price_metrics.get('total_cost_eur'), 4, ' EUR')}",
+        f"      Weighted average price: {_fmt_num(price_metrics.get('weighted_price_eur_per_kwh'), 5, ' EUR/kWh')}",
+        f"      Per day               : {price_day_str}",
+        f"  - Electricity",
+        f"      Total energy          : {d.get('energy_kwh_total', 0):.2f} kWh ({sim_days} days)",
+        f"      Daily average         : {d.get('energy_kwh_per_day', 0):.2f} kWh/day",
+        f"  - User comfort",
+        f"      Average satisfaction  : {avg_score_str}",
+        f"      Per event             : {score_per_event}",
+        f"      Mean zone temperature : {d.get('mean_temp_c', 0):.2f} °C",
+        f"      PMV pass rate         : {d.get('pmv_ok_fraction', 0)*100:.1f}%",
+        f"      Comfort-band pass rate: {d.get('comfort_ok_fraction', 0)*100:.1f}% (23-26°C)",
+        f"      Unmet cooling         : {d.get('unmet_cooling_h', 0):.1f} h",
+        f"  - Appliance goals",
+        f"      EV charging target met: {d.get('ev_target_reached_rate', 0)*100:.0f}%",
+        f"      Water-heater preheat  : {d.get('ewh_preheat_used_rate', 0)*100:.0f}%",
+        f"  - Token usage",
+        f"      LLM calls             : {d.get('llm_call_count', 0)} (failures {d.get('llm_call_failures', 0)})",
+        f"      Average latency       : {llm_avg_lat:.2f} s/call",
+        f"      Total tokens          : {d.get('llm_tokens_prompt', 0)} prompt + {d.get('llm_tokens_completion', 0)} completion",
         "",
         "─" * 62,
         "  EnergyPlus",
         "─" * 62,
-        f"  EP 结果          : {ep_ok}",
-        f"  详细日志         : {output_dir}/eplusout.err",
+        f"  EP result        : {ep_ok}",
+        f"  Detailed log     : {output_dir}/eplusout.err",
 
         "=" * 62,
     ]

@@ -193,10 +193,10 @@ def write_metrics_summary(name: str, summary: Dict[str, Any]) -> None:
     for i, detail in enumerate(summary.get("vpp_event_details", []), start=1):
         actions = detail["mean_actions"]
         detail_lines += [
-            f"      VPP{i}容量      : 可承诺{detail['capacity_committable_kw']:.3f}kW  "
-            f"建议上报{detail['capacity_recommended_bid_kw']:.3f}kW  "
-            f"成功率{detail['capacity_success_probability']*100:.1f}%",
-            f"      VPP{i}平均动作  : heating={actions['heating_setpoint_c']:.2f}°C  "
+            f"      VPP{i} capacity     : committable={detail['capacity_committable_kw']:.3f}kW  "
+            f"recommended_bid={detail['capacity_recommended_bid_kw']:.3f}kW  "
+            f"success_prob={detail['capacity_success_probability']*100:.1f}%",
+            f"      VPP{i} mean actions : heating={actions['heating_setpoint_c']:.2f}°C  "
             f"cooling={actions['cooling_setpoint_c']:.2f}°C  "
             f"EV={actions['ev_charge_request']:.2f}  EWH={actions['water_heater_request']:.2f}  "
             f"DW={actions['dishwasher_start_request']:.2f}  "
@@ -204,37 +204,37 @@ def write_metrics_summary(name: str, summary: Dict[str, Any]) -> None:
         ]
     lines = [
         "─" * 62,
-        f"  RL Baseline 关键 Metrics 汇总 ({name})",
+        f"  RL Baseline Key Metrics Summary ({name})",
         "─" * 62,
-        "  ▸ VPP削峰",
-        f"      VPP时段用电量: {summary['vpp_window_energy_kwh']:.3f} kWh (3个事件×1h合计)",
-        f"      需求达成比率 : {summary['vpp_demand_achievement_ratio']:.3f}  [{events}]",
-        f"      任务完成率   : {summary['task_completion_rate']*100:.0f}%",
-        f"      平移成功率   : {summary['task_shift_success_rate']*100:.0f}%",
-        f"      错峰率       : {summary['task_vpp_avoidance_rate']*100:.0f}%",
+        "  ▸ VPP peak shaving",
+        f"      VPP-window energy : {summary['vpp_window_energy_kwh']:.3f} kWh (3 events x 1h total)",
+        f"      Demand achievement: {summary['vpp_demand_achievement_ratio']:.3f}  [{events}]",
+        f"      Task completion   : {summary['task_completion_rate']*100:.0f}%",
+        f"      Shift success     : {summary['task_shift_success_rate']*100:.0f}%",
+        f"      VPP avoidance     : {summary['task_vpp_avoidance_rate']*100:.0f}%",
         *detail_lines,
-        "  ▸ 用电量",
-        f"      总能耗       : {summary['total_energy_kwh']:.2f} kWh (7天)",
-        f"      日均          : {summary['energy_kwh_per_day']:.2f} kWh/天",
-        "  ▸ 用户舒适度",
+        "  ▸ Electricity",
+        f"      Total energy      : {summary['total_energy_kwh']:.2f} kWh (7 days)",
+        f"      Daily average     : {summary['energy_kwh_per_day']:.2f} kWh/day",
+        "  ▸ User comfort",
         (
-            f"      满意度均分   : {summary['user_satisfaction']:.1f}/5"
+            f"      Mean satisfaction : {summary['user_satisfaction']:.1f}/5"
             if summary.get("user_satisfaction") is not None
-            else "      满意度均分   : N/A (未启用roleplay评分)"
+            else "      Mean satisfaction : N/A (role-play scoring disabled)"
         ),
-        "      逐事件       : " + (
+        "      Per event         : " + (
             "  ".join(f"VPP{i+1}:{score}" for i, score in enumerate(summary.get("user_pref_scores", [])))
             or "N/A"
         ),
-        f"      区域均温     : {summary['mean_indoor_temperature_c']:.2f} °C",
-        "      PMV达标率    : N/A (轻量RL环境无PMV模型)",
-        f"      舒适区达标率 : {summary['comfort_ok_fraction']*100:.1f}% (23-26°C)",
-        f"      未满足制冷   : {summary['unmet_cooling_hours']:.1f} h",
-        "  ▸ 电器目标达成",
-        f"      EV充电达标   : {summary['ev_target_reached_rate']*100:.0f}%",
-        f"      热水器就绪   : {summary['water_heater_ready_rate']*100:.0f}%",
-        "  ▸ Token消耗",
-        "      N/A (RL推理不调用LLM)",
+        f"      Mean indoor temp  : {summary['mean_indoor_temperature_c']:.2f} °C",
+        "      PMV pass rate    : N/A (lightweight RL env has no PMV model)",
+        f"      Comfort-zone pass : {summary['comfort_ok_fraction']*100:.1f}% (23-26°C)",
+        f"      Unmet cooling    : {summary['unmet_cooling_hours']:.1f} h",
+        "  ▸ Appliance goals",
+        f"      EV target met     : {summary['ev_target_reached_rate']*100:.0f}%",
+        f"      Water ready       : {summary['water_heater_ready_rate']*100:.0f}%",
+        "  ▸ Token usage",
+        "      N/A (RL inference does not call LLM)",
         "─" * 62,
     ]
     (OUTPUT_DIR / f"{name}_run_summary.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")

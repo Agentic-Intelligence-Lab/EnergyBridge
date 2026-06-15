@@ -40,14 +40,14 @@ for p in (str(EPLUS_ROOT), str(PROJECT_ROOT), str(BENCHMARK_DIR)):
 
 BUILDINGS = {
     "family": {"idf": _EXPERIMENTS_DIR / "models" / "family_home" / "family_simple_3day.idf",
-               "label":"家庭住宅(3天)", "sim_days":3},
+               "label":"family home (3 days)", "sim_days":3},
     "office": {"idf": _EXPERIMENTS_DIR / "models" / "medium_office" / "medium_office_3day.idf",
-               "label":"中型办公楼(15区,3天)", "sim_days":3},
+               "label":"medium office (15 zones, 3 days)", "sim_days":3},
 }
 CITIES = {
-    "beijing":  {"epw": EPW_DIR/"CHN_BJ_Beijing.545110_CSWD.epw",  "label":"北京"},
-    "shanghai": {"epw": EPW_DIR/"CHN_SH_Shanghai.583620_CSWD.epw", "label":"上海"},
-    "tianjin":  {"epw": EPW_DIR/"CHN_TJ_Tianjin.545270_CSWD.epw", "label":"天津"},
+    "beijing":  {"epw": EPW_DIR/"CHN_BJ_Beijing.545110_CSWD.epw",  "label":"Beijing"},
+    "shanghai": {"epw": EPW_DIR/"CHN_SH_Shanghai.583620_CSWD.epw", "label":"Shanghai"},
+    "tianjin":  {"epw": EPW_DIR/"CHN_TJ_Tianjin.545270_CSWD.epw", "label":"Tianjin"},
 }
 METHODS = ["pmv", "agent", "agent_pmv"]  # pmv_rule removed: superseded by agent+pmv
 
@@ -156,7 +156,7 @@ def make_table(results):
     lines += [HR,"EnergyBridge Benchmark Results",
               f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",HR]
     # header
-    h = f"{'场景(建筑/城市)':<22}{'方法':<10}{'能耗(kWh)':<13}{'PMV达标率':<11}{'均温(°C)':<10}{'未满足(h)':<12}{'VPP响应率':<11}{'Roleplay评分(1-5)':<20}{'状态'}"
+    h = f"{'Scenario(building/city)':<22}{'Method':<10}{'Energy(kWh)':<13}{'PMV pass':<11}{'MeanT(C)':<10}{'Unmet(h)':<12}{'VPP rate':<11}{'Roleplay score(1-5)':<20}{'Status'}"
     lines.append(h)
     lines.append("-"*129)
 
@@ -171,7 +171,7 @@ def make_table(results):
         _order = {"pmv": 0, "agent": 1, "agent_pmv": 2}
         sc_res.sort(key=lambda x: _order.get(x.get("method",""), 9))
         for idx,r in enumerate(sc_res):
-            b = "家庭" if r.get("building")=="family" else "办公"
+            b = "family" if r.get("building")=="family" else "office"
             cl = CITIES.get(r.get("city",""),{}).get("label","?")
             sc = f"{b}/{cl}" if idx==0 else ""
             _mmap = {"pmv":"PMV","agent":"AGENT","agent_pmv":"AGNT+PMV"}
@@ -203,7 +203,7 @@ def make_table(results):
             else: ties+=1
 
     lines.append("")
-    lines.append(f"总结: Agent优于PMV={agent_wins}  PMV优于Agent={pmv_wins}  持平={ties}")
+    lines.append(f"Summary: Agent_better_than_PMV={agent_wins}  PMV_better_than_Agent={pmv_wins}  ties={ties}")
     lines.append("")
 
     # Improvement suggestions
@@ -212,7 +212,7 @@ def make_table(results):
     return "\n".join(lines)
 
 def _suggest_improvements(results):
-    lines = ["改进建议:"]
+    lines = ["Improvement suggestions:"]
     for r in results:
         if r.get("method")!="agent": continue
         sc = f"{r.get('building','?')}/{r.get('city','?')}"
@@ -222,13 +222,13 @@ def _suggest_improvements(results):
         score = r.get("user_pref_score") or 0
 
         if pmv_ok < 0.7:
-            lines.append(f"  [{sc}] PMV达标率低({pmv_ok*100:.0f}%): 建议agent增加主动预冷策略")
+            lines.append(f"  [{sc}] Low PMV pass rate ({pmv_ok*100:.0f}%): consider more proactive pre-cooling.")
         if unmet > 50:
-            lines.append(f"  [{sc}] 未满足时数高({unmet:.0f}h): 建议agent提前1h降低设定点")
+            lines.append(f"  [{sc}] High unmet cooling hours ({unmet:.0f}h): consider lowering the setpoint 1h earlier.")
         if score < 3.5:
-            lines.append(f"  [{sc}] 用户满意度低({score:.1f}/5): 建议改进用户偏好提取和个性化策略")
+            lines.append(f"  [{sc}] Low user satisfaction ({score:.1f}/5): improve preference extraction and personalization.")
         if r.get("has_fatal_error"):
-            lines.append(f"  [{sc}] EP仿真有致命错误，需检查IDF和EPW兼容性")
+            lines.append(f"  [{sc}] Fatal EP simulation error: check IDF and EPW compatibility.")
 
     # Check if agent wins
     agent_better = 0
@@ -243,13 +243,13 @@ def _suggest_improvements(results):
 
     if agent_better==0 and len(by_sc)>0:
         lines.append("")
-        lines.append("  !! Agent方法尚未全面超越PMV基线 !!")
-        lines.append("  可能原因及改进方向:")
-        lines.append("  1. [连续控制] LLM每小时调用间隔过长,可改为每15分钟(每步)更频繁")
-        lines.append("  2. [预测优化] 加入天气预测和负荷预测,实现MPC-like前向优化")
-        lines.append("  3. [记忆学习] 利用EnergyBridge memory存储历史偏好,提升个性化")
-        lines.append("  4. [全天候控制] 家庭agent目前只在VPP事件时激活,应实现全天连续控制")
-        lines.append("  5. [提示工程] 改进Zone Advisor的system prompt,加入能耗约束")
+        lines.append("  !! Agent has not fully outperformed the PMV baseline yet. !!")
+        lines.append("  Possible reasons and improvement directions:")
+        lines.append("  1. [Continuous control] The hourly LLM cadence may be too sparse; consider every 15 minutes.")
+        lines.append("  2. [Predictive optimization] Add weather and load forecasts for MPC-like forward optimization.")
+        lines.append("  3. [Memory learning] Use EnergyBridge memory to store historical preferences and personalize control.")
+        lines.append("  4. [All-day control] The family agent currently activates mainly around VPP events; consider continuous control.")
+        lines.append("  5. [Prompt engineering] Improve the Zone Advisor system prompt with explicit energy constraints.")
     return lines
 
 def main():

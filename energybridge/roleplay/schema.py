@@ -1,8 +1,7 @@
 """
 Persona schema definitions for EnergyBridge role-play evaluation.
 
-Based on the 6-dimension behavioral tag framework from:
-  家庭用户行为角色建模.md
+Based on the internal six-dimension household behavior modeling framework.
 
 Each persona JSON file must conform to the schema defined here.
 Use validate_persona() to check a loaded dict.

@@ -49,16 +49,16 @@ def _set_job(job_id: str, **updates) -> None:
 def _infer_human_input_context(logs: list[str], requested_kind: str = "") -> tuple[str, str]:
     """Infer which blocking human prompt the web input is answering."""
     tail = "\n".join(logs[-100:])
-    event_matches = re.findall(r"(?:VPP event|VPP事件)\s*(\d+)", tail)
+    event_matches = re.findall(r"VPP event\s*(\d+)", tail)
     selected_matches = re.findall(r"\[Strategy Selected\s+\|\s+event=(\d+)\]", tail)
     score_matches = re.findall(r"\[Human Score Selected\s+\|\s+event=(\d+)\]", tail)
     event_id = (event_matches or selected_matches or score_matches or [""])[-1]
 
-    strategy_idx = max(tail.rfind("[请选择策略"), tail.rfind("输入 A / B / C"))
+    strategy_idx = max(tail.rfind("[Choose Strategy"), tail.rfind("Enter A / B / C"))
     selected_idx = tail.rfind("[Strategy Selected")
-    score_prompt_idx = tail.rfind("请对本次VPP处理结果评分")
+    score_prompt_idx = tail.rfind("Rate this VPP handling")
     score_done_idx = tail.rfind("[Human Score Selected")
-    comment_idx = tail.rfind("可选：留下简短反馈")
+    comment_idx = tail.rfind("Optional: leave brief feedback")
 
     if comment_idx > max(score_prompt_idx, strategy_idx) and comment_idx > score_done_idx:
         return "score_comment", event_id
@@ -621,21 +621,21 @@ INDEX_HTML = r"""<!doctype html>
   </style>
 </head>
 <body>
-  <button id="sidebarToggle" class="sidebar-toggle secondary">隐藏历史</button>
+  <button id="sidebarToggle" class="sidebar-toggle secondary">Hide history</button>
   <div class="shell" id="shell">
     <aside id="sidebar">
       <h1>EnergyBridge</h1>
-      <div class="sub">Agent 决策与 VPP 容量量化控制台</div>
-      <button id="newRunButton">新运行</button>
+      <div class="sub">Agent decisions and VPP capacity quantification console</div>
+      <button id="newRunButton">New run</button>
       <div style="height:14px"></div>
-      <label for="dateSelect">选择日期</label>
+      <label for="dateSelect">Date</label>
       <select id="dateSelect"></select>
       <div style="height:10px"></div>
-      <label for="runSelect">选择方法 / 结果</label>
+      <label for="runSelect">Method / result</label>
       <select id="runSelect"></select>
     </aside>
     <main>
-      <div id="app" class="empty">正在加载 benchmark 结果...</div>
+      <div id="app" class="empty">Loading benchmark results...</div>
     </main>
   </div>
   <script>
@@ -671,7 +671,7 @@ INDEX_HTML = r"""<!doctype html>
       {value: 7, label: '7day'}
     ];
     const START_DATE_OPTIONS = [
-      {value: '', label: '默认日期'},
+      {value: '', label: 'Default date'},
       {value: '2025-06-01', label: '2025-06-01'}
     ];
     const PRICE_CSV_DEFAULTS = {
@@ -707,7 +707,7 @@ INDEX_HTML = r"""<!doctype html>
       if (dateSelect) {
         dateSelect.innerHTML = dates.length
           ? dates.map(date => `<option value="${date}" ${state.selectedDate === date ? 'selected' : ''}>${date}</option>`).join('')
-          : '<option value="">暂无结果</option>';
+          : '<option value="">No results</option>';
         dateSelect.onchange = () => {
           state.selectedDate = dateSelect.value;
           state.active = null;
@@ -717,8 +717,8 @@ INDEX_HTML = r"""<!doctype html>
       const runs = state.runs.filter(r => r.date === state.selectedDate);
       const runSelect = $('runSelect');
       if (runSelect) {
-        runSelect.innerHTML = '<option value="">选择结果...</option>' + runs.map(r => {
-          const status = r.has_result ? '' : '未完成 · ';
+        runSelect.innerHTML = '<option value="">Select result...</option>' + runs.map(r => {
+          const status = r.has_result ? '' : 'incomplete · ';
           return `<option value="${r.id}" ${state.active === r.id ? 'selected' : ''}>${status}${r.label}</option>`;
         }).join('');
         runSelect.onchange = () => loadRun(runSelect.value);
@@ -757,7 +757,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function actionsLine(actions) {
       const entries = Object.entries(actions || {}).filter(([, v]) => v !== null && v !== undefined);
-      if (!entries.length) return '保持当前策略';
+      if (!entries.length) return 'keep current strategy';
       return entries.map(([k, v]) => `${k}=${v}`).join(' · ');
     }
 
@@ -816,17 +816,17 @@ INDEX_HTML = r"""<!doctype html>
     function appliancePlanFromActions(actions) {
       const plan = {};
       const a = actions || {};
-      if (a.washer_skip) plan.washer = '跳过';
-      else if (a.washer_start_h !== undefined && a.washer_start_h !== null) plan.washer = `排程@${Number(a.washer_start_h).toFixed(1)}`;
-      if (a.dishwasher_skip) plan.dishwasher = '跳过';
-      else if (a.dishwasher_start_h !== undefined && a.dishwasher_start_h !== null) plan.dishwasher = `排程@${Number(a.dishwasher_start_h).toFixed(1)}`;
+      if (a.washer_skip) plan.washer = 'skipped';
+      else if (a.washer_start_h !== undefined && a.washer_start_h !== null) plan.washer = `scheduled@${Number(a.washer_start_h).toFixed(1)}`;
+      if (a.dishwasher_skip) plan.dishwasher = 'skipped';
+      else if (a.dishwasher_start_h !== undefined && a.dishwasher_start_h !== null) plan.dishwasher = `scheduled@${Number(a.dishwasher_start_h).toFixed(1)}`;
       if (a.water_heater_preheat) {
         const start = a.water_heater_preheat_start_h ?? '?';
         const end = a.water_heater_preheat_end_h ?? '?';
         const temp = a.water_heater_preheat_temp_c ?? '?';
-        plan.water_heater = `预热 ${start}-${end} @ ${temp}°C`;
+        plan.water_heater = `preheat ${start}-${end} @ ${temp}°C`;
       }
-      if (a.ev_mode) plan.ev = `模式 ${a.ev_mode}`;
+      if (a.ev_mode) plan.ev = `mode ${a.ev_mode}`;
       return plan;
     }
 
@@ -858,9 +858,9 @@ INDEX_HTML = r"""<!doctype html>
       const day = ev?.day;
       const total = dailyTotalEnergyKwh(data, day);
       const vpp = Number.isFinite(Number(ev?.actual_kwh)) ? Number(ev.actual_kwh) : null;
-      if (total !== null && vpp !== null) return `${fmt(total, 1)} kWh 当天 / ${fmt(vpp, 3)} kWh VPP`;
-      if (total !== null) return `${fmt(total, 1)} kWh 当天 / VPP waiting`;
-      if (vpp !== null) return `当天 waiting / ${fmt(vpp, 3)} kWh VPP`;
+      if (total !== null && vpp !== null) return `${fmt(total, 1)} kWh today / ${fmt(vpp, 3)} kWh VPP`;
+      if (total !== null) return `${fmt(total, 1)} kWh today / VPP waiting`;
+      if (vpp !== null) return `today waiting / ${fmt(vpp, 3)} kWh VPP`;
       return 'waiting';
     }
 
@@ -872,25 +872,25 @@ INDEX_HTML = r"""<!doctype html>
       return `<div class="live-grid" id="liveMetrics">${metricCardsInner(items)}</div>`;
     }
 
-    function progressCardsHtml(progress, emptyText = '等待结果...') {
+    function progressCardsHtml(progress, emptyText = 'Waiting for results...') {
       return progress && progress.length
         ? progress.map(ev => `
           <div class="progress-card ${ev.status}">
             <h4>${ev.label}</h4>
             <div class="progress-row"><span>Day</span><strong>${ev.day}</strong></div>
-            <div class="progress-row"><span>VPP目标</span><strong>${ev.target}</strong></div>
-            <div class="progress-row"><span>空调设定</span><strong>${ev.setpoint}</strong></div>
-            <div class="progress-row"><span>用户评分</span><strong>${ev.score}</strong></div>
-            <div class="progress-row"><span>能耗</span><strong>${ev.energy}</strong></div>
-            <div class="progress-row"><span>选中策略</span><strong>${ev.selectedStrategy}</strong></div>
+            <div class="progress-row"><span>VPP target</span><strong>${ev.target}</strong></div>
+            <div class="progress-row"><span>AC setpoint</span><strong>${ev.setpoint}</strong></div>
+            <div class="progress-row"><span>User score</span><strong>${ev.score}</strong></div>
+            <div class="progress-row"><span>Energy</span><strong>${ev.energy}</strong></div>
+            <div class="progress-row"><span>Selected strategy</span><strong>${ev.selectedStrategy}</strong></div>
             <div class="progress-section">
-              <strong>候选/决策记录</strong>
+              <strong>Candidates / decision log</strong>
               <div class="progress-log">
                 ${ev.strategies.length ? ev.strategies.map(item => `<div class="progress-chip">${item}</div>`).join('') : '<div class="progress-chip">waiting</div>'}
               </div>
             </div>
             <div class="progress-section">
-              <strong>电器排程</strong>
+              <strong>Appliance schedule</strong>
               <div class="appliance-grid">
                 ${Object.keys(ev.appliances).length
                   ? Object.entries(ev.appliances).map(([name, text]) => `<div class="appliance-pill">${name}: ${text}</div>`).join('')
@@ -911,17 +911,18 @@ INDEX_HTML = r"""<!doctype html>
         const lastDecision = decisions[decisions.length - 1] || {};
         const actions = ev.vpp_trigger_actions || lastDecision.actions || lastDecision.raw_appliance_actions || {};
         const candidateStrategies = (ev.strategy_candidates || []).map(item => {
-          const base = `[${item.id || '?'}] ${item.label || ''} — ${item.description || ''}`;
+          const base = `[${item.id || '?'}] ${item.label || ''} - ${item.description || ''}`;
           const tradeoff = item.tradeoff ? ` (${item.tradeoff})` : '';
-          const appliance = item.appliance_plan_cn ? ` | 电器控制: ${item.appliance_plan_cn}` : '';
-          const pref = item.user_pref ? ` | 用户偏好: ${item.user_pref}` : '';
+          const appliancePlan = item.appliance_plan || item.appliance_plan_cn;
+          const appliance = appliancePlan ? ` | Appliance control: ${appliancePlan}` : '';
+          const pref = item.user_pref ? ` | User preference: ${item.user_pref}` : '';
           return `${base}${tradeoff}${appliance}${pref}`;
         });
         const selected = ev.selected_strategy || {};
-        const selectedDesc = selected.description ? ` — ${selected.description}` : '';
+        const selectedDesc = selected.description ? ` - ${selected.description}` : '';
         const selectedTradeoff = selected.tradeoff ? ` (${selected.tradeoff})` : '';
-        const selectedPref = selected.preference_text ? ` | 偏好: ${selected.preference_text}` : '';
-        const selectedReason = selected.selection_meta?.reason ? ` | 选择理由: ${selected.selection_meta.reason}` : '';
+        const selectedPref = selected.preference_text ? ` | Preference: ${selected.preference_text}` : '';
+        const selectedReason = selected.selection_meta?.reason ? ` | Selection reason: ${selected.selection_meta.reason}` : '';
         return {
           key: String(idx + 1),
           label: `Day ${idx + 1}`,
@@ -936,13 +937,13 @@ INDEX_HTML = r"""<!doctype html>
             : (ev.user_input || ev.label || ev.source || 'completed'),
           strategies: candidateStrategies.length
             ? candidateStrategies
-            : decisions.map(item => `${fmt(item.h % 24, 1)}h → ${fmt(item.sp, 1)}°C | ${item.reason || '无说明'}`),
+            : decisions.map(item => `${fmt(item.h % 24, 1)}h -> ${fmt(item.sp, 1)}°C | ${item.reason || 'no explanation'}`),
           appliances: appliancePlanFromActions(actions),
           notes: [ev.reason, ev.comment].filter(Boolean).slice(-5)
         };
       });
       const dialogue = events.flatMap((ev, idx) => [
-        {type: 'agent', label: `Event ${idx + 1} Agent`, text: ev.reason || '无 Agent 理由'},
+        {type: 'agent', label: `Event ${idx + 1} Agent`, text: ev.reason || 'no Agent rationale'},
         {type: 'result', label: `Event ${idx + 1} Score`, text: `${ev.score ?? 'N/A'}/5 ${ev.label || ''} | ${ev.comment || ''}`}
       ]);
       return {progress, dialogue};
@@ -959,26 +960,26 @@ INDEX_HTML = r"""<!doctype html>
           <div class="event-head">
             <div>
               <h2>${eventTitle(ev, index)}</h2>
-              <div class="sub">${ev.reason || '无 Agent 理由'}</div>
+              <div class="sub">${ev.reason || 'no Agent rationale'}</div>
             </div>
             <div class="score">${ev.score ?? 'N/A'}/5</div>
           </div>
           <div class="kv">
-            <div><span>VPP削减目标</span>${vppTargetText(ev)}</div>
-            <div><span>实际削减</span>${fmt(actualShed, 3)} / ${fmt(targetShed, 3)} kWh ${demandOk ? '✓' : '!'}</div>
-            <div><span>等价用电上限</span>${fmt(ev.demand_target_kwh, 3)} kWh</div>
-            <div><span>VPP实际用电</span>${fmt(ev.actual_kwh, 3)} kWh</div>
-            <div><span>90%可信容量</span>${fmt(tq.avg_reported_capacity_90_kw, 3)} kW</div>
-            <div><span>1.2倍目标容量</span>${fmt(tq.vpp_target_capacity_120_kw, 3)} kW</div>
+            <div><span>VPP shed target</span>${vppTargetText(ev)}</div>
+            <div><span>Actual shed</span>${fmt(actualShed, 3)} / ${fmt(targetShed, 3)} kWh ${demandOk ? 'ok' : '!'}</div>
+            <div><span>Equivalent energy cap</span>${fmt(ev.demand_target_kwh, 3)} kWh</div>
+            <div><span>Actual VPP energy</span>${fmt(ev.actual_kwh, 3)} kWh</div>
+            <div><span>90% firm capacity</span>${fmt(tq.avg_reported_capacity_90_kw, 3)} kW</div>
+            <div><span>1.2x target capacity</span>${fmt(tq.vpp_target_capacity_120_kw, 3)} kW</div>
           </div>
-          <h3>全天决策轨迹</h3>
+          <h3>Daily decision trajectory</h3>
           <div class="timeline">
             ${decisions.map(d => `
               <div class="decision">
                 <strong>${fmt(d.h % 24, 1)}h</strong>
                 <span>${fmt(d.sp, 1)}°C</span>
                 <div>
-                  <div>${d.reason || '无说明'}</div>
+                  <div>${d.reason || 'no explanation'}</div>
                   <div class="actions">${actionsLine(d.actions || d.raw_appliance_actions)}</div>
                 </div>
               </div>`).join('')}
@@ -1077,7 +1078,6 @@ INDEX_HTML = r"""<!doctype html>
           /\bvpp(\d+)\b/i,
           /event=(\d+)/i,
           /VPP event\s+(\d+)/i,
-          /VPP事件\s*(\d+)/i,
           /VPP Demand-Response Event\s+(\d+)\/\d+/i,
           /\[VPP Result \| Event\s+(\d+)\/\d+/i,
           /\[Human Score Selected\s+\|\s+event=(\d+)\]/i,
@@ -1136,18 +1136,18 @@ INDEX_HTML = r"""<!doctype html>
           currentKey = candidateEventKey;
           ensureEventForKey(currentKey);
         }
-        const candidateMatch = line.match(/│\s+\[([ABC])\]\s+(.+?)\s+—\s+(.+)/);
+        const candidateMatch = line.match(/│\s+\[([ABC])\]\s+(.+?)\s+(?:—|-)\s+(.+)/);
         if (candidateMatch && candidateEventKey) {
           const ev = ensureEventForKey(candidateEventKey);
-          ev.strategies.push(`[${candidateMatch[1]}] ${candidateMatch[2].trim()} — ${candidateMatch[3].trim()}`);
+          ev.strategies.push(`[${candidateMatch[1]}] ${candidateMatch[2].trim()} - ${candidateMatch[3].trim()}`);
         }
-        const candidateApplianceMatch = line.match(/│\s+电器控制:\s+(.+)/);
+        const candidateApplianceMatch = line.match(/│\s+Appliance control:\s+(.+)/);
         if (candidateApplianceMatch && candidateEventKey) {
           const ev = ensureEventForKey(candidateEventKey);
           if (ev.strategies.length) {
-            ev.strategies[ev.strategies.length - 1] += ` | 电器控制: ${candidateApplianceMatch[1].trim()}`;
+            ev.strategies[ev.strategies.length - 1] += ` | Appliance control: ${candidateApplianceMatch[1].trim()}`;
           } else {
-            ev.strategies.push(`电器控制: ${candidateApplianceMatch[1].trim()}`);
+            ev.strategies.push(`Appliance control: ${candidateApplianceMatch[1].trim()}`);
           }
         }
         const resultMatch = line.match(/\[VPP Result \| Event\s+(\d+)\/\d+/);
@@ -1156,7 +1156,7 @@ INDEX_HTML = r"""<!doctype html>
           currentEventKey = currentKey;
           ensureEventForKey(currentKey);
         }
-        const humanScoreMatch = line.match(/\[Human Score Selected\s+\|\s+event=(\d+)\]\s+→\s+([0-9.]+)\/5\s+\|\s*(.*)/);
+        const humanScoreMatch = line.match(/\[Human Score Selected\s+\|\s+event=(\d+)\]\s+(?:→|->)\s+([0-9.]+)\/5\s+\|\s*(.*)/);
         if (humanScoreMatch) {
           currentKey = humanScoreMatch[1];
           currentEventKey = currentKey;
@@ -1164,23 +1164,23 @@ INDEX_HTML = r"""<!doctype html>
           scoreEv.score = `${humanScoreMatch[2]}/5 human`;
           scoreEv.status = 'done';
           const comment = humanScoreMatch[3].trim();
-          if (comment && comment !== '—') scoreEv.notes.push(`真人反馈: ${comment}`);
+          if (comment && comment !== '-') scoreEv.notes.push(`Human feedback: ${comment}`);
         }
         const webInputMatch = line.match(/\[web human input(?:\s+\|\s+kind=([^ ]+)\s+event=([^\]]+))?\]\s*(.*)/);
         if (webInputMatch) {
           const kind = webInputMatch[1] || 'unknown';
           const inputEvent = webInputMatch[2] || '';
-          const value = (webInputMatch[3] || '').trim() || '回车默认';
+          const value = (webInputMatch[3] || '').trim() || 'Enter default';
           const targetKey = inputEvent && inputEvent !== '?' ? inputEvent : currentKey;
           if (targetKey) {
             const inputEv = ensureEventForKey(targetKey);
             if (kind === 'strategy_choice') {
-              inputEv.notes.push(`真人策略输入: ${value}`);
+              inputEv.notes.push(`Human strategy input: ${value}`);
             } else if (kind === 'score') {
               inputEv.score = `${value}/5 human`;
-              inputEv.notes.push(`真人评分输入: ${value}`);
+              inputEv.notes.push(`Human score input: ${value}`);
             } else if (kind === 'score_comment') {
-              inputEv.notes.push(`真人评分反馈: ${value}`);
+              inputEv.notes.push(`Human score feedback: ${value}`);
             }
           }
           dialogue.push({type: 'user', label: 'Human Input', text: line});
@@ -1188,7 +1188,7 @@ INDEX_HTML = r"""<!doctype html>
         }
         if (!currentKey) continue;
         const ev = ensureEventForKey(currentKey);
-        const selectedMatch = line.match(/\[Strategy Selected\s+\|\s+event=(\d+)\]\s+→\s+(.+)/);
+        const selectedMatch = line.match(/\[Strategy Selected\s+\|\s+event=(\d+)\]\s+(?:→|->)\s+(.+)/);
         if (selectedMatch) {
           const selectedEv = ensureEventForKey(selectedMatch[1]);
           selectedEv.selectedStrategy = selectedMatch[2].trim();
@@ -1209,34 +1209,34 @@ INDEX_HTML = r"""<!doctype html>
         }
         const energyMatch = line.match(/\[family\/[^\]]+\]\s+exit=\d+\s+energy=([0-9.]+)kWh\s+vpp_window=([0-9.]+)kWh/);
         if (energyMatch) {
-          ev.notes.push(`全程汇总: ${energyMatch[1]} kWh total / ${energyMatch[2]} kWh VPP`);
+          ev.notes.push(`Run summary: ${energyMatch[1]} kWh total / ${energyMatch[2]} kWh VPP`);
         }
         const shiftMatch = line.match(/\[Appliance\]\s+shift\s+(\w+)\s+day=(\d+)\s+hod=([0-9.]+)\s+->\s+(\w+)/);
         if (shiftMatch) {
           const dayKey = String(Number(shiftMatch[2]) + 1);
           const applianceEv = ensureProgressEvent(progressEvents, dayKey);
           setProgressEventDay(applianceEv, dayKey, dayKey);
-          applianceEv.appliances[shiftMatch[1]] = `排程@${Number(shiftMatch[3]).toFixed(1)} (${shiftMatch[4]})`;
+          applianceEv.appliances[shiftMatch[1]] = `scheduled@${Number(shiftMatch[3]).toFixed(1)} (${shiftMatch[4]})`;
         }
         const skipMatch = line.match(/\[Appliance\]\s+skip\s+(\w+)\s+day=(\d+)\s+->\s+(\w+)/);
         if (skipMatch) {
           const dayKey = String(Number(skipMatch[2]) + 1);
           const applianceEv = ensureProgressEvent(progressEvents, dayKey);
           setProgressEventDay(applianceEv, dayKey, dayKey);
-          applianceEv.appliances[skipMatch[1]] = `跳过 (${skipMatch[3]})`;
+          applianceEv.appliances[skipMatch[1]] = `skipped (${skipMatch[3]})`;
         }
         const whMatch = line.match(/\[Appliance\]\s+water_heater preheat schedule:\s+start=([^ ]+)\s+end=([^ ]+)\s+temp=([^ ]+)\s+->\s+(\w+)/);
         if (whMatch) {
           const whEv = ensureProgressEvent(progressEvents, currentKey);
-          whEv.appliances.water_heater = `预热 ${whMatch[1]}-${whMatch[2]} @ ${whMatch[3]}°C (${whMatch[4]})`;
+          whEv.appliances.water_heater = `preheat ${whMatch[1]}-${whMatch[2]} @ ${whMatch[3]}°C (${whMatch[4]})`;
         }
         const evModeMatch = line.match(/\[Appliance\]\s+ev mode=([^ ]+)\s+->\s+(\w+)/);
         if (evModeMatch) {
-          ev.appliances.ev = `模式 ${evModeMatch[1]} (${evModeMatch[2]})`;
+          ev.appliances.ev = `mode ${evModeMatch[1]} (${evModeMatch[2]})`;
         }
         const evWindowMatch = line.match(/\[Appliance\]\s+ev charge_window=([^ ]+)\s+->\s+(\w+)/);
         if (evWindowMatch) {
-          ev.appliances.ev = `充电窗口 ${evWindowMatch[1]} (${evWindowMatch[2]})`;
+          ev.appliances.ev = `charge window ${evWindowMatch[1]} (${evWindowMatch[2]})`;
         }
         if (line.includes('[VPP Grid Agent]')) {
           dialogue.push({type: 'grid', label: 'Grid VPP', text: line});
@@ -1284,42 +1284,42 @@ INDEX_HTML = r"""<!doctype html>
         </option>`).join('');
       const userTypeField = state.userMode === 'human' ? `
         <div class="field-row">
-          <label for="humanNameInput">2. 用户类型</label>
-          <input id="humanNameInput" value="${state.humanName}" placeholder="输入真人用户名称，例如 alice">
+          <label for="humanNameInput">2. User type</label>
+          <input id="humanNameInput" value="${state.humanName}" placeholder="Enter a human user name, e.g. alice">
         </div>` : `
         <div class="field-row">
-          <label for="personaSelect">2. 用户类型</label>
+          <label for="personaSelect">2. User type</label>
           <select id="personaSelect">${personaOptions}</select>
         </div>`;
       const humanInputPanel = state.userMode === 'human' ? `
         <div class="human-dialogue">
-          <h3>Human-in-loop 输入</h3>
-          <div class="sub">根据终端当前提示输入：策略阶段填 A/B/C，评分阶段填 1-5，反馈阶段可填一句话；直接发送空内容等于回车默认。</div>
+          <h3>Human-in-loop input</h3>
+          <div class="sub">Follow the current terminal prompt: enter A/B/C for strategy, 1-5 for score, or a short feedback sentence. Sending an empty value means pressing Enter.</div>
           <div class="human-custom">
-            <input id="humanCustomInput" placeholder="输入 A/B/C、1-5、反馈文字，或留空回车">
-            <button id="sendHumanCustom">回车</button>
+            <input id="humanCustomInput" placeholder="Enter A/B/C, 1-5, feedback text, or leave blank">
+            <button id="sendHumanCustom">Enter</button>
           </div>
         </div>` : '';
       return `
         <div class="grid">
           <section class="panel">
-            <h2>实时运行</h2>
-            <div class="result-name">结果名称：<strong id="resultName">${expectedRunName()}</strong></div>
-            <div class="sub">选择用户和方法后运行，下面会显示日志和结果。</div>
-            <h3>1. 用户类别</h3>
+            <h2>Live run</h2>
+            <div class="result-name">Result name: <strong id="resultName">${expectedRunName()}</strong></div>
+            <div class="sub">Select a user and method, then run. Logs and results will appear below.</div>
+            <h3>1. User category</h3>
             <div class="preset-grid">
               <button class="${state.userMode === 'roleplay' ? '' : 'secondary'}" data-user-mode="roleplay">Role-play LLM</button>
               <button class="${state.userMode === 'human' ? '' : 'secondary'}" data-user-mode="human">Human</button>
             </div>
             ${userTypeField}
             <div class="field-row">
-              <label for="citySelect">3. 场景</label>
+              <label for="citySelect">3. Scenario</label>
               <select id="citySelect">
                 ${['Tianjin', 'Beijing', 'Shanghai', 'Germany'].map(c => `<option value="${c}" ${state.selectedCity === c ? 'selected' : ''}>${c}</option>`).join('')}
               </select>
             </div>
             <div class="field-row">
-              <label for="daysSelect">天数 / 起始日期</label>
+              <label for="daysSelect">Days / start date</label>
               <div class="inline-fields">
                 <select id="daysSelect">
                   ${DAY_OPTIONS.map(item => `<option value="${item.value}" ${Number(state.selectedDays || 3) === item.value ? 'selected' : ''}>${item.label}</option>`).join('')}
@@ -1330,43 +1330,43 @@ INDEX_HTML = r"""<!doctype html>
               </div>
             </div>
             <div class="field-row">
-              <label for="priceCsvInput">进阶：日前电价 CSV</label>
-              <input id="priceCsvInput" value="${state.priceCsv}" placeholder="没有电价文件则留空；可手动改为其他 CSV 路径">
+              <label for="priceCsvInput">Advanced: day-ahead price CSV</label>
+              <input id="priceCsvInput" value="${state.priceCsv}" placeholder="Leave empty if no price file is used; you can edit the CSV path manually">
             </div>
             <div class="field-row">
-              <label for="vppStartHourInput">VPP窗口：开始 / 时长(小时)</label>
+              <label for="vppStartHourInput">VPP window: start / duration (hours)</label>
               <div class="inline-fields">
                 <input id="vppStartHourInput" type="number" step="0.25" min="0" max="23.99" value="${Number(state.vppStartHour || 18)}">
                 <input id="vppDurationHoursInput" type="number" step="0.25" min="0.25" value="${Number(state.vppDurationHours || 1)}">
               </div>
             </div>
             <div class="field-row">
-              <label for="vppEventsJsonInput">进阶：VPP事件 JSON</label>
-              <input id="vppEventsJsonInput" value="${state.vppEventsJson}" placeholder="可留空；例如 experiments/benchmark/configs/vpp_events_7day_variable.json">
+              <label for="vppEventsJsonInput">Advanced: VPP events JSON</label>
+              <input id="vppEventsJsonInput" value="${state.vppEventsJson}" placeholder="Optional; e.g. experiments/benchmark/configs/vpp_events_7day_variable.json">
             </div>
-            <h3>4. 方法</h3>
+            <h3>4. Method</h3>
             <div class="preset-grid">
               ${methods.map(m => `<button class="${state.selectedMethod === m ? '' : 'secondary'}" data-method="${m}">${methodLabel(m)}</button>`).join('')}
             </div>
             <div class="command-row">
               <input id="commandInput" value="${defaultCommand()}">
-              <button id="startRun">运行${state.userMode === 'human' ? 'Human' : 'Role-play LLM'}</button>
+              <button id="startRun">Run ${state.userMode === 'human' ? 'Human' : 'Role-play LLM'}</button>
             </div>
             <div class="live-grid" id="liveMetrics">
-              <div class="live-card"><span>Day/Event</span><strong>—</strong></div>
+              <div class="live-card"><span>Day/Event</span><strong>-</strong></div>
               <div class="live-card"><span>Setpoint</span><strong>waiting</strong></div>
               <div class="live-card"><span>VPP target</span><strong>waiting</strong></div>
               <div class="live-card"><span>User score</span><strong>waiting</strong></div>
             </div>
             <div style="height:10px"></div>
-            <h3>逐步可视化</h3>
-            <div class="progress-viz" id="progressViz"><div class="sub">运行时会按事件逐步生成可视化卡片。</div></div>
+            <h3>Step-by-step visualization</h3>
+            <div class="progress-viz" id="progressViz"><div class="sub">Visualization cards will appear event by event during the run.</div></div>
             <div style="height:10px"></div>
-            <h3>实时日志摘要 / 对话结果</h3>
-            <div class="dialogue-feed" id="dialogueFeed"><div class="sub">运行后会实时显示 Grid、Agent、用户选择、role-play 评分和 LLM stats。</div></div>
+            <h3>Live log summary / dialogue</h3>
+            <div class="dialogue-feed" id="dialogueFeed"><div class="sub">Grid, Agent, user choices, role-play scores, and LLM stats will appear during the run.</div></div>
             <div id="finishedSummary"></div>
             <div style="height:10px"></div>
-            <div class="terminal" id="runLog">等待运行命令...</div>
+            <div class="terminal" id="runLog">Waiting for a run command...</div>
             ${humanInputPanel}
           </section>
         </div>`;
@@ -1395,29 +1395,29 @@ INDEX_HTML = r"""<!doctype html>
         </div>
         <div class="grid">
           <section class="panel">
-            <h2>历史结果</h2>
-            <div class="result-name">结果名称：<strong>${resultName}</strong></div>
+            <h2>Historical result</h2>
+            <div class="result-name">Result name: <strong>${resultName}</strong></div>
             ${resultMetricsHtml([
-              ['方法', methodLabel(d.method || 'unknown')],
-              ['城市', d.weather || 'unknown'],
-              ['用户评分', `${fmt(d.user_pref_score, 1)}/5`],
-              ['总能耗', `${fmt(d.energy_kwh_total, 1)} kWh`],
-              ['VPP能耗', `${fmt(d.vpp_window_energy_kwh, 3)} kWh`],
-              ['电器错峰', pct(d.appliance_shift_success_rate)],
-              ['VPP削减达成', `${fmt(d.vpp_demand_achievement_ratio, 2)}x`],
-              ['状态', `exit ${d.exit_code}`]
+              ['Method', methodLabel(d.method || 'unknown')],
+              ['City', d.weather || 'unknown'],
+              ['User score', `${fmt(d.user_pref_score, 1)}/5`],
+              ['Total energy', `${fmt(d.energy_kwh_total, 1)} kWh`],
+              ['VPP energy', `${fmt(d.vpp_window_energy_kwh, 3)} kWh`],
+              ['Appliance shift', pct(d.appliance_shift_success_rate)],
+              ['VPP shed achievement', `${fmt(d.vpp_demand_achievement_ratio, 2)}x`],
+              ['Status', `exit ${d.exit_code}`]
             ])}
             <div style="height:10px"></div>
-            <h3>逐步可视化</h3>
-            <div class="progress-viz">${progressCardsHtml(live.progress, '没有事件记录。')}</div>
+            <h3>Step-by-step visualization</h3>
+            <div class="progress-viz">${progressCardsHtml(live.progress, 'No event records.')}</div>
             <div style="height:10px"></div>
-            <h3>实时日志摘要 / 对话结果</h3>
+            <h3>Log summary / dialogue</h3>
             <div class="dialogue-feed">
               ${live.dialogue.length
                 ? live.dialogue.map(item => `<div class="dialogue-item ${item.type}"><small>${item.label}</small>${item.text}</div>`).join('')
-                : '<div class="sub">没有对话记录。</div>'}
+                : '<div class="sub">No dialogue records.</div>'}
             </div>
-            ${d.run_summary_text ? `<h3>完整用户日志 / run_summary.txt</h3><div class="summary-log">${d.run_summary_text}</div>` : ''}
+            ${d.run_summary_text ? `<h3>Full user log / run_summary.txt</h3><div class="summary-log">${d.run_summary_text}</div>` : ''}
           </section>
         </div>`;
     }
@@ -1534,7 +1534,7 @@ INDEX_HTML = r"""<!doctype html>
     function render() {
       const shell = $('shell');
       shell.classList.toggle('sidebar-collapsed', !state.sidebarOpen);
-      $('sidebarToggle').textContent = state.sidebarOpen ? '隐藏历史' : '打开历史';
+      $('sidebarToggle').textContent = state.sidebarOpen ? 'Hide history' : 'Open history';
       $('newRunButton').onclick = () => {
         state.view = 'run';
         state.active = null;
@@ -1576,7 +1576,7 @@ INDEX_HTML = r"""<!doctype html>
         state.jobPoll = null;
         const log = $('runLog');
         if (log) {
-          log.textContent += `\n[web] 当前 job 已不存在，可能是 dashboard 刚重启。请重新运行。`;
+          log.textContent += `\n[web] The current job no longer exists, possibly because the dashboard restarted. Please run it again.`;
           log.scrollTop = log.scrollHeight;
         }
         state.jobId = null;
@@ -1626,17 +1626,17 @@ INDEX_HTML = r"""<!doctype html>
       if (feed) {
         feed.innerHTML = shownDialogue.length
           ? shownDialogue.map(item => `<div class="dialogue-item ${item.type}"><small>${item.label}</small>${item.text}</div>`).join('')
-          : '<div class="sub">运行后会显示 Grid、Agent、用户选择和 role-play 评分。</div>';
+          : '<div class="sub">Grid, Agent, user choices, and role-play scores will appear after the run starts.</div>';
         feed.scrollTop = feed.scrollHeight;
       }
       const progressViz = $('progressViz');
       if (progressViz) {
-        progressViz.innerHTML = progressCardsHtml(shownProgress, '运行时会按事件逐步生成可视化卡片。');
+        progressViz.innerHTML = progressCardsHtml(shownProgress, 'Visualization cards will appear event by event during the run.');
       }
       const summary = $('finishedSummary');
       if (summary) {
         if (job.run_summary_text) {
-          summary.innerHTML = `<h3>完整用户日志 / run_summary.txt</h3><div class="summary-log">${job.run_summary_text}</div>`;
+          summary.innerHTML = `<h3>Full user log / run_summary.txt</h3><div class="summary-log">${job.run_summary_text}</div>`;
         } else {
           summary.innerHTML = '';
         }
@@ -1646,7 +1646,7 @@ INDEX_HTML = r"""<!doctype html>
     async function sendHumanInput(text, kind = '') {
       const log = $('runLog');
       if (!state.jobId) {
-        if (log) log.textContent += '\n[web] 还没有正在运行的 human job。';
+        if (log) log.textContent += '\n[web] No running human job is available yet.';
         return;
       }
       await api('/api/job_input', {
@@ -1663,7 +1663,7 @@ INDEX_HTML = r"""<!doctype html>
     (async function boot() {
       await loadPersonas();
       await loadRuns();
-    })().catch(err => $('app').textContent = `加载失败：${err.message}`);
+    })().catch(err => $('app').textContent = `Load failed: ${err.message}`);
   </script>
 </body>
 </html>"""

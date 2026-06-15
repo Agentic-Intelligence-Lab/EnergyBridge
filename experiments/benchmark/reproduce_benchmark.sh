@@ -1,12 +1,12 @@
 #!/bin/bash
-# EnergyBridge Benchmark — 一键复现脚本
-# 3 城市 × 2 建筑 × 2 方法 = 12 EnergyPlus 仿真
+# EnergyBridge Benchmark - one-command reproduction script
+# 3 cities x 2 buildings x 2 methods = 12 EnergyPlus simulations
 #
-# 使用方法:
-#   bash reproduce_benchmark.sh          # 全量运行（清除旧结果）
-#   bash reproduce_benchmark.sh --resume  # 跳过已完成的场景
+# Usage:
+#   bash reproduce_benchmark.sh           # full run; clears old office results
+#   bash reproduce_benchmark.sh --resume  # skip completed scenarios
 #
-# 依赖:
+# Dependencies:
 #   conda activate energybridge
 #   EnergyPlus-24-1-0 at /home/hku_user/EnergyPlus-24-1-0/
 #   EPW files at /home/ha_agent/work/supporting/weather/epw/

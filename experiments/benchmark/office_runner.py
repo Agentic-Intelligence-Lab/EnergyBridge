@@ -151,7 +151,7 @@ class _OfficeLoop:
 
 def run_office(mode="pmv", idf_path=DEFAULT_OFFICE_IDF, epw_path=DEFAULT_OFFICE_EPW,
                output_dir=None, weather_label="",
-               user_pref="请在保证舒适的前提下节省能源"):
+               user_pref="Please save energy while keeping occupants comfortable."):
     if output_dir is None:
         output_dir = BENCHMARK_DIR/"results"/f"office_{mode}_{weather_label}"
     output_dir = Path(output_dir)

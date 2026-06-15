@@ -2,7 +2,7 @@
 from __future__ import annotations
 import os, sys, json, shutil
 
-# Fix Windows GBK encoding for Unicode characters (✓ ✗ ⚠)
+# Fix Windows GBK encoding for Unicode status characters.
 if sys.platform == 'win32':
     try:
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -379,7 +379,7 @@ def run_family_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
 def _print_prev_day_completion(suite, day_idx: int, day_num: int) -> None:
     """Print appliance task completion for day_num at next morning check."""
     results = suite.all_results()
-    print(f"  [Day {day_num} 任务完成评估]")
+    print(f"  [Day {day_num} task completion check]")
     any_shown = False
     for nm in ("washer", "dishwasher", "dryer"):
         days_list = results.get(nm, [])
@@ -391,29 +391,29 @@ def _print_prev_day_completion(suite, day_idx: int, day_num: int) -> None:
         any_shown = True
         sched_hod = int(dr.get("scheduled_abs_h", 0) % 24)
         if dr.get("skipped"):
-            status = "✗ 跳过任务 [agent issued skip — task NOT done]"
+            status = "x skipped task [agent issued skip; task NOT done]"
         elif not dr.get("completed"):
-            status = "✗ 未完成 [scheduled but never ran]"
+            status = "x not completed [scheduled but never ran]"
         elif dr.get("ran_during_vpp"):
-            status = f"⚠  完成@{sched_hod:02d}:00 [在VPP窗口内运行, 未错峰]"
+            status = f"! completed@{sched_hod:02d}:00 [ran inside VPP window; not shifted]"
         else:
-            status = f"✓  完成@{sched_hod:02d}:00 [错峰完成]"
+            status = f"ok completed@{sched_hod:02d}:00 [shifted away from VPP]"
         print(f"    {nm:<14}: {status}")
     wh_days = results.get("water_heater", [])
     if wh_days and day_idx < len(wh_days) and wh_days[day_idx].get("present", False):
         wh = wh_days[day_idx]
         any_shown = True
-        ph   = "预热✓" if wh.get("preheat_used") else "预热✗"
-        rb   = "浴前就绪✓" if wh.get("ready_at_bath", True) else "浴前就绪✗"
-        vfl  = " ⚠VPP中加热" if wh.get("ran_during_vpp") else ""
+        ph   = "preheat=yes" if wh.get("preheat_used") else "preheat=no"
+        rb   = "ready_before_bath=yes" if wh.get("ready_at_bath", True) else "ready_before_bath=no"
+        vfl  = " ! heated_in_VPP" if wh.get("ran_during_vpp") else ""
         print(f"    {'water_heater':<14}: {ph}  {rb}{vfl}  ({wh.get('energy_kwh', 0):.1f}kWh)")
     ev_days = results.get("ev", [])
     if ev_days and day_idx < len(ev_days) and ev_days[day_idx].get("present", False):
         ev = ev_days[day_idx]
         any_shown = True
-        tgt  = "SOC达标✓" if ev.get("target_reached") else "SOC未达标✗"
+        tgt  = "SOC_target_met" if ev.get("target_reached") else "SOC_target_missed"
         soc  = ev.get("soc_end", 0)
-        vfl  = " ⚠VPP中充电" if ev.get("ran_during_vpp") else ""
+        vfl  = " ! charged_in_VPP" if ev.get("ran_during_vpp") else ""
         print(f"    {'ev':<14}: {tgt}  SOC={soc:.0%}{vfl}  ({ev.get('energy_kwh', 0):.1f}kWh)")
     if not any_shown:
         print(f"    (no controllable appliances in this household)")
@@ -1390,7 +1390,7 @@ def _write_appliance_actuators(ex, s, loop, powers: dict, sim_h: float) -> None:
 
 def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
                      output_dir=None, weather_label="",
-                     user_pref="我希望室内舒适，但也愿意在不影响舒适的前提下节约电力。",
+                     user_pref="I want indoor comfort, but I am also willing to save electricity when comfort is not affected.",
                      appliance_config: dict | None = None,
                      persona_config: dict | None = None,
                      verbose: bool = False,

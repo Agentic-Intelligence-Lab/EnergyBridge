@@ -6,11 +6,11 @@ from __future__ import annotations
 def parse_user_preference(user_input: str) -> dict:
     text = (user_input or "").lower()
 
-    comfort_keywords = ["comfort", "comfortable", "舒服", "舒适"]
-    cost_keywords = ["save", "cheap", "省电", "便宜"]
-    grid_keywords = ["grid", "demand response", "电网", "削峰", "需求响应"]
-    pre_cool_keywords = ["pre-cool", "pre cool", "pre_cooling", "预冷"]
-    drift_keywords = ["drift", "float", "波动", "温漂"]
+    comfort_keywords = ["comfort", "comfortable"]
+    cost_keywords = ["save", "savings", "cheap"]
+    grid_keywords = ["grid", "demand response", "peak shaving"]
+    pre_cool_keywords = ["pre-cool", "pre cool", "pre_cooling", "pre-cooling"]
+    drift_keywords = ["drift", "float"]
 
     comfort_priority = 0.5
     cost_priority = 0.3
@@ -28,12 +28,12 @@ def parse_user_preference(user_input: str) -> dict:
     cost_priority /= total
     grid_priority /= total
 
-    allow_pre_cooling = any(k in text for k in pre_cool_keywords) or ("短时间" in user_input)
-    allow_temp_drift = any(k in text for k in drift_keywords) or ("短时间" in user_input)
+    allow_pre_cooling = any(k in text for k in pre_cool_keywords) or ("briefly" in text)
+    allow_temp_drift = any(k in text for k in drift_keywords) or ("briefly" in text)
 
     preferred_temp_min = 24.0
     preferred_temp_max = 26.0
-    strong_comfort_mentioned = "very comfortable" in text or "非常舒服" in user_input
+    strong_comfort_mentioned = "very comfortable" in text
     if strong_comfort_mentioned:
         preferred_temp_min = 23.5
         preferred_temp_max = 25.5
@@ -50,8 +50,8 @@ def parse_user_preference(user_input: str) -> dict:
             "comfort_priority": any(k in text for k in comfort_keywords),
             "cost_priority": any(k in text for k in cost_keywords),
             "grid_priority": any(k in text for k in grid_keywords),
-            "allow_pre_cooling": any(k in text for k in pre_cool_keywords) or ("短时间" in user_input),
-            "allow_temp_drift": any(k in text for k in drift_keywords) or ("短时间" in user_input),
+            "allow_pre_cooling": any(k in text for k in pre_cool_keywords) or ("briefly" in text),
+            "allow_temp_drift": any(k in text for k in drift_keywords) or ("briefly" in text),
             "preferred_temp_bounds": strong_comfort_mentioned,
         },
     }

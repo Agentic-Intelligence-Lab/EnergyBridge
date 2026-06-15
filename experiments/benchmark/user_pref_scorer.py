@@ -453,7 +453,7 @@ def build_vpp_preference_memory_notes(past_events: list | None, persona: dict | 
     return deduped[:5]
 
 
-def _strategy_appliance_plan_cn(
+def _strategy_appliance_plan_text(
     strategy_id: str,
     presence: dict,
     vpp_context: dict | None = None,
@@ -465,36 +465,46 @@ def _strategy_appliance_plan_cn(
     low_disruption = _low_disruption_strategy_language(persona)
     parts = []
     if _profile_controllable(presence, "washer"):
-        parts.append("洗衣机错峰")
+        parts.append("shift washer away from VPP")
     if _profile_controllable(presence, "dishwasher"):
-        parts.append("洗碗机错峰")
+        parts.append("shift dishwasher away from VPP")
     if _profile_controllable(presence, "dryer"):
-        parts.append("烘干机错峰")
+        parts.append("shift dryer away from VPP")
     if _profile_controllable(presence, "water_heater"):
-        parts.append(f"热水器{_fmt_hour_for_window(start_h)}前预热")
+        parts.append(f"finish water-heater preheat before {_fmt_hour_for_window(start_h)}")
     if _profile_controllable(presence, "ev"):
-        parts.append(f"EV避开{window_text}")
+        parts.append(f"keep EV charging out of {window_text}")
     fixed = _profile_fixed_names(presence)
     if not parts and not fixed:
         return ""
 
     if low_disruption:
         if strategy_id == "A":
-            head = "优先保舒适和例行安排"
+            head = "Protect comfort and routine first"
         elif strategy_id == "B":
-            head = "只做低打扰的温和支援"
+            head = "Use only low-disruption support"
         else:
-            head = "在不打扰例行的前提下支援"
+            head = "Support the event without disrupting routine"
     elif strategy_id == "A":
-        head = "尽量保舒适，电器以温和错峰为主"
+        head = "Prioritize comfort with gentle appliance shifting"
     elif strategy_id == "B":
-        head = "舒适与削峰平衡，电器主动错峰"
+        head = "Balance comfort and peak reduction with active shifting"
     else:
-        head = "优先削峰，电器尽量后移"
-    text = f"{head}：" + ("，".join(parts) if parts else "仅调整可控空调/负荷")
+        head = "Prioritize peak reduction and move controllable loads"
+    text = f"{head}: " + (", ".join(parts) if parts else "adjust only controllable HVAC/load")
     if fixed:
-        text += "；固定电器不调整(" + "，".join(fixed) + ")"
+        text += "; keep fixed appliances unchanged (" + ", ".join(fixed) + ")"
     return text
+
+
+def _strategy_appliance_plan_cn(
+    strategy_id: str,
+    presence: dict,
+    vpp_context: dict | None = None,
+    persona: dict | None = None,
+) -> str:
+    """Backward-compatible alias; returns English text despite the old name."""
+    return _strategy_appliance_plan_text(strategy_id, presence, vpp_context, persona)
 
 
 def _strategy_appliance_pref_en(
@@ -574,7 +584,8 @@ def _candidate_trace_items(
             "description": candidate.get("description", ""),
             "tradeoff": candidate.get("tradeoff", ""),
             "user_pref": candidate.get("user_pref", ""),
-            "appliance_plan_cn": _strategy_appliance_plan_cn(sid, presence, vpp_context, persona),
+            "appliance_plan": _strategy_appliance_plan_text(sid, presence, vpp_context, persona),
+            "appliance_plan_cn": _strategy_appliance_plan_text(sid, presence, vpp_context, persona),
             "appliance_pref_en": _strategy_appliance_pref_en(sid, presence, vpp_context, persona),
         })
     return items
@@ -645,22 +656,22 @@ def _align_candidates_to_appliance_profile(
         c["user_pref"] = _strategy_user_pref_for_profile(c, profile, vpp_context, persona)
         if low_disruption:
             if str(c.get("id", "")).upper() == "A":
-                c["label"] = "舒适优先"
-                c["tradeoff"] = "打扰最少，支援有限"
+                c["label"] = "Comfort first"
+                c["tradeoff"] = "Least disruption, limited support"
             elif str(c.get("id", "")).upper() == "B":
-                c["label"] = "温和支援"
-                c["tradeoff"] = "轻微调整，例行不变"
+                c["label"] = "Gentle support"
+                c["tradeoff"] = "Small adjustment, routine unchanged"
             else:
-                c["label"] = "低扰支援"
-                c["tradeoff"] = "支援更强，仍以低打扰为主"
+                c["label"] = "Low-disruption support"
+                c["tradeoff"] = "Stronger support while low disruption"
         desc = str(c.get("description", "")).strip()
         if fixed:
-            fixed_note = "固定电器不动"
-            desc = f"{desc}；{fixed_note}" if desc else fixed_note
+            fixed_note = "fixed appliances unchanged"
+            desc = f"{desc}; {fixed_note}" if desc else fixed_note
         if not controllable and fixed:
-            desc = "只做舒适安全的空调调整；固定电器不动"
+            desc = "Only comfort-safe AC adjustment; fixed appliances unchanged"
         if low_disruption and str(c.get("id", "")).upper() == "C":
-            desc = "在舒适范围内温和支援；不改变固定例行"
+            desc = "Gentle support within comfort range; fixed routine unchanged"
         c["description"] = desc[:64]
         c["_profile_aligned"] = True
         aligned.append(c)
@@ -751,7 +762,7 @@ def get_user_preference_input(
             str(c.get('id', '')).upper(), appliance_presence, vpp_context, persona
         )
         if plan_cn:
-            print(f"  │      电器控制: {plan_cn}")
+            print(f"  │      Appliance control: {plan_cn}")
     print(f"  └{'─'*56}")
 
     # Step 3: Select strategy
@@ -762,9 +773,9 @@ def get_user_preference_input(
     if human_mode:
         # --- Human-in-the-loop: prompt for selection ---
         auto_id = selected["id"]
-        print(f"  ┌─[请选择策略 | VPP event {event_index}]{'─'*28}")
-        print(f"  │  输入 A / B / C 选择策略，或直接输入自定义偏好文字")
-        print(f"  │  直接回车 = 采用自动推荐 [{auto_id}] {selected['label']}")
+        print(f"  ┌─[Choose Strategy | VPP event {event_index}]{'─'*28}")
+        print(f"  │  Enter A / B / C to choose a strategy, or type a custom preference.")
+        print(f"  │  Press Enter = use the auto recommendation [{auto_id}] {selected['label']}")
         print(f"  └{'─'*56}")
         try:
             raw_choice = input("  > ").strip()
@@ -874,27 +885,27 @@ def get_user_preference_input(
 # ---------------------------------------------------------------------------
 _STRATEGY_DEFAULTS = [
     {
-        "id": "A", "label": "舒适优先",
-        "description": "保持设定点25°C，接受较高电耗",
-        "tradeoff": "舒适度最高，电耗偏多",
+        "id": "A", "label": "Comfort first",
+        "description": "Keep the setpoint near 25°C and accept higher energy use.",
+        "tradeoff": "Best comfort, higher energy",
         "user_pref": (
             "Comfort first: please keep the temperature at 25°C. "
             "I'm willing to use more energy to stay comfortable during this VPP event."
         ),
     },
     {
-        "id": "B", "label": "平衡策略",
-        "description": "升温至26°C，家电提前完成或延后",
-        "tradeoff": "轻微温漂，节电约15%",
+        "id": "B", "label": "Balanced",
+        "description": "Raise to 26°C and finish or defer shiftable appliances.",
+        "tradeoff": "Small drift, about 15% savings",
         "user_pref": (
             "Balanced: I'm okay with a brief setpoint rise to 26°C and shifting "
             "shiftable appliances away from the VPP window to reduce peak load."
         ),
     },
     {
-        "id": "C", "label": "节能优先",
-        "description": "升温至27°C，所有可平移家电延迟至VPP后",
-        "tradeoff": "明显温漂，节电约30%",
+        "id": "C", "label": "Energy first",
+        "description": "Raise to 27°C and delay all shiftable appliances until after VPP.",
+        "tradeoff": "Noticeable drift, about 30% savings",
         "user_pref": (
             "Energy saving first: please raise the setpoint to 27°C and delay all "
             "shiftable appliances past the VPP window — I can tolerate the warmth."
@@ -968,9 +979,9 @@ def generate_vpp_strategy_candidates(
             "For fixed/non-DR-adjustable appliances, do not imply the controller can move them; describe them as fixed constraints. "
             'Return ONLY a JSON array of exactly 3 objects, each with keys: '
             '"id" ("A"/"B"/"C"), '
-            '"label" (Chinese label ≤6 chars), '
-            '"description" (Chinese action summary ≤64 chars), '
-            '"tradeoff" (Chinese tradeoff ≤30 chars), '
+            '"label" (short English label), '
+            '"description" (English action summary ≤80 chars), '
+            '"tradeoff" (English tradeoff ≤60 chars), '
             '"user_pref" (English preference statement ≤140 chars, will be injected into AC agent prompt).'
         )
         user_msg = (
@@ -1164,21 +1175,21 @@ def score_user_preference(
     # Human-in-the-loop scoring: print event summary and ask for terminal input
     if human_mode:
         sp_str = f"{agent_setpoint_c:.1f}°C" if agent_setpoint_c else f"{mean_temp_c:.1f}°C"
-        print(f"  ╔═[VPP事件{event_index} 满意度评分]{'═'*36}")
-        print(f"  ║  VPP期间室内均温: {mean_temp_c:.1f}°C   设定点: {sp_str}")
-        print(f"  ║  今日用电: {energy_kwh_per_day:.2f} kWh   舒适达标率: {pmv_ok_fraction*100:.0f}%")
+        print(f"  ╔═[VPP Event {event_index} Satisfaction Score]{'═'*32}")
+        print(f"  ║  VPP-window mean indoor temp: {mean_temp_c:.1f}°C   setpoint: {sp_str}")
+        print(f"  ║  Today's energy: {energy_kwh_per_day:.2f} kWh   comfort pass rate: {pmv_ok_fraction*100:.0f}%")
         if calendar_context.get("available"):
-            print(f"  ║  日程约束: {calendar_context.get('summary', '')[:80]}")
+            print(f"  ║  Calendar constraints: {calendar_context.get('summary', '')[:80]}")
         if agent_reason:
-            print(f"  ║  Agent理由: {agent_reason[:100]}")
+            print(f"  ║  Agent rationale: {agent_reason[:100]}")
         print(f"  ╚{'═'*52}")
-        print("  请对本次VPP处理结果评分（1=非常不满 / 5=非常满意），直接回车=3：")
+        print("  Rate this VPP handling (1=very dissatisfied / 5=very satisfied), press Enter=3:")
         try:
             raw_score = input("  > ").strip()
             score = max(1, min(5, int(raw_score))) if raw_score.isdigit() else 3
         except (EOFError, KeyboardInterrupt):
             score = 3
-        print("  可选：留下简短反馈（直接回车跳过）：")
+        print("  Optional: leave brief feedback, or press Enter to skip:")
         try:
             comment = input("  > ").strip()
         except (EOFError, KeyboardInterrupt):

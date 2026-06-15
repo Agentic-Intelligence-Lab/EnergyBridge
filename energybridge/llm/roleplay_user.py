@@ -84,14 +84,14 @@ class RoleplayUserSimulator:
             "Past turn summary:\n"
             f"{json.dumps(history_summary, ensure_ascii=False)}\n\n"
             "Return a JSON object with fields: user_input, hidden_goal, reveal_focus. "
-            "The user_input should be 1 to 2 natural sentences in the persona's preferred language. "
+            "The user_input should be 1 to 2 natural English sentences. "
             "Do not reveal every stable preference every turn. Reveal only one or two aspects naturally. "
             "Prefer revealing an aspect the system memory does not seem to have learned yet. "
-            "When talking about comfort, use words such as 舒服, 舒适, comfort, or comfortable. "
-            "When talking about cost, use words such as 省电, 便宜, save, or cheap. "
-            "When talking about grid support, use words such as 电网, 削峰, 需求响应, grid, or demand response. "
-            "When talking about pre-cooling, use 预冷 or pre-cooling. "
-            "When talking about temperature drift, use 温漂, 波动, drift, or float."
+            "When talking about comfort, use words such as comfort or comfortable. "
+            "When talking about cost, use words such as save, savings, or cheap. "
+            "When talking about grid support, use words such as grid, peak shaving, or demand response. "
+            "When talking about pre-cooling, use pre-cooling. "
+            "When talking about temperature drift, use drift or float."
         )
         return self._call_json(system_prompt, user_prompt)
 

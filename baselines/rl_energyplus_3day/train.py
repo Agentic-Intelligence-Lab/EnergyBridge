@@ -137,39 +137,39 @@ def write_summary(output: Path, summary: dict) -> None:
     capacity = summary["mean_vpp_capacity"]
     event_lines = []
     for event in summary["action_events"]:
-        fmt = lambda value: "未启动" if value is None else f"{int(value // 24) + 1}日 {value % 24:05.2f}h"
+        fmt = lambda value: "not started" if value is None else f"Day {int(value // 24) + 1} {value % 24:05.2f}h"
         event_lines.append(
-            f"  Day{event['day']}设备动作 : washer请求={fmt(event['washer_request_time'])}  "
-            f"实际启动={fmt(event['washer_actual_start_time'])}  "
-            f"EWH请求={fmt(event['ewh_request_time'])}  实际加热={fmt(event['ewh_actual_start_time'])}"
+            f"  Day{event['day']} appliance actions : washer_request={fmt(event['washer_request_time'])}  "
+            f"actual_start={fmt(event['washer_actual_start_time'])}  "
+            f"EWH_request={fmt(event['ewh_request_time'])}  actual_heat={fmt(event['ewh_actual_start_time'])}"
         )
     vpp_action_lines = [
-        f"  VPP{event['event']}实际动作 : 空调={event['cooling_setpoint_c']:.2f}°C  "
-        f"washer={'运行' if event['washer_started'] else '关闭'}  "
-        f"EWH={'加热' if event['ewh_heating'] else '关闭'}"
+        f"  VPP{event['event']} actual actions : AC={event['cooling_setpoint_c']:.2f}°C  "
+        f"washer={'running' if event['washer_started'] else 'off'}  "
+        f"EWH={'heating' if event['ewh_heating'] else 'off'}"
         for event in summary["vpp_actions"]
     ]
     lines = [
         "─" * 62,
-        "  RL EnergyPlus Baseline 关键 Metrics 汇总",
+        "  RL EnergyPlus Baseline Key Metrics Summary",
         "─" * 62,
-        f"  VPP时段用电量 : {summary['vpp_window_energy_kwh']:.3f} kWh",
-        f"  总能耗        : {summary['total_energy_kwh']:.2f} kWh (3天)",
-        f"  满意度均分    : {summary['user_satisfaction']:.1f}/5",
-        "  逐事件评分    : " + "  ".join(
+        f"  VPP-window energy : {summary['vpp_window_energy_kwh']:.3f} kWh",
+        f"  Total energy      : {summary['total_energy_kwh']:.2f} kWh (3 days)",
+        f"  Mean satisfaction : {summary['user_satisfaction']:.1f}/5",
+        "  Per-event scores  : " + "  ".join(
             f"VPP{i+1}:{score:.0f}" for i, score in enumerate(summary["user_pref_scores"])
         ),
-        f"  区域均温      : {summary['mean_indoor_temperature_c']:.2f} °C",
-        f"  PMV达标率     : {summary['pmv_ok_fraction']*100:.1f}%",
-        f"  舒适区达标率  : {summary['comfort_ok_fraction']*100:.1f}% (23-26°C)",
-        f"  洗衣任务完成率: {summary['task_completion_rate']*100:.0f}%",
-        f"  热水器就绪率  : {summary['water_heater_ready_rate']*100:.0f}%",
-        f"  VPP空调设定点 : {actions['cooling_setpoint_c']:.2f}°C",
+        f"  Mean indoor temp  : {summary['mean_indoor_temperature_c']:.2f} °C",
+        f"  PMV pass rate     : {summary['pmv_ok_fraction']*100:.1f}%",
+        f"  Comfort-zone pass : {summary['comfort_ok_fraction']*100:.1f}% (23-26°C)",
+        f"  Washer completion : {summary['task_completion_rate']*100:.0f}%",
+        f"  Water ready rate  : {summary['water_heater_ready_rate']*100:.0f}%",
+        f"  VPP AC setpoint   : {actions['cooling_setpoint_c']:.2f}°C",
         *vpp_action_lines,
         *event_lines,
-        f"  VPP平均容量   : 可承诺{capacity['committable_kw']:.3f}kW  "
-        f"建议上报{capacity['recommended_bid_kw']:.3f}kW  成功率{capacity['success_probability']*100:.1f}%",
-        "  Token消耗     : N/A (RL推理不调用LLM；仅最终role-play评分调用LLM)",
+        f"  VPP mean capacity : committable={capacity['committable_kw']:.3f}kW  "
+        f"recommended_bid={capacity['recommended_bid_kw']:.3f}kW  success_prob={capacity['success_probability']*100:.1f}%",
+        "  Token usage       : N/A (RL inference does not call LLM; only final role-play scoring calls LLM)",
         "─" * 62,
     ]
     (output / "run_summary.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")

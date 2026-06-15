@@ -46,7 +46,7 @@ def _build_round_summary(episode: dict, round_index: int) -> dict:
 
     parts = []
     if episode.get("user_input"):
-        parts.append(f"用户意图: {_compact_text(episode.get('user_input'), 80)}")
+        parts.append(f"User intent: {_compact_text(episode.get('user_input'), 80)}")
 
     if user_preferences:
         preference_bits = []
@@ -54,11 +54,11 @@ def _build_round_summary(episode: dict, round_index: int) -> dict:
             if field in user_preferences:
                 preference_bits.append(f"{field}={user_preferences[field]}")
         if preference_bits:
-            parts.append("偏好: " + ", ".join(preference_bits))
+            parts.append("Preferences: " + ", ".join(preference_bits))
 
     if grid_demand:
         parts.append(
-            "电网信号: "
+            "Grid signal: "
             + ", ".join(
                 [
                     f"type={grid_demand.get('type', 'unknown')}",
@@ -70,7 +70,7 @@ def _build_round_summary(episode: dict, round_index: int) -> dict:
 
     if control_plan:
         parts.append(
-            "控制: "
+            "Control: "
             + ", ".join(
                 [
                     f"action={control_plan.get('action', 'unknown')}",
@@ -81,10 +81,10 @@ def _build_round_summary(episode: dict, round_index: int) -> dict:
         )
 
     if safety_report:
-        parts.append(f"安全: {'通过' if safety_report.get('safe', False) else '拒绝'}")
+        parts.append(f"Safety: {'passed' if safety_report.get('safe', False) else 'rejected'}")
 
     if episode.get("final_response"):
-        parts.append(f"结论: {_compact_text(episode.get('final_response'), 100)}")
+        parts.append(f"Conclusion: {_compact_text(episode.get('final_response'), 100)}")
 
     return {
         "round_index": round_index,
@@ -111,12 +111,12 @@ def _build_session_summary(memory: dict) -> dict:
         for index, episode in enumerate(episodic_logs[-4:-1], start=max(1, len(episodic_logs) - 3))
     ]
 
-    parts = [f"当前轮: {current_round_summary.get('summary_text', '')}"]
+    parts = [f"Current round: {current_round_summary.get('summary_text', '')}"]
     if rolling_round_summaries:
         parts.append(
-            "最近3轮: "
+            "Recent 3 rounds: "
             + " || ".join(
-                f"第{summary.get('round_index', '?')}轮 {summary.get('summary_text', '')}"
+                f"round {summary.get('round_index', '?')} {summary.get('summary_text', '')}"
                 for summary in rolling_round_summaries
             )
         )
@@ -127,7 +127,7 @@ def _build_session_summary(memory: dict) -> dict:
             if field in stable_preferences:
                 stable_bits.append(f"{field}={stable_preferences[field]}")
         if stable_bits:
-            parts.append("稳定画像: " + ", ".join(stable_bits))
+            parts.append("Stable profile: " + ", ".join(stable_bits))
 
     return {
         "summary_text": " | ".join(parts),

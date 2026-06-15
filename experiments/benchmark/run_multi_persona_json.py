@@ -109,7 +109,7 @@ def _make_patched_functions(pool: DiscussionPool, transcripts: dict, orig_score:
     ) -> str:
         n = len(pool.agents)
         print(f"\n  {'='*62}")
-        print(f"  [多用户讨论] VPP事件{event_index} — {n}位家庭成员讨论策略偏好")
+        print(f"  [Multi-user discussion] VPP event {event_index} - {n} household members discuss strategy preference")
         print(f"  {'='*62}")
         pref, transcript = pool.discuss_strategy(event_index, vpp_context, past_events)
         transcripts.setdefault("strategy", {})[event_index] = transcript
@@ -135,7 +135,7 @@ def _make_patched_functions(pool: DiscussionPool, transcripts: dict, orig_score:
         # Agent scoring: household discussion
         n = len(pool.agents)
         print(f"\n  {'='*62}")
-        print(f"  [多用户讨论] VPP事件{event_index}结束 — {n}位家庭成员评分讨论")
+        print(f"  [Multi-user discussion] VPP event {event_index} ended - {n} household members discuss score")
         print(f"  {'='*62}")
         outcome = {
             "setpoint": agent_setpoint_c,
@@ -146,8 +146,8 @@ def _make_patched_functions(pool: DiscussionPool, transcripts: dict, orig_score:
         score, reason, transcript = pool.discuss_score(outcome, event_index)
         transcripts.setdefault("score", {})[event_index] = transcript
 
-        label_map = {1: "非常不满", 2: "不满意", 3: "一般", 4: "满意", 5: "非常满意"}
-        label = label_map.get(round(score), "一般")
+        label_map = {1: "very_dissatisfied", 2: "dissatisfied", 3: "neutral", 4: "satisfied", 5: "very_satisfied"}
+        label = label_map.get(round(score), "neutral")
         return {
             "score": score, "label": label, "comment": reason,
             "source": "multi_agent_discussion",
@@ -192,18 +192,18 @@ def _vpp_ratio_simple(rd: dict) -> str:
             met = "✓" if r <= 1.0 else "✗"
             parts.append(f"{vid}:{r:.2f}{met}")
     agg = rd.get("vpp_demand_achievement_ratio")
-    agg_str = f"  (总体{agg:.2f})" if isinstance(agg, float) else ""
+    agg_str = f"  (overall {agg:.2f})" if isinstance(agg, float) else ""
     return ("  ".join(parts) + agg_str) if parts else "N/A"
 
 
 
 def _appliance_goal_lines(rd: dict) -> list[str]:
     labels = {
-        "washer": "洗衣机达标",
-        "dishwasher": "洗碗机达标",
-        "dryer": "烘干机达标",
-        "water_heater": "热水器达标",
-        "ev": "EV充电达标",
+        "washer": "washer target met",
+        "dishwasher": "dishwasher target met",
+        "dryer": "dryer target met",
+        "water_heater": "water-heater target met",
+        "ev": "EV charging target met",
     }
     rates = rd.get("appliance_goal_attainment_rates") or {}
     lines: list[str] = []
@@ -218,15 +218,15 @@ def _fmt_discussion_block(transcript: list, n_members: int,
     """Render one discussion block (strategy or score) as lines.
 
     transcript: list of {"name": str, "text": str}
-    block_type: "策略讨论" or "满意度讨论"
-    consensus_line: the └→ line to append
+    block_type: "strategy discussion" or "satisfaction discussion"
+    consensus_line: the final consensus line to append
     """
     if not transcript:
         return []
     n_rounds = max(1, (len(transcript) + n_members - 1) // n_members)
-    lines = [f"  ┌─ {block_type} ({n_rounds}轮 · {n_members}人) {'─' * (54 - len(block_type))}"]
+    lines = [f"  ┌─ {block_type} ({n_rounds} rounds · {n_members} members) {'─' * (54 - len(block_type))}"]
     for ri in range(n_rounds):
-        rlabel = "初始意见" if ri == 0 else f"第{ri + 1}轮"
+        rlabel = "initial opinions" if ri == 0 else f"round {ri + 1}"
         lines.append(f"  │  [{rlabel}]")
         for mi in range(n_members):
             idx = ri * n_members + mi
@@ -251,10 +251,10 @@ def _write_multi_run_summary(
     """Generate human-readable run_summary.txt for multi-persona household run.
 
     Structure per VPP event:
-      策略讨论 (N轮 * M人) → 共识偏好
-      执行策略 (AC + appliances)
-      VPP需求 achievement
-      满意度讨论 (N轮 * M人) → 共识评分
+      Strategy discussion (N rounds * M members) -> consensus preference
+      Execution strategy (AC + appliances)
+      VPP demand achievement
+      Satisfaction discussion (N rounds * M members) -> consensus score
     """
     import datetime
 
@@ -277,24 +277,24 @@ def _write_multi_run_summary(
     # ── Header ────────────────────────────────────────────────────────────
     lines += [
         SEP2,
-        "  EnergyBridge 多用户家庭运行摘要  (run_summary.txt)",
+        "  EnergyBridge Multi-user Household Run Summary  (run_summary.txt)",
         SEP2,
-        f"  家庭成员   : {n_members}人  {'  |  '.join(member_names)}",
-        f"  城市       : {city}",
-        f"  生成时间   : {now}",
-        f"  输出目录   : {output_dir}",
+        f"  Household members : {n_members}  {'  |  '.join(member_names)}",
+        f"  City              : {city}",
+        f"  Generated         : {now}",
+        f"  Output dir        : {output_dir}",
     ]
-    _appl_names = {"washer": "洗衣机", "dishwasher": "洗碗机", "dryer": "烘干机",
-                   "water_heater": "热水器", "ev": "EV充电桩"}
+    _appl_names = {"washer": "washer", "dishwasher": "dishwasher", "dryer": "dryer",
+                   "water_heater": "water_heater", "ev": "EV charger"}
     _first_summ = evts[0].get("appliance_summary", {}) if evts else {}
     _pstr = " | ".join(_appl_names.get(k, k) for k, v in _first_summ.items()
-                       if v.get("present")) or "(无)"
+                       if v.get("present")) or "(none)"
     _astr = " | ".join(_appl_names.get(k, k) for k, v in _first_summ.items()
-                       if not v.get("present")) or "(无)"
-    lines += [f"  本户电器   : ✓ 已有: {_pstr}   ✗ 未配置: {_astr}", SEP]
+                       if not v.get("present")) or "(none)"
+    lines += [f"  Appliances        : present: {_pstr}   not configured: {_astr}", SEP]
 
     # ── Member profiles ───────────────────────────────────────────────────
-    lines += ["  成员档案", SEP]
+    lines += ["  Member profiles", SEP]
     for i, p in enumerate(persona_data, 1):
         w  = p.get("preferences", {}).get("scoring_weights", {})
         cw = int(w.get("comfort", 0.5) * 100)
@@ -304,8 +304,8 @@ def _write_multi_run_summary(
                 or p.get("llm_prompts", {}).get("system_prompt", ""))[:90]
         lines += [
             f"  [{i}] {p.get('display_name', p['id'])}",
-            f"      权重: 舒适{cw}% · 节能{ew}% · VPP{vw}%",
-            f"      简介: \"{desc}\"",
+            f"      Weights: comfort {cw}% · energy {ew}% · VPP {vw}%",
+            f"      Profile: \"{desc}\"",
             "",
         ]
 
@@ -315,7 +315,7 @@ def _write_multi_run_summary(
         {"id": "vpp2", "day": 2, "trigger_h": 42.0, "end_h": 43.0},
         {"id": "vpp3", "day": 3, "trigger_h": 66.0, "end_h": 67.0},
     ]
-    lines += [SEP, "  VPP 事件详情（讨论 → 共识 → 执行 → 评分）", SEP]
+    lines += [SEP, "  VPP Event Details (discussion -> consensus -> execution -> score)", SEP]
     for ev_num, vdef in enumerate(VPP_DEFS, 1):
         vid = vdef["id"]
         e   = next((x for x in evts if x.get("id") == vid), {})
@@ -334,10 +334,10 @@ def _write_multi_run_summary(
         a_kwh = e.get("actual_kwh")
         if a_kwh is not None and t_kwh is not None and t_kwh > 0:
             ratio = round(a_kwh / t_kwh, 2)
-            met   = "✓达标" if ratio <= 1.0 else "✗未达标"
-            demand_str = f"目标≤{t_kwh:.2f}kWh  实际{a_kwh:.3f}kWh  比率{ratio:.2f} {met}"
+            met   = "met" if ratio <= 1.0 else "not met"
+            demand_str = f"target<={t_kwh:.2f}kWh  actual={a_kwh:.3f}kWh  ratio={ratio:.2f} {met}"
         elif t_kwh is not None:
-            demand_str = f"目标≤{t_kwh:.2f}kWh"
+            demand_str = f"target<={t_kwh:.2f}kWh"
         else:
             demand_str = "N/A"
 
@@ -348,9 +348,9 @@ def _write_multi_run_summary(
                     or transcripts.get("score",    {}).get(str(ev_num), []))
 
         lines.append(
-            f"  [事件{ev_num}] Day{vdef['day']} "
+            f"  [Event {ev_num}] Day{vdef['day']} "
             f"{_fmt_h_multi(vdef['trigger_h'])}-{_fmt_h_multi(vdef['end_h'])}"
-            f"  目标：需求侧削峰1小时"
+            f"  objective: demand-side peak shaving for 1 hour"
         )
         lines.append("")
 
@@ -360,60 +360,60 @@ def _write_multi_run_summary(
             or transcripts.get("strategy_consensus", {}).get(str(ev_num))
             or user_input
         )
-        consensus_pref = (f"  └→ 共识偏好: {_consensus_text[:100]}"
-                          if _consensus_text else "  └─ (共识偏好未记录)")
-        lines += _fmt_discussion_block(strat_tr, n_members, "策略讨论", consensus_pref)
+        consensus_pref = (f"  └-> Consensus preference: {_consensus_text[:100]}"
+                          if _consensus_text else "  └- (consensus preference not recorded)")
+        lines += _fmt_discussion_block(strat_tr, n_members, "strategy discussion", consensus_pref)
         lines.append("")
 
         # 2. Execution strategy (AC + appliances)
         _pdev = {k for k, v in e.get("appliance_summary", {}).items() if v.get("present")}
-        lines.append(f"    执行策略 ↓ (全天{len(day_decisions)}次LLM决策):")
+        lines.append(f"    Executed strategy (all-day {len(day_decisions)} LLM decisions):")
         if _fmt_strategy:
             lines += _fmt_strategy(sp_str, trigger_actions, day_decisions,
                                    present_devices=_pdev)
         else:
-            lines.append(f"    └ 空调: {sp_str}")
+            lines.append(f"    └ AC: {sp_str}")
         lines += [
-            f"    VPP需求    : {demand_str}",
-            f"    Agent理由  : {agent_reason[:80]}",
+            f"    VPP demand      : {demand_str}",
+            f"    Agent rationale : {agent_reason[:80]}",
             "",
         ]
 
         # 3. Score discussion → consensus score
-        score_str = (f"{score:.1f}/5 — {comment}" if score is not None else "N/A")
-        consensus_score = f"  └→ 共识评分: {score_str}"
-        lines += _fmt_discussion_block(score_tr, n_members, "满意度讨论", consensus_score)
+        score_str = (f"{score:.1f}/5 - {comment}" if score is not None else "N/A")
+        consensus_score = f"  └-> Consensus score: {score_str}"
+        lines += _fmt_discussion_block(score_tr, n_members, "satisfaction discussion", consensus_score)
         lines += ["", SEP]
 
     # ── Overall metrics ────────────────────────────────────────────────────
-    lines += ["  总体指标", SEP]
+    lines += ["  Overall metrics", SEP]
     vpp_e  = rd.get("vpp_window_energy_kwh", rd.get("vpp_energy_kwh_total"))
     scores = rd.get("user_pref_scores", [])
     avg_sc = rd.get("user_pref_score")
     per_day = rd.get("task_completion_per_day", [])
     per_day_shift = rd.get("task_shift_success_per_day", [])
-    scores_str = "  ".join(f"事件{i+1}:{s:.1f}" for i, s in enumerate(scores))
+    scores_str = "  ".join(f"Event{i+1}:{s:.1f}" for i, s in enumerate(scores))
     per_day_str = "  ".join(f"Day{i+1}:{int(v*100)}%" for i, v in enumerate(per_day)) if per_day else "N/A"
     per_day_shift_str = "  ".join(f"Day{i+1}:{int(v*100)}%" for i, v in enumerate(per_day_shift)) if per_day_shift else "N/A"
     lines += [
-        f"  VPP时段用电量   : {f'{vpp_e:.3f} kWh (3事件合计)' if isinstance(vpp_e, (int, float)) else 'N/A'}",
-        f"  需求达成比率    : {_vpp_ratio_simple(rd)}",
-        f"  完成率(逐天)    : {per_day_str}",
-        f"  平移成功率(逐天): {per_day_shift_str}",
-        f"  任务完成率      : {rd.get('appliance_task_completion_rate', 1.0)*100:.0f}%"
-        f"  (✓=错峰完成 ✗=跳过任务/未完成)",
-        f"  平移成功率      : {rd.get('appliance_shift_success_rate', 0.0)*100:.0f}%"
-        f"  (分母=全部在户可平移电器任务；分子=完成且不在VPP运行)",
-        f"  错峰率          : {rd.get('appliance_vpp_avoidance_rate', 0.0)*100:.0f}%"
-        f"  (分母=已完成任务；用于衡量完成后是否避开VPP)",
-        f"  总用电量        : {rd.get('energy_kwh_total', 0):.3f} kWh",
-        f"  日均用电量      : {rd.get('energy_kwh_per_day', 0):.3f} kWh/day",
-        f"  PMV舒适达标率   : {rd.get('pmv_ok_fraction', 0):.1%}",
-        f"  平均室温        : {rd.get('mean_temp_c', 0):.2f}°C",
+        f"  VPP-window energy    : {f'{vpp_e:.3f} kWh (3 events total)' if isinstance(vpp_e, (int, float)) else 'N/A'}",
+        f"  Demand achievement   : {_vpp_ratio_simple(rd)}",
+        f"  Completion by day    : {per_day_str}",
+        f"  Shift success by day : {per_day_shift_str}",
+        f"  Task completion      : {rd.get('appliance_task_completion_rate', 1.0)*100:.0f}%"
+        f"  (ok=shifted away, x=skipped/not completed)",
+        f"  Shift success        : {rd.get('appliance_shift_success_rate', 0.0)*100:.0f}%"
+        f"  (denominator=all present shiftable appliance tasks; numerator=completed and not run in VPP)",
+        f"  VPP avoidance        : {rd.get('appliance_vpp_avoidance_rate', 0.0)*100:.0f}%"
+        f"  (denominator=completed tasks; measures whether completed tasks avoided VPP)",
+        f"  Total electricity    : {rd.get('energy_kwh_total', 0):.3f} kWh",
+        f"  Daily electricity    : {rd.get('energy_kwh_per_day', 0):.3f} kWh/day",
+        f"  PMV comfort pass     : {rd.get('pmv_ok_fraction', 0):.1%}",
+        f"  Mean indoor temp     : {rd.get('mean_temp_c', 0):.2f}°C",
     ]
     lines += _appliance_goal_lines(rd)
     lines += [
-        f"  共识满意度均值  : {f'{avg_sc:.2f}/5' if avg_sc else 'N/A'}  [{scores_str}]",
+        f"  Mean consensus score : {f'{avg_sc:.2f}/5' if avg_sc else 'N/A'}  [{scores_str}]",
         SEP2,
         "",
     ]
@@ -462,10 +462,10 @@ def main() -> None:
 
     member_list = [p.get("display_name", p["id"]) for p in persona_data]
     print("=" * 70)
-    print("  EnergyBridge 多用户家庭基准测试")
-    print(f"  成员    : {' | '.join(member_list)}")
-    print(f"  讨论轮数: 2 轮/决策点（每轮 {len(agents)} 人依次发言）")
-    print(f"  城市    : {args.city}")
+    print("  EnergyBridge Multi-user Household Benchmark")
+    print(f"  Members : {' | '.join(member_list)}")
+    print(f"  Rounds  : 2 rounds per decision point ({len(agents)} members speak in order each round)")
+    print(f"  City    : {args.city}")
     print(f"  OUTPUT  : {output_dir}")
     print("=" * 70)
 
@@ -473,8 +473,8 @@ def main() -> None:
     household_pref    = _household_pref_text(persona_data)
     present_devs = [k for k, v in merged_appliances.items()
                     if isinstance(v, dict) and v.get("present")]
-    print(f"\n  [家庭设定] {household_pref[:140]}")
-    print(f"  [家电配置] 合并后已有: {present_devs}\n")
+    print(f"\n  [Household setting] {household_pref[:140]}")
+    print(f"  [Appliance config] present after merge: {present_devs}\n")
 
     # Patch user_pref_scorer
     _orig_get_pref = _ups.get_user_preference_input

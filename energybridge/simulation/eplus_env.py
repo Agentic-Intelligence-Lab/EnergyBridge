@@ -25,7 +25,7 @@ Usage
         output_dir="logs/eplus_run",
         eplus_root="/path/to/EnergyPlus-24-1-0",
     )
-    env.inject_vpp_event(vpp_context, user_input="配合削峰")
+    env.inject_vpp_event(vpp_context, user_input="Support peak shaving")
     env.run()                          # blocks until EnergyPlus finishes
     results = env.agent_results        # list of per-event agent outputs
 """
@@ -71,7 +71,7 @@ class VPPEvent:
     """A VPP/DR event injected into the simulation."""
 
     vpp_context: dict[str, Any]
-    user_input: str = "我希望尽量舒服，但如果电网有需求，也可以短时间配合削峰。"
+    user_input: str = "I want to stay comfortable, but I can support short peak-shaving events when the grid needs help."
     # Simulation time (hour of year, 0-based) at which to trigger the event.
     # None means "trigger at the next available timestep".
     trigger_hour: Optional[float] = None
@@ -145,7 +145,7 @@ class EplusEnv:
     def inject_vpp_event(
         self,
         vpp_context: dict[str, Any],
-        user_input: str = "我希望尽量舒服，但如果电网有需求，也可以短时间配合削峰。",
+        user_input: str = "I want to stay comfortable, but I can support short peak-shaving events when the grid needs help.",
         trigger_hour: Optional[float] = None,
     ) -> None:
         """Queue a VPP event to be processed during the simulation.
