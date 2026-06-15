@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import shlex
@@ -101,6 +102,7 @@ def _attach_finished_summary(job_id: str) -> None:
                 try:
                     result_data = json.loads(result_path.read_text(encoding="utf-8"))
                     _apply_meter_vpp_energy(result_data, path.parent)
+                    _normalize_dashboard_result(result_data)
                     updates["benchmark_result"] = result_data
                 except Exception:
                     pass
@@ -306,6 +308,39 @@ def _read_meter_daily_energy(run_path: Path) -> list[dict]:
     ]
 
 
+def _coerce_daily_energy_values(raw) -> list[dict]:
+    if isinstance(raw, dict):
+        items = []
+        for key, value in raw.items():
+            if isinstance(value, dict):
+                item = dict(value)
+                item.setdefault("day", key)
+            else:
+                item = {"day": key, "energy_kwh": value}
+            items.append(item)
+    elif isinstance(raw, list):
+        items = []
+        for idx, value in enumerate(raw, start=1):
+            if isinstance(value, dict):
+                item = dict(value)
+                item.setdefault("day", idx)
+            else:
+                item = {"day": idx, "energy_kwh": value}
+            items.append(item)
+    else:
+        return []
+
+    normalized = []
+    for item in items:
+        try:
+            day = int(item.get("day"))
+            energy = float(item.get("energy_kwh", item.get("total_energy_kwh")))
+        except (TypeError, ValueError):
+            continue
+        normalized.append({"day": day, "energy_kwh": round(energy, 6), "source": item.get("source", "runtime")})
+    return normalized
+
+
 def _apply_meter_vpp_energy(data: dict, run_path: Path) -> None:
     meter_values = _read_meter_vpp_energy(run_path, data.get("vpp_event_log", []))
     if meter_values:
@@ -322,13 +357,53 @@ def _apply_meter_vpp_energy(data: dict, run_path: Path) -> None:
                 event["actual_shed_kwh"] = round(max(0.0, float(baseline_kwh) - actual_kwh), 4)
         if total > 0.0:
             data["vpp_window_energy_kwh"] = round(total, 4)
-    daily_values = _read_meter_daily_energy(run_path)
+    existing_daily_values = _coerce_daily_energy_values(data.get("daily_energy_kwh") or data.get("energy_kwh_per_day"))
+    meter_daily_values = _read_meter_daily_energy(run_path)
+    daily_values = existing_daily_values or meter_daily_values
     if daily_values and not data.get("daily_energy_kwh"):
         data["daily_energy_kwh"] = daily_values
+    if daily_values:
+        daily_by_day = {
+            int(item["day"]): item
+            for item in daily_values
+            if isinstance(item, dict) and str(item.get("day", "")).isdigit()
+        }
+        for event in data.get("vpp_event_log", []) or []:
+            try:
+                day = int(event.get("day"))
+            except (TypeError, ValueError):
+                continue
+            if day in daily_by_day and not event.get("daily_energy_kwh"):
+                event["daily_energy_kwh"] = daily_by_day[day]["energy_kwh"]
+
+
+def _normalize_dashboard_result(data: dict) -> None:
+    """Backfill optional dashboard fields so old/new result JSONs render alike."""
+    for event in data.get("vpp_event_log", []) or []:
+        trace = event.get("strategy_trace") or {}
+        if not event.get("strategy_candidates") and trace.get("candidates"):
+            event["strategy_candidates"] = trace.get("candidates") or []
+        if not event.get("selected_strategy") and trace.get("selected_strategy"):
+            event["selected_strategy"] = trace.get("selected_strategy") or {}
+        event.setdefault("strategy_candidates", [])
+        event.setdefault("selected_strategy", {})
+
+
+def _json_safe(value):
+    """Return browser-parseable JSON data by replacing NaN/Inf with null."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 INDEX_HTML = r"""<!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -841,27 +916,54 @@ INDEX_HTML = r"""<!doctype html>
 
     function dailyTotalEnergyKwh(data, day) {
       const targetDay = Number(day);
-      const daily = data?.daily_energy_kwh || [];
+      const dailyRaw = data?.daily_energy_kwh ?? data?.energy_kwh_per_day ?? [];
+      const daily = Array.isArray(dailyRaw)
+        ? dailyRaw
+        : Object.entries(dailyRaw || {}).map(([key, value]) => (
+            value && typeof value === 'object' ? {day: Number(key), ...value} : {day: Number(key), energy_kwh: Number(value)}
+          ));
       const exact = daily.find((item, idx) => {
         if (typeof item === 'number') return idx + 1 === targetDay;
-        return Number(item.day) === targetDay;
+        return Number(item.day ?? item.date_index) === targetDay;
       });
       if (typeof exact === 'number' && Number.isFinite(Number(exact))) return Number(exact);
       if (exact && Number.isFinite(Number(exact.energy_kwh))) return Number(exact.energy_kwh);
+      if (exact && Number.isFinite(Number(exact.total_energy_kwh))) return Number(exact.total_energy_kwh);
       const priceDaily = data?.day_ahead_price_metrics?.per_day || [];
       const priced = priceDaily.find(item => Number(item.day) === targetDay);
       if (priced && Number.isFinite(Number(priced.energy_kwh))) return Number(priced.energy_kwh);
+      if (priced && Number.isFinite(Number(priced.total_energy_kwh))) return Number(priced.total_energy_kwh);
       return null;
     }
 
     function dayEnergyText(data, ev) {
       const day = ev?.day;
-      const total = dailyTotalEnergyKwh(data, day);
+      const eventDaily = Number.isFinite(Number(ev?.daily_energy_kwh)) ? Number(ev.daily_energy_kwh) : null;
+      const total = eventDaily !== null ? eventDaily : dailyTotalEnergyKwh(data, day);
       const vpp = Number.isFinite(Number(ev?.actual_kwh)) ? Number(ev.actual_kwh) : null;
       if (total !== null && vpp !== null) return `${fmt(total, 1)} kWh today / ${fmt(vpp, 3)} kWh VPP`;
       if (total !== null) return `${fmt(total, 1)} kWh today / VPP waiting`;
       if (vpp !== null) return `today waiting / ${fmt(vpp, 3)} kWh VPP`;
       return 'waiting';
+    }
+
+    function candidateStrategiesFromEvent(ev, decisions) {
+      const trace = ev.strategy_trace || {};
+      const candidates = ev.strategy_candidates || trace.candidates || [];
+      const lines = candidates.map(item => {
+        if (typeof item === 'string') return item;
+        const base = `[${item.id || '?'}] ${item.label || ''} - ${item.description || ''}`;
+        const tradeoff = item.tradeoff ? ` (${item.tradeoff})` : '';
+        const appliancePlan = item.appliance_plan || item.appliance_plan_cn;
+        const appliance = appliancePlan ? ` | Appliance control: ${appliancePlan}` : '';
+        const pref = item.user_pref ? ` | User preference: ${item.user_pref}` : '';
+        return `${base}${tradeoff}${appliance}${pref}`;
+      }).filter(Boolean);
+      if (lines.length) return lines;
+      if (decisions.length) {
+        return decisions.map(item => `${fmt(item.h % 24, 1)}h -> ${fmt(item.sp, 1)}°C | ${item.reason || 'no explanation'}`);
+      }
+      return ['not recorded in this run'];
     }
 
     function metricCardsInner(items) {
@@ -910,19 +1012,13 @@ INDEX_HTML = r"""<!doctype html>
         const decisions = ev.day_decisions || [];
         const lastDecision = decisions[decisions.length - 1] || {};
         const actions = ev.vpp_trigger_actions || lastDecision.actions || lastDecision.raw_appliance_actions || {};
-        const candidateStrategies = (ev.strategy_candidates || []).map(item => {
-          const base = `[${item.id || '?'}] ${item.label || ''} - ${item.description || ''}`;
-          const tradeoff = item.tradeoff ? ` (${item.tradeoff})` : '';
-          const appliancePlan = item.appliance_plan || item.appliance_plan_cn;
-          const appliance = appliancePlan ? ` | Appliance control: ${appliancePlan}` : '';
-          const pref = item.user_pref ? ` | User preference: ${item.user_pref}` : '';
-          return `${base}${tradeoff}${appliance}${pref}`;
-        });
-        const selected = ev.selected_strategy || {};
+        const trace = ev.strategy_trace || {};
+        const selected = ev.selected_strategy || trace.selected_strategy || {};
         const selectedDesc = selected.description ? ` - ${selected.description}` : '';
         const selectedTradeoff = selected.tradeoff ? ` (${selected.tradeoff})` : '';
         const selectedPref = selected.preference_text ? ` | Preference: ${selected.preference_text}` : '';
         const selectedReason = selected.selection_meta?.reason ? ` | Selection reason: ${selected.selection_meta.reason}` : '';
+        const candidateStrategies = candidateStrategiesFromEvent(ev, decisions);
         return {
           key: String(idx + 1),
           label: `Day ${idx + 1}`,
@@ -934,10 +1030,8 @@ INDEX_HTML = r"""<!doctype html>
           energy: dayEnergyText(d, ev),
           selectedStrategy: selected.id
             ? `[${selected.id}] ${selected.label || ''}${selectedDesc}${selectedTradeoff} (${selected.source || ev.source || 'selected'})${selectedPref}${selectedReason}`
-            : (ev.user_input || ev.label || ev.source || 'completed'),
-          strategies: candidateStrategies.length
-            ? candidateStrategies
-            : decisions.map(item => `${fmt(item.h % 24, 1)}h -> ${fmt(item.sp, 1)}°C | ${item.reason || 'no explanation'}`),
+            : (ev.user_input || ev.label || ev.source || 'not recorded in this run'),
+          strategies: candidateStrategies,
           appliances: appliancePlanFromActions(actions),
           notes: [ev.reason, ev.comment].filter(Boolean).slice(-5)
         };
@@ -1131,19 +1225,19 @@ INDEX_HTML = r"""<!doctype html>
           ev.status = 'active';
           ev.notes.push('VPP event started');
         }
-        const candidateHeader = line.match(/\[Strategy Candidates \| VPP event\s+(\d+)\]/);
+        const candidateHeader = line.match(/\[Strategy Candidates\s*\|\s*VPP event\s+(\d+)\]/i);
         if (candidateHeader) {
           candidateEventKey = candidateHeader[1];
           currentEventKey = candidateEventKey;
           currentKey = candidateEventKey;
           ensureEventForKey(currentKey);
         }
-        const candidateMatch = line.match(/│\s+\[([ABC])\]\s+(.+?)\s+(?:—|-)\s+(.+)/);
+        const candidateMatch = line.match(/^(?:[│|]\s*)?\[([ABC])\]\s+(.+)$/);
         if (candidateMatch && candidateEventKey) {
           const ev = ensureEventForKey(candidateEventKey);
-          ev.strategies.push(`[${candidateMatch[1]}] ${candidateMatch[2].trim()} - ${candidateMatch[3].trim()}`);
+          ev.strategies.push(`[${candidateMatch[1]}] ${candidateMatch[2].trim()}`);
         }
-        const candidateApplianceMatch = line.match(/│\s+Appliance control:\s+(.+)/);
+        const candidateApplianceMatch = line.match(/^(?:[│|]\s*)?Appliance control:\s+(.+)/i);
         if (candidateApplianceMatch && candidateEventKey) {
           const ev = ensureEventForKey(candidateEventKey);
           if (ev.strategies.length) {
@@ -1702,9 +1796,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             result_path = run_path / "benchmark_result.json"
             if result_path.exists():
-                data = json.loads(result_path.read_text(encoding="utf-8"))
-                data["method"] = self._canonical_method_id(data.get("method") or self._infer_method_from_run_name(run_path.name))
-                _apply_meter_vpp_energy(data, run_path)
+                try:
+                    data = json.loads(result_path.read_text(encoding="utf-8"))
+                    data["method"] = self._canonical_method_id(data.get("method") or self._infer_method_from_run_name(run_path.name))
+                    _apply_meter_vpp_energy(data, run_path)
+                    _normalize_dashboard_result(data)
+                except Exception as exc:
+                    rel = run_path.relative_to(self.results_dir).as_posix()
+                    data = {
+                        "_run_id": rel,
+                        "output_dir": str(run_path),
+                        "method": self._canonical_method_id(self._infer_method_from_run_name(run_path.name)),
+                        "weather": self._infer_city_from_run_name(run_path.name),
+                        "exit_code": "incomplete",
+                        "vpp_event_log": [],
+                        "error": f"benchmark_result.json could not be loaded yet: {exc}",
+                    }
             else:
                 rel = run_path.relative_to(self.results_dir).as_posix()
                 data = {
@@ -1875,7 +1982,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return run_path
 
     def _send_json(self, data: object) -> None:
-        raw = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        raw = json.dumps(_json_safe(data), ensure_ascii=False, allow_nan=False).encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
@@ -1891,7 +1998,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def _send_error(self, status: HTTPStatus, message: str) -> None:
-        raw = json.dumps({"error": message}, ensure_ascii=False).encode("utf-8")
+        raw = json.dumps({"error": message}, ensure_ascii=False, allow_nan=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
