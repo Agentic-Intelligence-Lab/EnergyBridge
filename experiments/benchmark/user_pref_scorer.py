@@ -28,6 +28,14 @@ BENCH_DIR = Path(__file__).parent
 LOG_DIR   = BENCH_DIR / "logs" / "dialogue"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+class StrategyPreference(str):
+    """String preference text with attached candidate/selection trace metadata."""
+
+    def __new__(cls, text: str, strategy_trace: dict | None = None):
+        obj = str.__new__(cls, text)
+        obj.strategy_trace = strategy_trace or {}
+        return obj
+
 # ---------------------------------------------------------------------------
 # Legacy flat personas (backward compatibility when no persona dict supplied)
 # ---------------------------------------------------------------------------
@@ -551,6 +559,47 @@ def _compose_pref_with_appliances(selected: dict, presence: dict, vpp_context: d
     return f"{base} {tail}"
 
 
+def _candidate_trace_items(
+    candidates: list[dict],
+    presence: dict,
+    vpp_context: dict | None,
+    persona: dict | None,
+) -> list[dict]:
+    items = []
+    for candidate in candidates:
+        sid = str(candidate.get("id", "")).upper()
+        items.append({
+            "id": sid,
+            "label": candidate.get("label", ""),
+            "description": candidate.get("description", ""),
+            "tradeoff": candidate.get("tradeoff", ""),
+            "user_pref": candidate.get("user_pref", ""),
+            "appliance_plan_cn": _strategy_appliance_plan_cn(sid, presence, vpp_context, persona),
+            "appliance_pref_en": _strategy_appliance_pref_en(sid, presence, vpp_context, persona),
+        })
+    return items
+
+
+def _selected_trace_item(
+    selected: dict,
+    *,
+    source: str,
+    preference_text: str,
+    selection_meta: dict | None = None,
+    human_input: str = "",
+) -> dict:
+    return {
+        "id": selected.get("id", ""),
+        "label": selected.get("label", ""),
+        "description": selected.get("description", ""),
+        "tradeoff": selected.get("tradeoff", ""),
+        "source": source,
+        "human_input": human_input,
+        "preference_text": preference_text,
+        "selection_meta": selection_meta or {},
+    }
+
+
 def _strategy_user_pref_for_profile(
     candidate: dict,
     profile: dict,
@@ -668,7 +717,22 @@ def get_user_preference_input(
                 "My comfort is the top priority — please keep it below 26°C if at all possible."
             )
         _log_and_return(log_path, persona, event_index, "override_prefill", override_msg)
-        return override_msg
+        return StrategyPreference(
+            override_msg,
+            {
+                "event_index": event_index,
+                "source": "override_prefill",
+                "candidates": [],
+                "selected_strategy": {
+                    "id": "override",
+                    "label": "override_prefill",
+                    "source": "override_prefill",
+                    "preference_text": override_msg,
+                },
+                "calendar_context": calendar_context_for_event(persona, event_index, vpp_context),
+                "returned_user_pref": override_msg,
+            },
+        )
 
     # Step 1: Generate 3 candidate strategies
     calendar_context = calendar_context_for_event(persona, event_index, vpp_context)
@@ -679,6 +743,7 @@ def get_user_preference_input(
 
     # Step 2: Display all strategies
     appliance_presence = _appliance_control_profile(persona, vpp_context)
+    candidate_trace = _candidate_trace_items(candidates, appliance_presence, vpp_context, persona)
     print(f"  ┌─[Strategy Candidates | VPP event {event_index}]{'─'*30}")
     for c in candidates:
         print(f"  │  [{c['id']}] {c['label']}  —  {c['description']}  ({c['tradeoff']})")
@@ -712,19 +777,46 @@ def get_user_preference_input(
                 selected = override
                 print(f"  [Strategy Selected  | event={event_index}] → [{selected['id']}] {selected['label']} (human)")
                 pref = _compose_pref_with_appliances(selected, appliance_presence, vpp_context)
+                trace = {
+                    "event_index": event_index,
+                    "source": "human",
+                    "candidates": candidate_trace,
+                    "selected_strategy": _selected_trace_item(
+                        selected,
+                        source="human",
+                        preference_text=pref,
+                        human_input=raw_choice,
+                    ),
+                    "calendar_context": calendar_context,
+                    "returned_user_pref": pref,
+                }
                 _log_and_return(log_path, persona, event_index, "strategy_human",
                                 pref, extra={"selected_id": selected["id"], "human_input": raw_choice,
-                                             "candidates": [{k: c[k] for k in ("id","label","description")}
-                                                            for c in candidates]})
-                return pref
+                                             "candidates": candidate_trace,
+                                             "selected_strategy": trace["selected_strategy"]})
+                return StrategyPreference(pref, trace)
         elif raw_choice:
             # custom free-text preference
             print(f"  [Strategy Selected  | event={event_index}] → [custom] (human)")
+            trace = {
+                "event_index": event_index,
+                "source": "human_custom",
+                "candidates": candidate_trace,
+                "selected_strategy": {
+                    "id": "custom",
+                    "label": "custom",
+                    "source": "human_custom",
+                    "human_input": raw_choice,
+                    "preference_text": raw_choice,
+                },
+                "calendar_context": calendar_context,
+                "returned_user_pref": raw_choice,
+            }
             _log_and_return(log_path, persona, event_index, "strategy_human_custom",
                             raw_choice, extra={"human_input": raw_choice,
-                                               "candidates": [{k: c[k] for k in ("id","label","description")}
-                                                              for c in candidates]})
-            return raw_choice
+                                               "candidates": candidate_trace,
+                                               "selected_strategy": trace["selected_strategy"]})
+            return StrategyPreference(raw_choice, trace)
         else:
             print(f"  [Strategy Selected  | event={event_index}] → [{selected['id']}] {selected['label']} (human→auto)")
 
@@ -755,13 +847,26 @@ def get_user_preference_input(
 
     pref = _compose_pref_with_appliances(selected, appliance_presence, vpp_context)
     mode_tag = "human_auto" if human_mode else roleplay_selection_meta.get("source", "auto")
+    trace = {
+        "event_index": event_index,
+        "source": mode_tag,
+        "candidates": candidate_trace,
+        "selected_strategy": _selected_trace_item(
+            selected,
+            source=mode_tag,
+            preference_text=pref,
+            selection_meta=roleplay_selection_meta,
+        ),
+        "calendar_context": calendar_context,
+        "returned_user_pref": pref,
+    }
     _log_and_return(log_path, persona, event_index, f"strategy_{mode_tag}",
                     pref, extra={"selected_id": selected["id"],
                                  "selection_meta": roleplay_selection_meta,
                                  "calendar_context": calendar_context,
-                                 "candidates": [{k: c[k] for k in ("id","label","description")}
-                                                for c in candidates]})
-    return pref
+                                 "candidates": candidate_trace,
+                                 "selected_strategy": trace["selected_strategy"]})
+    return StrategyPreference(pref, trace)
 
 
 # ---------------------------------------------------------------------------

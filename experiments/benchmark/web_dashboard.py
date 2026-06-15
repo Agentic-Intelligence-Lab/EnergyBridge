@@ -264,23 +264,67 @@ def _read_meter_vpp_energy(run_path: Path, events_source: list[dict] | None = No
     return {key: round(value, 6) for key, value in values.items() if value > 0.0}
 
 
+def _read_meter_daily_energy(run_path: Path) -> list[dict]:
+    """Read per-day Electricity:Facility kWh from EnergyPlus timestep meters."""
+    mtr_path = run_path / "eplusout.mtr"
+    if not mtr_path.exists():
+        return []
+    values: dict[int, float] = {}
+    in_data = False
+    current_day = None
+    try:
+        with mtr_path.open(errors="ignore") as f:
+            for raw in f:
+                line = raw.strip()
+                if line.startswith("End of Data Dictionary"):
+                    in_data = True
+                    continue
+                if not in_data or not line:
+                    continue
+                parts = [part.strip() for part in line.split(",")]
+                if not parts or not parts[0].isdigit():
+                    continue
+                code = int(parts[0])
+                if code == 2 and len(parts) >= 2:
+                    try:
+                        current_day = int(parts[1])
+                    except ValueError:
+                        current_day = None
+                    continue
+                if code != 9 or current_day is None or len(parts) < 2:
+                    continue
+                try:
+                    values[current_day] = values.get(current_day, 0.0) + float(parts[1]) / 3_600_000.0
+                except ValueError:
+                    continue
+    except Exception:
+        return []
+    return [
+        {"day": day, "energy_kwh": round(value, 6), "source": "meter"}
+        for day, value in sorted(values.items())
+        if value > 0.0
+    ]
+
+
 def _apply_meter_vpp_energy(data: dict, run_path: Path) -> None:
     meter_values = _read_meter_vpp_energy(run_path, data.get("vpp_event_log", []))
-    if not meter_values:
-        return
-    total = 0.0
-    for event in data.get("vpp_event_log", []) or []:
-        event_id = event.get("id")
-        if event_id not in meter_values:
-            continue
-        actual_kwh = round(float(meter_values[event_id]), 4)
-        total += actual_kwh
-        event["actual_kwh"] = actual_kwh
-        baseline_kwh = event.get("demand_baseline_kwh")
-        if baseline_kwh is not None:
-            event["actual_shed_kwh"] = round(max(0.0, float(baseline_kwh) - actual_kwh), 4)
-    if total > 0.0:
-        data["vpp_window_energy_kwh"] = round(total, 4)
+    if meter_values:
+        total = 0.0
+        for event in data.get("vpp_event_log", []) or []:
+            event_id = event.get("id")
+            if event_id not in meter_values:
+                continue
+            actual_kwh = round(float(meter_values[event_id]), 4)
+            total += actual_kwh
+            event["actual_kwh"] = actual_kwh
+            baseline_kwh = event.get("demand_baseline_kwh")
+            if baseline_kwh is not None:
+                event["actual_shed_kwh"] = round(max(0.0, float(baseline_kwh) - actual_kwh), 4)
+        if total > 0.0:
+            data["vpp_window_energy_kwh"] = round(total, 4)
+    daily_values = _read_meter_daily_energy(run_path)
+    if daily_values and not data.get("daily_energy_kwh"):
+        data["daily_energy_kwh"] = daily_values
 
 
 INDEX_HTML = r"""<!doctype html>
@@ -579,6 +623,14 @@ INDEX_HTML = r"""<!doctype html>
     const $ = (id) => document.getElementById(id);
     const fmt = (n, d=2) => Number.isFinite(Number(n)) ? Number(n).toFixed(d) : 'N/A';
     const pct = (n) => Number.isFinite(Number(n)) ? `${(Number(n)*100).toFixed(0)}%` : 'N/A';
+    const DAY_OPTIONS = [
+      {value: 3, label: '3天：快速迭代'},
+      {value: 7, label: '7天：完整评估'}
+    ];
+    const START_DATE_OPTIONS = [
+      {value: '', label: '默认日期'},
+      {value: '2025-06-01', label: '2025-06-01'}
+    ];
 
     async function api(path, opts) {
       const res = await fetch(path, opts);
@@ -681,10 +733,18 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function expectedRunName() {
+      normalizeScenarioSelection();
       const prefix = state.userMode === 'human'
         ? `${slug(state.humanName) || 'human'}_human`
         : personaRunLabel(state.selectedPersona);
       return `${todayIso()}/${prefix}_${methodRunToken(state.selectedMethod)}_${String(state.selectedCity || 'Tianjin').toLowerCase()}_${Number(state.selectedDays || 3)}days`;
+    }
+
+    function normalizeScenarioSelection() {
+      const selectedDays = Number(state.selectedDays || 3);
+      state.selectedDays = DAY_OPTIONS.some(item => item.value === selectedDays) ? selectedDays : 3;
+      const allowedDates = START_DATE_OPTIONS.map(item => item.value);
+      if (!allowedDates.includes(state.startDate)) state.startDate = '';
     }
 
     function runNameFromOutput(outputDir) {
@@ -721,8 +781,29 @@ INDEX_HTML = r"""<!doctype html>
       return Number.isFinite(Number(kw)) ? `${fmt(kw, 3)} kW` : 'N/A';
     }
 
-    function eventEnergyText(ev) {
-      return Number.isFinite(Number(ev?.actual_kwh)) ? `${fmt(ev.actual_kwh, 3)} kWh VPP窗口` : 'N/A';
+    function dailyTotalEnergyKwh(data, day) {
+      const targetDay = Number(day);
+      const daily = data?.daily_energy_kwh || [];
+      const exact = daily.find((item, idx) => {
+        if (typeof item === 'number') return idx + 1 === targetDay;
+        return Number(item.day) === targetDay;
+      });
+      if (typeof exact === 'number' && Number.isFinite(Number(exact))) return Number(exact);
+      if (exact && Number.isFinite(Number(exact.energy_kwh))) return Number(exact.energy_kwh);
+      const priceDaily = data?.day_ahead_price_metrics?.per_day || [];
+      const priced = priceDaily.find(item => Number(item.day) === targetDay);
+      if (priced && Number.isFinite(Number(priced.energy_kwh))) return Number(priced.energy_kwh);
+      return null;
+    }
+
+    function dayEnergyText(data, ev) {
+      const day = ev?.day;
+      const total = dailyTotalEnergyKwh(data, day);
+      const vpp = Number.isFinite(Number(ev?.actual_kwh)) ? Number(ev.actual_kwh) : null;
+      if (total !== null && vpp !== null) return `${fmt(total, 1)} kWh 当天 / ${fmt(vpp, 3)} kWh VPP`;
+      if (total !== null) return `${fmt(total, 1)} kWh 当天 / VPP waiting`;
+      if (vpp !== null) return `当天 waiting / ${fmt(vpp, 3)} kWh VPP`;
+      return 'waiting';
     }
 
     function metricCardsInner(items) {
@@ -771,6 +852,13 @@ INDEX_HTML = r"""<!doctype html>
         const decisions = ev.day_decisions || [];
         const lastDecision = decisions[decisions.length - 1] || {};
         const actions = ev.vpp_trigger_actions || lastDecision.actions || lastDecision.raw_appliance_actions || {};
+        const candidateStrategies = (ev.strategy_candidates || []).map(item => {
+          const base = `[${item.id || '?'}] ${item.label || ''} — ${item.description || ''}`;
+          const tradeoff = item.tradeoff ? ` (${item.tradeoff})` : '';
+          const appliance = item.appliance_plan_cn ? ` | 电器控制: ${item.appliance_plan_cn}` : '';
+          return `${base}${tradeoff}${appliance}`;
+        });
+        const selected = ev.selected_strategy || {};
         return {
           key: String(idx + 1),
           label: `Day ${idx + 1}`,
@@ -779,9 +867,13 @@ INDEX_HTML = r"""<!doctype html>
           target: vppTargetText(ev),
           setpoint: ev.setpoint !== undefined && ev.setpoint !== null ? `${fmt(ev.setpoint, 1)}°C` : 'N/A',
           score: ev.score !== undefined && ev.score !== null ? `${ev.score}/5 ${ev.label || ''}` : 'N/A',
-          energy: eventEnergyText(ev),
-          selectedStrategy: ev.user_input || ev.label || ev.source || 'completed',
-          strategies: decisions.map(item => `${fmt(item.h % 24, 1)}h → ${fmt(item.sp, 1)}°C | ${item.reason || '无说明'}`),
+          energy: dayEnergyText(d, ev),
+          selectedStrategy: selected.id
+            ? `[${selected.id}] ${selected.label || ''} (${selected.source || ev.source || 'selected'})`
+            : (ev.user_input || ev.label || ev.source || 'completed'),
+          strategies: candidateStrategies.length
+            ? candidateStrategies
+            : decisions.map(item => `${fmt(item.h % 24, 1)}h → ${fmt(item.sp, 1)}°C | ${item.reason || '无说明'}`),
           appliances: appliancePlanFromActions(actions),
           notes: [ev.reason, ev.comment].filter(Boolean).slice(-5)
         };
@@ -840,6 +932,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function commandPreset(method, persona, userMode, humanName) {
+      normalizeScenarioSelection();
       const base = `conda run --no-capture-output -n energybridge python experiments/benchmark/run_persona_json.py ${persona || state.selectedPersona}`;
       const controllerMethod = method || 'agent';
       const horizon = controllerMethod === 'mpc_dynamic' || controllerMethod === 'mpc_ep' ? ' --mpc-horizon 6' : '';
@@ -889,6 +982,12 @@ INDEX_HTML = r"""<!doctype html>
       return events[key];
     }
 
+    function setProgressEventDay(ev, key, dayValue) {
+      const day = dayValue && dayValue !== '—' ? String(dayValue) : String(key);
+      ev.day = day;
+      ev.label = day === String(key) ? `Day ${day}` : `Day ${day} / Event ${key}`;
+    }
+
     function parseLive(logs) {
       const text = (logs || []).join('\n');
       const latest = (pattern) => {
@@ -906,45 +1005,81 @@ INDEX_HTML = r"""<!doctype html>
       const progressEvents = {};
       let currentKey = null;
       let currentDay = '—';
+      let currentEventKey = null;
       let candidateEventKey = null;
+      const eventDays = {};
+      const eventKeyFromLine = (line) => {
+        const patterns = [
+          /\bvpp(\d+)\b/i,
+          /event=(\d+)/i,
+          /VPP event\s+(\d+)/i,
+          /VPP事件\s*(\d+)/i,
+          /VPP Demand-Response Event\s+(\d+)\/\d+/i,
+          /\[VPP Result \| Event\s+(\d+)\/\d+/i,
+          /\[Human Score Selected\s+\|\s+event=(\d+)\]/i,
+          /\[Strategy Selected\s+\|\s+event=(\d+)\]/i
+        ];
+        for (const pattern of patterns) {
+          const match = line.match(pattern);
+          if (match) return match[1];
+        }
+        return null;
+      };
+      const ensureEventForKey = (key, dayHint = null) => {
+        const ev = ensureProgressEvent(progressEvents, key);
+        const mappedDay = dayHint || eventDays[key] || (currentDay !== '—' ? currentDay : key);
+        eventDays[key] = mappedDay;
+        setProgressEventDay(ev, key, mappedDay);
+        return ev;
+      };
       for (const raw of logs || []) {
         const line = raw.trim();
         if (!line) continue;
+        const inferredEventKey = eventKeyFromLine(line);
         const dayMatch = line.match(/--- Day\s+(\d+)\s+(?:start|daily plan)/);
         if (dayMatch) {
           currentDay = dayMatch[1];
+          currentKey = currentDay;
+          currentEventKey = null;
+          const dayEv = ensureProgressEvent(progressEvents, currentDay);
+          setProgressEventDay(dayEv, currentDay, currentDay);
         }
         const acDayMatch = line.match(/\[(?:AC|MPC) Agent[^\]]*Day(\d+)/);
         if (acDayMatch) {
           currentDay = acDayMatch[1];
-          currentKey = currentDay;
+          currentKey = inferredEventKey || currentEventKey || currentDay;
           const dayEv = ensureProgressEvent(progressEvents, currentKey);
-          dayEv.day = currentDay;
+          setProgressEventDay(dayEv, currentKey, currentDay);
           dayEv.status = 'active';
+        }
+        if (inferredEventKey) {
+          currentEventKey = inferredEventKey;
+          currentKey = inferredEventKey;
+          ensureEventForKey(inferredEventKey);
         }
         const eventMatch = line.match(/VPP Demand-Response Event\s+(\d+)\/\d+/);
         if (eventMatch) {
-          currentKey = currentDay !== '—' ? currentDay : eventMatch[1];
-          const ev = ensureProgressEvent(progressEvents, currentKey);
-          ev.day = currentDay;
+          currentEventKey = eventMatch[1];
+          currentKey = eventMatch[1];
+          const ev = ensureEventForKey(currentKey);
           ev.status = 'active';
           ev.notes.push('VPP event started');
         }
         const candidateHeader = line.match(/\[Strategy Candidates \| VPP event\s+(\d+)\]/);
         if (candidateHeader) {
           candidateEventKey = candidateHeader[1];
+          currentEventKey = candidateEventKey;
           currentKey = candidateEventKey;
-          const ev = ensureProgressEvent(progressEvents, currentKey);
-          ev.day = currentKey;
+          ensureEventForKey(currentKey);
         }
         const candidateMatch = line.match(/│\s+\[([ABC])\]\s+(.+?)\s+—\s+(.+)/);
         if (candidateMatch && candidateEventKey) {
-          const ev = ensureProgressEvent(progressEvents, candidateEventKey);
+          const ev = ensureEventForKey(candidateEventKey);
           ev.strategies.push(`[${candidateMatch[1]}] ${candidateMatch[2].trim()} — ${candidateMatch[3].trim()}`);
         }
         const candidateApplianceMatch = line.match(/│\s+电器控制:\s+(.+)/);
         if (candidateApplianceMatch && candidateEventKey) {
-          const ev = ensureProgressEvent(progressEvents, candidateEventKey);
+          const ev = ensureEventForKey(candidateEventKey);
           if (ev.strategies.length) {
             ev.strategies[ev.strategies.length - 1] += ` | 电器控制: ${candidateApplianceMatch[1].trim()}`;
           } else {
@@ -954,14 +1089,14 @@ INDEX_HTML = r"""<!doctype html>
         const resultMatch = line.match(/\[VPP Result \| Event\s+(\d+)\/\d+/);
         if (resultMatch) {
           currentKey = resultMatch[1];
-          const ev = ensureProgressEvent(progressEvents, currentKey);
-          ev.day = currentKey;
+          currentEventKey = currentKey;
+          ensureEventForKey(currentKey);
         }
         const humanScoreMatch = line.match(/\[Human Score Selected\s+\|\s+event=(\d+)\]\s+→\s+([0-9.]+)\/5\s+\|\s*(.*)/);
         if (humanScoreMatch) {
           currentKey = humanScoreMatch[1];
-          const scoreEv = ensureProgressEvent(progressEvents, currentKey);
-          scoreEv.day = currentKey;
+          currentEventKey = currentKey;
+          const scoreEv = ensureEventForKey(currentKey);
           scoreEv.score = `${humanScoreMatch[2]}/5 human`;
           scoreEv.status = 'done';
           const comment = humanScoreMatch[3].trim();
@@ -974,8 +1109,7 @@ INDEX_HTML = r"""<!doctype html>
           const value = (webInputMatch[3] || '').trim() || '回车默认';
           const targetKey = inputEvent && inputEvent !== '?' ? inputEvent : currentKey;
           if (targetKey) {
-            const inputEv = ensureProgressEvent(progressEvents, targetKey);
-            inputEv.day = targetKey;
+            const inputEv = ensureEventForKey(targetKey);
             if (kind === 'strategy_choice') {
               inputEv.notes.push(`真人策略输入: ${value}`);
             } else if (kind === 'score') {
@@ -989,16 +1123,16 @@ INDEX_HTML = r"""<!doctype html>
           continue;
         }
         if (!currentKey) continue;
-        const ev = ensureProgressEvent(progressEvents, currentKey);
+        const ev = ensureEventForKey(currentKey);
         const selectedMatch = line.match(/\[Strategy Selected\s+\|\s+event=(\d+)\]\s+→\s+(.+)/);
         if (selectedMatch) {
-          const selectedEv = ensureProgressEvent(progressEvents, selectedMatch[1]);
-          selectedEv.day = selectedMatch[1];
+          const selectedEv = ensureEventForKey(selectedMatch[1]);
           selectedEv.selectedStrategy = selectedMatch[2].trim();
         }
         const targetMatch = line.match(/shed_target=([0-9.]+)kW\s+\(cap=([0-9.]+)kWh\)/);
         if (targetMatch) {
-          ev.target = `${targetMatch[1]} kW`;
+          const targetEv = inferredEventKey ? ensureEventForKey(inferredEventKey) : ev;
+          targetEv.target = `${targetMatch[1]} kW`;
         }
         const acMatch = line.match(/\[(?:AC|MPC) Agent[^\]]*\].*?setpoint(?:→|->)([0-9.]+)/);
         if (acMatch) {
@@ -1011,20 +1145,20 @@ INDEX_HTML = r"""<!doctype html>
         }
         const energyMatch = line.match(/\[family\/[^\]]+\]\s+exit=\d+\s+energy=([0-9.]+)kWh\s+vpp_window=([0-9.]+)kWh/);
         if (energyMatch) {
-          ev.energy = `${energyMatch[1]} kWh total / ${energyMatch[2]} kWh VPP`;
+          ev.notes.push(`全程汇总: ${energyMatch[1]} kWh total / ${energyMatch[2]} kWh VPP`);
         }
         const shiftMatch = line.match(/\[Appliance\]\s+shift\s+(\w+)\s+day=(\d+)\s+hod=([0-9.]+)\s+->\s+(\w+)/);
         if (shiftMatch) {
           const dayKey = String(Number(shiftMatch[2]) + 1);
           const applianceEv = ensureProgressEvent(progressEvents, dayKey);
-          applianceEv.day = dayKey;
+          setProgressEventDay(applianceEv, dayKey, dayKey);
           applianceEv.appliances[shiftMatch[1]] = `排程@${Number(shiftMatch[3]).toFixed(1)} (${shiftMatch[4]})`;
         }
         const skipMatch = line.match(/\[Appliance\]\s+skip\s+(\w+)\s+day=(\d+)\s+->\s+(\w+)/);
         if (skipMatch) {
           const dayKey = String(Number(skipMatch[2]) + 1);
           const applianceEv = ensureProgressEvent(progressEvents, dayKey);
-          applianceEv.day = dayKey;
+          setProgressEventDay(applianceEv, dayKey, dayKey);
           applianceEv.appliances[skipMatch[1]] = `跳过 (${skipMatch[3]})`;
         }
         const whMatch = line.match(/\[Appliance\]\s+water_heater preheat schedule:\s+start=([^ ]+)\s+end=([^ ]+)\s+temp=([^ ]+)\s+->\s+(\w+)/);
@@ -1078,6 +1212,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function renderOps(events) {
+      normalizeScenarioSelection();
       const methods = ['agent', 'mpc_dynamic', 'mpc_ep'];
       const personaOptions = state.personas.map(p => `
         <option value="${p.id}" ${state.selectedPersona === p.id ? 'selected' : ''}>
@@ -1120,10 +1255,14 @@ INDEX_HTML = r"""<!doctype html>
               </select>
             </div>
             <div class="field-row">
-              <label for="daysInput">天数 / 起始日期</label>
+              <label for="daysSelect">天数 / 起始日期</label>
               <div class="inline-fields">
-                <input id="daysInput" type="number" min="1" value="${Number(state.selectedDays || 3)}">
-                <input id="startDateInput" value="${state.startDate}" placeholder="YYYY-MM-DD，可留空">
+                <select id="daysSelect">
+                  ${DAY_OPTIONS.map(item => `<option value="${item.value}" ${Number(state.selectedDays || 3) === item.value ? 'selected' : ''}>${item.label}</option>`).join('')}
+                </select>
+                <select id="startDateSelect">
+                  ${START_DATE_OPTIONS.map(item => `<option value="${item.value}" ${state.startDate === item.value ? 'selected' : ''}>${item.label}</option>`).join('')}
+                </select>
               </div>
             </div>
             <div class="field-row">
@@ -1248,23 +1387,24 @@ INDEX_HTML = r"""<!doctype html>
           if (state.selectedCity === 'Germany') {
             state.selectedDays = 7;
             state.startDate = state.startDate || '2025-06-01';
-          } else if (!state.startDate) {
-            state.selectedDays = 3;
           }
+          normalizeScenarioSelection();
           render();
         };
       }
-      const daysInput = $('daysInput');
-      if (daysInput) {
-        daysInput.oninput = (e) => {
-          state.selectedDays = Math.max(1, Number(e.target.value || 1));
+      const daysSelect = $('daysSelect');
+      if (daysSelect) {
+        daysSelect.onchange = (e) => {
+          state.selectedDays = Number(e.target.value || 3);
+          normalizeScenarioSelection();
           syncCommandFromSelections();
         };
       }
-      const startDateInput = $('startDateInput');
-      if (startDateInput) {
-        startDateInput.oninput = (e) => {
-          state.startDate = e.target.value.trim();
+      const startDateSelect = $('startDateSelect');
+      if (startDateSelect) {
+        startDateSelect.onchange = (e) => {
+          state.startDate = e.target.value;
+          normalizeScenarioSelection();
           syncCommandFromSelections();
         };
       }
@@ -1362,7 +1502,20 @@ INDEX_HTML = r"""<!doctype html>
 
     async function pollJob() {
       if (!state.jobId) return;
-      const job = await api(`/api/job?id=${encodeURIComponent(state.jobId)}`);
+      let job;
+      try {
+        job = await api(`/api/job?id=${encodeURIComponent(state.jobId)}`);
+      } catch (err) {
+        if (state.jobPoll) clearInterval(state.jobPoll);
+        state.jobPoll = null;
+        const log = $('runLog');
+        if (log) {
+          log.textContent += `\n[web] 当前 job 已不存在，可能是 dashboard 刚重启。请重新运行。`;
+          log.scrollTop = log.scrollHeight;
+        }
+        state.jobId = null;
+        return;
+      }
       const log = $('runLog');
       if (log) {
         log.textContent = `[${job.status}] ${job.command}\n\n${(job.logs || []).join('\n')}`;
@@ -1506,6 +1659,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/job":
             job_id = parse_qs(parsed.query).get("id", [""])[0]
+            with JOBS_LOCK:
+                existing = dict(JOBS.get(job_id, {}))
+            if existing and existing.get("status") in {"succeeded", "failed"} and not existing.get("run_summary_text"):
+                _attach_finished_summary(job_id)
             with JOBS_LOCK:
                 job = dict(JOBS.get(job_id, {}))
             if not job:

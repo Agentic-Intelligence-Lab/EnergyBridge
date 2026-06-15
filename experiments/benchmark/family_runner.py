@@ -185,6 +185,7 @@ class BenchmarkResult:
     start_date: str = ""
     vpp_schedule_source: str = ""
     exit_code: int = -1; energy_kwh_total: float = 0.0; energy_kwh_per_day: float = 0.0
+    daily_energy_kwh: List[dict] = field(default_factory=list)
     pmv_ok_fraction: float = 0.0; comfort_ok_fraction: float = 0.0
     mean_pmv: float = 0.0; mean_temp_c: float = 0.0
     unmet_cooling_h: float = 0.0
@@ -243,6 +244,7 @@ class _FamilyLoop:
         self.h_ev = self.h_ewh_sp = -1
         self.h_washer = self.h_dishwasher = self.h_dryer = self.h_refrigerator = -1
         self.e_wh = self.occ_h = self.pmv_ok_h = self.comfort_ok_h = 0.0
+        self.daily_e_wh: List[float] = []
         self.pmv_s = self.temp_s = self.unmet_h = 0.0
         self.vpp_e_wh = 0.0                        # energy consumed during VPP windows [Wh]
         self.llm_calls = 0; self.llm_failures = 0  # LLM call counters
@@ -262,6 +264,7 @@ class _FamilyLoop:
         self.vpp_mem_ctx: str = ""                  # compressed memory for next LLM call
         self.vpp_user_input: str = ""               # roleplay user preference before agent acts
         self.vpp_user_input_by_id: Dict[str, str] = {}
+        self.vpp_strategy_trace_by_id: Dict[str, dict] = {}
         self.vpp_last_reason: str = ""              # agent reason from last LLM call
         self.vpp_trigger_reason_by_id: Dict[str, str] = {}  # reason from the event-start control action
         # Per-event VPP energy tracking and demand-agent outputs
@@ -1435,6 +1438,7 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     from pyenergyplus.api import EnergyPlusAPI
     loop = _FamilyLoop(); api = EnergyPlusAPI(); state = api.state_manager.new_state()
     loop.sim_days = sim_days
+    loop.daily_e_wh = [0.0 for _ in range(sim_days)]
     loop.vpp_events = vpp_events
     loop.vpp_schedule_source = vpp_schedule_source or "daily_default"
     loop.day_agent_decisions = [[] for _ in range(sim_days)]
@@ -2135,6 +2139,7 @@ All times are hour-of-day (0–23.9)."""
             lbl = r.get("label", "?")
             cmt = r.get("comment", "")[:100]
             src = r.get("source", "?")
+            strategy_trace = loop_ref.vpp_strategy_trace_by_id.get(ev["id"], {})
             print(
                 f"  [VPP Result | Event {event_index}/{len(vpp_events)} {ev['id']}] "
                 f"User score: {sc}/5 ({lbl}) | {cmt[:80]}"
@@ -2151,6 +2156,9 @@ All times are hour-of-day (0–23.9)."""
                     "comment": cmt,
                     "user_input": loop_ref.vpp_user_input_by_id.get(ev["id"], loop_ref.vpp_user_input)[:80],
                     "reason": loop_ref.vpp_trigger_reason_by_id.get(ev["id"], loop_ref.vpp_last_reason)[:120],
+                    "strategy_candidates": strategy_trace.get("candidates", []),
+                    "selected_strategy": strategy_trace.get("selected_strategy", {}),
+                    "strategy_trace": strategy_trace,
                     "source": src}
         except Exception as e:
             print(f"  [VPP score {ev['id']}] error: {e}")
@@ -2297,7 +2305,7 @@ All times are hour-of-day (0–23.9)."""
                             "water_heater": bool((_acfg.get("water_heater", {}) or {}).get("present", False)),
                             "ev": bool((_acfg.get("ev", {}) or {}).get("present", False)),
                         }
-                        loop.vpp_user_input = get_user_preference_input(
+                        _pref_result = get_user_preference_input(
                             "family", ev_idx,
                             {"vpp_id": vid, "hour": sim_h, "trigger_h": triggered_vpp["trigger_h"],
                              "end_h": triggered_vpp["end_h"], "day": triggered_vpp.get("day", day_num),
@@ -2306,11 +2314,16 @@ All times are hour-of-day (0–23.9)."""
                             loop.vpp_event_log,
                             persona=persona_config,
                             human_mode=human_mode)
+                        loop.vpp_user_input = str(_pref_result)
                         loop.vpp_user_input_by_id[vid] = loop.vpp_user_input
+                        loop.vpp_strategy_trace_by_id[vid] = dict(
+                            getattr(_pref_result, "strategy_trace", {}) or {}
+                        )
                     except Exception as _e:
                         print(f"  [UserInput] {_e}")
                         loop.vpp_user_input = ""
                         loop.vpp_user_input_by_id[vid] = ""
+                        loop.vpp_strategy_trace_by_id[vid] = {}
                 else:
                     loop.vpp_user_input = ""
                 if method in ("mpc_dynamic", "mpc_ep"):
@@ -2502,6 +2515,9 @@ All times are hour-of-day (0–23.9)."""
         if wu: return
         pmv = _compute_pmv(temp)
         loop.e_wh += fac * dt
+        _day_idx_for_energy = int(sim_h // 24)
+        if 0 <= _day_idx_for_energy < len(loop.daily_e_wh):
+            loop.daily_e_wh[_day_idx_for_energy] += fac * dt
         if active_vpp:            # track energy consumed during VPP demand windows
             loop.vpp_e_wh += fac * dt
             loop.vpp_event_energy_wh[active_vpp["id"]] = (
@@ -2688,6 +2704,10 @@ All times are hour-of-day (0–23.9)."""
         start_date=run_start_date.isoformat() if run_start_date else "",
         vpp_schedule_source=loop.vpp_schedule_source,
         energy_kwh_total=kwh, energy_kwh_per_day=kwh/max(1, sim_days),
+        daily_energy_kwh=[
+            {"day": idx + 1, "energy_kwh": round(value / 1000.0, 6), "source": "runtime"}
+            for idx, value in enumerate(loop.daily_e_wh)
+        ],
         pmv_ok_fraction=loop.pmv_ok_h/occ, comfort_ok_fraction=loop.comfort_ok_h/occ,
         mean_pmv=loop.pmv_s/occ,
         mean_temp_c=loop.temp_s/occ, unmet_cooling_h=loop.unmet_h,
