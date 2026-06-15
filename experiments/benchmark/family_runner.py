@@ -2137,7 +2137,7 @@ All times are hour-of-day (0–23.9)."""
             energy_sc = r.get("energy_score")
             vpp_sc = r.get("vpp_score")
             lbl = r.get("label", "?")
-            cmt = r.get("comment", "")[:100]
+            cmt = str(r.get("comment", ""))
             src = r.get("source", "?")
             strategy_trace = loop_ref.vpp_strategy_trace_by_id.get(ev["id"], {})
             print(
@@ -2154,8 +2154,8 @@ All times are hour-of-day (0–23.9)."""
                     "target_achieved": _achieved,
                     "demand_achievement_ratio": _achieve_ratio,
                     "comment": cmt,
-                    "user_input": loop_ref.vpp_user_input_by_id.get(ev["id"], loop_ref.vpp_user_input)[:80],
-                    "reason": loop_ref.vpp_trigger_reason_by_id.get(ev["id"], loop_ref.vpp_last_reason)[:120],
+                    "user_input": loop_ref.vpp_user_input_by_id.get(ev["id"], loop_ref.vpp_user_input),
+                    "reason": loop_ref.vpp_trigger_reason_by_id.get(ev["id"], loop_ref.vpp_last_reason),
                     "strategy_candidates": strategy_trace.get("candidates", []),
                     "selected_strategy": strategy_trace.get("selected_strategy", {}),
                     "strategy_trace": strategy_trace,

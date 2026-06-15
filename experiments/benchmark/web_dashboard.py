@@ -498,7 +498,14 @@ INDEX_HTML = r"""<!doctype html>
     .live-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0; }
     .live-card { background: #f8faf9; border: 1px solid #edf0f2; border-radius: 7px; padding: 9px; }
     .live-card span { display: block; color: var(--muted); font-size: 11px; margin-bottom: 3px; }
-    .live-card strong { font-size: 16px; }
+    .live-card strong {
+      display: block;
+      min-width: 0;
+      font-size: 16px;
+      line-height: 1.35;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
     .dialogue-feed {
       max-height: 220px;
       overflow: auto;
@@ -510,7 +517,15 @@ INDEX_HTML = r"""<!doctype html>
       padding: 10px;
       margin-top: 10px;
     }
-    .dialogue-item { padding: 8px 10px; border-radius: 7px; background: #fff; border-left: 4px solid var(--sky); }
+    .dialogue-item {
+      padding: 8px 10px;
+      border-radius: 7px;
+      background: #fff;
+      border-left: 4px solid var(--sky);
+      line-height: 1.45;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
     .dialogue-item.user { border-left-color: var(--clay); }
     .dialogue-item.grid { border-left-color: var(--gold); }
     .dialogue-item.result { border-left-color: var(--leaf); }
@@ -528,18 +543,45 @@ INDEX_HTML = r"""<!doctype html>
       padding: 12px;
       border-top: 4px solid var(--sky);
       min-height: 170px;
+      min-width: 0;
     }
     .progress-card.active { border-top-color: var(--gold); box-shadow: 0 10px 24px rgba(190, 138, 34, .15); }
     .progress-card.done { border-top-color: var(--leaf); }
     .progress-card h4 { margin: 0 0 8px; font-size: 15px; }
-    .progress-row { display: grid; grid-template-columns: 88px 1fr; gap: 8px; padding: 5px 0; border-top: 1px solid #eef1f3; font-size: 12px; }
+    .progress-row {
+      display: grid;
+      grid-template-columns: 88px minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+      padding: 5px 0;
+      border-top: 1px solid #eef1f3;
+      font-size: 12px;
+    }
     .progress-row span { color: var(--muted); }
+    .progress-row strong {
+      min-width: 0;
+      line-height: 1.42;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
     .progress-log { margin-top: 8px; display: grid; gap: 5px; }
-    .progress-chip { font-size: 12px; border-radius: 999px; padding: 5px 8px; background: #f8faf9; border: 1px solid #edf0f2; overflow-wrap: anywhere; }
+    .progress-chip {
+      min-width: 0;
+      font-size: 12px;
+      line-height: 1.45;
+      border-radius: 12px;
+      padding: 7px 9px;
+      background: #f8faf9;
+      border: 1px solid #edf0f2;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
     .progress-section { margin-top: 10px; }
     .progress-section strong { display: block; font-size: 12px; margin-bottom: 5px; color: var(--muted); }
     .appliance-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-    .appliance-pill { font-size: 12px; border-radius: 7px; padding: 6px 8px; background: #fffdf8; border: 1px solid #eee2c9; overflow-wrap: anywhere; }
+    .appliance-pill { font-size: 12px; border-radius: 7px; padding: 6px 8px; background: #fffdf8; border: 1px solid #eee2c9; overflow-wrap: anywhere; word-break: break-word; }
     .terminal {
       height: 260px;
       overflow: auto;
@@ -614,6 +656,7 @@ INDEX_HTML = r"""<!doctype html>
       selectedDays: 3,
       startDate: '',
       priceCsv: '',
+      priceCsvManual: false,
       vppStartHour: 18,
       vppDurationHours: 1,
       vppEventsJson: '',
@@ -624,13 +667,16 @@ INDEX_HTML = r"""<!doctype html>
     const fmt = (n, d=2) => Number.isFinite(Number(n)) ? Number(n).toFixed(d) : 'N/A';
     const pct = (n) => Number.isFinite(Number(n)) ? `${(Number(n)*100).toFixed(0)}%` : 'N/A';
     const DAY_OPTIONS = [
-      {value: 3, label: '3天：快速迭代'},
-      {value: 7, label: '7天：完整评估'}
+      {value: 3, label: '3day'},
+      {value: 7, label: '7day'}
     ];
     const START_DATE_OPTIONS = [
       {value: '', label: '默认日期'},
       {value: '2025-06-01', label: '2025-06-01'}
     ];
+    const PRICE_CSV_DEFAULTS = {
+      Germany: 'experiments/real_data/germany_2025_price.csv'
+    };
 
     async function api(path, opts) {
       const res = await fetch(path, opts);
@@ -745,6 +791,17 @@ INDEX_HTML = r"""<!doctype html>
       state.selectedDays = DAY_OPTIONS.some(item => item.value === selectedDays) ? selectedDays : 3;
       const allowedDates = START_DATE_OPTIONS.map(item => item.value);
       if (!allowedDates.includes(state.startDate)) state.startDate = '';
+      syncDefaultPriceCsv();
+    }
+
+    function defaultPriceCsvForCity(city) {
+      return PRICE_CSV_DEFAULTS[String(city || '')] || '';
+    }
+
+    function syncDefaultPriceCsv(force = false) {
+      if (!force && state.priceCsvManual) return;
+      state.priceCsv = defaultPriceCsvForCity(state.selectedCity);
+      state.priceCsvManual = false;
     }
 
     function runNameFromOutput(outputDir) {
@@ -856,9 +913,14 @@ INDEX_HTML = r"""<!doctype html>
           const base = `[${item.id || '?'}] ${item.label || ''} — ${item.description || ''}`;
           const tradeoff = item.tradeoff ? ` (${item.tradeoff})` : '';
           const appliance = item.appliance_plan_cn ? ` | 电器控制: ${item.appliance_plan_cn}` : '';
-          return `${base}${tradeoff}${appliance}`;
+          const pref = item.user_pref ? ` | 用户偏好: ${item.user_pref}` : '';
+          return `${base}${tradeoff}${appliance}${pref}`;
         });
         const selected = ev.selected_strategy || {};
+        const selectedDesc = selected.description ? ` — ${selected.description}` : '';
+        const selectedTradeoff = selected.tradeoff ? ` (${selected.tradeoff})` : '';
+        const selectedPref = selected.preference_text ? ` | 偏好: ${selected.preference_text}` : '';
+        const selectedReason = selected.selection_meta?.reason ? ` | 选择理由: ${selected.selection_meta.reason}` : '';
         return {
           key: String(idx + 1),
           label: `Day ${idx + 1}`,
@@ -869,7 +931,7 @@ INDEX_HTML = r"""<!doctype html>
           score: ev.score !== undefined && ev.score !== null ? `${ev.score}/5 ${ev.label || ''}` : 'N/A',
           energy: dayEnergyText(d, ev),
           selectedStrategy: selected.id
-            ? `[${selected.id}] ${selected.label || ''} (${selected.source || ev.source || 'selected'})`
+            ? `[${selected.id}] ${selected.label || ''}${selectedDesc}${selectedTradeoff} (${selected.source || ev.source || 'selected'})${selectedPref}${selectedReason}`
             : (ev.user_input || ev.label || ev.source || 'completed'),
           strategies: candidateStrategies.length
             ? candidateStrategies
@@ -1267,7 +1329,7 @@ INDEX_HTML = r"""<!doctype html>
             </div>
             <div class="field-row">
               <label for="priceCsvInput">进阶：日前电价 CSV</label>
-              <input id="priceCsvInput" value="${state.priceCsv}" placeholder="可留空；例如 experiments/real_data/germany_2025_price.csv">
+              <input id="priceCsvInput" value="${state.priceCsv}" placeholder="没有电价文件则留空；可手动改为其他 CSV 路径">
             </div>
             <div class="field-row">
               <label for="vppStartHourInput">VPP窗口：开始 / 时长(小时)</label>
@@ -1388,6 +1450,7 @@ INDEX_HTML = r"""<!doctype html>
             state.selectedDays = 7;
             state.startDate = state.startDate || '2025-06-01';
           }
+          syncDefaultPriceCsv(true);
           normalizeScenarioSelection();
           render();
         };
@@ -1412,6 +1475,7 @@ INDEX_HTML = r"""<!doctype html>
       if (priceCsvInput) {
         priceCsvInput.oninput = (e) => {
           state.priceCsv = e.target.value.trim();
+          state.priceCsvManual = true;
           syncCommandFromSelections();
         };
       }

@@ -29,7 +29,9 @@ epluszsz.csv
 
 # Benchmark generated results & memory
 experiments/benchmark/results/
-benchmark_results/
+benchmark_results/*
+!benchmark_results/reports/
+!benchmark_results/reports/**
 experiments/benchmark/results_longterm/
 experiments/benchmark/memory/
 experiments/benchmark/metrics_table.csv

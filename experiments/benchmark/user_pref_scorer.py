@@ -626,7 +626,7 @@ def _strategy_user_pref_for_profile(
     else:
         base = f"Energy-aware: use the warmest still-comfortable AC setting within {pref_min:.1f}-{pref_max:.1f}°C."
     tail = _strategy_appliance_pref_en(sid, profile, vpp_context, persona)
-    return f"{base} {tail}".strip()[:180]
+    return f"{base} {tail}".strip()
 
 
 def _align_candidates_to_appliance_profile(
@@ -832,7 +832,7 @@ def get_user_preference_input(
                 appliance_presence=appliance_presence,
                 calendar_context=calendar_context,
             )
-            reason_suffix = f" | {roleplay_reason[:80]}" if roleplay_reason else ""
+            reason_suffix = f" | {roleplay_reason}" if roleplay_reason else ""
             print(
                 f"  [Strategy Selected  | event={event_index}] → "
                 f"[{selected['id']}] {selected['label']} (auto roleplay_llm){reason_suffix}"

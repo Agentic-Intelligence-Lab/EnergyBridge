@@ -92,6 +92,174 @@ needed beyond `requirements.txt`.
 
 ---
 
+## Reports And Baseline Interface
+
+This is the section to share with collaborators who want to add another
+baseline and compare it in the same reports.
+
+### Recommended Report Workflow
+
+Run one full matrix first. The matrix delegates every job to
+`experiments/benchmark/run_persona_json.py`, so single-run behavior, calendar
+loading, capacity quantification, VPP schedule handling, role-play scoring,
+and output naming stay consistent.
+
+Fast Germany 3-day matrix with real weather and day-ahead price:
+
+```bash
+python experiments/benchmark/run_baseline_matrix.py \
+  --city Germany --days 3 --start-date 2025-06-01 --mpc-horizon 6 \
+  --price-csv experiments/real_data/germany_2025_price.csv
+```
+
+Full Tianjin 7-day matrix without price:
+
+```bash
+python experiments/benchmark/run_baseline_matrix.py \
+  --city Tianjin --days 7 --mpc-horizon 6
+```
+
+Full Germany 7-day matrix with price:
+
+```bash
+python experiments/benchmark/run_baseline_matrix.py \
+  --city Germany --days 7 --start-date 2025-06-01 --mpc-horizon 6 \
+  --price-csv experiments/real_data/germany_2025_price.csv
+```
+
+Matrix summaries are written to:
+
+```text
+benchmark_results/<YYYY-MM-DD>/_batch_logs/
+├── baseline_matrix_summary_<city>_<days>days_H<horizon>.json
+└── baseline_matrix_summary_<city>_<days>days_H<horizon>.csv
+```
+
+Generate the report figure/table/markdown from that summary:
+
+```bash
+python experiments/benchmark/generate_baseline_matrix_report.py \
+  --date <YYYY-MM-DD> --city Germany --days 3 --horizon 6 \
+  --artifact-prefix 3day_germany \
+  --output-dir benchmark_results/reports/3day_germany
+```
+
+If you want to avoid date discovery, pass the summary explicitly:
+
+```bash
+python experiments/benchmark/generate_baseline_matrix_report.py \
+  --summary-json benchmark_results/<YYYY-MM-DD>/_batch_logs/baseline_matrix_summary_germany_3days_H6.json \
+  --artifact-prefix 3day_germany \
+  --output-dir benchmark_results/reports/3day_germany
+```
+
+Report outputs:
+
+```text
+benchmark_results/reports/<report_name>/
+├── <prefix>_baseline_matrix_report.png
+├── <prefix>_baseline_matrix_report.md
+└── <prefix>_baseline_matrix_report_table.csv
+```
+
+The current report reads each job's `benchmark_result.json` and visualizes:
+
+- role-play/human user score
+- total EnergyPlus electricity consumption
+- VPP-window electricity consumption
+- appliance shift success rate
+
+### How To Add A New Baseline Method
+
+Use a stable lowercase method id, for example `my_baseline`. Keep the method id
+short because it is used in output directory names, matrix summaries, and
+report columns.
+
+Recommended integration path:
+
+1. Implement the controller in or under `experiments/benchmark/baselines/`.
+2. Add dispatch in `experiments/benchmark/family_runner.py`.
+3. Expose the method in `experiments/benchmark/run_persona_json.py`.
+4. Add the method to `experiments/benchmark/run_baseline_matrix.py`.
+5. Add the display order/label in `experiments/benchmark/generate_baseline_matrix_report.py`.
+
+Files to update:
+
+| File | What to change |
+|------|----------------|
+| `experiments/benchmark/family_runner.py` | Accept the new `method` and call the baseline at each control decision |
+| `experiments/benchmark/run_persona_json.py` | Add the method to `--method` choices and `_method_label()` |
+| `experiments/benchmark/run_baseline_matrix.py` | Add the method to `DEFAULT_METHODS`; pass any method-specific CLI flags |
+| `experiments/benchmark/generate_baseline_matrix_report.py` | Add `METHOD_ORDER` and `METHOD_LABEL` entries |
+| `experiments/benchmark/web_dashboard.py` | Optional: add a button if the method should run from the browser |
+
+The baseline should return the same control intent shape used by the existing
+runner. At minimum it should provide an AC setpoint and a reason; if it controls
+appliances, use the same keys as the Agent/MPC paths:
+
+```python
+{
+    "setpoint": 25.5,
+    "reason": "short explanation shown in logs and run_summary",
+    "next_check_hour": 19.0,
+    "washer_start_h": 14.0,
+    "washer_skip": False,
+    "dishwasher_start_h": 21.0,
+    "dishwasher_skip": False,
+    "water_heater_preheat": True,
+    "water_heater_preheat_start_h": 14.0,
+    "water_heater_preheat_end_h": 18.0,
+    "water_heater_preheat_temp_c": 68.0,
+    "ev_mode": "smart"
+}
+```
+
+The report layer expects each run directory to contain:
+
+```text
+benchmark_result.json
+run_summary.txt
+eplusout.mtr
+```
+
+Important fields in `benchmark_result.json`:
+
+| Field | Required for reports | Meaning |
+|-------|----------------------|---------|
+| `method` | yes | Method id, e.g. `agent`, `mpc_dynamic`, `my_baseline` |
+| `weather` | yes | City/scenario label |
+| `exit_code` | yes | `0` means successful run |
+| `user_pref_score` | yes | Average user score |
+| `energy_kwh_total` | yes | Total EnergyPlus electricity |
+| `vpp_window_energy_kwh` | yes | Total VPP-window electricity |
+| `appliance_shift_success_rate` | yes | Shifted completed loads away from VPP |
+| `vpp_event_log` | recommended | Per-event details for dashboard and debugging |
+| `daily_energy_kwh` | recommended | Per-day energy shown in dashboard |
+
+Quick smoke test for a new method:
+
+```bash
+python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
+  --city Germany --days 3 --start-date 2025-06-01 \
+  --price-csv experiments/real_data/germany_2025_price.csv \
+  --method my_baseline
+```
+
+Then run a tiny matrix before the full comparison:
+
+```bash
+python experiments/benchmark/run_baseline_matrix.py \
+  --city Germany --days 3 --start-date 2025-06-01 \
+  --price-csv experiments/real_data/germany_2025_price.csv \
+  --methods agent my_baseline --personas basic_role_a_commuter_price_cooperative \
+  --max-runs 2
+```
+
+If that succeeds, run the full matrix and generate the report with the commands
+above.
+
+---
+
 ## Main Benchmark Commands
 
 ### Recommended Fast Iteration: Germany 3-Day
