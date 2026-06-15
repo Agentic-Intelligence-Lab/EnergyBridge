@@ -28,7 +28,7 @@ DEFAULT_RESULTS_ROOT = _PROJECT_ROOT / "benchmark_results"
 
 METHOD_ORDER = ["agent", "mpc_dynamic", "mpc_ep"]
 METHOD_LABEL = {
-    "agent": "Agent",
+    "agent": "EnergyBridge",
     "mpc_dynamic": "MPC Dynamic",
     "mpc_ep": "MPC EP",
 }
