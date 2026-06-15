@@ -1406,8 +1406,10 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
                      vpp_events_config: list[dict] | None = None,
                      vpp_schedule_source: str = ""):
     """Event-driven LLM control: one VPP event per simulated day. Score after each."""
-    method = (method or "agent").lower()
-    if method == "mpc":
+    method = (method or "agent").strip().lower()
+    if method in ("agent", "energybridge"):
+        method = "agent"
+    elif method == "mpc":
         method = "mpc_dynamic"
     mpc_horizon_steps = max(1, int(mpc_horizon_steps))
     sim_days = max(1, int(sim_days))

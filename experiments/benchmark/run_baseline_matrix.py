@@ -2,7 +2,7 @@
 """Run the 10-persona baseline matrix for EnergyBridge.
 
 Default matrix:
-  approved personas x {agent, mpc_dynamic, mpc_ep}
+  approved personas x {EnergyBridge, mpc_dynamic, mpc_ep}
 
 Each job delegates to run_persona_json.py so that calendar loading, output
 directory naming, run_summary generation, and MPC horizon handling stay aligned
@@ -39,7 +39,9 @@ if str(_PROJECT_ROOT) not in sys.path:
 from energybridge.roleplay.loader import list_personas  # noqa: E402
 
 
-DEFAULT_METHODS = ("agent", "mpc_dynamic", "mpc_ep")
+ENERGYBRIDGE_METHOD_ID = "EnergyBridge"
+DEFAULT_METHODS = (ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "mpc_ep")
+METHOD_CHOICES = (ENERGYBRIDGE_METHOD_ID, "agent", "mpc_dynamic", "mpc_ep", "mpc")
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,17 @@ def _slug_label(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9]+", "_", value or "").strip("_").lower()
 
 
+def _canonical_method(method: str) -> str:
+    raw = (method or ENERGYBRIDGE_METHOD_ID).strip()
+    key = raw.lower()
+    aliases = {
+        "agent": ENERGYBRIDGE_METHOD_ID,
+        "energybridge": ENERGYBRIDGE_METHOD_ID,
+        "mpc": "mpc_dynamic",
+    }
+    return aliases.get(key, key)
+
+
 def _persona_run_label(persona_id: str) -> str:
     match = re.match(r"^basic_role_([a-z])(?:_|$)", persona_id)
     if match:
@@ -70,6 +83,7 @@ def _persona_run_label(persona_id: str) -> str:
 
 
 def _method_token(method: str, horizon: int) -> str:
+    method = _canonical_method(method)
     if method in ("mpc_dynamic", "mpc_ep"):
         return f"{method}_H{int(horizon)}"
     return method
@@ -119,7 +133,7 @@ def _make_jobs(args: argparse.Namespace) -> list[Job]:
     start_date = args.start_date or ("2025-06-01" if args.city.lower() == "germany" else "")
     log_dir = date_dir / "_batch_logs" / f"baseline_matrix_{args.city.lower()}_{days}days_H{args.mpc_horizon}"
     personas = args.personas or list_personas(approved_only=True)
-    methods = args.methods or list(DEFAULT_METHODS)
+    methods = [_canonical_method(method) for method in (args.methods or list(DEFAULT_METHODS))]
 
     jobs: list[Job] = []
     for persona_id in personas:
@@ -268,7 +282,7 @@ def _run_job(job: Job, *, resume: bool) -> dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run approved personas across agent, mpc_dynamic, and mpc_ep baselines."
+        description="Run approved personas across EnergyBridge, mpc_dynamic, and mpc_ep baselines."
     )
     parser.add_argument(
         "--personas",
@@ -279,9 +293,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--methods",
         nargs="+",
-        choices=list(DEFAULT_METHODS),
+        choices=list(METHOD_CHOICES),
         default=None,
-        help="Methods to run. Defaults to agent mpc_dynamic mpc_ep.",
+        help="Methods to run. Defaults to EnergyBridge mpc_dynamic mpc_ep. 'agent' is a deprecated alias.",
     )
     parser.add_argument(
         "--city",

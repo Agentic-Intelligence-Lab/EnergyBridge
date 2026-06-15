@@ -26,12 +26,24 @@ _BENCH_DIR = Path(__file__).resolve().parent
 _PROJECT_ROOT = _BENCH_DIR.parent.parent
 DEFAULT_RESULTS_ROOT = _PROJECT_ROOT / "benchmark_results"
 
-METHOD_ORDER = ["agent", "mpc_dynamic", "mpc_ep"]
+ENERGYBRIDGE_METHOD_ID = "EnergyBridge"
+METHOD_ORDER = [ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "mpc_ep"]
 METHOD_LABEL = {
+    ENERGYBRIDGE_METHOD_ID: "EnergyBridge",
     "agent": "EnergyBridge",
     "mpc_dynamic": "MPC Dynamic",
     "mpc_ep": "MPC EP",
 }
+
+
+def _canonical_method(method: str) -> str:
+    key = str(method or ENERGYBRIDGE_METHOD_ID).strip().lower()
+    aliases = {
+        "agent": ENERGYBRIDGE_METHOD_ID,
+        "energybridge": ENERGYBRIDGE_METHOD_ID,
+        "mpc": "mpc_dynamic",
+    }
+    return aliases.get(key, key)
 def _latest_date_dir(results_root: Path) -> Path:
     date_dirs = [p for p in results_root.iterdir() if p.is_dir() and p.name[:4].isdigit()]
     if not date_dirs:
@@ -114,11 +126,12 @@ def _build_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
         result = _read_result_json(result_path)
         if not result:
             continue
+        method = _canonical_method(row["method"])
         records.append(
             {
                 "persona_id": row["persona_id"],
-                "method": row["method"],
-                "method_label": METHOD_LABEL.get(row["method"], row["method"]),
+                "method": method,
+                "method_label": METHOD_LABEL.get(method, method),
                 "status": row.get("status", ""),
                 "user_pref_score": _as_float(result.get("user_pref_score")),
                 "energy_kwh_total": _as_float(result.get("energy_kwh_total")),
@@ -412,7 +425,8 @@ def main() -> None:
     rows = _load_matrix_rows(summary_json)
     df = _build_dataframe(rows)
     df = df.copy()
-    df["method_label"] = df["method"].map(METHOD_LABEL)
+    method_text = df["method"].astype(str)
+    df["method_label"] = method_text.map(METHOD_LABEL).fillna(method_text)
 
     md_path = _write_markdown(df, report_dir, summary_json, args.artifact_prefix)
     csv_path = _write_csv(df, report_dir, args.artifact_prefix)

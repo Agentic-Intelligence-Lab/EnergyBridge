@@ -3,7 +3,7 @@
 
 Usage
 -----
-  python3 run_persona_json.py <persona_id_or_json_path> [--output <dir>] [--city <Tianjin|Beijing|Shanghai>] [--method <agent|mpc_dynamic|mpc_ep>]
+  python3 run_persona_json.py <persona_id_or_json_path> [--output <dir>] [--city <Tianjin|Beijing|Shanghai>] [--method <EnergyBridge|mpc_dynamic|mpc_ep>]
 
 Examples
 --------
@@ -75,6 +75,7 @@ STANDARD_TIMEZONE_BY_CITY = {
     "shanghai": 8.0,
     "germany": 1.0,
 }
+ENERGYBRIDGE_METHOD_ID = "EnergyBridge"
 
 
 def _load_persona_json(persona_arg: str) -> dict:
@@ -202,16 +203,25 @@ def _prepare_run_assets(args: argparse.Namespace, output_dir: Path, days: int, s
 
 
 def _canonical_method(method: str) -> str:
+    raw = (method or ENERGYBRIDGE_METHOD_ID).strip()
+    key = raw.lower()
     aliases = {
+        "agent": ENERGYBRIDGE_METHOD_ID,
+        "energybridge": ENERGYBRIDGE_METHOD_ID,
         "mpc": "mpc_dynamic",
     }
-    return aliases.get((method or "agent").lower(), (method or "agent").lower())
+    return aliases.get(key, key)
+
+
+def _controller_method(method: str) -> str:
+    method = _canonical_method(method)
+    return "agent" if method == ENERGYBRIDGE_METHOD_ID else method
 
 
 def _method_label(method: str) -> str:
     method = _canonical_method(method)
     labels = {
-        "agent": "EnergyBridge Agent",
+        ENERGYBRIDGE_METHOD_ID: "EnergyBridge",
         "human": "Human-in-loop Agent",
         "mpc_dynamic": "MPC-Dynamic baseline",
         "mpc_ep": "MPC-EnergyPlus baseline",
@@ -297,11 +307,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--human-name", default="",
-        help="Custom human user name used in default output directory prefix, e.g. alice_human_agent_tianjin_3days.",
+        help="Custom human user name used in default output directory prefix, e.g. alice_human_EnergyBridge_tianjin_3days.",
     )
     parser.add_argument(
-        "--method", choices=["agent", "mpc_dynamic", "mpc_ep", "mpc"], default="agent",
-        help="Controller method for family_runner (default: agent).",
+        "--method",
+        choices=[ENERGYBRIDGE_METHOD_ID, "agent", "mpc_dynamic", "mpc_ep", "mpc"],
+        default=ENERGYBRIDGE_METHOD_ID,
+        help="Controller method. Use EnergyBridge for our agent; 'agent' is kept as a deprecated alias.",
     )
     parser.add_argument(
         "--mpc-horizon", type=int, default=6,
@@ -313,8 +325,8 @@ def main() -> None:
     pid     = persona["id"]
     method = _canonical_method(args.method)
     human_mode = args.human or args.user_mode == "human"
-    controller_method = method
-    result_method = controller_method
+    controller_method = _controller_method(method)
+    result_method = method
     human_name = args.human_name.strip() if human_mode else ""
     mpc_horizon = max(1, int(args.mpc_horizon))
     vpp_start_hour = float(args.vpp_start_hour) % 24.0
@@ -380,6 +392,7 @@ def main() -> None:
         vpp_events_config= vpp_events,
         vpp_schedule_source = vpp_schedule_source,
     )
+    result.method = result_method
     if human_mode:
         result.user_label = f"{_slug_label(human_name) or 'human'}_human"
 

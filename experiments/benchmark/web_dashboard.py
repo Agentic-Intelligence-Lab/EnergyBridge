@@ -650,7 +650,7 @@ INDEX_HTML = r"""<!doctype html>
       jobId: null,
       jobPoll: null,
       selectedDate: '',
-      selectedMethod: 'agent',
+      selectedMethod: 'EnergyBridge',
       selectedPersona: 'basic_role_a_commuter_price_cooperative',
       selectedCity: 'Tianjin',
       selectedDays: 3,
@@ -771,7 +771,8 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function methodRunToken(method) {
-      return method === 'mpc_dynamic' || method === 'mpc_ep' ? `${method}_H6` : (method || 'agent');
+      if (method === 'agent' || String(method || '').toLowerCase() === 'energybridge') return 'EnergyBridge';
+      return method === 'mpc_dynamic' || method === 'mpc_ep' ? `${method}_H6` : (method || 'EnergyBridge');
     }
 
     function todayIso() {
@@ -996,7 +997,7 @@ INDEX_HTML = r"""<!doctype html>
     function commandPreset(method, persona, userMode, humanName) {
       normalizeScenarioSelection();
       const base = `conda run --no-capture-output -n energybridge python experiments/benchmark/run_persona_json.py ${persona || state.selectedPersona}`;
-      const controllerMethod = method || 'agent';
+      const controllerMethod = method || 'EnergyBridge';
       const horizon = controllerMethod === 'mpc_dynamic' || controllerMethod === 'mpc_ep' ? ' --mpc-horizon 6' : '';
       const human = userMode === 'human'
         ? ` --user-mode human --human-name ${shellQuote(humanName || 'human')}`
@@ -1011,7 +1012,8 @@ INDEX_HTML = r"""<!doctype html>
 
     function methodLabel(method) {
       return {
-        agent: 'Agent',
+        EnergyBridge: 'EnergyBridge',
+        agent: 'EnergyBridge',
         mpc_dynamic: 'MPC Dynamic',
         mpc_ep: 'MPC EP'
       }[method] || method;
@@ -1275,7 +1277,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function renderOps(events) {
       normalizeScenarioSelection();
-      const methods = ['agent', 'mpc_dynamic', 'mpc_ep'];
+      const methods = ['EnergyBridge', 'mpc_dynamic', 'mpc_ep'];
       const personaOptions = state.personas.map(p => `
         <option value="${p.id}" ${state.selectedPersona === p.id ? 'selected' : ''}>
           ${p.label} · ${p.name}
@@ -1396,7 +1398,7 @@ INDEX_HTML = r"""<!doctype html>
             <h2>历史结果</h2>
             <div class="result-name">结果名称：<strong>${resultName}</strong></div>
             ${resultMetricsHtml([
-              ['方法', d.method || 'unknown'],
+              ['方法', methodLabel(d.method || 'unknown')],
               ['城市', d.weather || 'unknown'],
               ['用户评分', `${fmt(d.user_pref_score, 1)}/5`],
               ['总能耗', `${fmt(d.energy_kwh_total, 1)} kWh`],
@@ -1699,13 +1701,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             result_path = run_path / "benchmark_result.json"
             if result_path.exists():
                 data = json.loads(result_path.read_text(encoding="utf-8"))
+                data["method"] = self._canonical_method_id(data.get("method") or self._infer_method_from_run_name(run_path.name))
                 _apply_meter_vpp_energy(data, run_path)
             else:
                 rel = run_path.relative_to(self.results_dir).as_posix()
                 data = {
                     "_run_id": rel,
                     "output_dir": str(run_path),
-                    "method": self._infer_method_from_run_name(run_path.name),
+                    "method": self._canonical_method_id(self._infer_method_from_run_name(run_path.name)),
                     "weather": self._infer_city_from_run_name(run_path.name),
                     "exit_code": "incomplete",
                     "vpp_event_log": [],
@@ -1805,7 +1808,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 except Exception:
                     data = {}
             rel = run_dir.relative_to(self.results_dir).as_posix()
-            method = data.get("method") or self._infer_method_from_run_name(run_dir.name)
+            method = self._canonical_method_id(data.get("method") or self._infer_method_from_run_name(run_dir.name))
             city = data.get("weather") or self._infer_city_from_run_name(run_dir.name)
             runs.append({
                 "id": rel,
@@ -1820,15 +1823,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return runs
 
     @staticmethod
-    def _infer_method_from_run_name(name: str) -> str:
-        if "_mpc_dynamic" in name:
+    def _canonical_method_id(method: str) -> str:
+        key = str(method or "").strip().lower()
+        if key in {"agent", "energybridge"}:
+            return "EnergyBridge"
+        if key == "mpc":
             return "mpc_dynamic"
-        if "_mpc_ep" in name:
+        return str(method or "unknown")
+
+    @staticmethod
+    def _infer_method_from_run_name(name: str) -> str:
+        lower_name = name.lower()
+        if "_mpc_dynamic" in lower_name:
+            return "mpc_dynamic"
+        if "_mpc_ep" in lower_name:
             return "mpc_ep"
-        if "_rl_" in name:
+        if "_rl_" in lower_name:
             return "rl"
-        if "_agent_" in name:
-            return "agent"
+        if "_energybridge_" in lower_name or "_agent_" in lower_name:
+            return "EnergyBridge"
         return "unknown"
 
     @staticmethod

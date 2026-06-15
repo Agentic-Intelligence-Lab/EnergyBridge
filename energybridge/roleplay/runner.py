@@ -11,7 +11,7 @@ def run_roleplay_queue(
     run_fn: Callable[..., Any],
     *,
     cities: list[str] | None = None,
-    method: str = "agent",
+    method: str = "EnergyBridge",
     output_base_dir: Path | None = None,
     extra_kwargs: dict | None = None,
     verbose: bool = True,

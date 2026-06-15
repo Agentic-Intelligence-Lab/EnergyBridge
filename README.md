@@ -82,7 +82,7 @@ Dashboard workflow:
 
 1. Select user category: `Role-play LLM` or `Human`.
 2. Select user type/name.
-3. Select method: `agent`, `mpc_dynamic`, or `mpc_ep`.
+3. Select method: `EnergyBridge`, `mpc_dynamic`, or `mpc_ep`.
 4. Start the run and watch live logs, progressive event cards, appliance
    schedules, user scores, and the final `run_summary.txt`.
 5. Open historical results from the collapsible sidebar.
@@ -226,7 +226,7 @@ Important fields in `benchmark_result.json`:
 
 | Field | Required for reports | Meaning |
 |-------|----------------------|---------|
-| `method` | yes | Method id, e.g. `agent`, `mpc_dynamic`, `my_baseline` |
+| `method` | yes | Method id, e.g. `EnergyBridge`, `mpc_dynamic`, `my_baseline`. The old `agent` id is accepted only as a deprecated alias. |
 | `weather` | yes | City/scenario label |
 | `exit_code` | yes | `0` means successful run |
 | `user_pref_score` | yes | Average user score |
@@ -251,7 +251,7 @@ Then run a tiny matrix before the full comparison:
 python experiments/benchmark/run_baseline_matrix.py \
   --city Germany --days 3 --start-date 2025-06-01 \
   --price-csv experiments/real_data/germany_2025_price.csv \
-  --methods agent my_baseline --personas basic_role_a_commuter_price_cooperative \
+  --methods EnergyBridge my_baseline --personas basic_role_a_commuter_price_cooperative \
   --max-runs 2
 ```
 
@@ -326,11 +326,11 @@ cd /home/hku_user/work/EnergyBridge
 conda activate energybridge
 ```
 
-Agent:
+EnergyBridge:
 
 ```bash
 python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Tianjin --method agent
+  --city Tianjin --method EnergyBridge
 ```
 
 MPC with collaborator dynamic model:
@@ -351,14 +351,14 @@ Human-in-the-loop user instead of role-play LLM:
 
 ```bash
 python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Tianjin --method agent --user-mode human --human-name alice
+  --city Tianjin --method EnergyBridge --user-mode human --human-name alice
 ```
 
 Tianjin 7-day Agent run using the existing 7-day IDF:
 
 ```bash
 python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Tianjin --method agent --days 7
+  --city Tianjin --method EnergyBridge --days 7
 ```
 
 ### Germany Real-Data Full Variant
@@ -377,18 +377,18 @@ not a separate Agent or city mode. It is enabled only when `--price-csv` is
 provided. If omitted, the benchmark falls back to the normal policy and price
 metrics are reported as `NaN`.
 
-Run Germany Agent:
+Run Germany EnergyBridge:
 
 ```bash
 python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Germany --method agent
+  --city Germany --method EnergyBridge
 ```
 
 Enable day-ahead price optimization for Germany:
 
 ```bash
 python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Germany --method agent \
+  --city Germany --method EnergyBridge \
   --price-csv experiments/real_data/germany_2025_price.csv
 ```
 
@@ -397,7 +397,7 @@ price CSV is supplied:
 
 ```bash
 python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Tianjin --method agent \
+  --city Tianjin --method EnergyBridge \
   --price-csv /path/to/tianjin_day_ahead_price.csv
 ```
 
@@ -405,7 +405,7 @@ Regenerate the EPW from the real-weather CSV:
 
 ```bash
 python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Germany --method agent --regenerate-epw
+  --city Germany --method EnergyBridge --regenerate-epw
 ```
 
 Run Germany MPC baselines:
@@ -422,7 +422,7 @@ Override the default date range if needed:
 
 ```bash
 python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Germany --method agent --days 7 --start-date 2025-06-01
+  --city Germany --method EnergyBridge --days 7 --start-date 2025-06-01
 ```
 
 If no price CSV is provided, the run still works and the price metrics are
@@ -433,7 +433,7 @@ VPP windows are parameterized. The default is one event per day from 18:00 to
 
 ```bash
 python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Tianjin --method agent \
+  --city Tianjin --method EnergyBridge \
   --vpp-start-hour 17 --vpp-duration-hours 2
 ```
 
@@ -445,7 +445,7 @@ For varied windows or multiple events per day, pass a JSON schedule:
 
 ```bash
 python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Tianjin --method agent --days 7 \
+  --city Tianjin --method EnergyBridge --days 7 \
   --vpp-events-json experiments/benchmark/configs/vpp_events_7day_variable.json
 ```
 
@@ -501,7 +501,7 @@ Default matrix:
 
 ```text
 10 approved personas x 3 methods = 30 jobs
-methods: agent, mpc_dynamic, mpc_ep
+methods: EnergyBridge, mpc_dynamic, mpc_ep
 duration: 3 days
 calendar: enabled
 capacity quantification: enabled
@@ -519,12 +519,12 @@ python experiments/benchmark/run_baseline_matrix.py --resume
 
 # Run only selected methods
 python experiments/benchmark/run_baseline_matrix.py \
-  --methods agent mpc_dynamic --city Tianjin --mpc-horizon 6
+  --methods EnergyBridge mpc_dynamic --city Tianjin --mpc-horizon 6
 
 # Run only selected users
 python experiments/benchmark/run_baseline_matrix.py \
   --personas basic_role_a_commuter_price_cooperative atom_control_auto \
-  --methods agent --city Tianjin
+  --methods EnergyBridge --city Tianjin
 
 # Smoke test one job
 python experiments/benchmark/run_baseline_matrix.py --max-runs 1
@@ -603,16 +603,16 @@ benchmark_results/<YYYY-MM-DD>/<role>_<method>[_Hn]_<city>_<days>days/
 Examples:
 
 ```text
-benchmark_results/2026-06-14/role_a_agent_tianjin_3days/
+benchmark_results/2026-06-14/role_a_EnergyBridge_tianjin_3days/
 benchmark_results/2026-06-14/role_a_mpc_dynamic_H6_tianjin_3days/
 benchmark_results/2026-06-14/role_a_mpc_ep_H6_tianjin_3days/
-benchmark_results/2026-06-14/role_a_agent_germany_7days/
+benchmark_results/2026-06-14/role_a_EnergyBridge_germany_7days/
 ```
 
 Human runs use the custom name:
 
 ```text
-benchmark_results/2026-06-14/alice_human_agent_tianjin_3days/
+benchmark_results/2026-06-14/alice_human_EnergyBridge_tianjin_3days/
 benchmark_results/2026-06-14/alice_human_mpc_dynamic_H6_tianjin_3days/
 ```
 
@@ -842,7 +842,7 @@ The current human-in-the-loop path is:
 
 ```bash
 python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --user-mode human --human-name alice --method agent
+  --user-mode human --human-name alice --method EnergyBridge
 ```
 
 The older lightweight demo is kept here:

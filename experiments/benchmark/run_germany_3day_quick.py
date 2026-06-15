@@ -16,6 +16,18 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RUN_PERSONA = PROJECT_ROOT / "experiments" / "benchmark" / "run_persona_json.py"
 DEFAULT_PRICE_CSV = PROJECT_ROOT / "experiments" / "real_data" / "germany_2025_price.csv"
+ENERGYBRIDGE_METHOD_ID = "EnergyBridge"
+
+
+def _canonical_method(method: str) -> str:
+    raw = (method or ENERGYBRIDGE_METHOD_ID).strip()
+    key = raw.lower()
+    aliases = {
+        "agent": ENERGYBRIDGE_METHOD_ID,
+        "energybridge": ENERGYBRIDGE_METHOD_ID,
+        "mpc": "mpc_dynamic",
+    }
+    return aliases.get(key, key)
 
 
 def main() -> None:
@@ -33,9 +45,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--method",
-        choices=["agent", "mpc_dynamic", "mpc_ep", "mpc"],
-        default="agent",
-        help="Controller method. Default: agent.",
+        choices=[ENERGYBRIDGE_METHOD_ID, "agent", "mpc_dynamic", "mpc_ep", "mpc"],
+        default=ENERGYBRIDGE_METHOD_ID,
+        help="Controller method. Default: EnergyBridge; 'agent' is a deprecated alias.",
     )
     parser.add_argument(
         "--mpc-horizon",
@@ -89,7 +101,7 @@ def main() -> None:
         "--city",
         "Germany",
         "--method",
-        args.method,
+        _canonical_method(args.method),
         "--days",
         "3",
         "--start-date",
