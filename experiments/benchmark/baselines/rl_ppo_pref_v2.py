@@ -1,0 +1,293 @@
+"""PPO v2 policy adapter for the EnergyBridge benchmark interface.
+
+Key differences from rl_ppo_3day:
+- Action: 5 dims (AC, washer, dishwasher, WH flag, WH temp) vs 3
+- Observation: 41 dims with price + preference proxy
+- Decision cooldown: once-per-day appliance scheduling
+- Model: ENERGYBRIDGE_RL_PREF_V2_MODEL env var
+- Debug: ENERGYBRIDGE_RL_PREF_V2_DEBUG_POLICY=fixed bypasses PPO
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+METHOD_ID = "rl_ppo_pref_v2"
+OBJECTIVE_SOURCE = "rl_ppo_pref_v2_policy"
+MODEL_ENV_VAR = "ENERGYBRIDGE_RL_PREF_V2_MODEL"
+DEBUG_ENV_VAR = "ENERGYBRIDGE_RL_PREF_V2_DEBUG_POLICY"
+DEFAULT_MODEL_CANDIDATES = (
+    PROJECT_ROOT / "benchmark_results" / "rl_ppo_pref_v2_1h_fixed" / "ppo_energyplus_3day.zip",
+    PROJECT_ROOT / "benchmark_results" / "rl_ppo_pref_v2_1h" / "ppo_energyplus_3day.zip",
+    PROJECT_ROOT / "benchmark_results" / "rl_ppo_pref_v2_smoke_fixed" / "ppo_energyplus_3day.zip",
+    PROJECT_ROOT / "benchmark_results" / "rl_ppo_pref_v2_smoke" / "ppo_energyplus_3day.zip",
+    PROJECT_ROOT / "benchmark_results" / "rl_ppo_pref_v2_4h" / "ppo_energyplus_3day.zip",
+)
+DECISION_INTERVAL_H = 1.0 / 6.0
+OBS_DIM = 41  # must match environment_pref_v2.OBS_DIM_V2
+
+_MODEL_CACHE: dict[tuple[Path, str], Any] = {}
+
+
+def _debug_mode() -> str:
+    return os.environ.get(DEBUG_ENV_VAR, "").strip().lower()
+
+
+def resolve_model_path() -> Path:
+    configured = os.environ.get(MODEL_ENV_VAR, "").strip()
+    if configured:
+        path = Path(configured)
+        if not path.is_absolute():
+            path = PROJECT_ROOT / path
+        if path.exists():
+            return path
+        raise FileNotFoundError(f"RL Pref-v2 model not found: {path}. Set {MODEL_ENV_VAR}.")
+    for candidate in DEFAULT_MODEL_CANDIDATES:
+        if candidate.exists():
+            return candidate
+    checked = "\n  ".join(str(p) for p in DEFAULT_MODEL_CANDIDATES)
+    raise FileNotFoundError(f"No RL Pref-v2 model found. Set {MODEL_ENV_VAR}. Checked:\n  {checked}")
+
+
+def load_policy(model_path: str | Path | None = None, *, device: str = "cpu") -> Any:
+    if _debug_mode() in ("fixed", "1", "true", "yes"):
+        return None
+    path = Path(model_path) if model_path else resolve_model_path()
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    key = (path.resolve(), device)
+    if key not in _MODEL_CACHE:
+        from stable_baselines3 import PPO
+        _MODEL_CACHE[key] = PPO.load(path, device=device, print_system_info=False)
+    return _MODEL_CACHE[key]
+
+
+def decode_action(action: np.ndarray) -> np.ndarray:
+    a = np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
+    return np.array([
+        25.0 + 3.0 * a[0],          # AC setpoint [22, 28]
+        15.5 + 7.5 * a[1],          # washer start [8, 23]
+        16.0 + 7.0 * a[2],          # dishwasher start [9, 23]
+        (a[3] + 1.0) / 2.0,          # WH preheat flag [0, 1]
+        60.0 + 15.0 * a[4],          # WH temp [45, 75]
+    ], dtype=np.float32)
+
+
+def _fixed_debug_action(vpp_active: bool, sim_h: float) -> np.ndarray:
+    """Deterministic sensible policy for sanity testing.
+
+    AC: 25.5°C normal, 26.0°C in VPP window.
+    Washer: 19:00.  Dishwasher: 21:00.
+    WH: preheat 14:00-17:00 at 68°C.
+    """
+    hod = sim_h % 24.0
+    sp = 26.0 if vpp_active else 25.5
+    wh_preheat = 1.0  # always preheat
+    wh_temp = 68.0
+    return np.array([sp, 19.0, 21.0, wh_preheat, wh_temp], dtype=np.float32)
+
+
+def build_observation(
+    *, loop: Any, sim_h: float, temp_c: float, outdoor_temp_c: float,
+    vpp_active: bool, assessment: dict[str, Any] | None,
+    price_profile: Any = None,
+    pref_proxy: dict[str, float] | None = None,
+) -> np.ndarray:
+    from baselines.rl_energyplus_3day.environment_pref_v2 import (
+        _price_features, _shiftable_obs, _wh_obs,
+    )
+
+    hour = float(sim_h) % 24.0
+    day_idx = min(2, int(float(sim_h) // 24))
+    suite = loop.appliance_suite
+    assessment = assessment or {}
+    pfeat = _price_features(price_profile, sim_h) if price_profile else {}
+    pfeat = pfeat or {}
+    pref = pref_proxy or {"comfort_weight": 0.35, "price_sensitivity": 0.5, "flexibility": 0.5, "vpp_cooperation": 0.7}
+
+    vpp_target_kwh = max(0.1, 2.0 - float(assessment.get("recommended_bid_kw", 0.0))) if vpp_active else 0.0
+    next_vpp = None
+    for d in range(3):
+        start = d * 24.0 + 18.0
+        if sim_h < start:
+            next_vpp = start
+            break
+    time_to_vpp = max(0.0, (next_vpp - sim_h) / 24.0) if next_vpp else 0.0
+
+    capacity_values = (
+        [float(assessment.get("committable_kw", 0.0)) / 2.0,
+         float(assessment.get("recommended_bid_kw", 0.0)) / 2.0]
+        if vpp_active else [0.0, 0.0]
+    )
+
+    values = [
+        np.sin(2 * np.pi * hour / 24.0), np.cos(2 * np.pi * hour / 24.0),
+        float(day_idx) / 3.0, time_to_vpp,
+        float(temp_c) / 40.0, float(outdoor_temp_c) / 45.0,
+        float(getattr(loop, "sp", 25.0)) / 30.0,
+        float(8.0 <= hour < 22.0),
+        float(vpp_active), vpp_target_kwh / 2.0,
+        *capacity_values,
+        float(pfeat.get("current", 0.0)) / 0.3,
+        float(pfeat.get("next6h_mean", 0.0)) / 0.3,
+        float(pfeat.get("next6h_max", 0.0)) / 0.3,
+        float(pfeat.get("next6h_min", 0.0)) / 0.3,
+        float(pfeat.get("peak", 0.0)),
+        pref["comfort_weight"], pref["price_sensitivity"],
+        pref["flexibility"], pref["vpp_cooperation"],
+    ]
+    for name in ("washer", "dishwasher"):
+        values.extend(_shiftable_obs(suite._shiftable[name], day_idx))
+    values.extend(_wh_obs(suite._water_heater, day_idx))
+    values.extend([
+        float(suite._ev.present), float(suite._ev._soc),
+        float(suite._ev._is_home(hour)),
+    ])
+    values.extend([
+        float(suite._refrigerator.present), float(suite._refrigerator.power_kw) / 2.0,
+    ])
+    obs = np.asarray(values, dtype=np.float32)
+    if obs.shape != (OBS_DIM,):
+        raise RuntimeError(f"Obs shape mismatch: {obs.shape} != {OBS_DIM}")
+    return obs
+
+
+def predict_control_result(
+    *, loop: Any, sim_h: float, temp_c: float, outdoor_temp_c: float,
+    vpp_active: bool, assessment: dict[str, Any] | None,
+    appliance_config: dict[str, Any] | None, base_actions: dict[str, Any],
+    vpp_event: dict[str, Any] | None = None,
+    price_profile: Any = None,
+    pref_proxy: dict[str, float] | None = None,
+    daily_scheduled: dict[int, set] | None = None,
+    model_path: str | Path | None = None, device: str = "cpu",
+) -> dict[str, Any]:
+    debug_mode = _debug_mode()
+
+    if debug_mode in ("fixed", "1", "true", "yes"):
+        # Deterministic fixed policy — bypass PPO entirely
+        action_decoded = _fixed_debug_action(vpp_active, sim_h)
+        print(f"  [RL Pref-v2 DEBUG=fixed] h={sim_h:.2f} vpp={vpp_active} "
+              f"sp={action_decoded[0]:.1f}°C")
+        return action_to_control_result_decoded(
+            action_decoded, sim_h=sim_h, appliance_config=appliance_config,
+            base_actions=base_actions, vpp_event=vpp_event,
+            daily_scheduled=daily_scheduled, source="fixed_debug_policy",
+        )
+
+    model = load_policy(model_path, device=device)
+    observation = build_observation(
+        loop=loop, sim_h=sim_h, temp_c=temp_c, outdoor_temp_c=outdoor_temp_c,
+        vpp_active=vpp_active, assessment=assessment,
+        price_profile=price_profile, pref_proxy=pref_proxy,
+    )
+    action, _ = model.predict(observation, deterministic=True)
+    action_decoded = decode_action(action)
+    print(f"  [RL Pref-v2 PPO] h={sim_h:.2f} vpp={vpp_active} "
+          f"raw={np.round(action, 3)} sp={action_decoded[0]:.1f}°C")
+    return action_to_control_result_decoded(
+        action_decoded, sim_h=sim_h, appliance_config=appliance_config,
+        base_actions=base_actions, vpp_event=vpp_event,
+        daily_scheduled=daily_scheduled, source="ppo_policy",
+    )
+
+
+def action_to_control_result(
+    action: np.ndarray, *, sim_h: float,
+    appliance_config: dict[str, Any] | None,
+    base_actions: dict[str, Any],
+    vpp_event: dict[str, Any] | None = None,
+    daily_scheduled: dict[int, set] | None = None,
+) -> dict[str, Any]:
+    """Legacy wrapper: decode action then dispatch."""
+    decoded = decode_action(action)
+    return action_to_control_result_decoded(
+        decoded, sim_h=sim_h, appliance_config=appliance_config,
+        base_actions=base_actions, vpp_event=vpp_event,
+        daily_scheduled=daily_scheduled, source="ppo_policy",
+    )
+
+
+def action_to_control_result_decoded(
+    decoded: np.ndarray, *, sim_h: float,
+    appliance_config: dict[str, Any] | None,
+    base_actions: dict[str, Any],
+    vpp_event: dict[str, Any] | None = None,
+    daily_scheduled: dict[int, set] | None = None,
+    source: str = "ppo_policy",
+) -> dict[str, Any]:
+    """Core logic: turn physical action values into benchmark control result."""
+    actions = dict(base_actions or {})
+    hod = float(sim_h) % 24.0
+    day_idx = min(2, int(float(sim_h) // 24))
+    vpp_active = bool(vpp_event and float(vpp_event.get("trigger_h", 0)) <= sim_h < float(vpp_event.get("end_h", 0)))
+    present = _present_controllable(appliance_config)
+    ds = daily_scheduled if daily_scheduled is not None else {}
+
+    # AC setpoint — always applied
+    sp = round(float(np.clip(float(decoded[0]), 22.0, 28.0)), 1)
+
+    # Washer: schedule once per day
+    washer_ok = "washer" in present
+    if washer_ok and "washer" not in ds.get(day_idx, set()):
+        proposed = float(np.clip(float(decoded[1]), 8.0, 23.0))
+        if not vpp_active:  # don't schedule INTO VPP window
+            actions["washer_start_h"] = round(proposed, 3)
+            actions["washer_skip"] = False
+            ds.setdefault(day_idx, set()).add("washer")
+            print(f"  [RL Pref-v2] day={day_idx} washer scheduled@{proposed:.1f}h")
+
+    # Dishwasher: schedule once per day
+    if "dishwasher" in present and "dishwasher" not in ds.get(day_idx, set()):
+        proposed = float(np.clip(float(decoded[2]), 9.0, 23.0))
+        if not vpp_active:
+            actions["dishwasher_start_h"] = round(proposed, 3)
+            actions["dishwasher_skip"] = False
+            ds.setdefault(day_idx, set()).add("dishwasher")
+            print(f"  [RL Pref-v2] day={day_idx} dishwasher scheduled@{proposed:.1f}h")
+
+    # Water heater: preheat once per day
+    if "water_heater" in present and "water_heater" not in ds.get(day_idx, set()):
+        preheat_flag = float(decoded[3])
+        if preheat_flag >= 0.5 and not vpp_active:
+            wh_temp = float(np.clip(float(decoded[4]), 45.0, 75.0))
+            # End preheat 1h before VPP to avoid overlap
+            end_h = min(17.0, float(vpp_event["trigger_h"]) % 24.0 - 1.0 if vpp_event else 17.0)
+            end_h = max(10.0, end_h)
+            start_h = max(8.0, end_h - 3.0)
+            actions.update({
+                "water_heater_preheat": True,
+                "water_heater_preheat_start_h": round(float(start_h), 3),
+                "water_heater_preheat_end_h": round(float(end_h), 3),
+                "water_heater_preheat_temp_c": round(wh_temp, 1),
+            })
+            ds.setdefault(day_idx, set()).add("water_heater")
+            print(f"  [RL Pref-v2] day={day_idx} WH preheat {start_h:.1f}-{end_h:.1f}h @ {wh_temp:.0f}°C")
+
+    return {
+        "setpoint": sp,
+        "next_check_hour": float(sim_h) + DECISION_INTERVAL_H,
+        "reason": f"RL PPO Pref-v2 policy ({source}) over 41-value observation with price and preference proxy.",
+        "appliance_actions": actions,
+        "objective_source": OBJECTIVE_SOURCE,
+        "model_path": str(resolve_model_path()) if _debug_mode() not in ("fixed", "1", "true", "yes") else "debug_fixed",
+    }
+
+
+def _present_controllable(appliance_config: dict[str, Any] | None) -> set[str]:
+    cfg = appliance_config or {}
+    present: set[str] = set()
+    for name in ("washer", "dishwasher", "dryer"):
+        dev = cfg.get(name, {}) or {}
+        if bool(dev.get("present")) and bool(dev.get("shiftable", True)) and bool(dev.get("dr_adjustable", True)):
+            present.add(name)
+    for name in ("water_heater", "ev"):
+        dev = cfg.get(name, {}) or {}
+        if bool(dev.get("present")) and bool(dev.get("dr_adjustable", True)):
+            present.add(name)
+    return present

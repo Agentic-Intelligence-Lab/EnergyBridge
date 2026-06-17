@@ -209,6 +209,11 @@ def _canonical_method(method: str) -> str:
         "agent": ENERGYBRIDGE_METHOD_ID,
         "energybridge": ENERGYBRIDGE_METHOD_ID,
         "mpc": "mpc_dynamic",
+        "rl": "rl_ppo_3day",
+        "rl_ppo": "rl_ppo_3day",
+        "rl_ppo_3day": "rl_ppo_3day",
+        "rl_ppo_pref_v2": "rl_ppo_pref_v2",
+        "rl_pref_v2": "rl_ppo_pref_v2",
     }
     return aliases.get(key, key)
 
@@ -225,7 +230,8 @@ def _method_label(method: str) -> str:
         "human": "Human-in-loop Agent",
         "mpc_dynamic": "MPC-Dynamic baseline",
         "mpc_ep": "MPC-EnergyPlus baseline",
-        "rl": "RL baseline",
+        "rl_ppo_3day": "RL PPO 3-day baseline",
+        "rl_ppo_pref_v2": "RL PPO Pref-v2",
     }
     return labels.get(method, method or "unknown")
 
@@ -311,7 +317,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--method",
-        choices=[ENERGYBRIDGE_METHOD_ID, "agent", "mpc_dynamic", "mpc_ep", "mpc"],
+        choices=[ENERGYBRIDGE_METHOD_ID, "agent", "mpc_dynamic", "mpc_ep", "mpc", "rl", "rl_ppo", "rl_ppo_3day", "rl_ppo_pref_v2", "rl_pref_v2"],
         default=ENERGYBRIDGE_METHOD_ID,
         help="Controller method. Use EnergyBridge for our agent; 'agent' is kept as a deprecated alias.",
     )

@@ -1016,7 +1016,9 @@ INDEX_HTML = r"""<!doctype html>
         EnergyBridge: 'EnergyBridge',
         agent: 'EnergyBridge',
         mpc_dynamic: 'MPC Dynamic',
-        mpc_ep: 'MPC EP'
+        mpc_ep: 'MPC EP',
+        rl_ppo_3day: 'RL PPO',
+        rl_ppo_pref_v2: 'RL PPO Pref-v2'
       }[method] || method;
     }
 
@@ -1277,7 +1279,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function renderOps(events) {
       normalizeScenarioSelection();
-      const methods = ['EnergyBridge', 'mpc_dynamic', 'mpc_ep'];
+      const methods = ['EnergyBridge', 'mpc_dynamic', 'mpc_ep', 'rl_ppo_3day', 'rl_ppo_pref_v2'];
       const personaOptions = state.personas.map(p => `
         <option value="${p.id}" ${state.selectedPersona === p.id ? 'selected' : ''}>
           ${p.label} · ${p.name}
@@ -1829,6 +1831,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return "EnergyBridge"
         if key == "mpc":
             return "mpc_dynamic"
+        if key in {"rl", "rl_ppo", "rl_ppo_3day"}:
+            return "rl_ppo_3day"
+        if key in {"rl_ppo_pref_v2", "rl_pref_v2"}:
+            return "rl_ppo_pref_v2"
         return str(method or "unknown")
 
     @staticmethod
@@ -1838,8 +1844,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return "mpc_dynamic"
         if "_mpc_ep" in lower_name:
             return "mpc_ep"
+        if "_rl_ppo_pref_v2" in lower_name:
+            return "rl_ppo_pref_v2"
+        if "_rl_ppo_3day" in lower_name:
+            return "rl_ppo_3day"
         if "_rl_" in lower_name:
-            return "rl"
+            return "rl_ppo_3day"
         if "_energybridge_" in lower_name or "_agent_" in lower_name:
             return "EnergyBridge"
         return "unknown"
