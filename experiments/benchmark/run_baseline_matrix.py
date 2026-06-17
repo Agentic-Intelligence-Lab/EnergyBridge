@@ -41,7 +41,18 @@ from energybridge.roleplay.loader import list_personas  # noqa: E402
 
 ENERGYBRIDGE_METHOD_ID = "EnergyBridge"
 DEFAULT_METHODS = (ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "mpc_ep")
-METHOD_CHOICES = (ENERGYBRIDGE_METHOD_ID, "agent", "mpc_dynamic", "mpc_ep", "mpc")
+METHOD_CHOICES = (
+    ENERGYBRIDGE_METHOD_ID,
+    "agent",
+    "mpc_dynamic",
+    "mpc_ep",
+    "mpc",
+    "rl",
+    "rl_ppo",
+    "rl_ppo_3day",
+    "rl_ppo_pref_v2",
+    "rl_pref_v2",
+)
 
 
 @dataclass(frozen=True)
@@ -71,6 +82,11 @@ def _canonical_method(method: str) -> str:
         "agent": ENERGYBRIDGE_METHOD_ID,
         "energybridge": ENERGYBRIDGE_METHOD_ID,
         "mpc": "mpc_dynamic",
+        "rl": "rl_ppo_3day",
+        "rl_ppo": "rl_ppo_3day",
+        "rl_ppo_3day": "rl_ppo_3day",
+        "rl_ppo_pref_v2": "rl_ppo_pref_v2",
+        "rl_pref_v2": "rl_ppo_pref_v2",
     }
     return aliases.get(key, key)
 
@@ -270,8 +286,14 @@ def _run_job(job: Job, *, resume: bool) -> dict[str, Any]:
         assert proc.stdout is not None
         for raw_line in proc.stdout:
             line = raw_line.decode("utf-8", errors="replace")
-            print(line, end="", flush=True)
             log_fh.write(line)
+            try:
+                print(line, end="", flush=True)
+            except UnicodeEncodeError:
+                safe = line.encode(sys.stdout.encoding or "utf-8", errors="replace").decode(
+                    sys.stdout.encoding or "utf-8", errors="replace"
+                )
+                print(safe, end="", flush=True)
         return_code = proc.wait()
 
     elapsed = time.time() - start

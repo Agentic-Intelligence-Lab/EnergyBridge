@@ -27,12 +27,14 @@ _PROJECT_ROOT = _BENCH_DIR.parent.parent
 DEFAULT_RESULTS_ROOT = _PROJECT_ROOT / "benchmark_results"
 
 ENERGYBRIDGE_METHOD_ID = "EnergyBridge"
-METHOD_ORDER = [ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "mpc_ep"]
+METHOD_ORDER = [ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "mpc_ep", "rl_ppo_3day", "rl_ppo_pref_v2"]
 METHOD_LABEL = {
     ENERGYBRIDGE_METHOD_ID: "EnergyBridge",
     "agent": "EnergyBridge",
     "mpc_dynamic": "MPC Dynamic",
     "mpc_ep": "MPC EP",
+    "rl_ppo_3day": "RL PPO",
+    "rl_ppo_pref_v2": "RL PPO Pref-v2",
 }
 
 
@@ -42,6 +44,11 @@ def _canonical_method(method: str) -> str:
         "agent": ENERGYBRIDGE_METHOD_ID,
         "energybridge": ENERGYBRIDGE_METHOD_ID,
         "mpc": "mpc_dynamic",
+        "rl": "rl_ppo_3day",
+        "rl_ppo": "rl_ppo_3day",
+        "rl_ppo_3day": "rl_ppo_3day",
+        "rl_ppo_pref_v2": "rl_ppo_pref_v2",
+        "rl_pref_v2": "rl_ppo_pref_v2",
     }
     return aliases.get(key, key)
 def _latest_date_dir(results_root: Path) -> Path:

@@ -1428,7 +1428,15 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
         if vpp_events_config is not None
         else _make_vpp_events(sim_days, start_h=vpp_start_h, duration_h=vpp_duration_h)
     )
-    if method not in ("agent", "mpc_dynamic", "mpc_ep"):
+    method = {
+        "rl": "rl_ppo_3day",
+        "rl_ppo": "rl_ppo_3day",
+        "rl_ppo_3day": "rl_ppo_3day",
+        "rl_ppo_pref_v2": "rl_ppo_pref_v2",
+        "rl_pref_v2": "rl_ppo_pref_v2",
+        "rl_ppo_v2": "rl_ppo_pref_v2",
+    }.get(str(method or "agent").lower(), method)
+    if method not in ("agent", "mpc_dynamic", "mpc_ep", "rl_ppo_3day", "rl_ppo_pref_v2"):
         raise ValueError(f"Unsupported family control method: {method}")
     if output_dir is None:
         output_dir = BENCHMARK_DIR / "results" / f"family_{method}_{weather_label}"
@@ -1442,6 +1450,7 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     loop.sim_days = sim_days
     loop.daily_e_wh = [0.0 for _ in range(sim_days)]
     loop.vpp_events = vpp_events
+    loop._rl_v2_daily_scheduled: dict[int, set] = {}  # v2 decision cooldown
     loop.vpp_schedule_source = vpp_schedule_source or "daily_default"
     loop.day_agent_decisions = [[] for _ in range(sim_days)]
     loop.next_check = planning_hour
@@ -2060,6 +2069,124 @@ All times are hour-of-day (0–23.9)."""
             "objective_source": "mpc_candidate_scoring_pdf_v15",
         }
 
+    def _rl_trigger(temp, out_t, hod, sim_h, facility_w=None, vpp_event=None):
+        from experiments.benchmark.baselines.rl_ppo_3day import predict_control_result
+
+        vpp_active_now = bool(
+            vpp_event and float(vpp_event["trigger_h"]) <= float(sim_h) < float(vpp_event["end_h"])
+        )
+        capacity = {}
+        if loop.appliance_suite is not None:
+            try:
+                from energybridge.quantification import assess_suite_vpp_request
+
+                duration_h = (
+                    max(1e-6, float(vpp_event["end_h"] - vpp_event["trigger_h"]))
+                    if vpp_event else 1.0
+                )
+                capacity = assess_suite_vpp_request(
+                    loop.appliance_suite,
+                    sim_h,
+                    target_kw=2.0,
+                    duration_minutes=duration_h * 60.0,
+                    hvac_context=_capacity_hvac_context(
+                        loop,
+                        temp=temp,
+                        out_t=out_t,
+                        facility_w=facility_w or 0.0,
+                    ),
+                )
+            except Exception as exc:
+                print(f"  [RL PPO] capacity assessment unavailable: {exc}")
+        base_actions = (
+            _vpp_safe_appliance_actions(appliance_config, vpp_event)
+            if vpp_event else _default_explicit_appliance_actions(appliance_config)
+        )
+        try:
+            decision = predict_control_result(
+                loop=loop,
+                sim_h=sim_h,
+                temp_c=temp,
+                outdoor_temp_c=out_t,
+                vpp_active=vpp_active_now,
+                assessment=capacity.get("assessment", {}),
+                appliance_config=appliance_config or {},
+                base_actions=base_actions,
+                vpp_event=vpp_event,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"RL PPO 3-day policy failed at h={sim_h:.2f}: {exc}") from exc
+        sp = round(max(_run_sp_min, min(_run_sp_max, float(decision.get("setpoint", loop.sp)))), 1)
+        appliance_actions = _filter_controllable_appliance_actions(
+            decision.get("appliance_actions", {}), appliance_config
+        )
+        model_name = Path(str(decision.get("model_path", ""))).name or "unknown"
+        print(
+            f"  [RL PPO | h={sim_h:.2f}] setpoint->{sp:.1f}C | "
+            f"model={model_name}"
+        )
+        return {
+            "setpoint": sp,
+            "next_check_hour": decision.get("next_check_hour"),
+            "reason": decision.get("reason", ""),
+            "appliance_actions": appliance_actions,
+            "objective_source": "rl_ppo_3day_policy",
+        }
+
+    def _rl_pref_v2_trigger(temp, out_t, hod, sim_h, facility_w=None, vpp_event=None):
+        """RL PPO Pref-v2: 5-dim action with price, preference, and cooldown."""
+        from experiments.benchmark.baselines.rl_ppo_pref_v2 import predict_control_result
+        from baselines.rl_energyplus_3day.environment_pref_v2 import _build_user_preference_proxy
+
+        vpp_active_now = bool(
+            vpp_event and float(vpp_event["trigger_h"]) <= float(sim_h) < float(vpp_event["end_h"])
+        )
+        capacity = {}
+        if loop.appliance_suite is not None:
+            try:
+                from energybridge.quantification import assess_suite_vpp_request
+                duration_h = (
+                    max(1e-6, float(vpp_event["end_h"] - vpp_event["trigger_h"]))
+                    if vpp_event else 1.0
+                )
+                capacity = assess_suite_vpp_request(
+                    loop.appliance_suite, sim_h, target_kw=2.0,
+                    duration_minutes=duration_h * 60.0,
+                    hvac_context=_capacity_hvac_context(loop, temp=temp, out_t=out_t, facility_w=facility_w or 0.0),
+                )
+            except Exception as exc:
+                print(f"  [RL Pref-v2] capacity unavailable: {exc}")
+        base_actions = (
+            _vpp_safe_appliance_actions(appliance_config, vpp_event)
+            if vpp_event else _default_explicit_appliance_actions(appliance_config)
+        )
+        pref_proxy = _build_user_preference_proxy(persona_config) if persona_config else None
+        try:
+            decision = predict_control_result(
+                loop=loop, sim_h=sim_h, temp_c=temp, outdoor_temp_c=out_t,
+                vpp_active=vpp_active_now, assessment=capacity.get("assessment", {}),
+                appliance_config=appliance_config or {}, base_actions=base_actions,
+                vpp_event=vpp_event,
+                price_profile=day_ahead_price_profile,
+                pref_proxy=pref_proxy,
+                daily_scheduled=getattr(loop, "_rl_v2_daily_scheduled", None),
+            )
+        except Exception as exc:
+            raise RuntimeError(f"RL PPO Pref-v2 failed at h={sim_h:.2f}: {exc}") from exc
+        sp = round(max(_run_sp_min, min(_run_sp_max, float(decision.get("setpoint", loop.sp)))), 1)
+        appliance_actions = _filter_controllable_appliance_actions(
+            decision.get("appliance_actions", {}), appliance_config
+        )
+        model_name = Path(str(decision.get("model_path", ""))).name or "unknown"
+        print(f"  [RL Pref-v2 | h={sim_h:.2f}] setpoint->{sp:.1f}C | model={model_name}")
+        return {
+            "setpoint": sp,
+            "next_check_hour": decision.get("next_check_hour"),
+            "reason": decision.get("reason", ""),
+            "appliance_actions": appliance_actions,
+            "objective_source": "rl_ppo_pref_v2_policy",
+        }
+
     def _score_event(ev, loop_ref, sim_h, event_index=1, human_mode: bool = False):
         """Score agent strategy for a VPP event window after it ends (roleplay LLM)."""
         try:
@@ -2194,7 +2321,7 @@ All times are hour-of-day (0–23.9)."""
         if not wu:
             psim = loop.prev_sim_h
             if not occ:
-                if method not in ("mpc_dynamic", "mpc_ep"):
+                if method not in ("mpc_dynamic", "mpc_ep", "rl_ppo_3day", "rl_ppo_pref_v2"):
                     loop.sp = 28.0   # unoccupied: save energy automatically
             # End-of-day completion check at each midnight after Day N.
             for _day_idx in range(max(0, sim_days - 1)):
@@ -2333,6 +2460,18 @@ All times are hour-of-day (0–23.9)."""
                         temp, out_t, hod, sim_h,
                         facility_w=fac,
                         vpp_event=triggered_vpp if is_vpp else None)
+                elif method == "rl_ppo_3day":
+                    rl_vpp_event = triggered_vpp if is_vpp else active_vpp
+                    res = _rl_trigger(
+                        temp, out_t, hod, sim_h,
+                        facility_w=fac,
+                        vpp_event=rl_vpp_event)
+                elif method == "rl_ppo_pref_v2":
+                    rl2_vpp_event = triggered_vpp if is_vpp else active_vpp
+                    res = _rl_pref_v2_trigger(
+                        temp, out_t, hod, sim_h,
+                        facility_w=fac,
+                        vpp_event=rl2_vpp_event)
                 else:
                     res = _llm_trigger(temp, out_t, hod, sim_h, total_sim_hours - sim_h,
                                        vpp_active=is_vpp, vpp_id=vid,
@@ -2356,7 +2495,7 @@ All times are hour-of-day (0–23.9)."""
                     except Exception as _oe:
                         print(f"  [Agent Objective] posthoc objective error: {_oe}")
                 loop.planned_occupied_sp = res["setpoint"]
-                loop.sp = res["setpoint"] if occ or method in ("mpc_dynamic", "mpc_ep") else 28.0
+                loop.sp = res["setpoint"] if occ or method in ("mpc_dynamic", "mpc_ep", "rl_ppo_3day", "rl_ppo_pref_v2") else 28.0
                 loop.next_check = res.get("next_check_hour")
                 if is_vpp and triggered_vpp is not None:
                     _vpp_end = triggered_vpp["end_h"]
