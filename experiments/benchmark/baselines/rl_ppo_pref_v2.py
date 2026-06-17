@@ -213,6 +213,57 @@ def action_to_control_result(
     )
 
 
+def _policy_summary(
+    decoded: np.ndarray,
+    actions: dict[str, Any],
+    present: set[str],
+    *,
+    sim_h: float,
+    vpp_active: bool,
+    source: str,
+) -> str:
+    hod = float(sim_h) % 24.0
+    parts = [
+        f"RL PPO Pref-v2 raw policy ({source}); no fallback appliance commands were added.",
+        f"AC setpoint={float(decoded[0]):.1f}C at h={hod:.2f}.",
+    ]
+    if "washer" in present:
+        if "washer_start_h" in actions:
+            parts.append(f"Washer emitted start_h={float(actions['washer_start_h']):.1f}.")
+        else:
+            parts.append(
+                f"Washer raw candidate={float(np.clip(float(decoded[1]), 8.0, 23.0)):.1f}h, "
+                "not emitted."
+            )
+    if "dishwasher" in present:
+        if "dishwasher_start_h" in actions:
+            parts.append(f"Dishwasher emitted start_h={float(actions['dishwasher_start_h']):.1f}.")
+        else:
+            parts.append(
+                f"Dishwasher raw candidate={float(np.clip(float(decoded[2]), 9.0, 23.0)):.1f}h, "
+                "not emitted."
+            )
+    if "water_heater" in present:
+        if actions.get("water_heater_preheat"):
+            parts.append(
+                "Water heater emitted preheat "
+                f"{float(actions['water_heater_preheat_start_h']):.1f}-"
+                f"{float(actions['water_heater_preheat_end_h']):.1f}h @ "
+                f"{float(actions['water_heater_preheat_temp_c']):.1f}C."
+            )
+        else:
+            parts.append(
+                f"Water heater raw flag={float(decoded[3]):.2f}, "
+                f"temp={float(np.clip(float(decoded[4]), 45.0, 75.0)):.1f}C, not emitted."
+            )
+    unsupported = sorted(present.difference({"washer", "dishwasher", "water_heater"}))
+    if unsupported:
+        parts.append("No raw RL action dimension for " + ", ".join(unsupported) + ".")
+    if vpp_active:
+        parts.append("Decision occurred inside a VPP window; shift/preheat actions are gated off.")
+    return " ".join(parts)
+
+
 def action_to_control_result_decoded(
     decoded: np.ndarray, *, sim_h: float,
     appliance_config: dict[str, Any] | None,
@@ -222,7 +273,10 @@ def action_to_control_result_decoded(
     source: str = "ppo_policy",
 ) -> dict[str, Any]:
     """Core logic: turn physical action values into benchmark control result."""
-    actions = dict(base_actions or {})
+    # Keep RL benchmark actions policy-only.  The runner passes an empty dict,
+    # and this adapter deliberately ignores any fallback/base actions from
+    # legacy call sites.
+    actions: dict[str, Any] = {}
     hod = float(sim_h) % 24.0
     day_idx = min(2, int(float(sim_h) // 24))
     vpp_active = bool(vpp_event and float(vpp_event.get("trigger_h", 0)) <= sim_h < float(vpp_event.get("end_h", 0)))
@@ -272,7 +326,14 @@ def action_to_control_result_decoded(
     return {
         "setpoint": sp,
         "next_check_hour": float(sim_h) + DECISION_INTERVAL_H,
-        "reason": f"RL PPO Pref-v2 policy ({source}) over 41-value observation with price and preference proxy.",
+        "reason": _policy_summary(
+            decoded,
+            actions,
+            present,
+            sim_h=sim_h,
+            vpp_active=vpp_active,
+            source=source,
+        ),
         "appliance_actions": actions,
         "objective_source": OBJECTIVE_SOURCE,
         "model_path": str(resolve_model_path()) if _debug_mode() not in ("fixed", "1", "true", "yes") else "debug_fixed",

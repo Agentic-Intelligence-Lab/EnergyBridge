@@ -207,7 +207,9 @@ def action_to_control_result(
     vpp_event: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     decoded = decode_action(action)
-    actions = dict(base_actions or {})
+    # Keep RL benchmark actions policy-only.  Legacy callers may still pass
+    # base_actions, but those must not complete missing appliance commands.
+    actions: dict[str, Any] = {}
     hod = float(sim_h) % 24.0
     vpp_active = _event_active(vpp_event, sim_h)
     present = _present_controllable(appliance_config)
@@ -224,11 +226,30 @@ def action_to_control_result(
                 "water_heater_preheat_temp_c": 65.0,
             }
         )
+    summary = [
+        "RL PPO 3-day raw policy; no fallback appliance commands were added.",
+        f"AC setpoint={float(decoded[0]):.1f}C at h={hod:.2f}.",
+    ]
+    if "washer" in present:
+        summary.append(
+            "Washer emitted start_h="
+            + (f"{float(actions['washer_start_h']):.1f}." if "washer_start_h" in actions else "none.")
+        )
+    if "water_heater" in present:
+        summary.append(
+            "Water heater emitted preheat="
+            + ("yes." if actions.get("water_heater_preheat") else "no.")
+        )
+    unsupported = sorted(present.difference({"washer", "water_heater"}))
+    if unsupported:
+        summary.append("No raw RL action dimension for " + ", ".join(unsupported) + ".")
+    if vpp_active:
+        summary.append("Decision occurred inside a VPP window; shift/preheat actions are gated off.")
 
     return {
         "setpoint": round(float(decoded[0]), 3),
         "next_check_hour": float(sim_h) + DECISION_INTERVAL_H,
-        "reason": "PPO baseline policy over 44-value EnergyPlus observation.",
+        "reason": " ".join(summary),
         "appliance_actions": actions,
         "objective_source": OBJECTIVE_SOURCE,
     }
