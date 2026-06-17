@@ -26,7 +26,7 @@ def _day_of(sim_h: float) -> int:
 
 @dataclass
 class _DayRecord:
-    scheduled_abs_h: float
+    scheduled_abs_h: Optional[float]
     run_start_abs_h: Optional[float] = None
     completed: bool = False
     ran_during_vpp: bool = False
@@ -35,7 +35,7 @@ class _DayRecord:
 class ShiftableAppliance:
     """Washer / dishwasher / dryer — runs once per day within a user window."""
 
-    def __init__(self, name: str, config: dict, sim_days: int = 3) -> None:
+    def __init__(self, name: str, config: dict, sim_days: int = 3, *, explicit_only: bool = False) -> None:
         self.name = name
         self.present: bool = bool(config.get("present", True))
         self.earliest_h: float = float(config.get("earliest_h", 8.0))
@@ -46,8 +46,9 @@ class ShiftableAppliance:
         self.shiftable: bool = bool(config.get("shiftable", True))
         self.dr_adjustable: bool = bool(config.get("dr_adjustable", True))
         self._overnight: bool = (self.latest_h < self.earliest_h)
+        self.explicit_only = bool(explicit_only)
         self._days: Dict[int, _DayRecord] = {
-            d: _DayRecord(scheduled_abs_h=self._default_start(d))
+            d: _DayRecord(scheduled_abs_h=None if self.explicit_only else self._default_start(d))
             for d in range(sim_days)
         }
         self._day_skipped: Dict[int, bool] = {d: False for d in range(sim_days)}
@@ -92,7 +93,7 @@ class ShiftableAppliance:
         rec = self._days.get(day_idx)
         if rec is None or rec.completed:
             return 0.0
-        if rec.run_start_abs_h is None and sim_h >= rec.scheduled_abs_h:
+        if rec.run_start_abs_h is None and rec.scheduled_abs_h is not None and sim_h >= rec.scheduled_abs_h:
             rec.run_start_abs_h = sim_h
         if rec.run_start_abs_h is not None:
             elapsed = sim_h - rec.run_start_abs_h
@@ -105,7 +106,7 @@ class ShiftableAppliance:
         return 0.0
 
     def day_result(self, day_idx: int) -> dict:
-        rec = self._days.get(day_idx, _DayRecord(scheduled_abs_h=0))
+        rec = self._days.get(day_idx, _DayRecord(scheduled_abs_h=None))
         return {
             "name": self.name, "day": day_idx, "present": self.present,
             "completed": rec.completed, "ran_during_vpp": rec.ran_during_vpp,
@@ -130,6 +131,12 @@ class ShiftableAppliance:
         if rec.run_start_abs_h is not None:
             remaining = max(0.0, (rec.run_start_abs_h + self.duration_h) - sim_h)
             return f"{self.name}: RUNNING ({remaining:.1f}h left)"
+        if rec.scheduled_abs_h is None:
+            return (f"{self.name}: no_policy_command "
+                    f"[preferred={self.preferred_h:.0f}:00 "
+                    f"window={self.earliest_h:.0f}:00-"
+                    f"{'(+1d)' if self._overnight else ''}{self.latest_h:.0f}:00] "
+                    f"{'[shiftable]' if self.shiftable else '[fixed]'}")
         sched_hod = rec.scheduled_abs_h % 24
         return (f"{self.name}: scheduled={sched_hod:.0f}:00 "
                 f"[preferred={self.preferred_h:.0f}:00 "
@@ -141,7 +148,7 @@ class ShiftableAppliance:
 class WaterHeater:
     """Electric tank water heater — pre-heat thermal-storage controller."""
 
-    def __init__(self, config: dict, sim_days: int = 3) -> None:
+    def __init__(self, config: dict, sim_days: int = 3, *, explicit_only: bool = False) -> None:
         self.present: bool = bool(config.get("present", True))
         self.rated_kw: float = float(config.get("rated_kw", 2.0))
         self.bath_required_h: float = float(config.get("bath_required_h", 21.0))
@@ -150,8 +157,9 @@ class WaterHeater:
         self.pre_heat_window_end_h: float = float(config.get("pre_heat_window_end_h", 18.0))
         self._normal_on_start: float = 17.0
         self._normal_on_end: float = 21.0
+        self.explicit_only = bool(explicit_only)
         self._days: Dict[int, dict] = {
-            d: {"preheat_requested": False, "ready_at_bath": True,
+            d: {"preheat_requested": False, "ready_at_bath": not self.explicit_only,
                 "ran_during_vpp": False, "energy_kwh": 0.0,
                 "preheat_start_h": None, "preheat_end_h": None,
                 "preheat_temp_c": None}
@@ -210,7 +218,7 @@ class WaterHeater:
             end = self.pre_heat_window_end_h if ph_end is None else float(ph_end)
             if start <= hod < end:
                 heating = True
-        else:
+        elif not self.explicit_only:
             if self._normal_on_start <= hod < self._normal_on_end:
                 heating = True
         if heating:
@@ -219,14 +227,17 @@ class WaterHeater:
             state["energy_kwh"] += self.rated_kw * dt_h
             return self.rated_kw
         if hod >= self.bath_required_h - 0.5:
-            state["ready_at_bath"] = True
+            state["ready_at_bath"] = (
+                True if not self.explicit_only
+                else float(state.get("energy_kwh", 0.0) or 0.0) > 0.0
+            )
         return 0.0
 
     def day_result(self, day_idx: int) -> dict:
         state = self._days.get(day_idx, {})
         return {
             "name": "water_heater", "day": day_idx, "present": self.present,
-            "ready_at_bath": state.get("ready_at_bath", True),
+            "ready_at_bath": state.get("ready_at_bath", not self.explicit_only),
             "ran_during_vpp": state.get("ran_during_vpp", False),
             "preheat_used": state.get("preheat_requested", False),
             "energy_kwh": round(state.get("energy_kwh", 0.0), 3),
@@ -249,7 +260,7 @@ class WaterHeater:
             mode = (f"preheat_mode window={ph_start:.0f}:00-{ph_end:.0f}:00 "
                     f"sp={ph_temp:.0f}C")
         else:
-            mode = "normal_mode"
+            mode = "no_policy_command" if self.explicit_only else "normal_mode"
         return (f"water_heater: [{adj}] [{mode}] "
                 f"bath_required={self.bath_required_h:.0f}:00")
 
@@ -257,7 +268,7 @@ class WaterHeater:
 class EVCharger:
     """Smart EV home charger — SOC-based charging within home window."""
 
-    def __init__(self, config: dict, sim_days: int = 3) -> None:
+    def __init__(self, config: dict, sim_days: int = 3, *, explicit_only: bool = False) -> None:
         self.present: bool = bool(config.get("present", False))
         self.charger_kw: float = float(config.get("charger_kw", 7.0))
         self.capacity_kwh: float = float(config.get("capacity_kwh", 60.0))
@@ -270,7 +281,8 @@ class EVCharger:
         # Start at target SOC (EV was already charged before sim begins)
         self._soc: float = self.target_soc
         self._departed: set = set()
-        self._day_mode: Dict[int, str] = {d: "smart" for d in range(sim_days)}
+        self.explicit_only = bool(explicit_only)
+        self._day_mode: Dict[int, Optional[str]] = {d: None if self.explicit_only else "smart" for d in range(sim_days)}
         self._day_ran_during_vpp: Dict[int, bool] = {d: False for d in range(sim_days)}
         self._day_target_reached: Dict[int, bool] = {d: False for d in range(sim_days)}
         self._day_energy_kwh: Dict[int, float] = {d: 0.0 for d in range(sim_days)}
@@ -322,7 +334,9 @@ class EVCharger:
             else:  # overnight window e.g. 22:00 -> 07:00
                 in_window = hod >= s or hod < e
             return in_window and not vpp_active
-        mode = self._day_mode.get(day_idx, "smart")
+        mode = self._day_mode.get(day_idx, None if self.explicit_only else "smart")
+        if mode is None:
+            return False
         if mode == "normal":
             return True
         if mode == "delay":
@@ -369,7 +383,7 @@ class EVCharger:
             "name": "ev", "day": day_idx, "present": self.present,
             "target_reached": self._day_target_reached.get(day_idx, False),
             "ran_during_vpp": self._day_ran_during_vpp.get(day_idx, False),
-            "mode": self._day_mode.get(day_idx, "smart"),
+            "mode": self._day_mode.get(day_idx, None if self.explicit_only else "smart"),
             "soc_end": round(self._soc, 3),
             "energy_kwh": round(self._day_energy_kwh.get(day_idx, 0.0), 3),
         }
@@ -383,7 +397,7 @@ class EVCharger:
         day_idx = _day_of(sim_h)
         hod = sim_h % 24
         at_home = self._is_home(hod)
-        mode = self._day_mode.get(day_idx, "smart")
+        mode = self._day_mode.get(day_idx, None if self.explicit_only else "smart")
         ch_start = self._day_charge_start.get(day_idx)
         ch_end   = self._day_charge_end.get(day_idx)
         window_str = (f" charge_window={ch_start:.0f}:00-{ch_end:.0f}:00"
@@ -391,7 +405,7 @@ class EVCharger:
                       else (f" charge_from={ch_start:.0f}:00" if ch_start is not None
                             else (f" charge_until={ch_end:.0f}:00" if ch_end is not None else "")))
         return (f"ev: SOC={self._soc*100:.0f}% target={self.target_soc*100:.0f}% "
-                f"[{'at_home' if at_home else 'away'}] mode={mode}{window_str} "
+                f"[{'at_home' if at_home else 'away'}] mode={mode or 'no_policy_command'}{window_str} "
                 f"arrival={self.arrival_h:.0f}:00")
 
 
@@ -417,24 +431,27 @@ class ApplianceSuite:
     SHIFTABLE_NAMES = ("washer", "dishwasher", "dryer")
 
     def __init__(self, appliance_config: dict, sim_days: int = 3,
-                 vpp_events: Optional[List[dict]] = None) -> None:
+                 vpp_events: Optional[List[dict]] = None,
+                 *, explicit_only: bool = False) -> None:
         self._vpp_events = vpp_events or []
         self._sim_days = sim_days
+        self.explicit_only = bool(explicit_only)
         self._shiftable: Dict[str, ShiftableAppliance] = {}
         for nm in self.SHIFTABLE_NAMES:
             raw = appliance_config.get(nm, {})
             cfg = raw if isinstance(raw, dict) and raw else {"present": False}
-            self._shiftable[nm] = ShiftableAppliance(nm, cfg, sim_days)
+            self._shiftable[nm] = ShiftableAppliance(nm, cfg, sim_days, explicit_only=self.explicit_only)
         wh_cfg = appliance_config.get("water_heater", {})
-        self._water_heater = WaterHeater(wh_cfg if isinstance(wh_cfg, dict) else {}, sim_days)
+        self._water_heater = WaterHeater(wh_cfg if isinstance(wh_cfg, dict) else {}, sim_days, explicit_only=self.explicit_only)
         ev_cfg = appliance_config.get("ev", {})
-        self._ev = EVCharger(ev_cfg if isinstance(ev_cfg, dict) else {}, sim_days)
+        self._ev = EVCharger(ev_cfg if isinstance(ev_cfg, dict) else {}, sim_days, explicit_only=self.explicit_only)
         rf_cfg = appliance_config.get("refrigerator", {})
         self._refrigerator = Refrigerator(rf_cfg if isinstance(rf_cfg, dict) else {"present": True})
         self._last_powers: Dict[str, float] = {}
-        # Auto-request preheat for all VPP-event days (default=on; agent can override)
-        for _ev in self._vpp_events:
-            self._water_heater.request_preheat(int(_ev["trigger_h"] // 24))
+        if not self.explicit_only:
+            # Legacy behavior: auto-request preheat for VPP-event days.
+            for _ev in self._vpp_events:
+                self._water_heater.request_preheat(int(_ev["trigger_h"] // 24))
 
     def _is_vpp_active(self, sim_h: float) -> bool:
         for ev in self._vpp_events:

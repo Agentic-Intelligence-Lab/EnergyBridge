@@ -232,6 +232,11 @@ def _summarize_job(job: Job, status: str, return_code: int | None, elapsed_s: fl
         "vpp_actual_shed_kwh": _metric(data, "vpp_actual_shed_kwh"),
         "vpp_demand_achievement_ratio": _metric(data, "vpp_demand_achievement_ratio"),
         "user_pref_score": _metric(data, "user_pref_score"),
+        "appliance_task_completion_rate": _metric(data, "appliance_task_completion_rate"),
+        "physical_appliance_task_completion_rate": _metric(data, "physical_appliance_task_completion_rate"),
+        "policy_output_covered_appliance_services": _metric(data, "policy_output_covered_appliance_services"),
+        "policy_output_uncovered_appliance_services": _metric(data, "policy_output_uncovered_appliance_services"),
+        "policy_output_absent_appliance_services": _metric(data, "policy_output_absent_appliance_services"),
         "completed_vpp_avoidance_rate": _first_metric(
             data,
             ("completed_vpp_avoidance_rate", "appliance_vpp_avoidance_rate", "appliance_shift_success_rate"),

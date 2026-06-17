@@ -484,11 +484,11 @@ def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
         elif start_h is not None:
             lines.append(f"    ├ {label:<10}: scheduled@{_fmt_h(start_h)}")
         elif default_skip:
-            lines.append(f"    ├ {label:<10}: skipped (default)")
+            lines.append(f"    ├ {label:<10}: skipped (emitted earlier today)")
         elif default_start_h is not None:
-            lines.append(f"    ├ {label:<10}: scheduled@{_fmt_h(default_start_h)} (default)")
+            lines.append(f"    ├ {label:<10}: scheduled@{_fmt_h(default_start_h)} (emitted earlier today)")
         else:
-            lines.append(f"    ├ {label:<10}: keep baseline routine (default)")
+            lines.append(f"    ├ {label:<10}: no emitted policy action")
 
     # ── Water heater ──
     if not pd or "water_heater" in pd:
@@ -508,14 +508,14 @@ def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
         elif wh_start is not None:
             wh_str = f"preheat starts@{_fmt_h(wh_start)}"
         elif default_wh_preheat is False:
-            wh_str = "preheat off (default)"
+            wh_str = "preheat off (emitted earlier today)"
         elif default_wh_start is not None and default_wh_end is not None:
             temp_s = f" @ {default_wh_temp:.0f}°C" if default_wh_temp else ""
-            wh_str = f"preheat {_fmt_h(default_wh_start)}-{_fmt_h(default_wh_end)}{temp_s} (default)"
+            wh_str = f"preheat {_fmt_h(default_wh_start)}-{_fmt_h(default_wh_end)}{temp_s} (emitted earlier today)"
         elif default_wh_start is not None:
-            wh_str = f"preheat starts@{_fmt_h(default_wh_start)} (default)"
+            wh_str = f"preheat starts@{_fmt_h(default_wh_start)} (emitted earlier today)"
         else:
-            wh_str = "keep preheat policy (default)"
+            wh_str = "no emitted policy action"
         lines.append(f"    ├ water_heater: {wh_str}")
 
     # ── EV ──
@@ -537,17 +537,17 @@ def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
         elif ev_start is not None:
             ev_str = f"charge starts@{_fmt_h(ev_start)}"
         elif default_ev_mode == "delay":
-            ev_str = "delay mode (default)"
+            ev_str = "delay mode (emitted earlier today)"
         elif default_ev_mode == "smart":
-            ev_str = "smart mode (default)"
+            ev_str = "smart mode (emitted earlier today)"
         elif default_ev_mode == "normal":
-            ev_str = "normal mode (default)"
+            ev_str = "normal mode (emitted earlier today)"
         elif default_ev_start is not None and default_ev_end is not None:
-            ev_str = f"charging window {_fmt_h(default_ev_start)}-{_fmt_h(default_ev_end)} (default)"
+            ev_str = f"charging window {_fmt_h(default_ev_start)}-{_fmt_h(default_ev_end)} (emitted earlier today)"
         elif default_ev_start is not None:
-            ev_str = f"charge starts@{_fmt_h(default_ev_start)} (default)"
+            ev_str = f"charge starts@{_fmt_h(default_ev_start)} (emitted earlier today)"
         else:
-            ev_str = "smart mode (default)"
+            ev_str = "no emitted policy action"
         lines.append(f"    └ EV      : {ev_str}")
 
     # Fix tree connector: last line should use └ instead of ├
@@ -794,11 +794,14 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
         has_shiftable = True
         parts = []
         for day_d in days_data:
-            sched_h = day_d.get("scheduled_abs_h", 0) % 24
+            sched_abs_h = day_d.get("scheduled_abs_h")
+            sched_txt = "--:--"
+            if sched_abs_h is not None:
+                sched_txt = f"{int(float(sched_abs_h) % 24):02d}:00"
             flag = _goal_flag(day_d.get("completed", False),
                               day_d.get("skipped", False),
                               day_d.get("ran_during_vpp", False))
-            parts.append(f"Day{day_d['day']+1}[{int(sched_h):02d}:00 {flag}]")
+            parts.append(f"Day{day_d['day']+1}[{sched_txt} {flag}]")
         lines.append(f"  {dev:<14}: " + "  ".join(parts))
 
     # Per-day shiftable completion rate (from metrics)
@@ -806,7 +809,7 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
     per_day_shift = d.get("task_shift_success_per_day", [])
     if per_day:
         day_strs = "  ".join(f"Day{i+1}:{int(v*100)}%" for i, v in enumerate(per_day))
-        lines.append(f"  {'Service completion/day':<24}: {day_strs}")
+        lines.append(f"  {'Policy output/day':<24}: {day_strs}")
     if per_day_shift:
         day_strs_shift = "  ".join(f"Day{i+1}:{int(v*100)}%" for i, v in enumerate(per_day_shift))
         lines.append(f"  {'Post-completion VPP avoidance/day':<34}: {day_strs_shift}")
@@ -866,8 +869,13 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
         f"  - VPP peak shaving",
         f"      VPP-window electricity : {d.get('vpp_window_energy_kwh', 0):.3f} kWh ({vpp_duration_summary})",
         ("      Demand achievement    : " + _vpp_ratio_str(result)),
-        f"      Service completion    : {d.get('appliance_task_completion_rate', 1.0)*100:.0f}%"
-        f"  (denominator=present controllable services; water heater=ready before bath, EV=SOC target met)",
+        f"      Policy service output : {d.get('appliance_task_completion_rate', 1.0)*100:.0f}%"
+        f"  (emitted present-appliance strategies / present non-AC appliances)",
+        f"      Covered services      : {', '.join(d.get('policy_output_covered_appliance_services') or []) or 'none'}",
+        f"      Missing services      : {', '.join(d.get('policy_output_uncovered_appliance_services') or []) or 'none'}",
+        f"      Extra emitted services: {', '.join(d.get('policy_output_absent_appliance_services') or []) or 'none'}",
+        f"      Physical completion   : {d.get('physical_appliance_task_completion_rate', d.get('appliance_task_completion_rate', 1.0))*100:.0f}%"
+        f"  (simulator service outcomes; diagnostic only)",
         f"      Post-completion VPP avoidance: {d.get('appliance_vpp_avoidance_rate', 0)*100:.0f}%"
         f"  (denominator=completed controllable services; numerator=not running in VPP)",
         f"  - Day-ahead price",

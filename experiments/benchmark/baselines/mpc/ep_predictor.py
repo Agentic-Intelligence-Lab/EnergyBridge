@@ -166,6 +166,7 @@ class EnergyPlusHorizonScorer:
             decision_state.get("appliance_config") or {},
             sim_days=3,
             vpp_events=VPP_EVENTS,
+            explicit_only=True,
         )
         ex.request_variable(ep_state, "Zone Mean Air Temperature", "living_unit1")
         ex.request_variable(ep_state, "Facility Total Electricity Demand Rate", "Whole Building")

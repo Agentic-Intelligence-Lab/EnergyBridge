@@ -209,6 +209,34 @@ def _rule_score(persona: dict, mean_temp_c: float, pmv_ok_fraction: float,
 _APPLIANCE_KEYS = ("washer", "dishwasher", "dryer", "water_heater", "ev")
 
 
+def _service_from_action_key(key: str) -> str | None:
+    key = str(key)
+    if key.startswith("washer_"):
+        return "washer"
+    if key.startswith("dishwasher_"):
+        return "dishwasher"
+    if key.startswith("dryer_"):
+        return "dryer"
+    if key.startswith("water_heater_"):
+        return "water_heater"
+    if key.startswith("ev_"):
+        return "ev"
+    return None
+
+
+def _services_from_actions(actions: dict | None) -> set[str]:
+    services: set[str] = set()
+    if not isinstance(actions, dict):
+        return services
+    for key, value in actions.items():
+        if value is None:
+            continue
+        service = _service_from_action_key(str(key))
+        if service:
+            services.add(service)
+    return services
+
+
 def _fmt_hour_for_window(hour: float) -> str:
     h = float(hour) % 24.0
     hh = int(h)
@@ -1139,6 +1167,7 @@ def score_user_preference(
     human_mode: bool = False,
     vpp_context: dict | None = None,
     vpp_result_context: dict | None = None,
+    policy_control_context: dict | None = None,
 ):
     """Score user satisfaction using roleplay LLM (fallback: rule-based).
 
@@ -1236,10 +1265,77 @@ def score_user_preference(
         and bool(info.get("ran_during_vpp"))
         and name not in fixed_appliances
     ]
+    policy_control_context = dict(policy_control_context or {})
+    policy_action_space = set(policy_control_context.get("action_space_services") or [])
+    emitted_policy_services = set(policy_control_context.get("emitted_services") or [])
+    if not emitted_policy_services:
+        emitted_policy_services |= _services_from_actions(policy_control_context.get("vpp_trigger_actions"))
+        for decision in policy_control_context.get("day_decisions") or []:
+            if isinstance(decision, dict):
+                emitted_policy_services |= _services_from_actions(decision.get("actions"))
+                emitted_policy_services |= _services_from_actions(decision.get("raw_appliance_actions"))
+    present_required_services: set[str] = set()
+    for name, info in appliance_summary.items():
+        if name not in _APPLIANCE_KEYS or not isinstance(info, dict) or not bool(info.get("present")):
+            continue
+        if name in {"washer", "dishwasher", "dryer"}:
+            if (
+                bool(info.get("skipped"))
+                or bool(info.get("ran_during_vpp"))
+                or info.get("completed") is False
+            ):
+                present_required_services.add(name)
+        elif name == "water_heater":
+            if bool(info.get("ran_during_vpp")) or info.get("ready_at_bath") is False:
+                present_required_services.add(name)
+        elif name == "ev":
+            if bool(info.get("ran_during_vpp")) or info.get("target_reached") is False:
+                present_required_services.add(name)
+    if policy_action_space:
+        present_required_services |= {
+            name for name, info in appliance_summary.items()
+            if name in policy_action_space
+            and isinstance(info, dict)
+            and bool(info.get("present"))
+        }
+    unsupported_policy_services = sorted(
+        present_required_services - policy_action_space
+    ) if policy_action_space else []
+    missing_policy_services = sorted(
+        present_required_services - emitted_policy_services
+    ) if policy_control_context else []
+    if policy_control_context:
+        home_state["policy_control_context"] = {
+            "method": policy_control_context.get("method", method),
+            "objective_source": policy_control_context.get("objective_source", ""),
+            "action_space_services": sorted(policy_action_space),
+            "emitted_services": sorted(emitted_policy_services),
+            "present_required_services": sorted(present_required_services),
+            "unsupported_policy_services": unsupported_policy_services,
+            "missing_policy_services": missing_policy_services,
+            "vpp_trigger_actions": policy_control_context.get("vpp_trigger_actions", {}),
+        }
 
-    if method in ("agent", "agent_pmv", "rl", "mpc", "mpc_dynamic", "mpc_ep") and agent_setpoint_c:
-        if method == "rl":
+    policy_scored_method = (
+        method in (
+            "agent",
+            "agent_pmv",
+            "EnergyBridge",
+            "hema_agent",
+            "rl",
+            "rl_ppo_3day",
+            "rl_ppo_pref_v2",
+            "mpc",
+            "mpc_dynamic",
+            "mpc_ep",
+        )
+        or str(method).startswith("rl_")
+    )
+    if policy_scored_method and agent_setpoint_c:
+        if method == "rl" or str(method).startswith("rl_"):
             controller = "RL baseline"
+        elif method == "hema_agent":
+            controller = "HEMA Agent baseline"
         elif method in ("mpc", "mpc_dynamic", "mpc_ep"):
             controller = "MPC baseline"
         else:
@@ -1318,6 +1414,41 @@ def score_user_preference(
                 + ", ".join(skipped_devices)
                 + ". User should be very dissatisfied; this should score at the lowest level."
             )
+        if policy_control_context:
+            rationale += (
+                " | Policy action evidence for this method: "
+                f"action_space={sorted(policy_action_space)}, "
+                f"emitted_services={sorted(emitted_policy_services)}, "
+                f"present_required_services={sorted(present_required_services)}, "
+                f"vpp_trigger_actions={policy_control_context.get('vpp_trigger_actions', {})}. "
+                "Only count appliance service as method-controlled when it appears in emitted policy actions; "
+                "do not credit baseline routines or simulator default completion as policy success."
+            )
+            if missing_policy_services:
+                rationale += (
+                    " | CRITICAL APPLIANCE STRATEGY FAILURE: required present controllable appliances "
+                    "have no emitted policy strategy/action: "
+                    + ", ".join(missing_policy_services)
+                    + ". This is a service failure. The role-play user must assign a punitive low overall score, normally 1/5, even if comfort or VPP energy target looks acceptable."
+                )
+        if str(method).startswith("rl") or str(policy_control_context.get("objective_source", "")).startswith("rl_"):
+            rationale += (
+                " | CRITICAL RL SCORING RULE: this benchmark evaluates the raw RL policy only. "
+                "Do not give RL credit for fallback/default appliance behavior or routine completion that was not emitted by the RL action. "
+                "If present required appliances are outside the RL action space or missing from emitted RL actions, treat the task as incomplete and score it as a punitive service failure even if the simulator service outcome later looks completed."
+            )
+            if unsupported_policy_services:
+                rationale += (
+                    " Unsupported-by-RL required services: "
+                    + ", ".join(unsupported_policy_services)
+                    + "."
+                )
+            if missing_policy_services:
+                rationale += (
+                    " Required services with no emitted RL control action: "
+                    + ", ".join(missing_policy_services)
+                    + "."
+                )
         control_plan = {
             "action": action_name,
             "setpoint": agent_setpoint_c,
@@ -1336,6 +1467,51 @@ def score_user_preference(
             control_plan["rationale"] += f" | User calendar context: {calendar_brief[:240]}"
 
     safety = {"status": "approved", "reason": "Within safe operation bounds."}
+
+    if missing_policy_services:
+        result = {
+            "score": 1,
+            "comfort_score": 2,
+            "energy_score": 1,
+            "vpp_score": 1,
+            "label": "very_dissatisfied",
+            "comment": (
+                "Required present controllable appliance(s) had no emitted policy strategy/action "
+                f"(missing: {', '.join(missing_policy_services)}; "
+                f"unsupported_by_action_space: {', '.join(unsupported_policy_services) or 'none'}). "
+                "Baseline routine/default completion was not credited as method success."
+            ),
+            "zone_comfort_scores": None,
+            "source": "roleplay_llm",
+            "policy_service_guard": {
+                "missing_policy_services": missing_policy_services,
+                "unsupported_policy_services": unsupported_policy_services,
+                "emitted_policy_services": sorted(emitted_policy_services),
+                "present_required_services": sorted(present_required_services),
+            },
+        }
+        if str(method).startswith("rl") or str(policy_control_context.get("objective_source", "")).startswith("rl_"):
+            result["rl_policy_service_guard"] = result["policy_service_guard"]
+        if log_path:
+            _append_dialogue_log(log_path, {
+                "ts": datetime.datetime.utcnow().isoformat(),
+                "persona": persona.get("id", "?"),
+                "event_index": event_index,
+                "type": "feedback",
+                "method": method,
+                "scores": {
+                    "overall": result["score"],
+                    "comfort": result["comfort_score"],
+                    "energy": result["energy_score"],
+                    "vpp": result["vpp_score"],
+                },
+                "comment": result.get("comment", ""),
+                "washer_completed": washer_completed,
+                "washer_during_vpp": washer_during_vpp,
+                "skipped_devices": skipped_devices,
+                "source": result.get("source", "?"),
+            })
+        return result
 
     # M2: build zone group context for office
     zone_ctx = None
@@ -1377,7 +1553,9 @@ def score_user_preference(
                 token in comment_lower
                 for token in ("missed", "failed", "not met", "not achieved")
             )
-            severe_service_issue = bool(skipped_task_count or nonfixed_appliances_during_vpp)
+            severe_service_issue = bool(
+                skipped_task_count or nonfixed_appliances_during_vpp or missing_policy_services
+            )
             if (misleading_miss or result["vpp_score"] <= 2) and not severe_service_issue:
                 result["vpp_score"] = max(result["vpp_score"], 4)
                 result["energy_score"] = max(result["energy_score"], 3)
@@ -1400,7 +1578,7 @@ def score_user_preference(
                     "this violates the user's service rule."
                 ),
             })
-        elif (
+        if (
             _low_disruption_strategy_language(persona)
             and fixed_appliances
             and result["score"] < 4
@@ -1424,6 +1602,27 @@ def score_user_preference(
                              zone_group_temps, washer_completed, washer_during_vpp,
                              skipped_task_count, skipped_devices)
         result["source"] = "rule_based_fallback"
+
+    if missing_policy_services:
+        result["score"] = 1
+        result["comfort_score"] = min(result["comfort_score"], 2)
+        result["energy_score"] = 1
+        result["vpp_score"] = 1
+        result["label"] = "very_dissatisfied"
+        result["comment"] = (
+            "Required present controllable appliance(s) had no emitted policy strategy/action "
+            f"(missing: {', '.join(missing_policy_services)}; "
+            f"unsupported_by_action_space: {', '.join(unsupported_policy_services) or 'none'}). "
+            "Baseline routine/default completion was not credited as method success."
+        )
+        result["policy_service_guard"] = {
+            "missing_policy_services": missing_policy_services,
+            "unsupported_policy_services": unsupported_policy_services,
+            "emitted_policy_services": sorted(emitted_policy_services),
+            "present_required_services": sorted(present_required_services),
+        }
+        if str(method).startswith("rl") or str(policy_control_context.get("objective_source", "")).startswith("rl_"):
+            result["rl_policy_service_guard"] = result["policy_service_guard"]
 
     # Dialogue log
     if log_path:
