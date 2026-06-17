@@ -27,12 +27,13 @@ _PROJECT_ROOT = _BENCH_DIR.parent.parent
 DEFAULT_RESULTS_ROOT = _PROJECT_ROOT / "benchmark_results"
 
 ENERGYBRIDGE_METHOD_ID = "EnergyBridge"
-METHOD_ORDER = [ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "mpc_ep", "rl_ppo_3day", "rl_ppo_pref_v2"]
+METHOD_ORDER = [ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "mpc_ep", "hema_agent", "rl_ppo_3day", "rl_ppo_pref_v2"]
 METHOD_LABEL = {
     ENERGYBRIDGE_METHOD_ID: "EnergyBridge",
     "agent": "EnergyBridge",
     "mpc_dynamic": "MPC Dynamic",
     "mpc_ep": "MPC EP",
+    "hema_agent": "HEMA Agent",
     "rl_ppo_3day": "RL PPO",
     "rl_ppo_pref_v2": "RL PPO Pref-v2",
 }
@@ -44,6 +45,10 @@ def _canonical_method(method: str) -> str:
         "agent": ENERGYBRIDGE_METHOD_ID,
         "energybridge": ENERGYBRIDGE_METHOD_ID,
         "mpc": "mpc_dynamic",
+        "hema": "hema_agent",
+        "hema_agent": "hema_agent",
+        "hema control agent": "hema_agent",
+        "hema_control_agent": "hema_agent",
         "rl": "rl_ppo_3day",
         "rl_ppo": "rl_ppo_3day",
         "rl_ppo_3day": "rl_ppo_3day",
@@ -129,25 +134,37 @@ def _df_to_markdown(df: pd.DataFrame, index: bool = True) -> str:
 def _build_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
     records: list[dict[str, Any]] = []
     for row in rows:
-        result_path = Path(row["output_dir"]) / "benchmark_result.json"
+        result_path = Path(row.get("output_dir") or "") / "benchmark_result.json"
         result = _read_result_json(result_path)
-        if not result:
+        if not result and not row.get("allow_summary_metrics"):
             continue
         method = _canonical_method(row["method"])
+        energy_kwh = result.get("energy_kwh_total", row.get("energy_kwh_total", row.get("energy_kwh")))
+        shift_success = result.get(
+            "appliance_shift_success_rate",
+            row.get("appliance_shift_success_rate", row.get("completed_vpp_avoidance_rate")),
+        )
         records.append(
             {
                 "persona_id": row["persona_id"],
                 "method": method,
                 "method_label": METHOD_LABEL.get(method, method),
                 "status": row.get("status", ""),
-                "user_pref_score": _as_float(result.get("user_pref_score")),
-                "energy_kwh_total": _as_float(result.get("energy_kwh_total")),
-                "vpp_window_energy_kwh": _as_float(result.get("vpp_window_energy_kwh")),
-                "appliance_vpp_avoidance_rate": _as_float(result.get("appliance_vpp_avoidance_rate")),
-                "appliance_task_completion_rate": _as_float(result.get("appliance_task_completion_rate")),
-                "appliance_shift_success_rate": _as_float(result.get("appliance_shift_success_rate")),
-                "vpp_compliance_rate": _as_float(result.get("vpp_compliance_rate")),
-                "llm_call_count": _as_float(result.get("llm_call_count")),
+                "days": _as_float(row.get("days")),
+                "user_pref_score": _as_float(result.get("user_pref_score", row.get("user_pref_score"))),
+                "energy_kwh_total": _as_float(energy_kwh),
+                "vpp_window_energy_kwh": _as_float(
+                    result.get("vpp_window_energy_kwh", row.get("vpp_window_energy_kwh"))
+                ),
+                "appliance_vpp_avoidance_rate": _as_float(
+                    result.get("appliance_vpp_avoidance_rate", row.get("appliance_vpp_avoidance_rate", shift_success))
+                ),
+                "appliance_task_completion_rate": _as_float(
+                    result.get("appliance_task_completion_rate", row.get("appliance_task_completion_rate"))
+                ),
+                "appliance_shift_success_rate": _as_float(shift_success),
+                "vpp_compliance_rate": _as_float(result.get("vpp_compliance_rate", row.get("vpp_compliance_rate"))),
+                "llm_call_count": _as_float(result.get("llm_call_count", row.get("llm_call_count"))),
                 "elapsed_s": _as_float(row.get("elapsed_s")),
                 "output_dir": row.get("output_dir", ""),
             }
@@ -157,6 +174,21 @@ def _build_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
         raise ValueError("No usable benchmark_result.json files found for the matrix.")
     df["method"] = pd.Categorical(df["method"], categories=METHOD_ORDER, ordered=True)
     return df.sort_values(["persona_id", "method"]).reset_index(drop=True)
+
+
+def _observed_method_order(df: pd.DataFrame) -> list[str]:
+    methods = {str(method) for method in df["method"].dropna().astype(str)}
+    ordered = [method for method in METHOD_ORDER if method in methods]
+    ordered.extend(sorted(method for method in methods if method not in METHOD_ORDER))
+    return ordered
+
+
+def _window_label(df: pd.DataFrame) -> str:
+    days = sorted({int(day) for day in df["days"].dropna().astype(int)}) if "days" in df else []
+    if len(days) == 1:
+        day_count = days[0]
+        return f"{day_count}-day benchmark window (Day 1 to Day {day_count})"
+    return "benchmark window"
 
 
 def _artifact_name(prefix: str, filename: str) -> str:
@@ -173,7 +205,8 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
         .round(4)
     )
     summary.index = summary.index.map(lambda m: METHOD_LABEL.get(m, m))
-    pivot = df.pivot(index="persona_id", columns="method", values="user_pref_score").round(3)
+    method_order = _observed_method_order(df)
+    pivot = df.pivot(index="persona_id", columns="method", values="user_pref_score").reindex(columns=method_order).round(3)
     pivot.columns = [METHOD_LABEL.get(c, c) for c in pivot.columns]
 
     top_rows = df.sort_values(["user_pref_score", "energy_kwh_total"], ascending=[False, True]).head(10)
@@ -222,7 +255,7 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
     lines.append(f"- Lowest average total energy: **{lowest_energy}**")
     lines.append(f"- Best average appliance shift success rate: **{best_shift}**")
     lines.append("")
-    lines.append("The matrix is calendar-aware and uses the 3-day benchmark window (Day 1 to Day 3).")
+    lines.append(f"The matrix is calendar-aware and uses the {_window_label(df)}.")
     md_path.write_text("\n".join(lines), encoding="utf-8")
     return md_path
 
@@ -238,9 +271,10 @@ def _plot_report(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
     }
 
     def _metric_matrix(metric: str) -> pd.DataFrame:
+        method_order = _observed_method_order(df)
         pivot = (
             df.pivot(index="persona_id", columns="method", values=metric)
-            .reindex(columns=METHOD_ORDER)
+            .reindex(columns=method_order)
         )
         pivot.columns = [METHOD_LABEL[c] for c in pivot.columns]
         return pivot
