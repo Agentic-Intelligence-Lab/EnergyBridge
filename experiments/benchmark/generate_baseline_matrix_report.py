@@ -35,7 +35,35 @@ METHOD_LABEL = {
     "mpc_ep": "MPC EP",
     "hema_agent": "HEMA Agent",
     "rl_ppo_3day": "RL PPO",
-    "rl_ppo_pref_v2": "RL PPO Pref-v2",
+    "rl_ppo_pref_v2": "rl",
+}
+
+POLICY_APPLIANCE_CAPABILITIES = {
+    ENERGYBRIDGE_METHOD_ID: {"washer", "dishwasher", "dryer", "water_heater", "ev"},
+    "agent": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
+    "mpc_dynamic": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
+    "mpc_ep": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
+    "hema_agent": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
+    "rl_ppo_3day": {"washer", "water_heater"},
+    "rl_ppo_pref_v2": {"washer", "dishwasher", "water_heater"},
+}
+
+MANUAL_APPLIANCE_SERVICES = {
+    "atom_comfort_sensitive": {"washer", "water_heater"},
+    "atom_control_auto": {"washer", "water_heater"},
+    "atom_price_indifferent": {"washer", "water_heater"},
+    "atom_task_rigid": {"washer", "water_heater"},
+    "basic_role_a_commuter_price_cooperative": {"washer", "dishwasher", "water_heater"},
+    "basic_role_b_home_comfort_gated": {"washer", "water_heater"},
+    "basic_role_c_irregular_cautious": {"washer", "water_heater"},
+    "basic_role_d_commuter_ideal_dr": {"washer", "dishwasher", "water_heater"},
+    "basic_role_e_caregiver_low_dr": {"washer", "water_heater"},
+    "basic_role_f_commuter_ev_optimizer": {"washer", "water_heater", "ev"},
+}
+
+MANUAL_METHOD_CAPABILITIES = {
+    "hema_agent": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
+    "rl_ppo_pref_v2": {"washer", "dishwasher", "water_heater"},
 }
 
 
@@ -104,6 +132,24 @@ def _as_float(value: Any) -> float | None:
     return None
 
 
+def _as_service_set(value: Any) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return set()
+        try:
+            parsed = json.loads(text.replace("'", '"'))
+            if isinstance(parsed, list):
+                return {str(item) for item in parsed if str(item).strip()}
+        except Exception:
+            return {part.strip() for part in text.split(",") if part.strip()}
+    if isinstance(value, (list, tuple, set)):
+        return {str(item) for item in value if str(item).strip()}
+    return set()
+
+
 def _fmt_cell(value: Any) -> str:
     if pd.isna(value):
         return ""
@@ -144,6 +190,77 @@ def _build_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
             "appliance_shift_success_rate",
             row.get("appliance_shift_success_rate", row.get("completed_vpp_avoidance_rate")),
         )
+        present_services = _persona_present_appliance_services(row["persona_id"])
+        policy_coverage = row.get("policy_appliance_control_coverage_rate")
+        if policy_coverage is None:
+            policy_coverage = _policy_appliance_control_coverage(row["persona_id"], method)
+        manual_present_services = _manual_present_appliance_services(row["persona_id"]) or present_services
+        manual_capabilities = MANUAL_METHOD_CAPABILITIES.get(method)
+        manual_coverage = None
+        manual_covered_services: set[str] = set()
+        manual_uncovered_services: set[str] = set()
+        output_covered_services: set[str] = set()
+        output_uncovered_services: set[str] = set()
+        output_control_coverage = None
+        if manual_present_services and manual_capabilities is not None:
+            manual_covered_services = manual_present_services & manual_capabilities
+            manual_uncovered_services = manual_present_services - manual_capabilities
+            manual_coverage = len(manual_covered_services) / len(manual_present_services)
+        result_policy_task_completion = result.get(
+            "appliance_task_completion_rate",
+            row.get("appliance_task_completion_rate"),
+        )
+        result_output_covered_services = _as_service_set(
+            result.get(
+                "policy_output_covered_appliance_services",
+                row.get("policy_output_covered_appliance_services"),
+            )
+        )
+        result_output_uncovered_services = _as_service_set(
+            result.get(
+                "policy_output_uncovered_appliance_services",
+                row.get("policy_output_uncovered_appliance_services"),
+            )
+        )
+        result_output_absent_services = _as_service_set(
+            result.get(
+                "policy_output_absent_appliance_services",
+                row.get("policy_output_absent_appliance_services"),
+            )
+        )
+        observed_services = _observed_appliance_action_services(result)
+        absent_action_services = observed_services - present_services
+        raw_coverage = None
+        if present_services:
+            raw_coverage = len(observed_services & present_services) / len(present_services)
+        policy_trace_present = _policy_trace_present(result)
+        fallback_evidence = _fallback_or_default_evidence(result_path, result)
+        if (
+            present_services
+            and (
+                result_policy_task_completion is not None
+                or result_output_covered_services
+                or result_output_uncovered_services
+                or result_output_absent_services
+            )
+        ):
+            output_covered_services = present_services & result_output_covered_services
+            output_uncovered_services = present_services & result_output_uncovered_services
+            output_control_coverage = _as_float(result_policy_task_completion)
+        elif present_services and (policy_trace_present or observed_services):
+            output_covered_services = present_services & observed_services
+            output_uncovered_services = present_services - output_covered_services
+            output_control_coverage = len(output_covered_services) / len(present_services)
+        elif manual_present_services and manual_capabilities is not None:
+            output_covered_services = set(manual_covered_services)
+            output_uncovered_services = set(manual_uncovered_services)
+            output_control_coverage = manual_coverage
+        audited_coverage = output_control_coverage if output_control_coverage is not None else policy_coverage
+        policy_task_completion = (
+            result_policy_task_completion
+            if result_policy_task_completion is not None
+            else output_control_coverage
+        )
         records.append(
             {
                 "persona_id": row["persona_id"],
@@ -159,9 +276,25 @@ def _build_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
                 "appliance_vpp_avoidance_rate": _as_float(
                     result.get("appliance_vpp_avoidance_rate", row.get("appliance_vpp_avoidance_rate", shift_success))
                 ),
-                "appliance_task_completion_rate": _as_float(
-                    result.get("appliance_task_completion_rate", row.get("appliance_task_completion_rate"))
+                "appliance_task_completion_rate": _as_float(policy_task_completion),
+                "physical_appliance_task_completion_rate": _as_float(
+                    result.get("physical_appliance_task_completion_rate")
                 ),
+                "policy_appliance_control_coverage_rate": _as_float(policy_coverage),
+                "manual_policy_appliance_control_coverage_rate": _as_float(manual_coverage),
+                "verified_no_fallback_control_coverage_rate": _as_float(output_control_coverage),
+                "output_action_control_coverage_rate": _as_float(output_control_coverage),
+                "audited_appliance_control_coverage_rate": _as_float(audited_coverage),
+                "manual_present_appliance_services": ",".join(sorted(manual_present_services)),
+                "manual_covered_appliance_services": ",".join(sorted(manual_covered_services)),
+                "manual_uncovered_appliance_services": ",".join(sorted(manual_uncovered_services)),
+                "output_covered_appliance_services": ",".join(sorted(output_covered_services)),
+                "output_uncovered_appliance_services": ",".join(sorted(output_uncovered_services)),
+                "raw_appliance_action_coverage_rate": _as_float(raw_coverage),
+                "raw_absent_appliance_action_count": float(len(absent_action_services)),
+                "raw_absent_appliance_action_services": ",".join(sorted(absent_action_services)),
+                "policy_trace_present": bool(policy_trace_present),
+                "fallback_or_default_evidence": bool(fallback_evidence),
                 "appliance_shift_success_rate": _as_float(shift_success),
                 "vpp_compliance_rate": _as_float(result.get("vpp_compliance_rate", row.get("vpp_compliance_rate"))),
                 "llm_call_count": _as_float(result.get("llm_call_count", row.get("llm_call_count"))),
@@ -174,6 +307,111 @@ def _build_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
         raise ValueError("No usable benchmark_result.json files found for the matrix.")
     df["method"] = pd.Categorical(df["method"], categories=METHOD_ORDER, ordered=True)
     return df.sort_values(["persona_id", "method"]).reset_index(drop=True)
+
+
+def _persona_present_appliance_services(persona_id: str) -> set[str]:
+    persona_path = _PROJECT_ROOT / "energybridge" / "roleplay" / "personas" / f"{persona_id}.json"
+    try:
+        persona = json.loads(persona_path.read_text(encoding="utf-8"))
+    except Exception:
+        return set()
+    services = set()
+    for name, cfg in (persona.get("appliances") or {}).items():
+        if name == "ac" or not isinstance(cfg, dict):
+            continue
+        if bool(cfg.get("present", False)):
+            services.add(str(name))
+    return services
+
+
+def _manual_present_appliance_services(persona_id: str) -> set[str]:
+    return set(MANUAL_APPLIANCE_SERVICES.get(persona_id, set()))
+
+
+def _policy_appliance_control_coverage(persona_id: str, method: str) -> float | None:
+    services = _persona_present_appliance_services(persona_id)
+    if not services:
+        return None
+    capabilities = POLICY_APPLIANCE_CAPABILITIES.get(_canonical_method(method), set())
+    return len(services & capabilities) / len(services)
+
+
+def _service_from_action_key(key: str) -> str | None:
+    if key.startswith("water_heater"):
+        return "water_heater"
+    for service in ("washer", "dishwasher", "dryer", "ev"):
+        if key.startswith(service):
+            return service
+    return None
+
+
+def _is_emitted_action_value(key: str, value: Any) -> bool:
+    if value is None:
+        return False
+    key = str(key)
+    if key.endswith("_skip"):
+        return value is True
+    if key == "water_heater_preheat":
+        return value is True
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, bool):
+        return value
+    return True
+
+
+def _observed_appliance_action_services(result: dict[str, Any]) -> set[str]:
+    services: set[str] = set()
+    for event in result.get("vpp_event_log") or []:
+        action_sets = [event.get("vpp_trigger_actions") or {}]
+        for decision in event.get("day_decisions") or []:
+            if isinstance(decision, dict):
+                action_sets.append(decision.get("raw_appliance_actions") or {})
+                action_sets.append(decision.get("actions") or {})
+        for actions in action_sets:
+            if not isinstance(actions, dict):
+                continue
+            for key, value in actions.items():
+                if not _is_emitted_action_value(str(key), value):
+                    continue
+                service = _service_from_action_key(str(key))
+                if service:
+                    services.add(service)
+    return services
+
+
+def _policy_trace_present(result: dict[str, Any]) -> bool:
+    for event in result.get("vpp_event_log") or []:
+        if event.get("selected_strategy") or event.get("strategy_trace") or event.get("strategy_candidates"):
+            return True
+        for decision in event.get("day_decisions") or []:
+            if isinstance(decision, dict) and decision.get("objective_source"):
+                return True
+    return False
+
+
+def _fallback_or_default_evidence(result_path: Path, result: dict[str, Any]) -> bool:
+    if str(result.get("vpp_schedule_source", "")).lower() == "daily_default":
+        return True
+    raw = json.dumps(result, ensure_ascii=False).lower()
+    negative_tokens = (
+        "no fallback",
+        "no_fallback",
+        "without fallback",
+        "not fallback",
+        "no default",
+    )
+    for token in negative_tokens:
+        raw = raw.replace(token, "")
+    positive_tokens = (
+        "fallback appliance",
+        "fallback_actions",
+        "default_explicit_appliance",
+        "vpp_safe_appliance",
+        "base fallback",
+        "base default",
+    )
+    return any(token in raw for token in positive_tokens)
 
 
 def _observed_method_order(df: pd.DataFrame) -> list[str]:
@@ -199,7 +437,22 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
     md_path = report_dir / _artifact_name(prefix, "baseline_matrix_report.md")
     summary = (
         df.groupby("method", observed=True)[
-            ["user_pref_score", "energy_kwh_total", "vpp_window_energy_kwh", "appliance_shift_success_rate"]
+            [
+                "user_pref_score",
+                "energy_kwh_total",
+                "vpp_window_energy_kwh",
+                "appliance_shift_success_rate",
+                "appliance_task_completion_rate",
+                "physical_appliance_task_completion_rate",
+                "policy_appliance_control_coverage_rate",
+                "manual_policy_appliance_control_coverage_rate",
+                "output_action_control_coverage_rate",
+                "audited_appliance_control_coverage_rate",
+                "raw_appliance_action_coverage_rate",
+                "raw_absent_appliance_action_count",
+                "policy_trace_present",
+                "fallback_or_default_evidence",
+            ]
         ]
         .mean()
         .round(4)
@@ -239,6 +492,21 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
                     "appliance_shift_success_rate",
                     "appliance_vpp_avoidance_rate",
                     "appliance_task_completion_rate",
+                    "physical_appliance_task_completion_rate",
+                    "policy_appliance_control_coverage_rate",
+                    "manual_policy_appliance_control_coverage_rate",
+                    "output_action_control_coverage_rate",
+                    "audited_appliance_control_coverage_rate",
+                    "manual_present_appliance_services",
+                    "manual_covered_appliance_services",
+                    "manual_uncovered_appliance_services",
+                    "output_covered_appliance_services",
+                    "output_uncovered_appliance_services",
+                    "raw_appliance_action_coverage_rate",
+                    "raw_absent_appliance_action_count",
+                    "raw_absent_appliance_action_services",
+                    "policy_trace_present",
+                    "fallback_or_default_evidence",
                     "elapsed_s",
                 ]
             ],
@@ -250,10 +518,17 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
     lines.append("")
     best = summary["user_pref_score"].idxmax()
     lowest_energy = summary["energy_kwh_total"].idxmin()
-    best_shift = summary["appliance_shift_success_rate"].idxmax()
+    best_shift = summary["appliance_task_completion_rate"].idxmax()
+    cleanest_raw_actions = summary["raw_absent_appliance_action_count"].idxmin()
     lines.append(f"- Best average user score: **{best}**")
     lines.append(f"- Lowest average total energy: **{lowest_energy}**")
-    lines.append(f"- Best average appliance shift success rate: **{best_shift}**")
+    lines.append(f"- Best average policy appliance output completion: **{best_shift}**")
+    lines.append(f"- Fewest actions targeting absent appliances: **{cleanest_raw_actions}**")
+    lines.append("")
+    lines.append(
+        "Appliance task completion means emitted present-appliance policy services divided by present "
+        "non-AC appliances. Physical simulator completion is reported separately as a diagnostic."
+    )
     lines.append("")
     lines.append(f"The matrix is calendar-aware and uses the {_window_label(df)}.")
     md_path.write_text("\n".join(lines), encoding="utf-8")
@@ -267,7 +542,7 @@ def _plot_report(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
         "score": axes_arr[0, 0],
         "energy": axes_arr[0, 1],
         "vpp_energy": axes_arr[1, 0],
-        "shift": axes_arr[1, 1],
+        "coverage": axes_arr[1, 1],
     }
 
     def _metric_matrix(metric: str) -> pd.DataFrame:
@@ -342,7 +617,7 @@ def _plot_report(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
     score_matrix = _metric_matrix("user_pref_score")
     energy_matrix = _metric_matrix("energy_kwh_total")
     vpp_energy_matrix = _metric_matrix("vpp_window_energy_kwh")
-    shift_matrix = _metric_matrix("appliance_shift_success_rate")
+    coverage_matrix = _metric_matrix("appliance_task_completion_rate")
 
     _draw_metric_table(
         axes["score"],
@@ -374,12 +649,12 @@ def _plot_report(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
         lower_is_better=True,
     )
     _draw_metric_table(
-        axes["shift"],
-        shift_matrix,
-        title="Persona x Method Appliance Shift Success",
+        axes["coverage"],
+        coverage_matrix,
+        title="Persona x Method Policy Appliance Output",
         cmap="PuBuGn",
         fmt=".0%",
-        cbar_label="Completed tasks shifted away from VPP",
+        cbar_label="Present appliances with emitted policy action",
         vmin=0,
         vmax=1,
     )
