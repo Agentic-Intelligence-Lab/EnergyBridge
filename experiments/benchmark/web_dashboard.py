@@ -227,10 +227,20 @@ def _read_meter_vpp_energy(run_path: Path, events_source: list[dict] | None = No
     values = {key: 0.0 for key in events}
     in_data = False
     current_window = None
+    facility_code = None
     try:
         with mtr_path.open(errors="ignore") as f:
             for raw in f:
                 line = raw.strip()
+                if not in_data:
+                    parts = [part.strip() for part in line.split(",")]
+                    if (
+                        len(parts) >= 3
+                        and parts[0].isdigit()
+                        and "Electricity:Facility" in line
+                        and "!TimeStep" in line
+                    ):
+                        facility_code = int(parts[0])
                 if line.startswith("End of Data Dictionary"):
                     in_data = True
                     continue
@@ -249,7 +259,9 @@ def _read_meter_vpp_energy(run_path: Path, events_source: list[dict] | None = No
                     end_h = (day - 1) * 24.0 + (hour - 1) + end_min / 60.0
                     current_window = (start_h, end_h)
                     continue
-                if code != 9 or current_window is None or len(parts) < 2:
+                if facility_code is None:
+                    facility_code = 9
+                if code != facility_code or current_window is None or len(parts) < 2:
                     continue
                 try:
                     kwh = float(parts[1]) / 3_600_000.0
@@ -324,10 +336,20 @@ def _read_meter_daily_energy(run_path: Path) -> list[dict]:
     values: dict[int, float] = {}
     in_data = False
     current_day = None
+    facility_code = None
     try:
         with mtr_path.open(errors="ignore") as f:
             for raw in f:
                 line = raw.strip()
+                if not in_data:
+                    parts = [part.strip() for part in line.split(",")]
+                    if (
+                        len(parts) >= 3
+                        and parts[0].isdigit()
+                        and "Electricity:Facility" in line
+                        and "!TimeStep" in line
+                    ):
+                        facility_code = int(parts[0])
                 if line.startswith("End of Data Dictionary"):
                     in_data = True
                     continue
@@ -343,7 +365,9 @@ def _read_meter_daily_energy(run_path: Path) -> list[dict]:
                     except ValueError:
                         current_day = None
                     continue
-                if code != 9 or current_day is None or len(parts) < 2:
+                if facility_code is None:
+                    facility_code = 9
+                if code != facility_code or current_day is None or len(parts) < 2:
                     continue
                 try:
                     values[current_day] = values.get(current_day, 0.0) + float(parts[1]) / 3_600_000.0
