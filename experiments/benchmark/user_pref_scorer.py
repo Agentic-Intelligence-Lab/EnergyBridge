@@ -1329,6 +1329,7 @@ def score_user_preference(
             "mpc",
             "mpc_dynamic",
             "mpc_ep",
+            "rule_milp",
         )
         or str(method).startswith("rl_")
     )
@@ -1339,6 +1340,8 @@ def score_user_preference(
             controller = "HEMA Agent baseline"
         elif method in ("mpc", "mpc_dynamic", "mpc_ep"):
             controller = "MPC baseline"
+        elif method == "rule_milp":
+            controller = "Rule+MILP baseline"
         else:
             controller = "LLM agent"
         within_preferred = pref_min - pref_tol <= float(agent_setpoint_c) <= pref_max + pref_tol

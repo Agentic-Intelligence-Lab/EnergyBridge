@@ -27,12 +27,13 @@ _PROJECT_ROOT = _BENCH_DIR.parent.parent
 DEFAULT_RESULTS_ROOT = _PROJECT_ROOT / "benchmark_results"
 
 ENERGYBRIDGE_METHOD_ID = "EnergyBridge"
-METHOD_ORDER = [ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "mpc_ep", "hema_agent", "rl_ppo_3day", "rl_ppo_pref_v2"]
+METHOD_ORDER = [ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "mpc_ep", "rule_milp", "hema_agent", "rl_ppo_3day", "rl_ppo_pref_v2"]
 METHOD_LABEL = {
     ENERGYBRIDGE_METHOD_ID: "EnergyBridge",
     "agent": "EnergyBridge",
     "mpc_dynamic": "MPC Dynamic",
     "mpc_ep": "MPC EP",
+    "rule_milp": "Rule+MILP",
     "hema_agent": "HEMA Agent",
     "rl_ppo_3day": "RL PPO",
     "rl_ppo_pref_v2": "rl",
@@ -43,6 +44,7 @@ POLICY_APPLIANCE_CAPABILITIES = {
     "agent": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "mpc_dynamic": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "mpc_ep": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
+    "rule_milp": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "hema_agent": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "rl_ppo_3day": {"washer", "water_heater"},
     "rl_ppo_pref_v2": {"washer", "dishwasher", "water_heater"},
@@ -62,6 +64,7 @@ MANUAL_APPLIANCE_SERVICES = {
 }
 
 MANUAL_METHOD_CAPABILITIES = {
+    "rule_milp": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "hema_agent": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "rl_ppo_pref_v2": {"washer", "dishwasher", "water_heater"},
 }
@@ -82,6 +85,9 @@ def _canonical_method(method: str) -> str:
         "rl_ppo_3day": "rl_ppo_3day",
         "rl_ppo_pref_v2": "rl_ppo_pref_v2",
         "rl_pref_v2": "rl_ppo_pref_v2",
+        "rule_milp": "rule_milp",
+        "rule+milp": "rule_milp",
+        "pmv_milp": "rule_milp",
     }
     return aliases.get(key, key)
 def _latest_date_dir(results_root: Path) -> Path:

@@ -163,7 +163,7 @@ def _find_active_or_upcoming_vpp_event(
     vpp_events: list[dict] | None = None,
 ) -> dict | None:
     """Return the active event or the next event later on the same simulated day."""
-    events = vpp_events or VPP_EVENTS
+    events = VPP_EVENTS if vpp_events is None else vpp_events
     if vpp_id:
         for ev in events:
             if ev.get("id") == vpp_id:
@@ -321,6 +321,7 @@ class _FamilyLoop:
         self.days_evaluated: set = set()                    # prevent double-printing daily eval
         self.vpp_trigger_actions: Dict[str, dict] = {}      # {event_id: appliance_actions at VPP trigger}
         self.day_agent_decisions: List[List[dict]] = [[], [], []]  # per day: list of {h, sp, actions}
+        self.daily_plans_done: set[int] = set()
         # Appliance suite — initialised by run_family_agent when persona is known
         self.appliance_suite = None                 # ApplianceSuite | None
 
@@ -628,7 +629,7 @@ def _method_policy_action_space_services(method: str) -> set[str]:
         return {"washer", "water_heater"}
     if method == "rl_ppo_pref_v2":
         return {"washer", "dishwasher", "water_heater"}
-    if method in ("agent", "mpc_dynamic", "mpc_ep", "hema_agent"):
+    if method in ("agent", "mpc_dynamic", "mpc_ep", "hema_agent", "rule_milp"):
         return {"washer", "dishwasher", "dryer", "water_heater", "ev"}
     return set()
 
@@ -1449,8 +1450,11 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
         "rl_ppo_pref_v2": "rl_ppo_pref_v2",
         "rl_pref_v2": "rl_ppo_pref_v2",
         "rl_ppo_v2": "rl_ppo_pref_v2",
+        "rule_milp": "rule_milp",
+        "rule+milp": "rule_milp",
+        "pmv_milp": "rule_milp",
     }.get(str(method or "agent").lower(), method)
-    if method not in ("agent", "mpc_dynamic", "mpc_ep", "rl_ppo_3day", "rl_ppo_pref_v2"):
+    if method not in ("agent", "mpc_dynamic", "mpc_ep", "rl_ppo_3day", "rl_ppo_pref_v2", "rule_milp"):
         raise ValueError(f"Unsupported family control method: {method}")
     if output_dir is None:
         output_dir = BENCHMARK_DIR / "results" / f"family_{method}_{weather_label}"
@@ -1467,6 +1471,7 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     loop._rl_v2_daily_scheduled: dict[int, set] = {}  # v2 decision cooldown
     loop.vpp_schedule_source = vpp_schedule_source or "daily_default"
     loop.day_agent_decisions = [[] for _ in range(sim_days)]
+    loop.daily_plans_done = set()
     loop.next_check = planning_hour
     ex = api.exchange
     ex.request_variable(state, "Zone Mean Air Temperature", "living_unit1")
@@ -1994,6 +1999,49 @@ All times are hour-of-day (0–23.9)."""
             "objective_source": "mpc_candidate_scoring_pdf_v15",
         }
 
+    def _rule_milp_trigger(temp, out_t, hod, sim_h, facility_w=None, vpp_event=None):
+        from experiments.benchmark.baselines.rule_milp import plan_rule_milp_action
+
+        state_dict = _build_decision_time_state(
+            loop,
+            sim_h=sim_h,
+            hod=hod,
+            temp=temp,
+            out_t=out_t,
+            facility_w=facility_w,
+            vpp_event=vpp_event,
+            vpp_target_kwh=None,
+            appliance_config=appliance_config or {},
+        )
+        decision = plan_rule_milp_action(
+            state=state_dict,
+            price_profile=day_ahead_price_profile,
+            run_start_date=run_start_date,
+        )
+        sp = round(max(_run_sp_min, min(_run_sp_max, float(decision.get("setpoint", loop.sp)))), 1)
+        appliance_actions = _filter_controllable_appliance_actions(
+            decision.get("appliances", {}), appliance_config
+        )
+        objective_terms = decision.get("objective_terms", {})
+        total = objective_terms.get("total")
+        total_str = f"{float(total):.3f}" if total is not None else "n/a"
+        day_num = int(sim_h // 24) + 1
+        hh_mm = f"{int(hod % 24):02d}:{int((hod % 1)*60):02d}"
+        vpp_tag = f" | VPP-{vpp_event.get('id')}" if isinstance(vpp_event, dict) else ""
+        print(
+            f"  [Rule+MILP | h={hh_mm} Day{day_num}{vpp_tag}] "
+            f"setpoint->{sp:.1f}C  objective={total_str}  | "
+            f"{decision.get('reason', '')}"
+        )
+        return {
+            "setpoint": sp,
+            "next_check_hour": decision.get("next_check_hour"),
+            "reason": decision.get("reason", ""),
+            "appliance_actions": appliance_actions,
+            "objective_terms": objective_terms,
+            "objective_source": "rule_milp_cost_min_v1",
+        }
+
     def _rl_trigger(temp, out_t, hod, sim_h, facility_w=None, vpp_event=None):
         from experiments.benchmark.baselines.rl_ppo_3day import predict_control_result
 
@@ -2276,6 +2324,19 @@ All times are hour-of-day (0–23.9)."""
         loop.current_occupancy_count = occ_count
         loop.current_occupancy_source = occ_source
         hvac_avail_set = _set_hvac_availability(ex, s, loop, occ)
+        if method == "rule_milp" and occ:
+            try:
+                from experiments.benchmark.baselines.rule_milp import _choose_pmv_cost_min_setpoint
+
+                rule_sp = _choose_pmv_cost_min_setpoint({
+                    "appliance_config": appliance_config or {},
+                    "current_setpoint_c": loop.sp,
+                    "temp_c": temp,
+                })
+                loop.sp = round(max(_run_sp_min, min(_run_sp_max, float(rule_sp))), 1)
+                loop.planned_occupied_sp = loop.sp
+            except Exception as _rme:
+                print(f"  [Rule+MILP HVAC] PMV rule failed: {_rme}")
 
         # Determine current VPP status
         active_vpp = None
@@ -2342,11 +2403,19 @@ All times are hour-of-day (0–23.9)."""
             triggered = False
             triggered_vpp = None
             triggered_daily_plan = False
+            _plan_grace_h = max(0.25, 2.0 * float(dt or 0.25))
             for _day_idx in range(sim_days):
                 _plan_h = _day_idx * 24.0 + planning_hour
-                if psim < _plan_h <= sim_h:
+                if _day_idx in loop.daily_plans_done:
+                    continue
+                _crossed_plan = psim < _plan_h <= sim_h
+                _missed_warmup_plan = (
+                    sim_h >= _plan_h and sim_h <= _plan_h + _plan_grace_h
+                )
+                if _crossed_plan or _missed_warmup_plan:
                     triggered = True
                     triggered_daily_plan = True
+                    loop.daily_plans_done.add(_day_idx)
                     break
             for ev in vpp_events:
                 if psim < ev["trigger_h"] <= sim_h:
@@ -2460,6 +2529,15 @@ All times are hour-of-day (0–23.9)."""
                         temp, out_t, hod, sim_h,
                         facility_w=fac,
                         vpp_event=triggered_vpp if is_vpp else None)
+                elif method == "rule_milp":
+                    rule_vpp_event = (
+                        triggered_vpp if is_vpp
+                        else _find_active_or_upcoming_vpp_event(sim_h, vpp_events=vpp_events)
+                    )
+                    res = _rule_milp_trigger(
+                        temp, out_t, hod, sim_h,
+                        facility_w=fac,
+                        vpp_event=rule_vpp_event)
                 elif method == "rl_ppo_3day":
                     rl_vpp_event = triggered_vpp if is_vpp else active_vpp
                     res = _rl_trigger(

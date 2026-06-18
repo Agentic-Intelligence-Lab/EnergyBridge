@@ -52,6 +52,9 @@ METHOD_CHOICES = (
     "rl_ppo_3day",
     "rl_ppo_pref_v2",
     "rl_pref_v2",
+    "rule_milp",
+    "rule+milp",
+    "pmv_milp",
 )
 
 
@@ -87,6 +90,9 @@ def _canonical_method(method: str) -> str:
         "rl_ppo_3day": "rl_ppo_3day",
         "rl_ppo_pref_v2": "rl_ppo_pref_v2",
         "rl_pref_v2": "rl_ppo_pref_v2",
+        "rule_milp": "rule_milp",
+        "rule+milp": "rule_milp",
+        "pmv_milp": "rule_milp",
     }
     return aliases.get(key, key)
 
@@ -309,7 +315,7 @@ def _run_job(job: Job, *, resume: bool) -> dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run approved personas across EnergyBridge, mpc_dynamic, and mpc_ep baselines."
+        description="Run approved personas across EnergyBridge and baseline methods."
     )
     parser.add_argument(
         "--personas",

@@ -26,6 +26,9 @@ def _canonical_method(method: str) -> str:
         "agent": ENERGYBRIDGE_METHOD_ID,
         "energybridge": ENERGYBRIDGE_METHOD_ID,
         "mpc": "mpc_dynamic",
+        "rule_milp": "rule_milp",
+        "rule+milp": "rule_milp",
+        "pmv_milp": "rule_milp",
     }
     return aliases.get(key, key)
 
@@ -45,7 +48,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--method",
-        choices=[ENERGYBRIDGE_METHOD_ID, "agent", "mpc_dynamic", "mpc_ep", "mpc"],
+        choices=[ENERGYBRIDGE_METHOD_ID, "agent", "mpc_dynamic", "mpc_ep", "mpc", "rule_milp", "rule+milp", "pmv_milp"],
         default=ENERGYBRIDGE_METHOD_ID,
         help="Controller method. Default: EnergyBridge; 'agent' is a deprecated alias.",
     )
