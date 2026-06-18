@@ -66,7 +66,9 @@ class ShiftableAppliance:
         return abs_e, abs_l
 
     def shift(self, day_idx: int, new_abs_h: float) -> bool:
-        if not self.present or not self.shiftable or not self.dr_adjustable:
+        if not self.present:
+            return False
+        if not self.explicit_only and (not self.shiftable or not self.dr_adjustable):
             return False
         rec = self._days.get(day_idx)
         if rec is None or rec.run_start_abs_h is not None or rec.completed:
@@ -79,7 +81,9 @@ class ShiftableAppliance:
 
     def skip_today(self, day_idx: int) -> bool:
         """Tell the rule engine not to run this appliance today."""
-        if not self.present or not self.shiftable or not self.dr_adjustable:
+        if not self.present:
+            return False
+        if not self.explicit_only and (not self.shiftable or not self.dr_adjustable):
             return False
         self._day_skipped[day_idx] = True
         return True
@@ -179,7 +183,7 @@ class WaterHeater:
         temp_c  : tank setpoint during preheat (clamped 45-75 C).
         Unspecified params fall back to class defaults at execution time.
         """
-        if not self.present or (not self.dr_adjustable and not force_routine):
+        if not self.present or (not self.dr_adjustable and not force_routine and not self.explicit_only):
             return False
         state = self._days.get(day_idx)
         if state is None:

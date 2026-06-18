@@ -612,26 +612,23 @@ def _requested_skip_devices(actions: dict | None) -> List[str]:
 
 
 def _present_agent_controlled_appliances(appliance_config: dict | None) -> List[str]:
-    """Appliances the Agent must explicitly command on every decision call."""
+    """Present non-AC appliances the policy must explicitly command.
+
+    Even non-DR-adjustable devices need a policy command in explicit-only
+    simulation; for those devices the command should preserve the user's
+    routine rather than reschedule it.
+    """
     cfg = appliance_config or {}
     names = []
     for name in ("washer", "dishwasher", "dryer", "water_heater", "ev"):
         dev_cfg = cfg.get(name, {}) or {}
-        if not bool(dev_cfg.get("present", False)):
-            continue
-        if name in ("washer", "dishwasher", "dryer"):
-            if bool(dev_cfg.get("shiftable", True)) and bool(dev_cfg.get("dr_adjustable", True)):
-                names.append(name)
-        elif name == "water_heater":
-            if bool(dev_cfg.get("dr_adjustable", True)):
-                names.append(name)
-        else:
+        if bool(dev_cfg.get("present", False)):
             names.append(name)
     return names
 
 
 def _fixed_appliance_constraint_text(appliance_config: dict | None) -> str:
-    """Describe present devices that exist but cannot be shifted by the Agent."""
+    """Describe present devices that should keep routine commands."""
     cfg = appliance_config or {}
     fixed: List[str] = []
     for name in ("washer", "dishwasher", "dryer"):
@@ -651,8 +648,9 @@ def _fixed_appliance_constraint_text(appliance_config: dict | None) -> str:
     if not fixed:
         return ""
     return (
-        "\n[Fixed appliance constraints]\n"
-        "These present devices are NOT controllable by the Agent. Do not output commands for them; account for them as fixed load constraints:\n"
+        "\n[Routine-locked appliance constraints]\n"
+        "These present devices are not DR-adjustable, but the explicit-only simulator still needs commands for them. "
+        "Output routine-preserving commands for them; do not reschedule or skip them for VPP benefit:\n"
         + "\n".join(f"- {item}" for item in fixed)
     )
 
@@ -1039,6 +1037,8 @@ def _explicit_appliance_requirement_text(
         "a concrete command for it.\n"
         "If you omit a present appliance field or leave it null, that appliance is treated as not controlled "
         "by this policy and may be penalized in user scoring and task completion.\n"
+        "This applies to every present non-AC appliance, including fixed or non-DR-adjustable routine appliances. "
+        "For fixed/routine appliances, emit the user's normal preferred routine command instead of leaving it null.\n"
         "For washer/dishwasher/dryer: emit start_h and skip=false, unless the task is truly unnecessary "
         "and skip=true. For water_heater: emit preheat=true/false plus start/end/temp when controlling it. "
         "For EV: emit ev_mode and optional charge window when controlling it."
@@ -1120,7 +1120,7 @@ def _vpp_appliance_conflicts(
 
 
 def _filter_controllable_appliance_actions(actions: dict | None, appliance_config: dict | None) -> dict:
-    """Drop LLM commands for fixed/non-controllable appliances before applying them."""
+    """Drop commands for absent appliances before applying policy output."""
     actions = actions or {}
     controllable = set(_present_agent_controlled_appliances(appliance_config))
     allowed: set[str] = set()
@@ -1140,7 +1140,7 @@ def _filter_controllable_appliance_actions(actions: dict | None, appliance_confi
     dropped = sorted(key for key, value in actions.items() if value is not None and key not in allowed)
     if dropped:
         print(
-            "  [Appliance Control] dropping commands for fixed/absent devices: "
+            "  [Appliance Control] dropping commands for absent/unsupported devices: "
             f"{', '.join(dropped)}"
         )
     return filtered
@@ -1497,12 +1497,12 @@ When a DAY_AHEAD_PRICE block is provided at the daily planning call, optimize fl
 Goal: reduce total electricity consumption during the provided VPP_WINDOW to support the grid.
 The exact event window is provided at runtime as VPP_WINDOW=start-end.
 {_vpp_ac_strategy_text}
-Appliances: you have full scheduling control over controllable independent devices (see details below). Fixed/non-DR-adjustable devices are external constraints, not commands you can change.
+Appliances: every present independent device needs an explicit policy command (see details below). For flexible devices, choose a schedule. For fixed/non-DR-adjustable devices, emit the user's normal routine command and do not alter it for VPP.
 IMPORTANT: control each appliance independently. Decisions persist until you change them. Learn from past VPP event scores.
 HARD APPLIANCE RULE: on every VPP day, no present controllable appliance may draw controllable load during VPP_WINDOW.
 This means washer/dishwasher/dryer cycles must not overlap VPP_WINDOW, water-heater preheat must avoid VPP_WINDOW, and EV charging must use smart/delay or an explicit non-overlapping window.
 Plan appliance schedules before the event. Waiting until the VPP start time is too late for preheating or long-cycle tasks.
-All schedule commands must be executable from the CURRENT clock time. Do not "fix" an active VPP event by assigning a washer/dishwasher/dryer start time in the past; if a cycle was not already safely completed, move it after VPP_WINDOW.
+All flexible schedule commands must be executable from the CURRENT clock time. Do not "fix" an active VPP event by assigning a washer/dishwasher/dryer start time in the past; if a flexible cycle was not already safely completed, move it after VPP_WINDOW. For fixed/routine appliances, keep the stated preferred routine and emit it explicitly.
 {_protective_policy}
 {_persona_policy}
 
@@ -1515,6 +1515,7 @@ started by code. Record only the command this policy actually chooses.
 WASHER / DISHWASHER / DRYER (run once per day)
   Choose a start time inside the user window shown in appliance status.
   On VPP days: choose a start time so the full cycle [start_h, start_h+duration_h] does not overlap VPP_WINDOW.
+  If the appliance status or constraints say fixed/non-DR-adjustable, emit its preferred routine start_h and skip=false; do not leave it null.
   If the current clock is already at/inside VPP_WINDOW, do not choose a past start_h as a workaround; schedule after VPP_WINDOW unless the appliance status already says the task is finished.
   Service rule: these tasks should normally still be completed the same day.
   Skip is an exception only when the task is truly unnecessary that day. If you choose skip,
@@ -1527,6 +1528,7 @@ WASHER / DISHWASHER / DRYER (run once per day)
 WATER HEATER (electric tank, thermal storage)
   Emit a preheat schedule if hot water should be prepared for bath time.
   On VPP days: move the preheat window away from VPP_WINDOW, preferably ending about 1 hour before the event.
+  If the water heater is fixed/non-DR-adjustable, emit its configured routine preheat window and temperature; do not leave it null.
   Hotter tank = more thermal storage = less chance of heating during VPP.
   Parameters:
     water_heater_preheat_start_h : float  — hour-of-day to begin preheating.
