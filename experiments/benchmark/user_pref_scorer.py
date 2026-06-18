@@ -1314,6 +1314,7 @@ def score_user_preference(
             "unsupported_policy_services": unsupported_policy_services,
             "missing_policy_services": missing_policy_services,
             "vpp_trigger_actions": policy_control_context.get("vpp_trigger_actions", {}),
+            "occupancy_decisions": policy_control_context.get("occupancy_decisions", []),
         }
 
     policy_scored_method = (
@@ -1420,7 +1421,8 @@ def score_user_preference(
                 f"action_space={sorted(policy_action_space)}, "
                 f"emitted_services={sorted(emitted_policy_services)}, "
                 f"present_required_services={sorted(present_required_services)}, "
-                f"vpp_trigger_actions={policy_control_context.get('vpp_trigger_actions', {})}. "
+                f"vpp_trigger_actions={policy_control_context.get('vpp_trigger_actions', {})}, "
+                f"occupancy_ac_modes={policy_control_context.get('occupancy_decisions', [])}. "
                 "Only count appliance service as method-controlled when it appears in emitted policy actions; "
                 "do not credit baseline routines or simulator default completion as policy success."
             )

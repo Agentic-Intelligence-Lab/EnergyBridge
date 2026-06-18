@@ -34,6 +34,7 @@ OCCUPIED_START = 8.0; OCCUPIED_END = 22.0
 PMV_MET = 1.1; PMV_CLO = 0.5; PMV_V = 0.1; PMV_RH = 55.0
 PMV_DEADBAND = 0.5; SP_MIN = 22.0; SP_MAX = 28.0; SP_STEP = 0.5
 SP_DEFAULT = 26.0; HTG_SP = 20.0; UNMET_TOL = 0.556
+AC_OFF_FALLBACK_COOLING_SETPOINT = 40.0
 
 # 3x VPP-1: same event type, configured as absolute simulation-hour windows.
 # The Agent prompt and appliance guardrails derive their timing from this list.
@@ -240,10 +241,42 @@ def _compute_pmv(tdb, rh=PMV_RH):
 
 def _occupied(h): return OCCUPIED_START <= (h % 24) < OCCUPIED_END
 
+
+def _observable_occupancy(ex, s, loop, persona_config: dict | None, sim_h: float, hod: float) -> tuple[bool, float, str]:
+    """Read home occupancy from EnergyPlus, falling back to the role-play calendar."""
+    if getattr(loop, "h_occ", -1) != -1:
+        try:
+            count = ex.get_variable_value(s, loop.h_occ)
+            if count is not None and not (float(count) != float(count)):
+                count_f = max(0.0, float(count))
+                return count_f > 0.05, count_f, "ep_zone_people"
+        except Exception:
+            pass
+    if persona_config and (persona_config.get("calendar") or {}).get("days"):
+        try:
+            from energybridge.roleplay.calendar import occupancy_fraction_at_sim_hour
+            fraction = max(0.0, min(1.0, float(occupancy_fraction_at_sim_hour(persona_config, sim_h))))
+            return fraction > 0.05, fraction * 3.0, "persona_calendar_fallback"
+        except Exception:
+            return True, 3.0, "persona_calendar_unreadable_default_home"
+    if persona_config:
+        return True, 3.0, "missing_persona_calendar_default_home"
+    return _occupied(hod), 3.0 if _occupied(hod) else 0.0, "fixed_hours_fallback"
+
+
+def _set_hvac_availability(ex, s, loop, available: bool) -> bool:
+    """Set the EP HVAC availability schedule if this IDF exposes it."""
+    value = 1.0 if available else 0.0
+    loop.current_hvac_available = bool(available)
+    if getattr(loop, "h_hvac_avail", -1) == -1:
+        return False
+    ex.set_actuator_value(s, loop.h_hvac_avail, value)
+    return True
+
 class _FamilyLoop:
     def __init__(self):
         self.sp = SP_DEFAULT; self.ready = False; self.start_day = None
-        self.h_cool = self.h_heat = self.h_temp = self.h_fac = -1
+        self.h_cool = self.h_heat = self.h_temp = self.h_fac = self.h_occ = self.h_hvac_avail = -1
         # Appliance actuator handles (written back to EnergyPlus each timestep)
         self.h_ev = self.h_ewh_sp = -1
         self.h_washer = self.h_dishwasher = self.h_dryer = self.h_refrigerator = -1
@@ -261,6 +294,11 @@ class _FamilyLoop:
         self.vpp_events: List[Dict[str, Any]] = list(VPP_EVENTS)
         self.vpp_schedule_source: str = ""
         self.prev_sim_h: float = -1.0              # for crossing detection
+        self.prev_occupied: Optional[bool] = None
+        self.current_occupied: bool = True
+        self.current_occupancy_count: float = 3.0
+        self.current_occupancy_source: str = "unknown"
+        self.current_hvac_available: bool = True
         # VPP per-event tracking
         self.vpp_window_data: Dict[str, Any] = {}  # id -> {temps, pmvs, sp, reason}
         self.vpp_event_log: List[Dict] = []         # scored events in time order
@@ -299,6 +337,8 @@ class _FamilyLoop:
         self.h_refrigerator= ex.get_actuator_handle(s, "Schedule:Constant", "Schedule Value", "Refrigerator_Power_Frac")
         self.h_temp = ex.get_variable_handle(s, "Zone Mean Air Temperature", "living_unit1")
         self.h_fac  = ex.get_variable_handle(s, "Facility Total Electricity Demand Rate", "Whole Building")
+        self.h_occ  = ex.get_variable_handle(s, "Zone People Occupant Count", "living_unit1")
+        self.h_hvac_avail = ex.get_actuator_handle(s, "Schedule:Constant", "Schedule Value", "HVAC_Availability_Control")
         self.ready = True; return True
 
 def run_family_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
@@ -314,6 +354,7 @@ def run_family_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     ex = api.exchange
     ex.request_variable(state, "Zone Mean Air Temperature", "living_unit1")
     ex.request_variable(state, "Facility Total Electricity Demand Rate", "Whole Building")
+    ex.request_variable(state, "Zone People Occupant Count", "living_unit1")
 
     # PMV per-VPP-window tracking (to show PMV doesn't adapt)
     vpp_window_temps: Dict[str, list] = {ev["id"]: [] for ev in VPP_EVENTS}
@@ -328,9 +369,19 @@ def run_family_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
         wu = ex.warmup_flag(s)
         temp = ex.get_variable_value(s, loop.h_temp) if loop.h_temp!=-1 else SP_DEFAULT
         fac  = ex.get_variable_value(s, loop.h_fac)  if loop.h_fac!=-1  else 0.0
+        occ, occ_count, occ_source = _observable_occupancy(ex, s, loop, None, sim_h, hod)
+        loop.current_occupied = occ
+        loop.current_occupancy_count = occ_count
+        loop.current_occupancy_source = occ_source
         pmv = _compute_pmv(temp)
-        if pmv > PMV_DEADBAND: loop.sp = max(SP_MIN, loop.sp - SP_STEP)
-        elif pmv < -PMV_DEADBAND: loop.sp = min(SP_MAX, loop.sp + SP_STEP)
+        hvac_avail_set = _set_hvac_availability(ex, s, loop, occ)
+        if not occ:
+            if not hvac_avail_set:
+                loop.sp = AC_OFF_FALLBACK_COOLING_SETPOINT
+        elif pmv > PMV_DEADBAND:
+            loop.sp = max(SP_MIN, loop.sp - SP_STEP)
+        elif pmv < -PMV_DEADBAND:
+            loop.sp = min(SP_MAX, loop.sp + SP_STEP)
         if loop.h_cool!=-1: ex.set_actuator_value(s, loop.h_cool, loop.sp)
         if loop.h_heat!=-1: ex.set_actuator_value(s, loop.h_heat, HTG_SP)
         if wu: return
@@ -340,7 +391,7 @@ def run_family_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
             if ev["trigger_h"] <= sim_h < ev["end_h"]:
                 vpp_window_temps[ev["id"]].append(temp)
                 vpp_window_pmvs[ev["id"]].append(abs(pmv) <= PMV_DEADBAND)
-        if _occupied(hod):
+        if occ:
             loop.occ_h += dt; loop.pmv_s += pmv*dt; loop.temp_s += temp*dt
             if abs(pmv) <= PMV_DEADBAND: loop.pmv_ok_h += dt
             if temp > loop.sp + UNMET_TOL: loop.unmet_h += dt
@@ -1217,6 +1268,13 @@ def _build_decision_time_state(
                 "current_appliance_power_kw": appliance_kw,
             }
         )
+    state.update(
+        {
+            "occupied": bool(getattr(loop, "current_occupied", True)),
+            "occupancy_count": float(getattr(loop, "current_occupancy_count", 0.0) or 0.0),
+            "occupancy_source": getattr(loop, "current_occupancy_source", "unknown"),
+        }
+    )
     return state
 
 
@@ -1414,6 +1472,7 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     ex.request_variable(state, "Zone Mean Air Temperature", "living_unit1")
     ex.request_variable(state, "Facility Total Electricity Demand Rate", "Whole Building")
     ex.request_variable(state, "Site Outdoor Air Drybulb Temperature", "Environment")
+    ex.request_variable(state, "Zone People Occupant Count", "living_unit1")
     # Initialise per-appliance independent simulator
     try:
         from energybridge.simulation.appliance_sim import ApplianceSuite
@@ -1484,7 +1543,8 @@ SIMULATION: {sim_days} days starting {_run_start_text} ({_run_location_text}). T
 You are called at: (1) daily planning at {_fmt_clock_h(planning_hour)}, (2) VPP demand-response events, (3) times you request.
 
 [AC CONTROL]
-Occupied hours: 08:00-22:00. Outside this window AC is automatically set to 28°C (standby).
+Home occupancy comes from the role-play calendar written into the EnergyPlus People schedule and exposed as an EnergyPlus output variable.
+If occupied=false, the benchmark turns HVAC availability OFF for every method; if occupied=true, HVAC is ON and your selected comfort/VPP setpoint is applied.
 User preferred comfort range: {_ac_sp_min:.1f}–{_ac_sp_max:.1f}°C (tolerance ±{_ac_sp_tol:.1f}°C).
 Normal setpoint target: ~{_ac_sp_default:.1f}°C. PMV near 0 at 25.5°C; >+0.5 when zone exceeds 27°C.
 Allowed setpoint range: {_run_sp_min:.1f}–{_run_sp_max:.1f}°C.
@@ -1683,7 +1743,13 @@ All times are hour-of-day (0–23.9)."""
             appl_tag = ""
         fixed_appliance_tag = _fixed_appliance_constraint_text(appliance_config)
         explicit_appliance_tag = _explicit_appliance_requirement_text(appliance_config, vpp_event=vpp_event)
+        occupancy_tag = (
+            f"occupancy={'occupied' if loop.current_occupied else 'unoccupied'} "
+            f"people_count={loop.current_occupancy_count:.2f} "
+            f"source={loop.current_occupancy_source}\n"
+        )
         prompt = (f"sim_hour={sim_h:.1f}  clock={hh:02d}:00{vpp_tag}{upcoming_vpp_tag}{post_vpp_tag}{return_home_tag}\n"
+                  f"{occupancy_tag}"
                   f"zone_temp={temp:.1f}C  outdoor={out_t:.1f}C\n"
                   f"remaining_sim_hours={remaining_h:.0f}\n"
                   f"user_pref: {user_pref}{user_now_tag}{price_tag}{benefit_tag}{learned_efficiency_tag}{intensity_tag}{appl_tag}{fixed_appliance_tag}{explicit_appliance_tag}{mem_tag}")
@@ -2122,6 +2188,20 @@ All times are hour-of-day (0–23.9)."""
                 "emitted_services": sorted(_emitted_services),
                 "vpp_trigger_actions": _vpp_trigger_actions,
                 "day_decisions": _day_decisions,
+                "occupancy_decisions": [
+                    {
+                        "h": item.get("h"),
+                        "occupied": item.get("occupied"),
+                        "occupancy_count": item.get("occupancy_count"),
+                        "occupancy_source": item.get("occupancy_source"),
+                        "ac_mode": item.get("ac_mode"),
+                        "effective_setpoint": item.get("effective_setpoint"),
+                        "hvac_availability": item.get("hvac_availability"),
+                        "hvac_availability_source": item.get("hvac_availability_source"),
+                    }
+                    for item in _day_decisions
+                    if isinstance(item, dict) and item.get("ac_mode") is not None
+                ],
             }
             r = score_user_preference(
                 building="family", method=method,
@@ -2185,13 +2265,17 @@ All times are hour-of-day (0–23.9)."""
         hod = ex.current_time(s); dt = ex.zone_time_step(s)
         sim_h = (day - loop.start_day) * 24 + hod
         wu = ex.warmup_flag(s)
-        occ = _occupied(hod)
         temp = ex.get_variable_value(s, loop.h_temp) if loop.h_temp != -1 else SP_DEFAULT
         fac  = ex.get_variable_value(s, loop.h_fac)  if loop.h_fac != -1  else 0.0
         out_t = 30.0
         if loop.h_out != -1:
             v = ex.get_variable_value(s, loop.h_out)
             if v is not None and not _math.isnan(v): out_t = v
+        occ, occ_count, occ_source = _observable_occupancy(ex, s, loop, persona_config, sim_h, hod)
+        loop.current_occupied = occ
+        loop.current_occupancy_count = occ_count
+        loop.current_occupancy_source = occ_source
+        hvac_avail_set = _set_hvac_availability(ex, s, loop, occ)
 
         # Determine current VPP status
         active_vpp = None
@@ -2202,8 +2286,51 @@ All times are hour-of-day (0–23.9)."""
         if not wu:
             psim = loop.prev_sim_h
             if not occ:
-                if method not in ("mpc_dynamic", "mpc_ep", "rl_ppo_3day", "rl_ppo_pref_v2"):
-                    loop.sp = 28.0   # unoccupied: save energy automatically
+                if loop.prev_occupied is not False:
+                    print(
+                        f"  [AC Occupancy | Day{int(sim_h // 24) + 1} {_fmt_clock_h(hod)}] "
+                        f"unoccupied ({occ_source}, count={occ_count:.2f}); HVAC availability→off"
+                    )
+                if not hvac_avail_set:
+                    loop.sp = AC_OFF_FALLBACK_COOLING_SETPOINT
+                if loop.prev_occupied is not False:
+                    _day_i = min(sim_days - 1, int(sim_h // 24))
+                    loop.day_agent_decisions[_day_i].append({
+                        "h": sim_h,
+                        "sp": loop.planned_occupied_sp,
+                        "effective_setpoint": loop.sp,
+                        "hvac_availability": 0.0,
+                        "hvac_availability_source": "HVAC_Availability_Control" if hvac_avail_set else "setpoint_fallback",
+                        "occupied": False,
+                        "occupancy_count": round(float(occ_count), 3),
+                        "occupancy_source": occ_source,
+                        "ac_mode": "off_unoccupied",
+                        "reason": "calendar/EP occupancy shows home unoccupied; HVAC availability off",
+                        "actions": {},
+                        "raw_appliance_actions": {},
+                    })
+            elif loop.prev_occupied is False:
+                loop.sp = loop.planned_occupied_sp
+                print(
+                    f"  [AC Occupancy | Day{int(sim_h // 24) + 1} {_fmt_clock_h(hod)}] "
+                    f"occupied ({occ_source}, count={occ_count:.2f}); setpoint→{loop.sp:.1f}°C from policy plan"
+                )
+                _day_i = min(sim_days - 1, int(sim_h // 24))
+                loop.day_agent_decisions[_day_i].append({
+                    "h": sim_h,
+                    "sp": loop.planned_occupied_sp,
+                    "effective_setpoint": loop.sp,
+                    "hvac_availability": 1.0,
+                    "hvac_availability_source": "HVAC_Availability_Control" if hvac_avail_set else "setpoint_fallback",
+                    "occupied": True,
+                    "occupancy_count": round(float(occ_count), 3),
+                    "occupancy_source": occ_source,
+                    "ac_mode": "on",
+                    "reason": "calendar/EP occupancy shows home occupied; AC restored to policy setpoint",
+                    "actions": {},
+                    "raw_appliance_actions": {},
+                })
+            loop.prev_occupied = occ
             # End-of-day completion check at each midnight after Day N.
             for _day_idx in range(max(0, sim_days - 1)):
                 _eod_h = float((_day_idx + 1) * 24)
@@ -2211,14 +2338,6 @@ All times are hour-of-day (0–23.9)."""
                     if _day_idx not in loop.days_evaluated:
                         loop.days_evaluated.add(_day_idx)
                         _print_prev_day_completion(loop.appliance_suite, _day_idx, _day_idx + 1)
-
-            # Apply the 00:00 planned occupied setpoint when the home becomes occupied.
-            if psim >= 0 and (psim % 24) < OCCUPIED_START <= (sim_h % 24):
-                loop.sp = loop.planned_occupied_sp
-                print(
-                    f"  [AC Scheduled | Day{int(sim_h // 24) + 1} {int(OCCUPIED_START):02d}:00] "
-                    f"setpoint→{loop.sp:.1f}°C from daily {_fmt_clock_h(planning_hour)} plan"
-                )
 
             triggered = False
             triggered_vpp = None
@@ -2376,7 +2495,8 @@ All times are hour-of-day (0–23.9)."""
                     except Exception as _oe:
                         print(f"  [Agent Objective] posthoc objective error: {_oe}")
                 loop.planned_occupied_sp = res["setpoint"]
-                loop.sp = res["setpoint"] if occ or method in ("mpc_dynamic", "mpc_ep", "rl_ppo_3day", "rl_ppo_pref_v2") else 28.0
+                effective_sp = res["setpoint"] if occ or hvac_avail_set else AC_OFF_FALLBACK_COOLING_SETPOINT
+                loop.sp = effective_sp
                 loop.next_check = res.get("next_check_hour")
                 if is_vpp and triggered_vpp is not None:
                     _vpp_end = triggered_vpp["end_h"]
@@ -2388,6 +2508,13 @@ All times are hour-of-day (0–23.9)."""
                 _decision_log = {
                     "h": sim_h,
                     "sp": res["setpoint"],
+                    "effective_setpoint": effective_sp,
+                    "hvac_availability": 1.0 if occ else 0.0,
+                    "hvac_availability_source": "HVAC_Availability_Control" if hvac_avail_set else "setpoint_fallback",
+                    "occupied": bool(occ),
+                    "occupancy_count": round(float(occ_count), 3),
+                    "occupancy_source": occ_source,
+                    "ac_mode": "on" if occ else "off_unoccupied",
                     "reason": res.get("reason", ""),
                     "actions": _non_null,
                     "raw_appliance_actions": res.get("appliance_actions", {}),

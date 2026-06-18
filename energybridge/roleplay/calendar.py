@@ -12,6 +12,8 @@ from typing import Any
 
 
 CALENDAR_DIRNAME = "calendars"
+AWAY_LOCATIONS = {"outside", "office", "work", "transit", "commute", "school"}
+OCCUPANCY_THRESHOLD = 0.05
 
 
 def calendar_path_for_persona(persona_id: str, personas_dir: Path) -> Path:
@@ -147,8 +149,96 @@ def calendar_brief_for_prompt(context: dict[str, Any]) -> str:
     )
 
 
+def hourly_occupancy_from_persona(persona: dict[str, Any], days: int) -> list[list[float]] | None:
+    """Convert a persona role-play calendar into hourly home occupancy fractions.
+
+    The synthetic calendars describe user-side routines.  We treat home as the
+    default for a household, then subtract explicit away intervals such as
+    office, transit, outside, or school.  This avoids confusing a home appliance
+    task with human presence while still using the role-play schedule as the
+    single source of truth.
+    """
+    calendar = persona.get("calendar") or {}
+    calendar_days = calendar.get("days") or []
+    if not calendar_days:
+        return None
+
+    out: list[list[float]] = []
+    for day_idx in range(max(1, int(days))):
+        day = _calendar_day_for_index(calendar_days, day_idx + 1)
+        if day is None:
+            out.append([1.0] * 24)
+            continue
+        hourly = [1.0] * 24
+        events = day.get("events") or []
+        for event in events:
+            location = str(event.get("location", "")).strip().lower()
+            if location not in AWAY_LOCATIONS:
+                continue
+            try:
+                start_h = float(event.get("start_h", 0.0))
+                end_h = float(event.get("end_h", start_h))
+            except (TypeError, ValueError):
+                continue
+            _subtract_hourly_interval(hourly, start_h, end_h)
+        out.append([round(max(0.0, min(1.0, value)), 4) for value in hourly])
+    return out
+
+
+def occupancy_fraction_at_sim_hour(
+    persona: dict[str, Any] | None,
+    sim_h: float,
+    *,
+    default: float = 1.0,
+) -> float:
+    """Return role-play-calendar occupancy fraction for a simulation hour."""
+    if not persona:
+        return default
+    day_idx = max(0, int(float(sim_h) // 24.0))
+    profile = hourly_occupancy_from_persona(persona, day_idx + 1)
+    if not profile:
+        return default
+    hour_idx = int(float(sim_h) % 24.0)
+    try:
+        return float(profile[day_idx][hour_idx])
+    except (IndexError, TypeError, ValueError):
+        return default
+
+
+def occupied_at_sim_hour(persona: dict[str, Any] | None, sim_h: float, *, default: bool = True) -> bool:
+    """Boolean convenience wrapper for calendar-derived occupancy."""
+    fraction = occupancy_fraction_at_sim_hour(persona, sim_h, default=1.0 if default else 0.0)
+    return fraction > OCCUPANCY_THRESHOLD
+
+
 def _overlaps(start_a: float, end_a: float, start_b: float, end_b: float) -> bool:
     return max(start_a, start_b) < min(end_a, end_b)
+
+
+def _calendar_day_for_index(days: list[dict[str, Any]], day_index_1based: int) -> dict[str, Any] | None:
+    day = next((item for item in days if int(item.get("day", -1)) == day_index_1based), None)
+    if day is not None or not days:
+        return day
+    weekly_day = ((day_index_1based - 1) % len(days)) + 1
+    return next((item for item in days if int(item.get("day", -1)) == weekly_day), None)
+
+
+def _subtract_hourly_interval(hourly: list[float], start_h: float, end_h: float) -> None:
+    """Subtract interval overlap from 24 hourly occupancy fractions in place."""
+    start = float(start_h)
+    end = float(end_h)
+    if end < start:
+        _subtract_hourly_interval(hourly, start, 24.0)
+        _subtract_hourly_interval(hourly, 0.0, end)
+        return
+    start = max(0.0, min(24.0, start))
+    end = max(0.0, min(24.0, end))
+    if end <= start:
+        return
+    for hour in range(24):
+        overlap = max(0.0, min(end, hour + 1.0) - max(start, float(hour)))
+        if overlap > 0:
+            hourly[hour] = max(0.0, hourly[hour] - overlap)
 
 
 def _fmt_h(value: Any) -> str:

@@ -53,7 +53,7 @@ from energybridge.data.vpp_events import (
     load_vpp_events_config,
     make_daily_vpp_events,
 )
-from energybridge.roleplay.calendar import attach_calendar
+from energybridge.roleplay.calendar import attach_calendar, hourly_occupancy_from_persona
 
 PERSONA_DIR = _PROJECT_ROOT / "energybridge" / "roleplay" / "personas"
 FAMILY_MODEL_DIR = _PROJECT_ROOT / "experiments" / "models" / "family_home"
@@ -171,7 +171,132 @@ def _default_start_date_for_city(city: str, requested_start: str) -> str:
     return "2025-06-01" if city.lower() == "germany" else ""
 
 
-def _prepare_run_assets(args: argparse.Namespace, output_dir: Path, days: int, start_date: str):
+def _idf_field(value: str | float | int, comment: str, *, last: bool = False) -> str:
+    sep = ";" if last else ","
+    return f"    {value}{sep:<24}!- {comment}"
+
+
+def _append_persona_occupancy_objects(lines: list[str], hourly: list[list[float]]) -> list[str]:
+    schedule_lines: list[str] = [
+        "",
+        "!- Persona calendar occupancy injected by run_persona_json.py",
+    ]
+    day_names: list[str] = []
+    for idx, values in enumerate(hourly[:7], start=1):
+        name = f"PersonaOccupancyDay{idx}"
+        day_names.append(name)
+        schedule_lines.extend([
+            "  Schedule:Day:Hourly,",
+            _idf_field(name, "Name"),
+            _idf_field("Fraction", "Schedule Type Limits Name"),
+        ])
+        for hour, value in enumerate(values[:24], start=1):
+            schedule_lines.append(_idf_field(f"{float(value):.4f}", f"Hour {hour}", last=hour == 24))
+        schedule_lines.append("")
+    while len(day_names) < 7:
+        day_names.append(day_names[-1] if day_names else "PersonaOccupancyDay1")
+
+    week_fields = [
+        ("PersonaOccupancyWeek", "Name"),
+        (day_names[0], "Sunday Schedule:Day Name"),
+        (day_names[1], "Monday Schedule:Day Name"),
+        (day_names[2], "Tuesday Schedule:Day Name"),
+        (day_names[3], "Wednesday Schedule:Day Name"),
+        (day_names[4], "Thursday Schedule:Day Name"),
+        (day_names[5], "Friday Schedule:Day Name"),
+        (day_names[6], "Saturday Schedule:Day Name"),
+        (day_names[0], "Holiday Schedule:Day Name"),
+        (day_names[0], "SummerDesignDay Schedule:Day Name"),
+        (day_names[0], "WinterDesignDay Schedule:Day Name"),
+        (day_names[0], "CustomDay1 Schedule:Day Name"),
+        (day_names[0], "CustomDay2 Schedule:Day Name"),
+    ]
+    schedule_lines.append("  Schedule:Week:Daily,")
+    for idx, (value, comment) in enumerate(week_fields):
+        schedule_lines.append(_idf_field(value, comment, last=idx == len(week_fields) - 1))
+    schedule_lines.extend([
+        "",
+        "  Schedule:Year,",
+        _idf_field("PersonaOccupancy", "Name"),
+        _idf_field("Fraction", "Schedule Type Limits Name"),
+        _idf_field("PersonaOccupancyWeek", "Schedule:Week Name 1"),
+        _idf_field("1", "Start Month 1"),
+        _idf_field("1", "Start Day 1"),
+        _idf_field("12", "End Month 1"),
+        _idf_field("31", "End Day 1", last=True),
+        "",
+        "  Output:Variable,",
+        _idf_field("living_unit1", "Key Value"),
+        _idf_field("Zone People Occupant Count", "Variable Name"),
+        _idf_field("Timestep", "Reporting Frequency", last=True),
+        "",
+    ])
+    return lines + schedule_lines
+
+
+def _replace_people_occupancy_schedule(lines: list[str]) -> list[str]:
+    out = list(lines)
+    for idx, line in enumerate(out):
+        if line.strip().lower() != "people,":
+            continue
+        end = min(len(out), idx + 16)
+        for j in range(idx + 1, end):
+            if "Number of People Schedule Name" in out[j]:
+                out[j] = "    PersonaOccupancy,        !- Number of People Schedule Name"
+                return out
+    raise ValueError("Could not find People object Number of People Schedule Name in IDF")
+
+
+def _enable_hvac_availability_control(lines: list[str]) -> list[str]:
+    """Add a controllable HVAC availability schedule and connect the air loop to it."""
+    out = list(lines)
+    if not any("HVAC_Availability_Control" in line for line in out):
+        out.extend([
+            "",
+            "!- Controllable HVAC availability injected by run_persona_json.py",
+            "  Schedule:Constant,",
+            _idf_field("HVAC_Availability_Control", "Name"),
+            _idf_field("On/Off", "Schedule Type Limits Name"),
+            _idf_field("1", "Hourly Value", last=True),
+            "",
+        ])
+    for idx, line in enumerate(out):
+        if line.strip().lower() != "availabilitymanager:scheduled,":
+            continue
+        end = min(len(out), idx + 8)
+        is_system_availability = any("System availability" in out[j] for j in range(idx + 1, end))
+        if not is_system_availability:
+            continue
+        for j in range(idx + 1, end):
+            if "Schedule Name" in out[j]:
+                out[j] = "    HVAC_Availability_Control;  !- Schedule Name"
+                return out
+    raise ValueError("Could not connect System availability manager to HVAC_Availability_Control")
+
+
+def _write_persona_occupancy_idf(idf_path: Path, persona: dict | None, days: int) -> bool:
+    hourly = hourly_occupancy_from_persona(persona or {}, days)
+    if not hourly:
+        return False
+    idf_path = Path(idf_path)
+    lines = idf_path.read_text(encoding="utf-8").splitlines()
+    lines = [line for line in lines if "Persona calendar occupancy injected by run_persona_json.py" not in line]
+    lines = [line for line in lines if "Controllable HVAC availability injected by run_persona_json.py" not in line]
+    lines = _replace_people_occupancy_schedule(lines)
+    lines = _enable_hvac_availability_control(lines)
+    if not any("PersonaOccupancyDay1" in line for line in lines):
+        lines = _append_persona_occupancy_objects(lines, hourly)
+    idf_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return True
+
+
+def _prepare_run_assets(
+    args: argparse.Namespace,
+    output_dir: Path,
+    days: int,
+    start_date: str,
+    persona: dict | None = None,
+):
     city_key = args.city.lower()
     epw_path = Path(args.epw) if args.epw else DEFAULT_EPW_BY_CITY[city_key]
     price_profile = None
@@ -191,14 +316,23 @@ def _prepare_run_assets(args: argparse.Namespace, output_dir: Path, days: int, s
         DEFAULT_FAMILY_IDF_BY_DAYS[7] if days > 3 else DEFAULT_FAMILY_IDF_BY_DAYS[3],
     )
     idf_path = template_idf
-    if start_date:
+    occupancy_profile = hourly_occupancy_from_persona(persona or {}, days)
+    if start_date or occupancy_profile:
         assets_dir = output_dir.parent / "_run_assets" / output_dir.name
-        idf_path = generate_runperiod_idf(
-            template_idf,
-            assets_dir,
-            start_date=date.fromisoformat(start_date),
-            days=days,
-        )
+        if start_date:
+            idf_path = generate_runperiod_idf(
+                template_idf,
+                assets_dir,
+                start_date=date.fromisoformat(start_date),
+                days=days,
+            )
+        else:
+            assets_dir.mkdir(parents=True, exist_ok=True)
+            idf_path = assets_dir / f"{template_idf.stem}_persona_{days}days.idf"
+            shutil.copy2(template_idf, idf_path)
+        if occupancy_profile:
+            _write_persona_occupancy_idf(idf_path, persona, days)
+            print(f"[Occupancy] persona calendar schedule injected -> {idf_path}")
     return idf_path, epw_path, price_profile
 
 
@@ -360,7 +494,7 @@ def main() -> None:
             pid, result_method, args.city, days=days, mpc_horizon=mpc_horizon, human_name=human_name
         )
     )
-    idf_path, epw_path, price_profile = _prepare_run_assets(args, output_dir, days, start_date)
+    idf_path, epw_path, price_profile = _prepare_run_assets(args, output_dir, days, start_date, persona)
 
     print("=" * 70)
     print(f"PERSONA : {pid}")
@@ -461,7 +595,27 @@ def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
 
     # ── AC ──
     # Gather all setpoints used across the day
-    day_sps = [f"→{d['sp']:.1f}°C@{_fmt_h(d['h'])}" for d in day_decisions]
+    day_sps = []
+    for decision in day_decisions:
+        try:
+            policy_sp = float(decision.get("sp", 0.0))
+        except (TypeError, ValueError):
+            policy_sp = 0.0
+        try:
+            effective_sp = float(decision.get("effective_setpoint", policy_sp))
+        except (TypeError, ValueError):
+            effective_sp = policy_sp
+        mode = str(decision.get("ac_mode", "on"))
+        hvac_avail = decision.get("hvac_availability")
+        if mode.startswith("off") or hvac_avail == 0.0:
+            day_sps.append(f"off@{_fmt_h(decision.get('h'))} ({mode}, policy {policy_sp:.1f}°C)")
+        elif abs(effective_sp - policy_sp) > 1e-6 or mode != "on":
+            day_sps.append(
+                f"→{effective_sp:.1f}°C@{_fmt_h(decision.get('h'))}"
+                f" ({mode}, policy {policy_sp:.1f}°C)"
+            )
+        else:
+            day_sps.append(f"→{policy_sp:.1f}°C@{_fmt_h(decision.get('h'))}")
     ac_line = f"    ├ AC       : {sp_str} (VPP trigger)  daily adjustments: {', '.join(day_sps) if day_sps else 'single decision'}"
 
     lines = [ac_line]
