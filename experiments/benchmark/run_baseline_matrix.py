@@ -55,6 +55,9 @@ METHOD_CHOICES = (
     "rule_milp",
     "rule+milp",
     "pmv_milp",
+    "no_dr",
+    "none",
+    "baseline",
 )
 
 
@@ -93,6 +96,9 @@ def _canonical_method(method: str) -> str:
         "rule_milp": "rule_milp",
         "rule+milp": "rule_milp",
         "pmv_milp": "rule_milp",
+        "no_dr": "no_dr",
+        "none": "no_dr",
+        "baseline": "no_dr",
     }
     return aliases.get(key, key)
 

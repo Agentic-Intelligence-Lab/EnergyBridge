@@ -27,7 +27,7 @@ _PROJECT_ROOT = _BENCH_DIR.parent.parent
 DEFAULT_RESULTS_ROOT = _PROJECT_ROOT / "benchmark_results"
 
 ENERGYBRIDGE_METHOD_ID = "EnergyBridge"
-METHOD_ORDER = [ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "mpc_ep", "rule_milp", "hema_agent", "rl_ppo_3day", "rl_ppo_pref_v2"]
+METHOD_ORDER = [ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "mpc_ep", "rule_milp", "hema_agent", "rl_ppo_3day", "rl_ppo_pref_v2", "no_dr"]
 METHOD_LABEL = {
     ENERGYBRIDGE_METHOD_ID: "EnergyBridge",
     "agent": "EnergyBridge",
@@ -37,6 +37,7 @@ METHOD_LABEL = {
     "hema_agent": "HEMA Agent",
     "rl_ppo_3day": "RL PPO",
     "rl_ppo_pref_v2": "rl",
+    "no_dr": "No-DR",
 }
 
 POLICY_APPLIANCE_CAPABILITIES = {
@@ -48,6 +49,7 @@ POLICY_APPLIANCE_CAPABILITIES = {
     "hema_agent": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "rl_ppo_3day": {"washer", "water_heater"},
     "rl_ppo_pref_v2": {"washer", "dishwasher", "water_heater"},
+    "no_dr": set(),
 }
 
 MANUAL_APPLIANCE_SERVICES = {
@@ -88,6 +90,9 @@ def _canonical_method(method: str) -> str:
         "rule_milp": "rule_milp",
         "rule+milp": "rule_milp",
         "pmv_milp": "rule_milp",
+        "no_dr": "no_dr",
+        "none": "no_dr",
+        "baseline": "no_dr",
     }
     return aliases.get(key, key)
 def _latest_date_dir(results_root: Path) -> Path:
@@ -432,6 +437,31 @@ def _build_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
     df = pd.DataFrame.from_records(records)
     if df.empty:
         raise ValueError("No usable benchmark_result.json files found for the matrix.")
+    no_dr_lookup = {
+        (str(row["persona_id"]), str(row["city"]).lower(), int(row["days"])): row["vpp_window_energy_per_hour_kwh"]
+        for _, row in df[df["method"] == "no_dr"].iterrows()
+        if _as_float(row.get("vpp_window_energy_per_hour_kwh")) is not None
+    }
+    if no_dr_lookup:
+        baseline_values: list[float | None] = []
+        reduction_values: list[float | None] = []
+        for _, row in df.iterrows():
+            key = (str(row["persona_id"]), str(row["city"]).lower(), int(row["days"]))
+            baseline = _as_float(no_dr_lookup.get(key))
+            current = _as_float(row.get("vpp_window_energy_per_hour_kwh"))
+            baseline_values.append(baseline)
+            if baseline is None or current is None:
+                reduction_values.append(_as_float(row.get("vpp_reduction_kwh")))
+            elif str(row["method"]) == "no_dr":
+                reduction_values.append(0.0)
+            else:
+                reduction_values.append(baseline - current)
+        df["vpp_no_dr_window_energy_per_hour_kwh"] = baseline_values
+        df["vpp_reduction_kwh"] = reduction_values
+        df["vpp_reduction_basis"] = "no_dr_counterfactual_window_energy_per_hour"
+    else:
+        df["vpp_no_dr_window_energy_per_hour_kwh"] = None
+        df["vpp_reduction_basis"] = ""
     df["method"] = pd.Categorical(df["method"], categories=METHOD_ORDER, ordered=True)
     return df.sort_values(["persona_id", "method"]).reset_index(drop=True)
 
@@ -591,6 +621,7 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
                 "electricity_cost_eur",
                 "energy_kwh_total",
                 "vpp_window_energy_per_hour_kwh",
+                "vpp_no_dr_window_energy_per_hour_kwh",
                 "vpp_reduction_kwh",
                 "vpp_window_energy_kwh",
                 "appliance_shift_success_rate",
@@ -645,6 +676,7 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
                     "electricity_cost_eur",
                     "energy_kwh_total",
                     "vpp_window_energy_per_hour_kwh",
+                    "vpp_no_dr_window_energy_per_hour_kwh",
                     "vpp_reduction_kwh",
                     "vpp_window_energy_kwh",
                     "appliance_shift_success_rate",
@@ -676,12 +708,22 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
     lines.append("")
     best = summary["user_pref_score"].idxmax()
     lowest_energy = summary["report_energy_metric"].idxmin()
-    lowest_vpp_window_energy = summary["vpp_window_energy_per_hour_kwh"].idxmin()
+    has_no_dr_reduction = (
+        "vpp_reduction_basis" in df
+        and (df["vpp_reduction_basis"] == "no_dr_counterfactual_window_energy_per_hour").any()
+    )
+    if has_no_dr_reduction:
+        best_vpp = summary["vpp_reduction_kwh"].idxmax()
+    else:
+        best_vpp = summary["vpp_window_energy_per_hour_kwh"].idxmin()
     best_shift = summary["appliance_task_completion_rate"].idxmax()
     cleanest_raw_actions = summary["raw_absent_appliance_action_count"].idxmin()
     lines.append(f"- Best average user score: **{best}**")
     lines.append(f"- {_report_energy_quick_read_label(df)}: **{lowest_energy}**")
-    lines.append(f"- Lowest average VPP-window energy per hour: **{lowest_vpp_window_energy}**")
+    if has_no_dr_reduction:
+        lines.append(f"- Highest average VPP energy reduction vs No-DR: **{best_vpp}**")
+    else:
+        lines.append(f"- Lowest average VPP-window energy per hour: **{best_vpp}**")
     lines.append(f"- Best average policy appliance output completion: **{best_shift}**")
     lines.append(f"- Fewest actions targeting absent appliances: **{cleanest_raw_actions}**")
     lines.append("")
@@ -776,7 +818,21 @@ def _plot_report(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
 
     score_matrix = _metric_matrix("user_pref_score")
     energy_matrix = _metric_matrix("report_energy_metric")
-    vpp_energy_matrix = _metric_matrix("vpp_window_energy_per_hour_kwh")
+    has_no_dr_reduction = (
+        "vpp_reduction_basis" in df
+        and (df["vpp_reduction_basis"] == "no_dr_counterfactual_window_energy_per_hour").any()
+    )
+    if has_no_dr_reduction:
+        vpp_metric_col = "vpp_reduction_kwh"
+        vpp_title = "Persona x Method VPP Energy Reduction"
+        vpp_cbar = "Reduced kWh per VPP hour vs No-DR (higher is better)"
+        vpp_lower_is_better = False
+    else:
+        vpp_metric_col = "vpp_window_energy_per_hour_kwh"
+        vpp_title = "Persona x Method VPP-Window Energy"
+        vpp_cbar = "Actual kWh per VPP hour (lower is better)"
+        vpp_lower_is_better = True
+    vpp_energy_matrix = _metric_matrix(vpp_metric_col)
     coverage_matrix = _metric_matrix("appliance_task_completion_rate")
     energy_title, energy_cbar_label, energy_fmt, energy_lower_is_better = _report_energy_label(df)
 
@@ -803,11 +859,11 @@ def _plot_report(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
     _draw_metric_table(
         axes["vpp_energy"],
         vpp_energy_matrix,
-        title="Persona x Method VPP-Window Energy",
+        title=vpp_title,
         cmap="Oranges",
         fmt=".2f",
-        cbar_label="Actual kWh per VPP hour (lower is better)",
-        lower_is_better=True,
+        cbar_label=vpp_cbar,
+        lower_is_better=vpp_lower_is_better,
     )
     _draw_metric_table(
         axes["coverage"],

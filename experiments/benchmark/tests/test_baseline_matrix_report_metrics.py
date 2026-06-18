@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from experiments.benchmark.generate_baseline_matrix_report import (
+    _build_dataframe,
     _observed_appliance_action_services,
     _vpp_window_energy_per_hour,
 )
@@ -45,6 +46,46 @@ def test_vpp_window_energy_prefers_explicit_average_field() -> None:
     }
 
     assert _vpp_window_energy_per_hour(result, {}) == 0.42
+
+
+def test_vpp_reduction_uses_no_dr_counterfactual(tmp_path) -> None:
+    no_dr_dir = tmp_path / "persona_no_dr"
+    method_dir = tmp_path / "persona_energybridge"
+    no_dr_dir.mkdir()
+    method_dir.mkdir()
+    (no_dr_dir / "benchmark_result.json").write_text(
+        '{"vpp_window_energy_avg_per_hour_kwh": 2.0, "energy_kwh_total": 20.0}',
+        encoding="utf-8",
+    )
+    (method_dir / "benchmark_result.json").write_text(
+        '{"vpp_window_energy_avg_per_hour_kwh": 0.75, "energy_kwh_total": 15.0}',
+        encoding="utf-8",
+    )
+
+    df = _build_dataframe([
+        {
+            "persona_id": "persona",
+            "method": "no_dr",
+            "city": "Germany",
+            "days": 7,
+            "status": "completed",
+            "output_dir": str(no_dr_dir),
+        },
+        {
+            "persona_id": "persona",
+            "method": "EnergyBridge",
+            "city": "Germany",
+            "days": 7,
+            "status": "completed",
+            "output_dir": str(method_dir),
+        },
+    ])
+
+    eb = df[df["method"].astype(str) == "EnergyBridge"].iloc[0]
+    nd = df[df["method"].astype(str) == "no_dr"].iloc[0]
+    assert eb["vpp_no_dr_window_energy_per_hour_kwh"] == pytest.approx(2.0)
+    assert eb["vpp_reduction_kwh"] == pytest.approx(1.25)
+    assert nd["vpp_reduction_kwh"] == pytest.approx(0.0)
 
 
 def test_observed_services_require_ev_charge_window_not_mode_only() -> None:

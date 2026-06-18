@@ -1,6 +1,7 @@
 """Family home benchmark runner (PMV or Agent mode) — 3x VPP-1 events per 3-day sim."""
 from __future__ import annotations
-import os, sys, json, shutil
+import hashlib
+import os, sys, json, random, shutil
 
 # Fix Windows GBK encoding for Unicode status characters.
 if sys.platform == 'win32':
@@ -228,6 +229,7 @@ class BenchmarkResult:
     ev_target_reached_rate: float = 0.0         # fraction of days EV reached target SOC
     ewh_preheat_used_rate: float = 0.0          # fraction of days EWH preheat was active
     appliance_results: dict = field(default_factory=dict)  # per-device per-day details
+    no_dr_routine_actions: List[dict] = field(default_factory=list)
     day_ahead_price_metrics: dict = field(default_factory=dict)
     control_decisions: List[Tuple[float, float, float]] = field(default_factory=list)
     vpp_event_log: List[dict] = field(default_factory=list)  # scored VPP events with reason
@@ -328,6 +330,7 @@ class _FamilyLoop:
         self.vpp_trigger_actions: Dict[str, dict] = {}      # {event_id: appliance_actions at VPP trigger}
         self.day_agent_decisions: List[List[dict]] = [[], [], []]  # per day: list of {h, sp, actions}
         self.daily_plans_done: set[int] = set()
+        self.no_dr_routine_actions: List[dict] = []
         # Appliance suite — initialised by run_family_agent when persona is known
         self.appliance_suite = None                 # ApplianceSuite | None
 
@@ -762,6 +765,8 @@ def _services_from_appliance_actions(actions: dict | None) -> set[str]:
 
 
 def _method_policy_action_space_services(method: str) -> set[str]:
+    if method == "no_dr":
+        return set()
     if method == "rl_ppo_3day":
         return {"washer", "water_heater"}
     if method == "rl_ppo_pref_v2":
@@ -789,6 +794,59 @@ def _policy_emitted_services_from_decisions(decisions: list[dict] | None) -> set
         services |= _services_from_appliance_actions(decision.get("actions"))
         services |= _services_from_appliance_actions(decision.get("raw_appliance_actions"))
     return services
+
+
+def _schedule_no_dr_routine_appliances(suite, appliance_config: dict | None, sim_days: int, seed_text: str) -> list[dict]:
+    """Create a reproducible non-DR appliance routine.
+
+    This is a counterfactual user routine, not a controller fallback: it ignores
+    VPP timing, schedules shiftable tasks randomly within each user's allowed
+    window, and uses ordinary water-heater/EV service windows.
+    """
+    rng = random.Random(int(hashlib.sha256(seed_text.encode("utf-8")).hexdigest()[:16], 16))
+    records: list[dict] = []
+    cfg = appliance_config or {}
+    for day_idx in range(max(1, int(sim_days))):
+        day_record: dict[str, Any] = {"day": day_idx + 1, "actions": {}}
+        for name in ("washer", "dishwasher", "dryer"):
+            app_cfg = cfg.get(name, {}) if isinstance(cfg.get(name, {}), dict) else {}
+            if not bool(app_cfg.get("present", False)):
+                continue
+            earliest = float(app_cfg.get("earliest_h", 8.0))
+            latest = float(app_cfg.get("latest_h", 22.0))
+            duration = float(app_cfg.get("duration_h", 2.0))
+            if latest < earliest:
+                latest += 24.0
+            latest_start = max(earliest, latest - duration)
+            start_h = earliest if latest_start <= earliest else rng.uniform(earliest, latest_start)
+            start_abs = day_idx * 24.0 + start_h
+            ok = suite.shift_appliance(name, day_idx, start_abs)
+            if ok:
+                day_record["actions"][f"{name}_start_h"] = round(start_h % 24.0, 3)
+        wh_cfg = cfg.get("water_heater", {}) if isinstance(cfg.get("water_heater", {}), dict) else {}
+        if bool(wh_cfg.get("present", False)):
+            start_h = float(wh_cfg.get("normal_start_h", 17.0))
+            end_h = float(wh_cfg.get("normal_end_h", 21.0))
+            temp_c = float(wh_cfg.get("normal_temp_c", 60.0))
+            if suite.set_ewh_preheat_schedule(day_idx, start_h=start_h, end_h=end_h, temp_c=temp_c):
+                day_record["actions"].update({
+                    "water_heater_preheat": True,
+                    "water_heater_preheat_start_h": round(start_h, 3),
+                    "water_heater_preheat_end_h": round(end_h, 3),
+                    "water_heater_preheat_temp_c": round(temp_c, 1),
+                })
+        ev_cfg = cfg.get("ev", {}) if isinstance(cfg.get("ev", {}), dict) else {}
+        if bool(ev_cfg.get("present", False)):
+            start_h = float(ev_cfg.get("arrival_h", 18.0))
+            end_h = float(ev_cfg.get("departure_h", 7.5))
+            suite.set_ev_mode(day_idx, "normal")
+            if suite.set_ev_charge_window(day_idx, start_h=start_h, end_h=end_h):
+                day_record["actions"].update({
+                    "ev_charge_start_h": round(start_h, 3),
+                    "ev_charge_end_h": round(end_h, 3),
+                })
+        records.append(day_record)
+    return records
 
 
 def _requested_skip_devices(actions: dict | None) -> List[str]:
@@ -1765,8 +1823,11 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
         "rule_milp": "rule_milp",
         "rule+milp": "rule_milp",
         "pmv_milp": "rule_milp",
+        "no_dr": "no_dr",
+        "none": "no_dr",
+        "baseline": "no_dr",
     }.get(str(method or "agent").lower(), method)
-    if method not in ("agent", "mpc_dynamic", "mpc_ep", "rl_ppo_3day", "rl_ppo_pref_v2", "rule_milp"):
+    if method not in ("agent", "mpc_dynamic", "mpc_ep", "rl_ppo_3day", "rl_ppo_pref_v2", "rule_milp", "no_dr"):
         raise ValueError(f"Unsupported family control method: {method}")
     if output_dir is None:
         output_dir = BENCHMARK_DIR / "results" / f"family_{method}_{weather_label}"
@@ -1794,8 +1855,30 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     try:
         from energybridge.simulation.appliance_sim import ApplianceSuite
         _acfg = appliance_config or {}
-        loop.appliance_suite = ApplianceSuite(_acfg, sim_days=sim_days, vpp_events=vpp_events, explicit_only=True)
-        print(f"  [ApplianceSuite] explicit-only loaded: {[k for k,v in _acfg.items() if isinstance(v,dict) and v.get('present',True)]}")
+        if method == "no_dr":
+            # The counterfactual appliance routine must not know VPP windows;
+            # otherwise EV/window helpers would avoid them and become DR.
+            loop.appliance_suite = ApplianceSuite(_acfg, sim_days=sim_days, vpp_events=[], explicit_only=True)
+            _routine_seed = "|".join([
+                str((persona_config or {}).get("id", "persona")),
+                str(sim_days),
+                str(vpp_start_h),
+                str(vpp_duration_h),
+                "no_dr_random_routine_v1",
+            ])
+            loop.no_dr_routine_actions = _schedule_no_dr_routine_appliances(
+                loop.appliance_suite,
+                _acfg,
+                sim_days,
+                _routine_seed,
+            )
+            print(
+                "  [ApplianceSuite] no-DR random routine loaded: "
+                f"{[k for k,v in _acfg.items() if isinstance(v,dict) and v.get('present',True)]}"
+            )
+        else:
+            loop.appliance_suite = ApplianceSuite(_acfg, sim_days=sim_days, vpp_events=vpp_events, explicit_only=True)
+            print(f"  [ApplianceSuite] explicit-only loaded: {[k for k,v in _acfg.items() if isinstance(v,dict) and v.get('present',True)]}")
     except Exception as _ae:
         print(f"  [ApplianceSuite] init failed: {_ae}; appliances disabled")
         loop.appliance_suite = None
@@ -2656,7 +2739,8 @@ All times are hour-of-day (0–23.9)."""
         loop.current_occupied = occ
         loop.current_occupancy_count = occ_count
         loop.current_occupancy_source = occ_source
-        hvac_avail_set = _set_hvac_availability(ex, s, loop, occ)
+        hvac_control_occupied = True if method == "no_dr" else occ
+        hvac_avail_set = _set_hvac_availability(ex, s, loop, hvac_control_occupied)
         if method == "rule_milp" and occ:
             try:
                 from experiments.benchmark.baselines.rule_milp import _choose_pmv_cost_min_setpoint
@@ -2679,7 +2763,13 @@ All times are hour-of-day (0–23.9)."""
 
         if not wu:
             psim = loop.prev_sim_h
-            if not occ:
+            if method == "no_dr":
+                if loop.prev_occupied is None:
+                    print(
+                        f"  [No-DR HVAC | Day{int(sim_h // 24) + 1} {_fmt_clock_h(hod)}] "
+                        "HVAC availability stays on; occupancy is not used for AC shutoff"
+                    )
+            elif not occ:
                 if loop.prev_occupied is not False:
                     print(
                         f"  [AC Occupancy | Day{int(sim_h // 24) + 1} {_fmt_clock_h(hod)}] "
@@ -2857,7 +2947,15 @@ All times are hour-of-day (0–23.9)."""
                         loop.vpp_strategy_trace_by_id[vid] = {}
                 else:
                     loop.vpp_user_input = ""
-                if method in ("mpc_dynamic", "mpc_ep"):
+                if method == "no_dr":
+                    res = {
+                        "setpoint": round(float(_ac_sp_default), 1),
+                        "next_check_hour": None,
+                        "reason": "no_dr counterfactual: normal AC setpoint; random routine appliances; no DR action",
+                        "appliance_actions": {},
+                        "objective_source": "no_dr_random_routine_counterfactual",
+                    }
+                elif method in ("mpc_dynamic", "mpc_ep"):
                     res = _mpc_trigger(
                         temp, out_t, hod, sim_h,
                         facility_w=fac,
@@ -2907,7 +3005,7 @@ All times are hour-of-day (0–23.9)."""
                         print(f"  [Agent Objective] posthoc objective error: {_oe}")
                 _raw_appliance_actions = dict(res.get("appliance_actions", {}) or {})
                 _vpp_replan_guard = {}
-                if is_vpp and triggered_vpp is not None and loop.appliance_suite is not None:
+                if method != "no_dr" and is_vpp and triggered_vpp is not None and loop.appliance_suite is not None:
                     _guarded_actions, _vpp_replan_guard = _filter_vpp_event_replan_actions(
                         actions=_raw_appliance_actions,
                         suite=loop.appliance_suite,
@@ -2917,7 +3015,7 @@ All times are hour-of-day (0–23.9)."""
                     )
                     res["appliance_actions"] = _guarded_actions
                 loop.planned_occupied_sp = res["setpoint"]
-                effective_sp = res["setpoint"] if occ or hvac_avail_set else AC_OFF_FALLBACK_COOLING_SETPOINT
+                effective_sp = res["setpoint"] if hvac_control_occupied or hvac_avail_set else AC_OFF_FALLBACK_COOLING_SETPOINT
                 loop.sp = effective_sp
                 loop.next_check = res.get("next_check_hour")
                 if is_vpp and triggered_vpp is not None:
@@ -2931,18 +3029,25 @@ All times are hour-of-day (0–23.9)."""
                     "h": sim_h,
                     "sp": res["setpoint"],
                     "effective_setpoint": effective_sp,
-                    "hvac_availability": 1.0 if occ else 0.0,
+                    "hvac_availability": 1.0 if hvac_control_occupied else 0.0,
                     "hvac_availability_source": "HVAC_Availability_Control" if hvac_avail_set else "setpoint_fallback",
                     "occupied": bool(occ),
                     "occupancy_count": round(float(occ_count), 3),
                     "occupancy_source": occ_source,
-                    "ac_mode": "on" if occ else "off_unoccupied",
+                    "ac_mode": "on" if hvac_control_occupied else "off_unoccupied",
                     "reason": res.get("reason", ""),
                     "actions": _non_null,
                     "raw_appliance_actions": _raw_appliance_actions,
                 }
                 if _vpp_replan_guard:
                     _decision_log["vpp_replan_guard"] = _vpp_replan_guard
+                if method == "no_dr":
+                    _routine_day_i = min(sim_days - 1, int(sim_h // 24))
+                    _routine = (
+                        loop.no_dr_routine_actions[_routine_day_i]
+                        if 0 <= _routine_day_i < len(loop.no_dr_routine_actions) else {}
+                    )
+                    _decision_log["no_dr_routine_actions"] = _routine.get("actions", {})
                 if res.get("objective_source"):
                     _decision_log["objective_source"] = res.get("objective_source")
                 if res.get("objective_terms"):
@@ -2992,7 +3097,29 @@ All times are hour-of-day (0–23.9)."""
             for ev in vpp_events:
                 if psim < ev["end_h"] <= sim_h and ev["id"] not in loop.vpp_scored:
                     ev_idx = next((i+1 for i,e in enumerate(vpp_events) if e["id"]==ev["id"]), 1)
-                    result = _score_event(ev, loop, sim_h, event_index=ev_idx, human_mode=human_mode)
+                    if method == "no_dr":
+                        wd = loop.vpp_window_data.get(ev["id"], {})
+                        result = {
+                            "id": ev["id"],
+                            "setpoint": wd.get("sp", loop.sp),
+                            "score": None,
+                            "label": "no_dr_counterfactual",
+                            "trigger_h": float(ev.get("trigger_h", 0.0)),
+                            "end_h": float(ev.get("end_h", 0.0)),
+                            "day": int(ev.get("day", ev_idx)),
+                            "comfort_score": None,
+                            "energy_score": None,
+                            "vpp_score": None,
+                            "target_mode": "counterfactual",
+                            "target_achieved": None,
+                            "demand_achievement_ratio": None,
+                            "comment": "No-DR counterfactual; role-play score intentionally skipped.",
+                            "user_input": "",
+                            "reason": "No controller response; normal AC and random routine appliances.",
+                            "source": "no_dr_counterfactual",
+                        }
+                    else:
+                        result = _score_event(ev, loop, sim_h, event_index=ev_idx, human_mode=human_mode)
                     # Attach actual energy and demand targets to event log.
                     _demand = loop.vpp_demand_by_id.get(ev["id"], {})
                     result["actual_kwh"] = round(loop.vpp_event_energy_wh.get(ev["id"], 0.0) / 1000.0, 4)
@@ -3096,7 +3223,7 @@ All times are hour-of-day (0–23.9)."""
     kwh = loop.e_wh / 1000; occ = max(loop.occ_h, 1e-6)
     avg_sp = sum(d[1] for d in loop.decisions) / max(1, len(loop.decisions)) if loop.decisions else SP_DEFAULT
     pref_scores = [e["score"] for e in loop.vpp_event_log if e.get("score") is not None]
-    if not human_mode and len(pref_scores) != len(vpp_events):
+    if method != "no_dr" and not human_mode and len(pref_scores) != len(vpp_events):
         scored_ids = [str(e.get("id", "?")) for e in loop.vpp_event_log if e.get("score") is not None]
         expected_ids = [str(e.get("id", "?")) for e in vpp_events]
         raise RuntimeError(
@@ -3315,6 +3442,7 @@ All times are hour-of-day (0–23.9)."""
         ev_target_reached_rate=round(ev_target_rate, 3),
         ewh_preheat_used_rate=round(ewh_preheat_rate, 3),
         appliance_results=appl_results_dict,
+        no_dr_routine_actions=list(loop.no_dr_routine_actions),
         day_ahead_price_metrics=price_metrics,
         vpp_event_log=loop.vpp_event_log,
         control_decisions=loop.decisions[-50:], output_dir=str(output_dir))

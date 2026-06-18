@@ -1184,6 +1184,7 @@ INDEX_HTML = r"""<!doctype html>
         mpc_dynamic: 'MPC Dynamic',
         mpc_ep: 'MPC EP',
         rule_milp: 'Rule+MILP',
+        no_dr: 'No-DR',
         rl_ppo_3day: 'RL PPO',
         rl_ppo_pref_v2: 'RL PPO Pref-v2'
       }[method] || method;
