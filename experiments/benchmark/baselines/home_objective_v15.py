@@ -1006,8 +1006,9 @@ def _ev_power_kw(appliances: dict, state: dict, cfg: dict) -> tuple[float, dict]
     if not _present(ev_cfg, default=False):
         return 0.0, {"present": False, "power_kw": 0.0}
     start_h = _float_or_none(appliances.get("ev_charge_start_h"))
+    end_h = _float_or_none(appliances.get("ev_charge_end_h"))
     mode = appliances.get("ev_mode")
-    if start_h is None and mode not in ("normal", "delay", "smart"):
+    if start_h is None or end_h is None:
         return 0.0, {"present": True, "scheduled": False, "power_kw": 0.0}
     power_kw = _float(ev_cfg.get("charger_kw"), _float(ev_cfg.get("power_kw"), 0.0))
     return max(0.0, power_kw), {
@@ -1066,14 +1067,6 @@ def _ev_soc_inputs(appliances: dict, state: dict, ev_cfg: dict) -> dict:
     fields["missing"] = missing
     start_h = _float_or_none(appliances.get("ev_charge_start_h"))
     end_h = _float_or_none(appliances.get("ev_charge_end_h"))
-    mode = appliances.get("ev_mode")
-    if start_h is None:
-        if mode == "delay":
-            start_h = 22.0
-        elif mode in ("smart", "normal"):
-            start_h = fields.get("arrival_h")
-    if end_h is None:
-        end_h = fields.get("departure_h")
     fields["start_h"] = start_h
     fields["end_h"] = end_h
     fields["efficiency"] = _float(ev_cfg.get("efficiency"), 0.90)

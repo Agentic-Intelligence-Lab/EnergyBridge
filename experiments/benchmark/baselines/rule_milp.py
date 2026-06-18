@@ -260,7 +260,7 @@ def _ev_candidates(
     for start_abs in sorted(set(round(v, 6) for v in starts)):
         end = start_abs + duration
         appliances = {
-            "ev_mode": "delay",
+            "ev_mode": None,
             "ev_charge_start_h": round(start_abs % 24.0, 2),
             "ev_charge_end_h": round(end % 24.0, 2),
         }
@@ -281,7 +281,7 @@ def _ev_candidates(
         candidates.append(
             {
                 "label": "ev_delay_fallback",
-                "appliances": {"ev_mode": "delay", "ev_charge_start_h": None, "ev_charge_end_h": None},
+                "appliances": {"ev_mode": None, "ev_charge_start_h": None, "ev_charge_end_h": None},
                 "objective": BIG_VPP_PENALTY,
                 "cost": 0.0,
                 "vpp_penalty": BIG_VPP_PENALTY,

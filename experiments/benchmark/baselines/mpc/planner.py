@@ -155,10 +155,6 @@ def _choose_best_ev(
     candidates = []
     arrival_h = _float(cfg.get("arrival_h"), 18.0)
     departure_h = _float(cfg.get("departure_h"), 7.5)
-    for mode in ("smart", "delay"):
-        candidate = _clone(action)
-        candidate["appliances"]["ev_mode"] = mode
-        candidates.append(candidate)
     for start_h in sorted({_wrap_hour(arrival_h), 20.0, 22.0}):
         window = _clone(action)
         window["appliances"]["ev_mode"] = None

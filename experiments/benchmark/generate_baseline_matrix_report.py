@@ -156,6 +156,55 @@ def _sum_event_float(result: dict[str, Any], key: str) -> float | None:
     return total if seen else None
 
 
+def _avg_event_shed_per_vpp_hour(result: dict[str, Any]) -> float | None:
+    total = 0.0
+    duration_h = 0.0
+    seen = False
+    for event in result.get("vpp_event_log") or []:
+        value = _event_actual_shed_for_report(event)
+        if value is None:
+            continue
+        try:
+            duration = max(1e-6, float(event.get("end_h", 0.0)) - float(event.get("trigger_h", 0.0)))
+        except (TypeError, ValueError):
+            duration = 1.0
+        total += max(0.0, value)
+        duration_h += duration
+        seen = True
+    if not seen or duration_h <= 0.0:
+        return None
+    return total / duration_h
+
+
+def _event_physical_shed_cap_for_report(event: dict[str, Any]) -> float | None:
+    summary = event.get("capacity_window_summary") or {}
+    value = _as_float(summary.get("recommended_bid_energy_kwh"))
+    if value is not None:
+        return max(0.0, value)
+    assessment = ((event.get("capacity_assessment") or {}).get("assessment") or {})
+    bid_kw = _as_float(assessment.get("recommended_bid_kw"))
+    if bid_kw is None:
+        return None
+    try:
+        duration = max(1e-6, float(event.get("end_h", 0.0)) - float(event.get("trigger_h", 0.0)))
+    except (TypeError, ValueError):
+        duration = 1.0
+    return max(0.0, bid_kw * duration)
+
+
+def _event_actual_shed_for_report(event: dict[str, Any]) -> float | None:
+    value = _as_float(event.get("actual_shed_kwh"))
+    cap = _event_physical_shed_cap_for_report(event)
+    if value is None:
+        baseline = _as_float(event.get("demand_baseline_kwh"))
+        actual = _as_float(event.get("actual_kwh"))
+        if baseline is not None and actual is not None:
+            value = max(0.0, baseline - actual)
+    if value is None:
+        return None
+    return min(max(0.0, value), cap) if cap is not None else max(0.0, value)
+
+
 def _day_ahead_total_cost_eur(result: dict[str, Any], row: dict[str, Any]) -> float | None:
     metrics = result.get("day_ahead_price_metrics")
     if isinstance(metrics, dict):
@@ -180,13 +229,18 @@ def _report_energy_metric(
 
 
 def _vpp_reduction_kwh(result: dict[str, Any], row: dict[str, Any]) -> float | None:
-    event_shed = _sum_event_float(result, "actual_shed_kwh")
+    for key in ("vpp_energy_reduction_avg_per_hour_kwh",):
+        value = _as_nonempty_float(result.get(key, row.get(key)))
+        if value is not None:
+            return value
+    event_shed = _avg_event_shed_per_vpp_hour(result)
     if event_shed is not None:
         return event_shed
-    row_shed = _as_nonempty_float(row.get("vpp_actual_shed_kwh"))
-    if row_shed is not None:
-        return row_shed
-    return _as_float(result.get("vpp_energy_reduction_kwh", row.get("vpp_energy_reduction_kwh")))
+    for key in ("vpp_actual_shed_kwh", "vpp_energy_reduction_kwh"):
+        value = _as_nonempty_float(result.get(key, row.get(key)))
+        if value is not None:
+            return value
+    return None
 
 
 def _as_service_set(value: Any) -> set[str]:
@@ -451,8 +505,10 @@ def _observed_appliance_action_services(result: dict[str, Any]) -> set[str]:
                 if not _is_emitted_action_value(str(key), value):
                     continue
                 service = _service_from_action_key(str(key))
-                if service:
+                if service and service != "ev":
                     services.add(service)
+            if actions.get("ev_charge_start_h") is not None and actions.get("ev_charge_end_h") is not None:
+                services.add("ev")
     return services
 
 
@@ -748,10 +804,10 @@ def _plot_report(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
     _draw_metric_table(
         axes["vpp_energy"],
         vpp_energy_matrix,
-        title="Persona x Method VPP Energy Reduction",
+        title="Persona x Method Avg VPP Energy Reduction",
         cmap="Oranges",
         fmt=".2f",
-        cbar_label="Reduced energy kWh (higher is better)",
+        cbar_label="Avg reduced kWh per VPP hour (higher is better)",
         lower_is_better=False,
     )
     _draw_metric_table(

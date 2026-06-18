@@ -684,26 +684,18 @@ def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
         default_ev_mode = _first_day_action("ev_mode")
         default_ev_start = _first_day_action("ev_charge_start_h")
         default_ev_end = _first_day_action("ev_charge_end_h")
-        if ev_mode == "delay":
-            ev_str = "delay mode (charge after 22:00)"
-        elif ev_mode == "smart":
-            ev_str = "smart mode (avoid peak automatically)"
-        elif ev_mode == "normal":
-            ev_str = "normal mode (charge immediately)"
-        elif ev_start is not None and ev_end is not None:
+        if ev_start is not None and ev_end is not None:
             ev_str = f"charging window {_fmt_h(ev_start)}-{_fmt_h(ev_end)}"
         elif ev_start is not None:
             ev_str = f"charge starts@{_fmt_h(ev_start)}"
-        elif default_ev_mode == "delay":
-            ev_str = "delay mode (emitted earlier today)"
-        elif default_ev_mode == "smart":
-            ev_str = "smart mode (emitted earlier today)"
-        elif default_ev_mode == "normal":
-            ev_str = "normal mode (emitted earlier today)"
+        elif ev_mode in {"delay", "smart", "normal"}:
+            ev_str = f"{ev_mode} mode only (missing charge window)"
         elif default_ev_start is not None and default_ev_end is not None:
             ev_str = f"charging window {_fmt_h(default_ev_start)}-{_fmt_h(default_ev_end)} (emitted earlier today)"
         elif default_ev_start is not None:
             ev_str = f"charge starts@{_fmt_h(default_ev_start)} (emitted earlier today)"
+        elif default_ev_mode in {"delay", "smart", "normal"}:
+            ev_str = f"{default_ev_mode} mode only (missing charge window, emitted earlier today)"
         else:
             ev_str = "no emitted policy action"
         lines.append(f"    └ EV      : {ev_str}")
@@ -1026,6 +1018,8 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
         "─" * 62,
         f"  - VPP peak shaving",
         f"      VPP-window electricity : {d.get('vpp_window_energy_kwh', 0):.3f} kWh ({vpp_duration_summary})",
+        f"      Avg reduction / VPP h : {d.get('vpp_energy_reduction_avg_per_hour_kwh', d.get('vpp_energy_reduction_kwh', 0)):.3f} kWh",
+        f"      Total reduction       : {d.get('vpp_energy_reduction_total_kwh', 0):.3f} kWh",
         ("      Demand achievement    : " + _vpp_ratio_str(result)),
         f"      Policy service output : {d.get('appliance_task_completion_rate', 1.0)*100:.0f}%"
         f"  (emitted present-appliance strategies / present non-AC appliances)",

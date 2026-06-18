@@ -266,6 +266,52 @@ def _read_meter_vpp_energy(run_path: Path, events_source: list[dict] | None = No
     return {key: round(value, 6) for key, value in values.items() if value > 0.0}
 
 
+def _event_duration_h(event: dict) -> float:
+    try:
+        return max(1e-6, float(event.get("end_h", 0.0)) - float(event.get("trigger_h", 0.0)))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _event_physical_shed_cap_kwh(event: dict) -> float | None:
+    summary = event.get("capacity_window_summary") or {}
+    value = summary.get("recommended_bid_energy_kwh")
+    try:
+        if value is not None:
+            return max(0.0, float(value))
+    except (TypeError, ValueError):
+        pass
+    assessment = ((event.get("capacity_assessment") or {}).get("assessment") or {})
+    value = assessment.get("recommended_bid_kw")
+    try:
+        if value is not None:
+            return max(0.0, float(value) * _event_duration_h(event))
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def _update_event_actual_shed(event: dict) -> None:
+    baseline_kwh = event.get("demand_baseline_kwh")
+    actual_kwh = event.get("actual_kwh")
+    if baseline_kwh is None or actual_kwh is None:
+        return
+    try:
+        raw_shed = max(0.0, float(baseline_kwh) - float(actual_kwh))
+    except (TypeError, ValueError):
+        return
+    cap_kwh = _event_physical_shed_cap_kwh(event)
+    event["reference_baseline_shed_kwh"] = round(raw_shed, 4)
+    event["reference_pbase_minus_actual_kwh"] = round(raw_shed, 4)
+    if cap_kwh is not None:
+        event["physical_shed_cap_kwh"] = round(cap_kwh, 4)
+        event["actual_shed_basis"] = "min(reference_baseline_shed, physical_capacity_recommended_bid)"
+        raw_shed = min(raw_shed, cap_kwh)
+    else:
+        event["actual_shed_basis"] = "reference_baseline_shed_uncapped"
+    event["actual_shed_kwh"] = round(max(0.0, raw_shed), 4)
+
+
 def _read_meter_daily_energy(run_path: Path) -> list[dict]:
     """Read per-day Electricity:Facility kWh from EnergyPlus timestep meters."""
     mtr_path = run_path / "eplusout.mtr"
@@ -354,9 +400,34 @@ def _apply_meter_vpp_energy(data: dict, run_path: Path) -> None:
             event["actual_kwh"] = actual_kwh
             baseline_kwh = event.get("demand_baseline_kwh")
             if baseline_kwh is not None:
-                event["actual_shed_kwh"] = round(max(0.0, float(baseline_kwh) - actual_kwh), 4)
+                _update_event_actual_shed(event)
         if total > 0.0:
             data["vpp_window_energy_kwh"] = round(total, 4)
+    else:
+        for event in data.get("vpp_event_log", []) or []:
+            _update_event_actual_shed(event)
+    shed_values = []
+    shed_duration_h = 0.0
+    for event in data.get("vpp_event_log", []) or []:
+        shed = event.get("actual_shed_kwh")
+        if shed is None:
+            continue
+        try:
+            shed_f = max(0.0, float(shed))
+            duration_f = max(1e-6, float(event.get("end_h", 0.0)) - float(event.get("trigger_h", 0.0)))
+        except (TypeError, ValueError):
+            continue
+        shed_values.append(shed_f)
+        shed_duration_h += duration_f
+    if shed_values:
+        total_shed = round(sum(shed_values), 4)
+        avg_event = round(total_shed / len(shed_values), 4)
+        avg_hour = round(total_shed / shed_duration_h, 4) if shed_duration_h > 0.0 else 0.0
+        data["vpp_energy_reduction_total_kwh"] = total_shed
+        data["vpp_energy_reduction_avg_per_event_kwh"] = avg_event
+        data["vpp_energy_reduction_avg_per_hour_kwh"] = avg_hour
+        data["vpp_energy_reduction_kwh"] = avg_hour
+        data["vpp_actual_shed_kwh"] = avg_hour
     existing_daily_values = _coerce_daily_energy_values(data.get("daily_energy_kwh") or data.get("energy_kwh_per_day"))
     meter_daily_values = _read_meter_daily_energy(run_path)
     daily_values = existing_daily_values or meter_daily_values
@@ -901,7 +972,11 @@ INDEX_HTML = r"""<!doctype html>
         const temp = a.water_heater_preheat_temp_c ?? '?';
         plan.water_heater = `preheat ${start}-${end} @ ${temp}°C`;
       }
-      if (a.ev_mode) plan.ev = `mode ${a.ev_mode}`;
+      if (a.ev_charge_start_h !== undefined && a.ev_charge_start_h !== null && a.ev_charge_end_h !== undefined && a.ev_charge_end_h !== null) {
+        plan.ev = `charge ${Number(a.ev_charge_start_h).toFixed(1)}-${Number(a.ev_charge_end_h).toFixed(1)}`;
+      } else if (a.ev_mode) {
+        plan.ev = `mode ${a.ev_mode} only`;
+      }
       return plan;
     }
 

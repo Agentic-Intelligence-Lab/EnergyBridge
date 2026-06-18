@@ -97,7 +97,7 @@ def test_rule_milp_outputs_all_known_action_keys() -> None:
     }
 
 
-def test_rule_milp_ev_command_includes_required_mode() -> None:
+def test_rule_milp_ev_command_uses_charge_window_without_required_mode() -> None:
     state = _state()
     state["appliance_config"]["ev"] = {
         "present": True,
@@ -117,6 +117,6 @@ def test_rule_milp_ev_command_includes_required_mode() -> None:
         run_start_date=datetime(2025, 6, 1).date(),
     )
 
-    assert action["appliances"]["ev_mode"] == "delay"
+    assert action["appliances"]["ev_mode"] is None
     assert action["appliances"]["ev_charge_start_h"] is not None
     assert action["appliances"]["ev_charge_end_h"] is not None

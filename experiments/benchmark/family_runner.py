@@ -192,7 +192,11 @@ class BenchmarkResult:
     unmet_cooling_h: float = 0.0
     # VPP energy: actual kWh consumed during the 3x 1-hour demand windows
     vpp_window_energy_kwh: float = 0.0
-    vpp_energy_reduction_kwh: float = 0.0
+    vpp_energy_reduction_kwh: float = 0.0  # average shed per VPP-hour for matrix plots
+    vpp_actual_shed_kwh: float = 0.0       # compatibility alias for average shed per VPP-hour
+    vpp_energy_reduction_total_kwh: float = 0.0
+    vpp_energy_reduction_avg_per_event_kwh: float = 0.0
+    vpp_energy_reduction_avg_per_hour_kwh: float = 0.0
     agent_setpoint_c: Optional[float] = None
     # User satisfaction (roleplay LLM evaluation, per VPP event)
     user_pref_score: Optional[float] = None       # average across events
@@ -521,6 +525,80 @@ def _call_vpp_demand_agent(event_id: str, total_quantification: dict | None = No
     }
 
 
+def _capacity_window_summary_from_rows(cap_rows: list[dict] | None) -> dict:
+    rows = list(cap_rows or [])
+    if not rows:
+        return {}
+    n_rows = len(rows)
+    return {
+        "method": "state_physical_with_optional_baseline",
+        "steps": n_rows,
+        "avg_committable_kw": round(
+            sum(float(r["committable_kw"]) for r in rows) / n_rows, 6),
+        "firm_min_committable_kw": round(
+            min(float(r["committable_kw"]) for r in rows), 6),
+        "committable_energy_kwh": round(
+            sum(float(r["committable_kw"]) * float(r["dt_h"]) for r in rows), 6),
+        "avg_recommended_bid_kw": round(
+            sum(float(r["recommended_bid_kw"]) for r in rows) / n_rows, 6),
+        "firm_min_recommended_bid_kw": round(
+            min(float(r["recommended_bid_kw"]) for r in rows), 6),
+        "recommended_bid_energy_kwh": round(
+            sum(float(r["recommended_bid_kw"]) * float(r["dt_h"]) for r in rows), 6),
+        "avg_success_probability": round(
+            sum(float(r["success_probability"]) for r in rows) / n_rows, 6),
+    }
+
+
+def _event_duration_h(event_result: dict) -> float:
+    try:
+        return max(
+            1e-6,
+            float(event_result.get("end_h", 0.0)) - float(event_result.get("trigger_h", 0.0)),
+        )
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _event_physical_shed_cap_kwh(event_result: dict) -> tuple[float | None, str]:
+    summary = event_result.get("capacity_window_summary") or {}
+    value = summary.get("recommended_bid_energy_kwh")
+    try:
+        if value is not None:
+            return max(0.0, float(value)), "capacity_window_recommended_bid_energy"
+    except (TypeError, ValueError):
+        pass
+    assessment = ((event_result.get("capacity_assessment") or {}).get("assessment") or {})
+    value = assessment.get("recommended_bid_kw")
+    try:
+        if value is not None:
+            return max(0.0, float(value) * _event_duration_h(event_result)), "event_start_recommended_bid_kw"
+    except (TypeError, ValueError):
+        pass
+    return None, ""
+
+
+def _update_event_actual_shed_metrics(event_result: dict) -> None:
+    baseline_kwh = event_result.get("demand_baseline_kwh")
+    actual_kwh = event_result.get("actual_kwh")
+    if baseline_kwh is None or actual_kwh is None:
+        return
+    try:
+        raw_shed = max(0.0, float(baseline_kwh) - float(actual_kwh))
+    except (TypeError, ValueError):
+        return
+    cap_kwh, cap_source = _event_physical_shed_cap_kwh(event_result)
+    actual_shed = min(raw_shed, cap_kwh) if cap_kwh is not None else raw_shed
+    event_result["reference_baseline_shed_kwh"] = round(raw_shed, 4)
+    event_result["reference_pbase_minus_actual_kwh"] = round(raw_shed, 4)
+    if cap_kwh is not None:
+        event_result["physical_shed_cap_kwh"] = round(cap_kwh, 4)
+        event_result["actual_shed_basis"] = f"min(reference_baseline_shed, {cap_source})"
+    else:
+        event_result["actual_shed_basis"] = "reference_baseline_shed_uncapped"
+    event_result["actual_shed_kwh"] = round(max(0.0, actual_shed), 4)
+
+
 def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
     """Apply independent per-appliance scheduling commands from the LLM agent.
 
@@ -619,8 +697,10 @@ def _services_from_appliance_actions(actions: dict | None) -> set[str]:
         if value is None:
             continue
         service = _service_from_appliance_action_key(str(key))
-        if service:
+        if service and service != "ev":
             services.add(service)
+    if actions.get("ev_charge_start_h") is not None and actions.get("ev_charge_end_h") is not None:
+        services.add("ev")
     return services
 
 
@@ -1065,8 +1145,11 @@ def _missing_explicit_appliance_actions(actions: dict | None, appliance_config: 
         ):
             if actions.get(key) is None:
                 missing.append(key)
-    if "ev" in present and actions.get("ev_mode") is None:
-        missing.append("ev_mode")
+    if "ev" in present:
+        if actions.get("ev_charge_start_h") is None:
+            missing.append("ev_charge_start_h")
+        if actions.get("ev_charge_end_h") is None:
+            missing.append("ev_charge_end_h")
     return missing
 
 
@@ -1093,7 +1176,7 @@ def _explicit_appliance_requirement_text(
         "For fixed/routine appliances, emit the user's normal preferred routine command instead of leaving it null.\n"
         "For washer/dishwasher/dryer: emit start_h and skip=false, unless the task is truly unnecessary "
         "and skip=true. For water_heater: emit preheat=true/false plus start/end/temp when controlling it. "
-        "For EV: emit ev_mode and optional charge window when controlling it."
+        "For EV: emit ev_charge_start_h and ev_charge_end_h; ev_mode is optional compatibility metadata."
         f"{vpp_note}"
     )
 
@@ -1196,6 +1279,178 @@ def _filter_controllable_appliance_actions(actions: dict | None, appliance_confi
             f"{', '.join(dropped)}"
         )
     return filtered
+
+
+def _abs_interval_from_hod(day_idx: int, start_h: Any, end_h: Any) -> tuple[float, float] | None:
+    try:
+        start = float(day_idx * 24.0 + (float(start_h) % 24.0))
+        end = float(day_idx * 24.0 + (float(end_h) % 24.0))
+    except (TypeError, ValueError):
+        return None
+    if end <= start:
+        end += 24.0
+    return start, end
+
+
+def _abs_intervals_overlap(start: float, end: float, window_start: float, window_end: float) -> bool:
+    return max(float(start), float(window_start)) < min(float(end), float(window_end))
+
+
+def _suite_planned_service_interval(
+    suite: Any,
+    name: str,
+    day_idx: int,
+    appliance_config: dict | None,
+) -> tuple[float, float] | None:
+    """Return the simulator's current planned service interval for one appliance."""
+    cfg = appliance_config or {}
+    try:
+        results = suite.all_results()
+    except Exception:
+        results = {}
+    if name in ("washer", "dishwasher", "dryer"):
+        days = results.get(name, []) if isinstance(results, dict) else []
+        if not (0 <= day_idx < len(days)):
+            return None
+        rec = days[day_idx] or {}
+        if rec.get("completed") or rec.get("skipped"):
+            return None
+        start = rec.get("scheduled_abs_h")
+        if start is None:
+            return None
+        duration = float(((cfg.get(name, {}) or {}).get("duration_h", 1.0)) or 1.0)
+        return float(start), float(start) + max(1e-6, duration)
+    if name == "water_heater":
+        wh = getattr(suite, "_water_heater", None)
+        state = (getattr(wh, "_days", {}) or {}).get(day_idx, {}) if wh is not None else {}
+        if not state.get("preheat_requested"):
+            return None
+        start_h = state.get("preheat_start_h")
+        end_h = state.get("preheat_end_h")
+        if start_h is None:
+            start_h = getattr(wh, "pre_heat_window_start_h", None)
+        if end_h is None:
+            end_h = getattr(wh, "pre_heat_window_end_h", None)
+        return _abs_interval_from_hod(day_idx, start_h, end_h)
+    if name == "ev":
+        ev = getattr(suite, "_ev", None)
+        start_h = (getattr(ev, "_day_charge_start", {}) or {}).get(day_idx) if ev is not None else None
+        end_h = (getattr(ev, "_day_charge_end", {}) or {}).get(day_idx) if ev is not None else None
+        if start_h is None or end_h is None:
+            return None
+        return _abs_interval_from_hod(day_idx, start_h, end_h)
+    return None
+
+
+def _candidate_action_interval(
+    actions: dict,
+    name: str,
+    day_idx: int,
+    appliance_config: dict | None,
+) -> tuple[float, float] | None:
+    cfg = appliance_config or {}
+    if name in ("washer", "dishwasher", "dryer"):
+        if actions.get(f"{name}_skip") is True:
+            return None
+        start = actions.get(f"{name}_start_h")
+        if start is None:
+            return None
+        duration = float(((cfg.get(name, {}) or {}).get("duration_h", 1.0)) or 1.0)
+        try:
+            start_abs = day_idx * 24.0 + (float(start) % 24.0)
+        except (TypeError, ValueError):
+            return None
+        return start_abs, start_abs + max(1e-6, duration)
+    if name == "water_heater":
+        if actions.get("water_heater_preheat") is False:
+            return None
+        return _abs_interval_from_hod(
+            day_idx,
+            actions.get("water_heater_preheat_start_h"),
+            actions.get("water_heater_preheat_end_h"),
+        )
+    if name == "ev":
+        return _abs_interval_from_hod(
+            day_idx,
+            actions.get("ev_charge_start_h"),
+            actions.get("ev_charge_end_h"),
+        )
+    return None
+
+
+def _drop_service_action(actions: dict, name: str) -> None:
+    if name in ("washer", "dishwasher", "dryer"):
+        actions.pop(f"{name}_start_h", None)
+        actions.pop(f"{name}_skip", None)
+    elif name == "water_heater":
+        for key in (
+            "water_heater_preheat_start_h",
+            "water_heater_preheat_end_h",
+            "water_heater_preheat_temp_c",
+            "water_heater_preheat",
+        ):
+            actions.pop(key, None)
+    elif name == "ev":
+        actions.pop("ev_mode", None)
+        actions.pop("ev_charge_start_h", None)
+        actions.pop("ev_charge_end_h", None)
+
+
+def _filter_vpp_event_replan_actions(
+    *,
+    actions: dict | None,
+    suite: Any,
+    appliance_config: dict | None,
+    event: dict | None,
+    sim_h: float,
+) -> tuple[dict, dict]:
+    """At event start, only move already-planned loads that overlap this VPP window."""
+    filtered = dict(actions or {})
+    if suite is None or not isinstance(event, dict):
+        return filtered, {"active": False}
+    day_idx = int(sim_h // 24)
+    try:
+        event_start = float(event["trigger_h"])
+        event_end = float(event["end_h"])
+    except (KeyError, TypeError, ValueError):
+        return filtered, {"active": False, "reason": "invalid_event"}
+    kept: list[str] = []
+    dropped: list[str] = []
+    for name in ("washer", "dishwasher", "dryer", "water_heater", "ev"):
+        if not any(key in filtered for key in (
+            (f"{name}_start_h", f"{name}_skip") if name in ("washer", "dishwasher", "dryer")
+            else (
+                "water_heater_preheat_start_h",
+                "water_heater_preheat_end_h",
+                "water_heater_preheat_temp_c",
+                "water_heater_preheat",
+            ) if name == "water_heater"
+            else ("ev_mode", "ev_charge_start_h", "ev_charge_end_h")
+        )):
+            continue
+        planned = _suite_planned_service_interval(suite, name, day_idx, appliance_config)
+        candidate = _candidate_action_interval(filtered, name, day_idx, appliance_config)
+        if planned is None or not _abs_intervals_overlap(planned[0], planned[1], event_start, event_end):
+            _drop_service_action(filtered, name)
+            dropped.append(f"{name}:not_planned_in_vpp")
+            continue
+        if candidate is None or candidate[0] + 1e-9 < event_end:
+            _drop_service_action(filtered, name)
+            dropped.append(f"{name}:not_after_vpp")
+            continue
+        kept.append(name)
+    if kept or dropped:
+        print(
+            "  [VPP Replan Guard] "
+            f"kept={kept or 'none'} dropped={dropped or 'none'}"
+        )
+    return filtered, {
+        "active": True,
+        "event_id": event.get("id"),
+        "kept": kept,
+        "dropped": dropped,
+        "rule": "only reschedule services already planned inside the VPP window to after the window",
+    }
 
 
 def _service_completed(name: str, info: dict) -> bool:
@@ -1602,14 +1857,13 @@ WATER HEATER (electric tank, thermal storage)
     water_heater_preheat         : bool   — true = activate, false = disable (you can omit if setting times).
 
 EV CHARGER (home charger, arrival/departure shown in status)
-  On VPP days: use smart/delay mode OR set an explicit charge window that does not overlap VPP_WINDOW.
+  On VPP days: set an explicit charge window that does not overlap VPP_WINDOW.
   For EV-constrained users, start charging as soon as VPP_WINDOW ends if needed for departure SOC.
   SOC and arrival time shown in status each step.
   Parameters:
-    ev_mode             : "smart"|"delay"|"normal"  — smart=avoid-VPP, delay=defer with explicit safe window, normal=immediate.
+    ev_mode             : optional "smart"|"delay"|"normal" metadata only; it is not a substitute for a charging window.
     ev_charge_start_h   : float  — override: begin charging at this hour (e.g. 22.0).
     ev_charge_end_h     : float  — override: stop  charging at this hour (e.g. 7.0 = 07:00 next morning).
-    (window override takes priority over ev_mode when set)
 
 Return JSON ONLY (no markdown, no explanation):
 {{"setpoint": X, "next_check_hour": Y_or_null, "reason": "≤100 chars",
@@ -1627,10 +1881,10 @@ Return JSON ONLY (no markdown, no explanation):
    "ev_mode": null_or_"smart"|"delay"|"normal",
    "ev_charge_start_h": null_or_float,
    "ev_charge_end_h": null_or_float
- }}
+}}
 }}
 For every PRESENT appliance, appliance fields must be explicit and non-null as described in the runtime prompt.
-Use null only for appliances that are absent from the home, or for optional EV charge-window overrides.
+Use null only for appliances that are absent from the home, or for optional ev_mode metadata.
 All times are hour-of-day (0–23.9)."""
 
     def _llm_trigger(temp, out_t, hod, sim_h, remaining_h, vpp_active=False, vpp_id="",
@@ -2179,9 +2433,19 @@ All times are hour-of-day (0–23.9)."""
             _baseline_kwh = _demand.get("baseline_kwh", None)
             _target_kwh = _demand.get("target_kwh", None)
             _target_shed_kwh = _demand.get("target_shed_kwh", None)
-            _actual_shed_kwh = None
-            if _baseline_kwh is not None:
-                _actual_shed_kwh = round(max(0.0, float(_baseline_kwh) - _actual_kwh), 4)
+            _cap_summary = _capacity_window_summary_from_rows(
+                loop_ref.vpp_capacity_window_by_id.get(ev["id"], [])
+            )
+            _shed_context = {
+                "trigger_h": float(ev.get("trigger_h", 0.0)),
+                "end_h": float(ev.get("end_h", 0.0)),
+                "actual_kwh": _actual_kwh,
+                "demand_baseline_kwh": _baseline_kwh,
+                "capacity_assessment": loop_ref.vpp_capacity_by_id.get(ev["id"], {}),
+                "capacity_window_summary": _cap_summary,
+            }
+            _update_event_actual_shed_metrics(_shed_context)
+            _actual_shed_kwh = _shed_context.get("actual_shed_kwh")
             _achieve_ratio = None
             _achieved = None
             _target_mode = "unknown"
@@ -2211,6 +2475,10 @@ All times are hour-of-day (0–23.9)."""
                 "target_kwh": _target_kwh,
                 "baseline_kwh": _baseline_kwh,
                 "actual_shed_kwh": _actual_shed_kwh,
+                "reference_baseline_shed_kwh": _shed_context.get("reference_baseline_shed_kwh"),
+                "reference_pbase_minus_actual_kwh": _shed_context.get("reference_pbase_minus_actual_kwh"),
+                "physical_shed_cap_kwh": _shed_context.get("physical_shed_cap_kwh"),
+                "actual_shed_basis": _shed_context.get("actual_shed_basis"),
                 "target_shed_kwh": _target_shed_kwh,
                 "target_shed_kw": _demand.get("target_shed_kw", None),
                 "achievement_ratio": _achieve_ratio,
@@ -2572,6 +2840,17 @@ All times are hour-of-day (0–23.9)."""
                         res["objective_source"] = "posthoc_agent_decision_time_pdf_v15"
                     except Exception as _oe:
                         print(f"  [Agent Objective] posthoc objective error: {_oe}")
+                _raw_appliance_actions = dict(res.get("appliance_actions", {}) or {})
+                _vpp_replan_guard = {}
+                if is_vpp and triggered_vpp is not None and loop.appliance_suite is not None:
+                    _guarded_actions, _vpp_replan_guard = _filter_vpp_event_replan_actions(
+                        actions=_raw_appliance_actions,
+                        suite=loop.appliance_suite,
+                        appliance_config=appliance_config or {},
+                        event=triggered_vpp,
+                        sim_h=sim_h,
+                    )
+                    res["appliance_actions"] = _guarded_actions
                 loop.planned_occupied_sp = res["setpoint"]
                 effective_sp = res["setpoint"] if occ or hvac_avail_set else AC_OFF_FALLBACK_COOLING_SETPOINT
                 loop.sp = effective_sp
@@ -2595,8 +2874,10 @@ All times are hour-of-day (0–23.9)."""
                     "ac_mode": "on" if occ else "off_unoccupied",
                     "reason": res.get("reason", ""),
                     "actions": _non_null,
-                    "raw_appliance_actions": res.get("appliance_actions", {}),
+                    "raw_appliance_actions": _raw_appliance_actions,
                 }
+                if _vpp_replan_guard:
+                    _decision_log["vpp_replan_guard"] = _vpp_replan_guard
                 if res.get("objective_source"):
                     _decision_log["objective_source"] = res.get("objective_source")
                 if res.get("objective_terms"):
@@ -2654,11 +2935,11 @@ All times are hour-of-day (0–23.9)."""
                     result["demand_baseline_kwh"] = _demand.get("baseline_kwh", None)
                     result["demand_target_kw"] = _demand.get("target_shed_kw", None)
                     result["demand_target_shed_kwh"] = _demand.get("target_shed_kwh", None)
-                    if result["demand_baseline_kwh"] is not None:
-                        result["actual_shed_kwh"] = round(
-                            max(0.0, float(result["demand_baseline_kwh"]) - result["actual_kwh"]),
-                            4,
-                        )
+                    result["capacity_assessment"] = loop.vpp_capacity_by_id.get(ev["id"], {})
+                    _cap_rows = loop.vpp_capacity_window_by_id.get(ev["id"], [])
+                    if _cap_rows:
+                        result["capacity_window_summary"] = _capacity_window_summary_from_rows(_cap_rows)
+                    _update_event_actual_shed_metrics(result)
                     _target_shed = result.get("demand_target_shed_kwh")
                     _target_cap = result.get("demand_target_kwh")
                     _actual_shed = result.get("actual_shed_kwh")
@@ -2673,28 +2954,6 @@ All times are hour-of-day (0–23.9)."""
                             if float(_target_cap) > 1e-9 else None
                         )
                         result["target_achieved"] = float(result["actual_kwh"]) <= float(_target_cap) + 1e-9
-                    result["capacity_assessment"] = loop.vpp_capacity_by_id.get(ev["id"], {})
-                    _cap_rows = loop.vpp_capacity_window_by_id.get(ev["id"], [])
-                    if _cap_rows:
-                        _ncap = len(_cap_rows)
-                        result["capacity_window_summary"] = {
-                            "method": "state_physical_with_optional_baseline",
-                            "steps": _ncap,
-                            "avg_committable_kw": round(
-                                sum(r["committable_kw"] for r in _cap_rows) / _ncap, 6),
-                            "firm_min_committable_kw": round(
-                                min(r["committable_kw"] for r in _cap_rows), 6),
-                            "committable_energy_kwh": round(
-                                sum(r["committable_kw"] * r["dt_h"] for r in _cap_rows), 6),
-                            "avg_recommended_bid_kw": round(
-                                sum(r["recommended_bid_kw"] for r in _cap_rows) / _ncap, 6),
-                            "firm_min_recommended_bid_kw": round(
-                                min(r["recommended_bid_kw"] for r in _cap_rows), 6),
-                            "recommended_bid_energy_kwh": round(
-                                sum(r["recommended_bid_kw"] * r["dt_h"] for r in _cap_rows), 6),
-                            "avg_success_probability": round(
-                                sum(r["success_probability"] for r in _cap_rows) / _ncap, 6),
-                        }
                     result["total_quantification_90"] = loop.total_quantification_by_id.get(
                         ev["id"],
                         {"status": "not_computed", "reason": "Reference A3 quantification unavailable"},
@@ -2779,10 +3038,7 @@ All times are hour-of-day (0–23.9)."""
             event_result["actual_kwh"] = actual_kwh
             baseline_kwh = event_result.get("demand_baseline_kwh")
             if baseline_kwh is not None:
-                event_result["actual_shed_kwh"] = round(
-                    max(0.0, float(baseline_kwh) - actual_kwh),
-                    4,
-                )
+                _update_event_actual_shed_metrics(event_result)
             target_shed = event_result.get("demand_target_shed_kwh")
             target_cap = event_result.get("demand_target_kwh")
             actual_shed = event_result.get("actual_shed_kwh")
@@ -2874,12 +3130,10 @@ All times are hour-of-day (0–23.9)."""
                            for e in vpp_events]
         _vpp_shed_targets = [loop.vpp_demand_by_id.get(e["id"], {}).get("target_shed_kwh", 0.0)
                              for e in vpp_events]
-        _vpp_actual_shed_total = 0.0
-        for e in vpp_events:
-            _demand = loop.vpp_demand_by_id.get(e["id"], {})
-            _baseline = float(_demand.get("baseline_kwh", 0.0) or 0.0)
-            _actual = loop.vpp_event_energy_wh.get(e["id"], 0.0) / 1000.0
-            _vpp_actual_shed_total += max(0.0, _baseline - _actual)
+        _vpp_actual_shed_total = sum(
+            max(0.0, float(e.get("actual_shed_kwh", 0.0) or 0.0))
+            for e in loop.vpp_event_log
+        )
         _vpp_shed_target_total = sum(v for v in _vpp_shed_targets if v > 0)
         _vpp_achieve_ratio = (
             round(_vpp_actual_shed_total / _vpp_shed_target_total, 4)
@@ -2953,6 +3207,33 @@ All times are hour-of-day (0–23.9)."""
             sim_days=sim_days,
         )
 
+    _shed_values: list[float] = []
+    _shed_duration_h = 0.0
+    for _event_result in loop.vpp_event_log:
+        _shed = _event_result.get("actual_shed_kwh")
+        if _shed is None:
+            continue
+        try:
+            _shed_f = max(0.0, float(_shed))
+            _duration_f = max(
+                1e-6,
+                float(_event_result.get("end_h", 0.0))
+                - float(_event_result.get("trigger_h", 0.0)),
+            )
+        except (TypeError, ValueError):
+            continue
+        _shed_values.append(_shed_f)
+        _shed_duration_h += _duration_f
+    _vpp_shed_total_kwh = round(sum(_shed_values), 4) if _shed_values else 0.0
+    _vpp_shed_avg_event_kwh = (
+        round(_vpp_shed_total_kwh / len(_shed_values), 4)
+        if _shed_values else 0.0
+    )
+    _vpp_shed_avg_hour_kwh = (
+        round(_vpp_shed_total_kwh / _shed_duration_h, 4)
+        if _shed_values and _shed_duration_h > 0.0 else 0.0
+    )
+
     return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
         weather=weather_label, method=method, exit_code=ec,
         sim_days=sim_days,
@@ -2967,6 +3248,11 @@ All times are hour-of-day (0–23.9)."""
         mean_pmv=loop.pmv_s/occ,
         mean_temp_c=loop.temp_s/occ, unmet_cooling_h=loop.unmet_h,
         vpp_window_energy_kwh=round(loop.vpp_e_wh / 1000, 4),
+        vpp_energy_reduction_kwh=_vpp_shed_avg_hour_kwh,
+        vpp_actual_shed_kwh=_vpp_shed_avg_hour_kwh,
+        vpp_energy_reduction_total_kwh=_vpp_shed_total_kwh,
+        vpp_energy_reduction_avg_per_event_kwh=_vpp_shed_avg_event_kwh,
+        vpp_energy_reduction_avg_per_hour_kwh=_vpp_shed_avg_hour_kwh,
         agent_setpoint_c=round(avg_sp, 1),
         user_pref_scores=pref_scores,
         user_pref_score=sum(pref_scores)/max(1,len(pref_scores)) if pref_scores else None,
