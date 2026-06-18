@@ -101,7 +101,7 @@ def _choose_best_shiftable(
     weights: dict,
 ) -> dict:
     cfg = ((state.get("appliance_config") or {}).get(name, {}) or {})
-    if not cfg.get("present", True):
+    if not cfg.get("present", True) or not cfg.get("shiftable", True) or not cfg.get("dr_adjustable", True):
         return action
     if _shiftable_locked_for_today(name, state):
         return action
@@ -112,16 +112,14 @@ def _choose_best_shiftable(
     latest_h = _float(cfg.get("latest_h"), 22.0)
     preferred_h = _float(cfg.get("preferred_h"), 14.0)
     duration_h = _float(cfg.get("duration_h"), 1.0)
-    flexible = bool(cfg.get("shiftable", True)) and bool(cfg.get("dr_adjustable", True))
     starts = {preferred_h}
 
-    if flexible:
-        event = state.get("vpp_event") or {}
-        vpp_start = _float_or_none(event.get("trigger_h"))
-        vpp_end = _float_or_none(event.get("end_h"))
-        if vpp_start is not None and vpp_end is not None:
-            starts.add((vpp_start % 24.0) - duration_h)
-            starts.add(vpp_end % 24.0)
+    event = state.get("vpp_event") or {}
+    vpp_start = _float_or_none(event.get("trigger_h"))
+    vpp_end = _float_or_none(event.get("end_h"))
+    if vpp_start is not None and vpp_end is not None:
+        starts.add((vpp_start % 24.0) - duration_h)
+        starts.add(vpp_end % 24.0)
 
     results = (state.get("appliance_results") or {}).get(name, [])
     if 0 <= day_idx < len(results):
@@ -141,6 +139,11 @@ def _choose_best_shiftable(
         candidate["appliances"][f"{name}_skip"] = False
         candidates.append(candidate)
 
+    skip_candidate = _clone(action)
+    skip_candidate["appliances"][f"{name}_start_h"] = None
+    skip_candidate["appliances"][f"{name}_skip"] = True
+    candidates.append(skip_candidate)
+
     return _best_action(candidates or [action], state, weights)
 
 
@@ -152,7 +155,7 @@ def _choose_best_ev(
     cfg = ((state.get("appliance_config") or {}).get("ev", {}) or {})
     if not cfg.get("present", False):
         return action
-    candidates = []
+    candidates = [_clone(action)]
     arrival_h = _float(cfg.get("arrival_h"), 18.0)
     departure_h = _float(cfg.get("departure_h"), 7.5)
     for mode in ("smart", "delay"):
@@ -174,23 +177,18 @@ def _choose_best_water_heater(
     weights: dict,
 ) -> dict:
     cfg = ((state.get("appliance_config") or {}).get("water_heater", {}) or {})
-    if not cfg.get("present", True):
+    if not cfg.get("present", True) or not cfg.get("dr_adjustable", True):
         return action
-    candidates = []
+    candidates = [_clone(action)]
     bath_h = _float(cfg.get("bath_required_h"), 21.0)
     default_start = _float(cfg.get("pre_heat_window_start_h"), 15.0)
     default_end = _float(cfg.get("pre_heat_window_end_h"), 18.0)
-    flexible = bool(cfg.get("dr_adjustable", True))
-    windows = [(default_start, default_end)]
-    if flexible:
-        windows.extend(
-            [
-                (15.0, 17.0),
-                (16.0, 17.5),
-                (max(0.0, bath_h - 4.0), max(0.0, bath_h - 2.0)),
-            ]
-        )
-    for start_h, end_h in windows:
+    for start_h, end_h in (
+        (default_start, default_end),
+        (15.0, 17.0),
+        (16.0, 17.5),
+        (max(0.0, bath_h - 4.0), max(0.0, bath_h - 2.0)),
+    ):
         candidate = _clone(action)
         candidate["appliances"]["water_heater_preheat"] = True
         candidate["appliances"]["water_heater_preheat_start_h"] = start_h
