@@ -1383,20 +1383,26 @@ def score_user_preference(
         if vpp_result_context:
             ratio = vpp_result_context.get("achievement_ratio")
             achieved = vpp_result_context.get("achieved")
+            achieved_text = "unknown" if achieved is None else str(bool(achieved))
             target_mode = vpp_result_context.get("target_mode", "unknown")
             success_text = vpp_result_context.get("success_text", "")
             achievement_text = vpp_result_context.get("achievement_text", "")
             if ratio is not None:
                 rationale += (
-                    f" | Event-level VPP result: mode={target_mode}, achieved={bool(achieved)}, "
+                    f" | Event-level VPP result: mode={target_mode}, achieved={achieved_text}, "
                     f"actual_shed={vpp_result_context.get('actual_shed_kwh', 'n/a')}kWh, "
                     f"target_shed={vpp_result_context.get('target_shed_kwh', 'n/a')}kWh, "
                     f"ratio={ratio}; {success_text}. {achievement_text}"
                 )
             else:
+                target_shed = vpp_result_context.get("target_shed_kwh")
+                shed_note = (
+                    f"target_shed={target_shed}kWh, actual_shed unavailable without same-run no-DR counterfactual, "
+                    if target_shed not in (None, "n/a") else ""
+                )
                 rationale += (
-                    f" | Event-level VPP result: mode={target_mode}, achieved={bool(achieved)}, "
-                    f"actual_kwh={vpp_result_context.get('actual_kwh', 'n/a')}kWh, "
+                    f" | Event-level VPP result: mode={target_mode}, achieved={achieved_text}, "
+                    f"{shed_note}actual_kwh={vpp_result_context.get('actual_kwh', 'n/a')}kWh, "
                     f"target_cap={vpp_result_context.get('target_kwh', 'n/a')}kWh; {success_text}. {achievement_text}"
                 )
         if not washer_completed:

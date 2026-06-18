@@ -291,9 +291,11 @@ def _event_physical_shed_cap_kwh(event: dict) -> float | None:
     return None
 
 
-def _update_event_actual_shed(event: dict) -> None:
+def _update_event_reference_shed_diagnostics(event: dict) -> None:
     baseline_kwh = event.get("demand_baseline_kwh")
     actual_kwh = event.get("actual_kwh")
+    event["actual_shed_kwh"] = None
+    event["actual_shed_basis"] = "unavailable_without_same_run_no_dr_counterfactual"
     if baseline_kwh is None or actual_kwh is None:
         return
     try:
@@ -303,13 +305,15 @@ def _update_event_actual_shed(event: dict) -> None:
     cap_kwh = _event_physical_shed_cap_kwh(event)
     event["reference_baseline_shed_kwh"] = round(raw_shed, 4)
     event["reference_pbase_minus_actual_kwh"] = round(raw_shed, 4)
+    event["reference_shed_diagnostic_basis"] = (
+        "reference_a3_pbase_minus_current_ep_actual_not_actual_shed"
+    )
     if cap_kwh is not None:
         event["physical_shed_cap_kwh"] = round(cap_kwh, 4)
-        event["actual_shed_basis"] = "min(reference_baseline_shed, physical_capacity_recommended_bid)"
-        raw_shed = min(raw_shed, cap_kwh)
-    else:
-        event["actual_shed_basis"] = "reference_baseline_shed_uncapped"
-    event["actual_shed_kwh"] = round(max(0.0, raw_shed), 4)
+        event["capacity_limited_reference_shed_kwh"] = round(min(raw_shed, cap_kwh), 4)
+        event["capacity_limited_reference_shed_basis"] = (
+            "min(reference_a3_pbase_minus_current_ep_actual, physical_capacity_recommended_bid)"
+        )
 
 
 def _read_meter_daily_energy(run_path: Path) -> list[dict]:
@@ -400,34 +404,24 @@ def _apply_meter_vpp_energy(data: dict, run_path: Path) -> None:
             event["actual_kwh"] = actual_kwh
             baseline_kwh = event.get("demand_baseline_kwh")
             if baseline_kwh is not None:
-                _update_event_actual_shed(event)
+                _update_event_reference_shed_diagnostics(event)
         if total > 0.0:
             data["vpp_window_energy_kwh"] = round(total, 4)
     else:
         for event in data.get("vpp_event_log", []) or []:
-            _update_event_actual_shed(event)
-    shed_values = []
-    shed_duration_h = 0.0
+            _update_event_reference_shed_diagnostics(event)
+    total_duration_h = 0.0
     for event in data.get("vpp_event_log", []) or []:
-        shed = event.get("actual_shed_kwh")
-        if shed is None:
-            continue
+        total_duration_h += _event_duration_h(event)
+    if total_duration_h > 0.0 and data.get("vpp_window_energy_kwh") is not None:
         try:
-            shed_f = max(0.0, float(shed))
-            duration_f = max(1e-6, float(event.get("end_h", 0.0)) - float(event.get("trigger_h", 0.0)))
+            data["vpp_window_energy_avg_per_hour_kwh"] = round(
+                float(data["vpp_window_energy_kwh"]) / total_duration_h,
+                4,
+            )
         except (TypeError, ValueError):
-            continue
-        shed_values.append(shed_f)
-        shed_duration_h += duration_f
-    if shed_values:
-        total_shed = round(sum(shed_values), 4)
-        avg_event = round(total_shed / len(shed_values), 4)
-        avg_hour = round(total_shed / shed_duration_h, 4) if shed_duration_h > 0.0 else 0.0
-        data["vpp_energy_reduction_total_kwh"] = total_shed
-        data["vpp_energy_reduction_avg_per_event_kwh"] = avg_event
-        data["vpp_energy_reduction_avg_per_hour_kwh"] = avg_hour
-        data["vpp_energy_reduction_kwh"] = avg_hour
-        data["vpp_actual_shed_kwh"] = avg_hour
+            pass
+    data["vpp_energy_reduction_basis"] = "unavailable_without_same_run_no_dr_counterfactual"
     existing_daily_values = _coerce_daily_energy_values(data.get("daily_energy_kwh") or data.get("energy_kwh_per_day"))
     meter_daily_values = _read_meter_daily_energy(run_path)
     daily_values = existing_daily_values or meter_daily_values
@@ -1122,7 +1116,9 @@ INDEX_HTML = r"""<!doctype html>
       const tq = ev.total_quantification_90 || {};
       const actualShed = ev.actual_shed_kwh;
       const targetShed = ev.demand_target_shed_kwh ?? tq.vpp_target_capacity_energy_kwh;
-      const demandOk = Number(actualShed) >= Number(targetShed || Infinity);
+      const shedText = actualShed == null
+        ? 'n/a without no-DR counterfactual'
+        : `${fmt(actualShed, 3)} / ${fmt(targetShed, 3)} kWh`;
       const decisions = ev.day_decisions || [];
       return `
         <section class="panel event" data-event="${ev.id}">
@@ -1135,7 +1131,8 @@ INDEX_HTML = r"""<!doctype html>
           </div>
           <div class="kv">
             <div><span>VPP shed target</span>${vppTargetText(ev)}</div>
-            <div><span>Actual shed</span>${fmt(actualShed, 3)} / ${fmt(targetShed, 3)} kWh ${demandOk ? 'ok' : '!'}</div>
+            <div><span>Actual shed</span>${shedText}</div>
+            <div><span>Reference Pbase diagnostic</span>${fmt(ev.reference_pbase_minus_actual_kwh, 3)} kWh</div>
             <div><span>Equivalent energy cap</span>${fmt(ev.demand_target_kwh, 3)} kWh</div>
             <div><span>Actual VPP energy</span>${fmt(ev.actual_kwh, 3)} kWh</div>
             <div><span>90% firm capacity</span>${fmt(tq.avg_reported_capacity_90_kw, 3)} kW</div>
@@ -1575,8 +1572,8 @@ INDEX_HTML = r"""<!doctype html>
               ['User score', `${fmt(d.user_pref_score, 1)}/5`],
               ['Total energy', `${fmt(d.energy_kwh_total, 1)} kWh`],
               ['VPP energy', `${fmt(d.vpp_window_energy_kwh, 3)} kWh`],
+              ['VPP energy / h', `${fmt(d.vpp_window_energy_avg_per_hour_kwh, 3)} kWh`],
               ['Appliance shift', pct(d.appliance_shift_success_rate)],
-              ['VPP shed achievement', `${fmt(d.vpp_demand_achievement_ratio, 2)}x`],
               ['Status', `exit ${d.exit_code}`]
             ])}
             <div style="height:10px"></div>

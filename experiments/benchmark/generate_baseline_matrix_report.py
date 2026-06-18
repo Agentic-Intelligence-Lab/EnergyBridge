@@ -156,24 +156,21 @@ def _sum_event_float(result: dict[str, Any], key: str) -> float | None:
     return total if seen else None
 
 
-def _avg_event_shed_per_vpp_hour(result: dict[str, Any]) -> float | None:
-    total = 0.0
+def _total_vpp_duration_h(result: dict[str, Any], row: dict[str, Any]) -> float | None:
     duration_h = 0.0
-    seen = False
     for event in result.get("vpp_event_log") or []:
-        value = _event_actual_shed_for_report(event)
-        if value is None:
-            continue
         try:
             duration = max(1e-6, float(event.get("end_h", 0.0)) - float(event.get("trigger_h", 0.0)))
         except (TypeError, ValueError):
             duration = 1.0
-        total += max(0.0, value)
         duration_h += duration
-        seen = True
-    if not seen or duration_h <= 0.0:
-        return None
-    return total / duration_h
+    if duration_h > 0.0:
+        return duration_h
+    days = _as_nonempty_float(result.get("sim_days", row.get("days")))
+    per_day = _as_nonempty_float(row.get("vpp_duration_hours"))
+    if days is not None and per_day is not None:
+        return max(0.0, days * per_day)
+    return None
 
 
 def _event_physical_shed_cap_for_report(event: dict[str, Any]) -> float | None:
@@ -228,18 +225,15 @@ def _report_energy_metric(
     return energy_kwh_total, "energy_kwh_total"
 
 
-def _vpp_reduction_kwh(result: dict[str, Any], row: dict[str, Any]) -> float | None:
-    for key in ("vpp_energy_reduction_avg_per_hour_kwh",):
+def _vpp_window_energy_per_hour(result: dict[str, Any], row: dict[str, Any]) -> float | None:
+    for key in ("vpp_window_energy_avg_per_hour_kwh", "vpp_window_energy_per_hour_kwh"):
         value = _as_nonempty_float(result.get(key, row.get(key)))
         if value is not None:
             return value
-    event_shed = _avg_event_shed_per_vpp_hour(result)
-    if event_shed is not None:
-        return event_shed
-    for key in ("vpp_actual_shed_kwh", "vpp_energy_reduction_kwh"):
-        value = _as_nonempty_float(result.get(key, row.get(key)))
-        if value is not None:
-            return value
+    total = _as_nonempty_float(result.get("vpp_window_energy_kwh", row.get("vpp_window_energy_kwh")))
+    duration_h = _total_vpp_duration_h(result, row)
+    if total is not None and duration_h and duration_h > 0.0:
+        return total / duration_h
     return None
 
 
@@ -402,7 +396,10 @@ def _build_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
                 "vpp_window_energy_kwh": _as_float(
                     result.get("vpp_window_energy_kwh", row.get("vpp_window_energy_kwh"))
                 ),
-                "vpp_reduction_kwh": _vpp_reduction_kwh(result, row),
+                "vpp_window_energy_per_hour_kwh": _vpp_window_energy_per_hour(result, row),
+                "vpp_reduction_kwh": _as_float(
+                    result.get("vpp_energy_reduction_avg_per_hour_kwh", row.get("vpp_energy_reduction_avg_per_hour_kwh"))
+                ),
                 "appliance_vpp_avoidance_rate": _as_float(
                     result.get("appliance_vpp_avoidance_rate", row.get("appliance_vpp_avoidance_rate", shift_success))
                 ),
@@ -593,6 +590,7 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
                 "energy_kwh_per_day",
                 "electricity_cost_eur",
                 "energy_kwh_total",
+                "vpp_window_energy_per_hour_kwh",
                 "vpp_reduction_kwh",
                 "vpp_window_energy_kwh",
                 "appliance_shift_success_rate",
@@ -646,6 +644,7 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
                     "energy_kwh_per_day",
                     "electricity_cost_eur",
                     "energy_kwh_total",
+                    "vpp_window_energy_per_hour_kwh",
                     "vpp_reduction_kwh",
                     "vpp_window_energy_kwh",
                     "appliance_shift_success_rate",
@@ -677,12 +676,12 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
     lines.append("")
     best = summary["user_pref_score"].idxmax()
     lowest_energy = summary["report_energy_metric"].idxmin()
-    best_vpp_reduction = summary["vpp_reduction_kwh"].idxmax()
+    lowest_vpp_window_energy = summary["vpp_window_energy_per_hour_kwh"].idxmin()
     best_shift = summary["appliance_task_completion_rate"].idxmax()
     cleanest_raw_actions = summary["raw_absent_appliance_action_count"].idxmin()
     lines.append(f"- Best average user score: **{best}**")
     lines.append(f"- {_report_energy_quick_read_label(df)}: **{lowest_energy}**")
-    lines.append(f"- Highest average VPP energy reduction: **{best_vpp_reduction}**")
+    lines.append(f"- Lowest average VPP-window energy per hour: **{lowest_vpp_window_energy}**")
     lines.append(f"- Best average policy appliance output completion: **{best_shift}**")
     lines.append(f"- Fewest actions targeting absent appliances: **{cleanest_raw_actions}**")
     lines.append("")
@@ -777,7 +776,7 @@ def _plot_report(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
 
     score_matrix = _metric_matrix("user_pref_score")
     energy_matrix = _metric_matrix("report_energy_metric")
-    vpp_energy_matrix = _metric_matrix("vpp_reduction_kwh")
+    vpp_energy_matrix = _metric_matrix("vpp_window_energy_per_hour_kwh")
     coverage_matrix = _metric_matrix("appliance_task_completion_rate")
     energy_title, energy_cbar_label, energy_fmt, energy_lower_is_better = _report_energy_label(df)
 
@@ -804,11 +803,11 @@ def _plot_report(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
     _draw_metric_table(
         axes["vpp_energy"],
         vpp_energy_matrix,
-        title="Persona x Method Avg VPP Energy Reduction",
+        title="Persona x Method VPP-Window Energy",
         cmap="Oranges",
         fmt=".2f",
-        cbar_label="Avg reduced kWh per VPP hour (higher is better)",
-        lower_is_better=False,
+        cbar_label="Actual kWh per VPP hour (lower is better)",
+        lower_is_better=True,
     )
     _draw_metric_table(
         axes["coverage"],

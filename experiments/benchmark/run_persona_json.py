@@ -711,17 +711,41 @@ def _fmt_strategy(sp_str: str, trigger_actions: dict, day_decisions: list,
 def _vpp_ratio_str(result) -> str:
     """Compute aggregate VPP demand achievement."""
     events = result.vpp_event_log
-    shed_targets = [e.get("demand_target_shed_kwh", 0.0) for e in events if e.get("demand_target_shed_kwh")]
-    actual_sheds = [e.get("actual_shed_kwh", 0.0) for e in events if e.get("demand_target_shed_kwh")]
+    shed_events = [e for e in events if e.get("demand_target_shed_kwh")]
+    shed_targets = []
+    for e in shed_events:
+        try:
+            shed_targets.append(float(e.get("demand_target_shed_kwh", 0.0) or 0.0))
+        except (TypeError, ValueError):
+            shed_targets.append(0.0)
+    actual_sheds = []
+    for e in shed_events:
+        if e.get("actual_shed_kwh") is None:
+            continue
+        try:
+            actual_sheds.append(float(e.get("actual_shed_kwh")))
+        except (TypeError, ValueError):
+            continue
     if shed_targets and sum(shed_targets) > 0:
-        total_a = sum(actual_sheds)
         total_t = sum(shed_targets)
-        ratio = total_a / total_t
-        per_ev = "  ".join(
-            f"VPP{i+1}:{a:.3f}/{t:.3f}" for i, (a, t) in enumerate(zip(actual_sheds, shed_targets))
+        if len(actual_sheds) == len(shed_events):
+            total_a = sum(actual_sheds)
+            ratio = total_a / total_t
+            per_ev = "  ".join(
+                f"VPP{i+1}:{a:.3f}/{t:.3f}" for i, (a, t) in enumerate(zip(actual_sheds, shed_targets))
+            )
+            ok = "met" if ratio >= 1.0 else "not met"
+            return f"shed {total_a:.3f}/{total_t:.3f}kWh = {ratio:.2f} {ok}  [{per_ev}]"
+        total_actual = 0.0
+        for e in shed_events:
+            try:
+                total_actual += float(e.get("actual_kwh", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                continue
+        return (
+            f"shed target {total_t:.3f}kWh; actual shed unavailable "
+            f"(needs same-run no-DR counterfactual); actual VPP energy {total_actual:.3f}kWh"
         )
-        ok = "met" if ratio >= 1.0 else "not met"
-        return f"shed {total_a:.3f}/{total_t:.3f}kWh = {ratio:.2f} {ok}  [{per_ev}]"
     actuals = [e.get("actual_kwh", 0.0) for e in events if e.get("demand_target_kwh")]
     targets = [e.get("demand_target_kwh", 0.0) for e in events if e.get("demand_target_kwh")]
     if not targets or sum(targets) == 0:
@@ -831,17 +855,32 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
         actual_shed = e.get("actual_shed_kwh")
         demand_t = e.get("demand_target_kwh")
         actual_k = e.get("actual_kwh")
-        if demand_kw and demand_shed_kwh and actual_shed is not None:
-            ratio = actual_shed / demand_shed_kwh if demand_shed_kwh > 0 else 0
-            ok = "met" if ratio >= 1.0 else "not met"
-            cap_part = (
-                f"  equivalent consumption cap<={demand_t:.2f}kWh  actual consumption={actual_k:.3f}kWh"
-                if demand_t and actual_k is not None else ""
-            )
-            demand_str = (
-                f"shed target>={demand_kw:.3f}kW ({event_duration_text}={demand_shed_kwh:.3f}kWh)  "
-                f"actual shed={actual_shed:.3f}kWh  ratio={ratio:.2f} {ok}{cap_part}"
-            )
+        if demand_kw and demand_shed_kwh:
+            if actual_shed is not None:
+                ratio = actual_shed / demand_shed_kwh if demand_shed_kwh > 0 else 0
+                ok = "met" if ratio >= 1.0 else "not met"
+                cap_part = (
+                    f"  equivalent consumption cap<={demand_t:.2f}kWh  actual consumption={actual_k:.3f}kWh"
+                    if demand_t and actual_k is not None else ""
+                )
+                demand_str = (
+                    f"shed target>={demand_kw:.3f}kW ({event_duration_text}={demand_shed_kwh:.3f}kWh)  "
+                    f"actual shed={actual_shed:.3f}kWh  ratio={ratio:.2f} {ok}{cap_part}"
+                )
+            else:
+                diag = e.get("reference_pbase_minus_actual_kwh")
+                diag_part = (
+                    f"  reference Pbase-minus-actual diagnostic={diag:.3f}kWh"
+                    if isinstance(diag, (int, float)) else ""
+                )
+                actual_part = (
+                    f"  actual VPP energy={actual_k:.3f}kWh"
+                    if actual_k is not None else ""
+                )
+                demand_str = (
+                    f"shed target>={demand_kw:.3f}kW ({event_duration_text}={demand_shed_kwh:.3f}kWh)  "
+                    f"actual shed unavailable without same-run no-DR counterfactual.{actual_part}{diag_part}"
+                )
         elif demand_t and actual_k is not None:
             ratio = actual_k / demand_t if demand_t > 0 else 0
             ok = "met" if ratio <= 1.0 else "exceeded"
@@ -1011,15 +1050,19 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
             vpp_duration_summary = f"{len(vpp_defs)} events, total window {_fmt_duration_h(total_vpp_duration_h)}"
     else:
         vpp_duration_summary = "no VPP events"
+    vpp_window_energy = float(d.get("vpp_window_energy_kwh", 0) or 0.0)
+    vpp_window_avg_hour = d.get("vpp_window_energy_avg_per_hour_kwh")
+    if vpp_window_avg_hour is None and total_vpp_duration_h > 0.0:
+        vpp_window_avg_hour = vpp_window_energy / total_vpp_duration_h
     lines += [
         "",
         "─" * 62,
         "  Key Metrics Summary",
         "─" * 62,
         f"  - VPP peak shaving",
-        f"      VPP-window electricity : {d.get('vpp_window_energy_kwh', 0):.3f} kWh ({vpp_duration_summary})",
-        f"      Avg reduction / VPP h : {d.get('vpp_energy_reduction_avg_per_hour_kwh', d.get('vpp_energy_reduction_kwh', 0)):.3f} kWh",
-        f"      Total reduction       : {d.get('vpp_energy_reduction_total_kwh', 0):.3f} kWh",
+        f"      VPP-window electricity : {vpp_window_energy:.3f} kWh ({vpp_duration_summary})",
+        f"      VPP-window avg / h    : {float(vpp_window_avg_hour or 0.0):.3f} kWh",
+        f"      Actual shed           : unavailable without same-run no-DR counterfactual",
         ("      Demand achievement    : " + _vpp_ratio_str(result)),
         f"      Policy service output : {d.get('appliance_task_completion_rate', 1.0)*100:.0f}%"
         f"  (emitted present-appliance strategies / present non-AC appliances)",

@@ -190,13 +190,15 @@ class BenchmarkResult:
     pmv_ok_fraction: float = 0.0; comfort_ok_fraction: float = 0.0
     mean_pmv: float = 0.0; mean_temp_c: float = 0.0
     unmet_cooling_h: float = 0.0
-    # VPP energy: actual kWh consumed during the 3x 1-hour demand windows
+    # VPP energy: actual kWh consumed during demand windows.
     vpp_window_energy_kwh: float = 0.0
-    vpp_energy_reduction_kwh: float = 0.0  # average shed per VPP-hour for matrix plots
-    vpp_actual_shed_kwh: float = 0.0       # compatibility alias for average shed per VPP-hour
+    vpp_window_energy_avg_per_hour_kwh: float = 0.0
+    vpp_energy_reduction_kwh: float = 0.0  # true reduction requires a same-run no-DR counterfactual
+    vpp_actual_shed_kwh: float = 0.0       # legacy alias; do not use as actual shed for family runs
     vpp_energy_reduction_total_kwh: float = 0.0
     vpp_energy_reduction_avg_per_event_kwh: float = 0.0
     vpp_energy_reduction_avg_per_hour_kwh: float = 0.0
+    vpp_energy_reduction_basis: str = ""
     agent_setpoint_c: Optional[float] = None
     # User satisfaction (roleplay LLM evaluation, per VPP event)
     user_pref_score: Optional[float] = None       # average across events
@@ -222,7 +224,7 @@ class BenchmarkResult:
     task_shift_success_per_day: List[float] = field(default_factory=list)  # per-day shift success [day1,day2,day3]
     vpp_demand_targets: List[float] = field(default_factory=list)       # per-event equivalent consumption caps
     vpp_demand_targets_kw: List[float] = field(default_factory=list)    # per-event shed-capacity targets from quantification
-    vpp_demand_achievement_ratio: float = 0.0  # sum(actual_shed_kwh) / sum(target_shed_kwh)
+    vpp_demand_achievement_ratio: Optional[float] = None
     ev_target_reached_rate: float = 0.0         # fraction of days EV reached target SOC
     ewh_preheat_used_rate: float = 0.0          # fraction of days EWH preheat was active
     appliance_results: dict = field(default_factory=dict)  # per-device per-day details
@@ -578,9 +580,19 @@ def _event_physical_shed_cap_kwh(event_result: dict) -> tuple[float | None, str]
     return None, ""
 
 
-def _update_event_actual_shed_metrics(event_result: dict) -> None:
+def _update_event_reference_shed_diagnostics(event_result: dict) -> None:
+    """Record reference Pbase-minus-actual diagnostics without calling it shed.
+
+    The reference quantification P_base is produced from a separate A3 household
+    and strategy. Subtracting the current EnergyPlus actual from that P_base is
+    useful for debugging scale mismatches, but it is not a method-specific
+    actual reduction. A true actual shed metric needs a same-persona no-DR
+    counterfactual run.
+    """
     baseline_kwh = event_result.get("demand_baseline_kwh")
     actual_kwh = event_result.get("actual_kwh")
+    event_result["actual_shed_kwh"] = None
+    event_result["actual_shed_basis"] = "unavailable_without_same_run_no_dr_counterfactual"
     if baseline_kwh is None or actual_kwh is None:
         return
     try:
@@ -588,15 +600,60 @@ def _update_event_actual_shed_metrics(event_result: dict) -> None:
     except (TypeError, ValueError):
         return
     cap_kwh, cap_source = _event_physical_shed_cap_kwh(event_result)
-    actual_shed = min(raw_shed, cap_kwh) if cap_kwh is not None else raw_shed
     event_result["reference_baseline_shed_kwh"] = round(raw_shed, 4)
     event_result["reference_pbase_minus_actual_kwh"] = round(raw_shed, 4)
+    event_result["reference_shed_diagnostic_basis"] = (
+        "reference_a3_pbase_minus_current_ep_actual_not_actual_shed"
+    )
     if cap_kwh is not None:
         event_result["physical_shed_cap_kwh"] = round(cap_kwh, 4)
-        event_result["actual_shed_basis"] = f"min(reference_baseline_shed, {cap_source})"
-    else:
-        event_result["actual_shed_basis"] = "reference_baseline_shed_uncapped"
-    event_result["actual_shed_kwh"] = round(max(0.0, actual_shed), 4)
+        event_result["capacity_limited_reference_shed_kwh"] = round(min(raw_shed, cap_kwh), 4)
+        event_result["capacity_limited_reference_shed_basis"] = (
+            f"min(reference_a3_pbase_minus_current_ep_actual, {cap_source})"
+        )
+
+
+def _annotate_event_demand_achievement(event_result: dict) -> None:
+    """Annotate VPP target outcome only when the measured basis is valid."""
+    target_shed = event_result.get("demand_target_shed_kwh")
+    target_cap = event_result.get("demand_target_kwh")
+    actual_shed = event_result.get("actual_shed_kwh")
+    actual_kwh = event_result.get("actual_kwh")
+    try:
+        target_shed_f = float(target_shed) if target_shed is not None else None
+    except (TypeError, ValueError):
+        target_shed_f = None
+    if target_shed_f is not None and target_shed_f > 1e-9:
+        event_result["target_mode"] = "shed_requires_counterfactual"
+        event_result["demand_achievement_ratio"] = None
+        event_result["target_achieved"] = None
+        event_result["demand_achievement_basis"] = (
+            "actual_shed_unavailable_without_same_run_no_dr_counterfactual"
+        )
+        if actual_shed is not None:
+            try:
+                actual_shed_f = float(actual_shed)
+            except (TypeError, ValueError):
+                return
+            event_result["target_mode"] = "shed"
+            event_result["demand_achievement_ratio"] = round(actual_shed_f / target_shed_f, 4)
+            event_result["target_achieved"] = actual_shed_f + 1e-9 >= target_shed_f
+            event_result["demand_achievement_basis"] = "actual_shed_kwh"
+        return
+    if target_cap is None or actual_kwh is None:
+        return
+    try:
+        target_cap_f = float(target_cap)
+        actual_kwh_f = float(actual_kwh)
+    except (TypeError, ValueError):
+        return
+    event_result["target_mode"] = "energy_cap"
+    event_result["demand_achievement_ratio"] = (
+        round(actual_kwh_f / target_cap_f, 4)
+        if target_cap_f > 1e-9 else None
+    )
+    event_result["target_achieved"] = actual_kwh_f <= target_cap_f + 1e-9
+    event_result["demand_achievement_basis"] = "actual_vpp_window_energy_kwh"
 
 
 def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
@@ -2444,7 +2501,7 @@ All times are hour-of-day (0–23.9)."""
                 "capacity_assessment": loop_ref.vpp_capacity_by_id.get(ev["id"], {}),
                 "capacity_window_summary": _cap_summary,
             }
-            _update_event_actual_shed_metrics(_shed_context)
+            _update_event_reference_shed_diagnostics(_shed_context)
             _actual_shed_kwh = _shed_context.get("actual_shed_kwh")
             _achieve_ratio = None
             _achieved = None
@@ -2455,6 +2512,12 @@ All times are hour-of-day (0–23.9)."""
                 _achieved = _actual_shed_kwh + 1e-9 >= float(_target_shed_kwh)
                 _target_mode = "shed"
                 _success_text = "shed_ratio >= 1 means success"
+            elif _target_shed_kwh is not None and float(_target_shed_kwh or 0.0) > 1e-9:
+                _target_mode = "shed_requires_counterfactual"
+                _success_text = (
+                    "actual shed is unavailable without a same-run no-DR counterfactual; "
+                    "judge actual VPP-window energy and policy actions instead"
+                )
             elif _target_kwh is not None:
                 _achieved = _actual_kwh <= float(_target_kwh) + 1e-9
                 if float(_target_kwh) > 1e-9:
@@ -2478,6 +2541,8 @@ All times are hour-of-day (0–23.9)."""
                 "reference_baseline_shed_kwh": _shed_context.get("reference_baseline_shed_kwh"),
                 "reference_pbase_minus_actual_kwh": _shed_context.get("reference_pbase_minus_actual_kwh"),
                 "physical_shed_cap_kwh": _shed_context.get("physical_shed_cap_kwh"),
+                "capacity_limited_reference_shed_kwh": _shed_context.get("capacity_limited_reference_shed_kwh"),
+                "reference_shed_diagnostic_basis": _shed_context.get("reference_shed_diagnostic_basis"),
                 "actual_shed_basis": _shed_context.get("actual_shed_basis"),
                 "target_shed_kwh": _target_shed_kwh,
                 "target_shed_kw": _demand.get("target_shed_kw", None),
@@ -2939,21 +3004,8 @@ All times are hour-of-day (0–23.9)."""
                     _cap_rows = loop.vpp_capacity_window_by_id.get(ev["id"], [])
                     if _cap_rows:
                         result["capacity_window_summary"] = _capacity_window_summary_from_rows(_cap_rows)
-                    _update_event_actual_shed_metrics(result)
-                    _target_shed = result.get("demand_target_shed_kwh")
-                    _target_cap = result.get("demand_target_kwh")
-                    _actual_shed = result.get("actual_shed_kwh")
-                    if _target_shed is not None and float(_target_shed or 0.0) > 1e-9 and _actual_shed is not None:
-                        result["target_mode"] = "shed"
-                        result["demand_achievement_ratio"] = round(float(_actual_shed) / float(_target_shed), 4)
-                        result["target_achieved"] = float(_actual_shed) + 1e-9 >= float(_target_shed)
-                    elif _target_cap is not None:
-                        result["target_mode"] = "energy_cap"
-                        result["demand_achievement_ratio"] = (
-                            round(float(result["actual_kwh"]) / float(_target_cap), 4)
-                            if float(_target_cap) > 1e-9 else None
-                        )
-                        result["target_achieved"] = float(result["actual_kwh"]) <= float(_target_cap) + 1e-9
+                    _update_event_reference_shed_diagnostics(result)
+                    _annotate_event_demand_achievement(result)
                     result["total_quantification_90"] = loop.total_quantification_by_id.get(
                         ev["id"],
                         {"status": "not_computed", "reason": "Reference A3 quantification unavailable"},
@@ -3038,21 +3090,8 @@ All times are hour-of-day (0–23.9)."""
             event_result["actual_kwh"] = actual_kwh
             baseline_kwh = event_result.get("demand_baseline_kwh")
             if baseline_kwh is not None:
-                _update_event_actual_shed_metrics(event_result)
-            target_shed = event_result.get("demand_target_shed_kwh")
-            target_cap = event_result.get("demand_target_kwh")
-            actual_shed = event_result.get("actual_shed_kwh")
-            if target_shed is not None and float(target_shed or 0.0) > 1e-9 and actual_shed is not None:
-                event_result["target_mode"] = "shed"
-                event_result["demand_achievement_ratio"] = round(float(actual_shed) / float(target_shed), 4)
-                event_result["target_achieved"] = float(actual_shed) + 1e-9 >= float(target_shed)
-            elif target_cap is not None:
-                event_result["target_mode"] = "energy_cap"
-                event_result["demand_achievement_ratio"] = (
-                    round(float(actual_kwh) / float(target_cap), 4)
-                    if float(target_cap) > 1e-9 else None
-                )
-                event_result["target_achieved"] = float(actual_kwh) <= float(target_cap) + 1e-9
+                _update_event_reference_shed_diagnostics(event_result)
+            _annotate_event_demand_achievement(event_result)
 
     kwh = loop.e_wh / 1000; occ = max(loop.occ_h, 1e-6)
     avg_sp = sum(d[1] for d in loop.decisions) / max(1, len(loop.decisions)) if loop.decisions else SP_DEFAULT
@@ -3090,7 +3129,7 @@ All times are hour-of-day (0–23.9)."""
     )
     _vpp_targets = []
     _vpp_targets_kw = []
-    _vpp_achieve_ratio = 0.0
+    _vpp_achieve_ratio = None
     _task_per_day = []
     _shift_success_per_day = []
     appl_results_dict: dict = {}
@@ -3130,14 +3169,19 @@ All times are hour-of-day (0–23.9)."""
                            for e in vpp_events]
         _vpp_shed_targets = [loop.vpp_demand_by_id.get(e["id"], {}).get("target_shed_kwh", 0.0)
                              for e in vpp_events]
-        _vpp_actual_shed_total = sum(
-            max(0.0, float(e.get("actual_shed_kwh", 0.0) or 0.0))
-            for e in loop.vpp_event_log
-        )
+        _vpp_actual_shed_values = []
+        for e in loop.vpp_event_log:
+            if e.get("actual_shed_kwh") is None:
+                continue
+            try:
+                _vpp_actual_shed_values.append(max(0.0, float(e.get("actual_shed_kwh"))))
+            except (TypeError, ValueError):
+                continue
+        _vpp_actual_shed_total = sum(_vpp_actual_shed_values)
         _vpp_shed_target_total = sum(v for v in _vpp_shed_targets if v > 0)
         _vpp_achieve_ratio = (
             round(_vpp_actual_shed_total / _vpp_shed_target_total, 4)
-            if _vpp_shed_target_total > 0 else 0.0
+            if _vpp_shed_target_total > 0 and _vpp_actual_shed_values else None
         )
         # Per-day completion list (for JSON export and final summary)
         _task_per_day = []
@@ -3207,32 +3251,23 @@ All times are hour-of-day (0–23.9)."""
             sim_days=sim_days,
         )
 
-    _shed_values: list[float] = []
-    _shed_duration_h = 0.0
-    for _event_result in loop.vpp_event_log:
-        _shed = _event_result.get("actual_shed_kwh")
-        if _shed is None:
-            continue
+    _vpp_total_duration_h = 0.0
+    for _ev in vpp_events:
         try:
-            _shed_f = max(0.0, float(_shed))
-            _duration_f = max(
-                1e-6,
-                float(_event_result.get("end_h", 0.0))
-                - float(_event_result.get("trigger_h", 0.0)),
+            _vpp_total_duration_h += max(
+                0.0,
+                float(_ev.get("end_h", 0.0)) - float(_ev.get("trigger_h", 0.0)),
             )
         except (TypeError, ValueError):
             continue
-        _shed_values.append(_shed_f)
-        _shed_duration_h += _duration_f
-    _vpp_shed_total_kwh = round(sum(_shed_values), 4) if _shed_values else 0.0
-    _vpp_shed_avg_event_kwh = (
-        round(_vpp_shed_total_kwh / len(_shed_values), 4)
-        if _shed_values else 0.0
+    _vpp_window_energy_kwh = round(loop.vpp_e_wh / 1000, 4)
+    _vpp_window_energy_avg_hour_kwh = (
+        round(_vpp_window_energy_kwh / _vpp_total_duration_h, 4)
+        if _vpp_total_duration_h > 0.0 else 0.0
     )
-    _vpp_shed_avg_hour_kwh = (
-        round(_vpp_shed_total_kwh / _shed_duration_h, 4)
-        if _shed_values and _shed_duration_h > 0.0 else 0.0
-    )
+    _vpp_shed_total_kwh = 0.0
+    _vpp_shed_avg_event_kwh = 0.0
+    _vpp_shed_avg_hour_kwh = 0.0
 
     return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
         weather=weather_label, method=method, exit_code=ec,
@@ -3247,12 +3282,14 @@ All times are hour-of-day (0–23.9)."""
         pmv_ok_fraction=loop.pmv_ok_h/occ, comfort_ok_fraction=loop.comfort_ok_h/occ,
         mean_pmv=loop.pmv_s/occ,
         mean_temp_c=loop.temp_s/occ, unmet_cooling_h=loop.unmet_h,
-        vpp_window_energy_kwh=round(loop.vpp_e_wh / 1000, 4),
+        vpp_window_energy_kwh=_vpp_window_energy_kwh,
+        vpp_window_energy_avg_per_hour_kwh=_vpp_window_energy_avg_hour_kwh,
         vpp_energy_reduction_kwh=_vpp_shed_avg_hour_kwh,
         vpp_actual_shed_kwh=_vpp_shed_avg_hour_kwh,
         vpp_energy_reduction_total_kwh=_vpp_shed_total_kwh,
         vpp_energy_reduction_avg_per_event_kwh=_vpp_shed_avg_event_kwh,
         vpp_energy_reduction_avg_per_hour_kwh=_vpp_shed_avg_hour_kwh,
+        vpp_energy_reduction_basis="unavailable_without_same_run_no_dr_counterfactual",
         agent_setpoint_c=round(avg_sp, 1),
         user_pref_scores=pref_scores,
         user_pref_score=sum(pref_scores)/max(1,len(pref_scores)) if pref_scores else None,
