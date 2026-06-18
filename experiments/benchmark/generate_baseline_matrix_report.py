@@ -132,6 +132,57 @@ def _as_float(value: Any) -> float | None:
     return None
 
 
+def _as_nonempty_float(value: Any) -> float | None:
+    if value in ("", None):
+        return None
+    return _as_float(value)
+
+
+def _sum_event_float(result: dict[str, Any], key: str) -> float | None:
+    total = 0.0
+    seen = False
+    for event in result.get("vpp_event_log") or []:
+        value = _as_float(event.get(key))
+        if value is None:
+            continue
+        total += value
+        seen = True
+    return total if seen else None
+
+
+def _day_ahead_total_cost_eur(result: dict[str, Any], row: dict[str, Any]) -> float | None:
+    metrics = result.get("day_ahead_price_metrics")
+    if isinstance(metrics, dict):
+        value = _as_float(metrics.get("total_cost_eur"))
+        if value is not None:
+            return value
+    return _as_nonempty_float(row.get("day_ahead_total_cost_eur"))
+
+
+def _report_energy_metric(
+    *,
+    city: str,
+    energy_kwh_total: float | None,
+    energy_kwh_per_day: float | None,
+    electricity_cost_eur: float | None,
+) -> tuple[float | None, str]:
+    if city.strip().lower() == "germany" and electricity_cost_eur is not None:
+        return electricity_cost_eur, "electricity_cost_eur"
+    if energy_kwh_per_day is not None:
+        return energy_kwh_per_day, "energy_kwh_per_day"
+    return energy_kwh_total, "energy_kwh_total"
+
+
+def _vpp_reduction_kwh(result: dict[str, Any], row: dict[str, Any]) -> float | None:
+    event_shed = _sum_event_float(result, "actual_shed_kwh")
+    if event_shed is not None:
+        return event_shed
+    row_shed = _as_nonempty_float(row.get("vpp_actual_shed_kwh"))
+    if row_shed is not None:
+        return row_shed
+    return _as_float(result.get("vpp_energy_reduction_kwh", row.get("vpp_energy_reduction_kwh")))
+
+
 def _as_service_set(value: Any) -> set[str]:
     if value is None:
         return set()
@@ -185,7 +236,20 @@ def _build_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
         if not result and not row.get("allow_summary_metrics"):
             continue
         method = _canonical_method(row["method"])
+        city = str(row.get("city") or result.get("city") or result.get("weather") or "")
         energy_kwh = result.get("energy_kwh_total", row.get("energy_kwh_total", row.get("energy_kwh")))
+        energy_kwh_total = _as_float(energy_kwh)
+        days = _as_float(row.get("days") or result.get("days"))
+        energy_kwh_per_day = _as_float(result.get("energy_kwh_per_day", row.get("energy_kwh_per_day")))
+        if energy_kwh_per_day is None and energy_kwh_total is not None and days:
+            energy_kwh_per_day = energy_kwh_total / days
+        electricity_cost_eur = _day_ahead_total_cost_eur(result, row)
+        report_metric, report_metric_name = _report_energy_metric(
+            city=city,
+            energy_kwh_total=energy_kwh_total,
+            energy_kwh_per_day=energy_kwh_per_day,
+            electricity_cost_eur=electricity_cost_eur,
+        )
         shift_success = result.get(
             "appliance_shift_success_rate",
             row.get("appliance_shift_success_rate", row.get("completed_vpp_avoidance_rate")),
@@ -266,13 +330,19 @@ def _build_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
                 "persona_id": row["persona_id"],
                 "method": method,
                 "method_label": METHOD_LABEL.get(method, method),
+                "city": city,
                 "status": row.get("status", ""),
-                "days": _as_float(row.get("days")),
+                "days": days,
                 "user_pref_score": _as_float(result.get("user_pref_score", row.get("user_pref_score"))),
-                "energy_kwh_total": _as_float(energy_kwh),
+                "energy_kwh_total": energy_kwh_total,
+                "energy_kwh_per_day": energy_kwh_per_day,
+                "electricity_cost_eur": electricity_cost_eur,
+                "report_energy_metric": report_metric,
+                "report_energy_metric_name": report_metric_name,
                 "vpp_window_energy_kwh": _as_float(
                     result.get("vpp_window_energy_kwh", row.get("vpp_window_energy_kwh"))
                 ),
+                "vpp_reduction_kwh": _vpp_reduction_kwh(result, row),
                 "appliance_vpp_avoidance_rate": _as_float(
                     result.get("appliance_vpp_avoidance_rate", row.get("appliance_vpp_avoidance_rate", shift_success))
                 ),
@@ -433,13 +503,35 @@ def _artifact_name(prefix: str, filename: str) -> str:
     return f"{prefix}_{filename}" if prefix else filename
 
 
+def _report_energy_label(df: pd.DataFrame) -> tuple[str, str, str, bool]:
+    metric_names = {str(name) for name in df["report_energy_metric_name"].dropna().unique()}
+    if metric_names == {"electricity_cost_eur"}:
+        return "Persona x Method Electricity Cost", "Total electricity cost EUR (lower is better)", ".2f", True
+    if metric_names == {"energy_kwh_per_day"}:
+        return "Persona x Method Daily Energy", "Daily energy kWh/day (lower is better)", ".2f", True
+    return "Persona x Method Energy/Cost", "Energy/cost report metric (lower is better)", ".2f", True
+
+
+def _report_energy_quick_read_label(df: pd.DataFrame) -> str:
+    metric_names = {str(name) for name in df["report_energy_metric_name"].dropna().unique()}
+    if metric_names == {"electricity_cost_eur"}:
+        return "Lowest average electricity cost"
+    if metric_names == {"energy_kwh_per_day"}:
+        return "Lowest average daily energy"
+    return "Lowest average energy/cost metric"
+
+
 def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, prefix: str = "") -> Path:
     md_path = report_dir / _artifact_name(prefix, "baseline_matrix_report.md")
     summary = (
         df.groupby("method", observed=True)[
             [
                 "user_pref_score",
+                "report_energy_metric",
+                "energy_kwh_per_day",
+                "electricity_cost_eur",
                 "energy_kwh_total",
+                "vpp_reduction_kwh",
                 "vpp_window_energy_kwh",
                 "appliance_shift_success_rate",
                 "appliance_task_completion_rate",
@@ -462,7 +554,7 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
     pivot = df.pivot(index="persona_id", columns="method", values="user_pref_score").reindex(columns=method_order).round(3)
     pivot.columns = [METHOD_LABEL.get(c, c) for c in pivot.columns]
 
-    top_rows = df.sort_values(["user_pref_score", "energy_kwh_total"], ascending=[False, True]).head(10)
+    top_rows = df.sort_values(["user_pref_score", "report_energy_metric"], ascending=[False, True]).head(10)
 
     lines: list[str] = []
     lines.append("# EnergyBridge Baseline Matrix Report")
@@ -487,7 +579,12 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
                     "persona_id",
                     "method_label",
                     "user_pref_score",
+                    "report_energy_metric",
+                    "report_energy_metric_name",
+                    "energy_kwh_per_day",
+                    "electricity_cost_eur",
                     "energy_kwh_total",
+                    "vpp_reduction_kwh",
                     "vpp_window_energy_kwh",
                     "appliance_shift_success_rate",
                     "appliance_vpp_avoidance_rate",
@@ -517,11 +614,13 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
     lines.append("## Quick Read")
     lines.append("")
     best = summary["user_pref_score"].idxmax()
-    lowest_energy = summary["energy_kwh_total"].idxmin()
+    lowest_energy = summary["report_energy_metric"].idxmin()
+    best_vpp_reduction = summary["vpp_reduction_kwh"].idxmax()
     best_shift = summary["appliance_task_completion_rate"].idxmax()
     cleanest_raw_actions = summary["raw_absent_appliance_action_count"].idxmin()
     lines.append(f"- Best average user score: **{best}**")
-    lines.append(f"- Lowest average total energy: **{lowest_energy}**")
+    lines.append(f"- {_report_energy_quick_read_label(df)}: **{lowest_energy}**")
+    lines.append(f"- Highest average VPP energy reduction: **{best_vpp_reduction}**")
     lines.append(f"- Best average policy appliance output completion: **{best_shift}**")
     lines.append(f"- Fewest actions targeting absent appliances: **{cleanest_raw_actions}**")
     lines.append("")
@@ -615,9 +714,10 @@ def _plot_report(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
         cbar.set_label(cbar_label)
 
     score_matrix = _metric_matrix("user_pref_score")
-    energy_matrix = _metric_matrix("energy_kwh_total")
-    vpp_energy_matrix = _metric_matrix("vpp_window_energy_kwh")
+    energy_matrix = _metric_matrix("report_energy_metric")
+    vpp_energy_matrix = _metric_matrix("vpp_reduction_kwh")
     coverage_matrix = _metric_matrix("appliance_task_completion_rate")
+    energy_title, energy_cbar_label, energy_fmt, energy_lower_is_better = _report_energy_label(df)
 
     _draw_metric_table(
         axes["score"],
@@ -632,21 +732,21 @@ def _plot_report(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
     _draw_metric_table(
         axes["energy"],
         energy_matrix,
-        title="Persona x Method Total Energy",
+        title=energy_title,
         cmap="YlOrBr",
-        fmt=".1f",
-        cbar_label="Total energy kWh (lower is better)",
-        lower_is_better=True,
+        fmt=energy_fmt,
+        cbar_label=energy_cbar_label,
+        lower_is_better=energy_lower_is_better,
         suffix="",
     )
     _draw_metric_table(
         axes["vpp_energy"],
         vpp_energy_matrix,
-        title="Persona x Method VPP Window Energy",
+        title="Persona x Method VPP Energy Reduction",
         cmap="Oranges",
         fmt=".2f",
-        cbar_label="VPP-window kWh (lower is better)",
-        lower_is_better=True,
+        cbar_label="Reduced energy kWh (higher is better)",
+        lower_is_better=False,
     )
     _draw_metric_table(
         axes["coverage"],
