@@ -97,6 +97,32 @@ def test_rule_milp_outputs_all_known_action_keys() -> None:
     }
 
 
+def test_rule_milp_oracle_moves_fixed_water_heater_away_from_vpp() -> None:
+    state = _state()
+    state["appliance_config"]["washer"]["present"] = False
+    state["appliance_config"]["water_heater"].update(
+        {
+            "bath_required_h": 21.0,
+            "dr_adjustable": False,
+            "pre_heat_window_start_h": 18.0,
+            "pre_heat_window_end_h": 20.0,
+        }
+    )
+
+    action = plan_rule_milp_action(
+        state=state,
+        price_profile=_FakePriceProfile(),
+        run_start_date=datetime(2025, 6, 1).date(),
+    )
+
+    appliances = action["appliances"]
+    assert appliances["water_heater_preheat"] is True
+    start = appliances["water_heater_preheat_start_h"]
+    end = appliances["water_heater_preheat_end_h"]
+    assert max(start, 18.0) >= min(end, 19.0)
+    assert end <= 21.0
+
+
 def test_rule_milp_ev_command_uses_charge_window_without_required_mode() -> None:
     state = _state()
     state["appliance_config"]["ev"] = {

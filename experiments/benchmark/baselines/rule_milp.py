@@ -200,17 +200,16 @@ def _water_heater_candidates(
     default_start = _float(cfg.get("pre_heat_window_start_h"), max(0.0, bath_h - 4.0))
     default_end = _float(cfg.get("pre_heat_window_end_h"), max(default_start + 1.0, bath_h - 1.0))
     duration = max(GRID_H, default_end - default_start if default_end > default_start else 2.0)
-    flexible = bool(cfg.get("dr_adjustable", True))
     bath_abs = day_idx * 24.0 + bath_h
-    if not flexible:
-        starts = [day_idx * 24.0 + default_start]
-    else:
-        start_min = max(day_idx * 24.0, _ceil_to_grid(sim_h))
-        start_max = max(start_min, bath_abs - duration)
-        starts = _grid_values(start_min, start_max, GRID_H)
-        default_abs = day_idx * 24.0 + default_start
-        if start_min <= default_abs <= start_max:
-            starts.append(default_abs)
+    # Rule+MILP is an oracle-style baseline: keep the hot-water service
+    # deadline, but allow thermal preheat to move away from VPP/expensive
+    # windows even for personas whose ordinary routine is non-DR-adjustable.
+    start_min = max(day_idx * 24.0, _ceil_to_grid(sim_h))
+    start_max = max(start_min, bath_abs - duration)
+    starts = _grid_values(start_min, start_max, GRID_H)
+    default_abs = day_idx * 24.0 + default_start
+    if start_min <= default_abs <= start_max:
+        starts.append(default_abs)
     candidates = []
     for start_abs in sorted(set(round(v, 6) for v in starts)):
         end_abs = start_abs + duration
