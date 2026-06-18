@@ -28,6 +28,7 @@ DEFAULT_RESULTS_ROOT = _PROJECT_ROOT / "benchmark_results"
 
 ENERGYBRIDGE_METHOD_ID = "EnergyBridge"
 METHOD_ORDER = [ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "mpc_ep", "rule_milp", "hema_agent", "rl_ppo_3day", "rl_ppo_pref_v2", "no_dr"]
+REFERENCE_ONLY_METHODS = {"no_dr"}
 METHOD_LABEL = {
     ENERGYBRIDGE_METHOD_ID: "EnergyBridge",
     "agent": "EnergyBridge",
@@ -580,6 +581,11 @@ def _observed_method_order(df: pd.DataFrame) -> list[str]:
     return ordered
 
 
+def _report_display_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    display = df[~df["method"].astype(str).isin(REFERENCE_ONLY_METHODS)].copy()
+    return display if not display.empty else df.copy()
+
+
 def _window_label(df: pd.DataFrame) -> str:
     days = sorted({int(day) for day in df["days"].dropna().astype(int)}) if "days" in df else []
     if len(days) == 1:
@@ -652,6 +658,8 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
     lines.append("")
     lines.append(f"- Source: `{summary_json}`")
     lines.append(f"- Jobs: `{len(df)}`")
+    if REFERENCE_ONLY_METHODS:
+        lines.append("- Reference-only rows such as `No-DR` are used for counterfactual metrics but omitted from displayed method comparisons.")
     lines.append("")
     lines.append("## Method Averages")
     lines.append("")
@@ -960,10 +968,11 @@ def main() -> None:
     df = df.copy()
     method_text = df["method"].astype(str)
     df["method_label"] = method_text.map(METHOD_LABEL).fillna(method_text)
+    display_df = _report_display_dataframe(df)
 
-    md_path = _write_markdown(df, report_dir, summary_json, args.artifact_prefix)
-    csv_path = _write_csv(df, report_dir, args.artifact_prefix)
-    png_path = _plot_report(df, report_dir, args.artifact_prefix)
+    md_path = _write_markdown(display_df, report_dir, summary_json, args.artifact_prefix)
+    csv_path = _write_csv(display_df, report_dir, args.artifact_prefix)
+    png_path = _plot_report(display_df, report_dir, args.artifact_prefix)
 
     print(f"[OK] markdown: {md_path}")
     print(f"[OK] csv     : {csv_path}")
