@@ -323,6 +323,7 @@ class _FamilyLoop:
         self.vpp_capacity_by_id: Dict[str, dict] = {}      # household capacity assessment sent to VPP
         self.vpp_capacity_window_by_id: Dict[str, List[dict]] = {}  # per-timestep physical capacity
         self.total_quantification_by_id: Dict[str, dict] = {}  # reference A3 90% event capacity
+        self.power_trace_rows: List[Dict[str, Any]] = []   # timestep load/weather rows for event baselines
         self.current_vpp_demand_kwh: float = 0.0           # equivalent consumption cap for active VPP event
         self.current_vpp_demand_kw: float = 0.0            # shed-capacity target for active VPP event
         self.current_vpp_capacity: Dict[str, Any] = {}
@@ -583,6 +584,34 @@ def _event_physical_shed_cap_kwh(event_result: dict) -> tuple[float | None, str]
     return None, ""
 
 
+def _attach_event_baseline_shed(event_result: dict, event: dict, power_trace_rows: list[dict]) -> None:
+    """Attach baseline-minus-actual shed using current-run or historical rows."""
+    try:
+        from energybridge.quantification import estimate_event_baseline_and_shed
+
+        estimate = estimate_event_baseline_and_shed(
+            event,
+            power_trace_rows,
+            actual_kwh=event_result.get("actual_kwh"),
+        )
+    except Exception as exc:
+        event_result["event_baseline_estimate"] = {
+            "status": "failed",
+            "reason": str(exc)[:160],
+        }
+        return
+
+    event_result["event_baseline_estimate"] = estimate
+    if estimate.get("actual_shed_kwh") is None:
+        return
+    event_result["estimated_baseline_kwh"] = estimate.get("baseline_kwh")
+    event_result["estimated_baseline_source"] = estimate.get("baseline_source")
+    event_result["estimated_baseline_confidence"] = estimate.get("baseline_confidence")
+    event_result["actual_shed_kwh"] = estimate.get("actual_shed_kwh")
+    event_result["actual_shed_avg_kw"] = estimate.get("actual_shed_avg_kw")
+    event_result["actual_shed_basis"] = estimate.get("actual_shed_basis")
+
+
 def _update_event_reference_shed_diagnostics(event_result: dict) -> None:
     """Record reference Pbase-minus-actual diagnostics without calling it shed.
 
@@ -594,8 +623,9 @@ def _update_event_reference_shed_diagnostics(event_result: dict) -> None:
     """
     baseline_kwh = event_result.get("demand_baseline_kwh")
     actual_kwh = event_result.get("actual_kwh")
-    event_result["actual_shed_kwh"] = None
-    event_result["actual_shed_basis"] = "unavailable_without_same_run_no_dr_counterfactual"
+    if event_result.get("actual_shed_kwh") is None:
+        event_result["actual_shed_kwh"] = None
+        event_result["actual_shed_basis"] = "unavailable_without_valid_event_baseline"
     if baseline_kwh is None or actual_kwh is None:
         return
     try:
@@ -2584,6 +2614,7 @@ All times are hour-of-day (0–23.9)."""
                 "capacity_assessment": loop_ref.vpp_capacity_by_id.get(ev["id"], {}),
                 "capacity_window_summary": _cap_summary,
             }
+            _attach_event_baseline_shed(_shed_context, ev, loop_ref.power_trace_rows)
             _update_event_reference_shed_diagnostics(_shed_context)
             _actual_shed_kwh = _shed_context.get("actual_shed_kwh")
             _achieve_ratio = None
@@ -2621,6 +2652,9 @@ All times are hour-of-day (0–23.9)."""
                 "target_kwh": _target_kwh,
                 "baseline_kwh": _baseline_kwh,
                 "actual_shed_kwh": _actual_shed_kwh,
+                "estimated_baseline_kwh": _shed_context.get("estimated_baseline_kwh"),
+                "estimated_baseline_source": _shed_context.get("estimated_baseline_source"),
+                "estimated_baseline_confidence": _shed_context.get("estimated_baseline_confidence"),
                 "reference_baseline_shed_kwh": _shed_context.get("reference_baseline_shed_kwh"),
                 "reference_pbase_minus_actual_kwh": _shed_context.get("reference_pbase_minus_actual_kwh"),
                 "physical_shed_cap_kwh": _shed_context.get("physical_shed_cap_kwh"),
@@ -2760,6 +2794,20 @@ All times are hour-of-day (0–23.9)."""
         for ev in vpp_events:
             if ev["trigger_h"] <= sim_h < ev["end_h"]:
                 active_vpp = ev; break
+
+        if not wu:
+            loop.power_trace_rows.append({
+                "sim_h": float(sim_h),
+                "hod": float(hod),
+                "dt_h": float(dt),
+                "power_kw": max(0.0, float(fac or 0.0) / 1000.0),
+                "facility_power_w": max(0.0, float(fac or 0.0)),
+                "outdoor_temperature_c": float(out_t),
+                "indoor_temperature_c": float(temp),
+                "occupied": bool(occ),
+                "vpp_active": active_vpp is not None,
+                "vpp_event_id": str(active_vpp.get("id", "")) if active_vpp else "",
+            })
 
         if not wu:
             psim = loop.prev_sim_h
@@ -3131,6 +3179,8 @@ All times are hour-of-day (0–23.9)."""
                     _cap_rows = loop.vpp_capacity_window_by_id.get(ev["id"], [])
                     if _cap_rows:
                         result["capacity_window_summary"] = _capacity_window_summary_from_rows(_cap_rows)
+                    if method != "no_dr":
+                        _attach_event_baseline_shed(result, ev, loop.power_trace_rows)
                     _update_event_reference_shed_diagnostics(result)
                     _annotate_event_demand_achievement(result)
                     result["total_quantification_90"] = loop.total_quantification_by_id.get(
@@ -3209,15 +3259,20 @@ All times are hour-of-day (0–23.9)."""
             for ev_id, kwh in meter_vpp_kwh.items()
         }
         loop.vpp_e_wh = sum(loop.vpp_event_energy_wh.values())
+        _vpp_event_by_id = {str(ev.get("id", "")): ev for ev in vpp_events}
         for event_result in loop.vpp_event_log:
             ev_id = event_result.get("id")
             if ev_id not in meter_vpp_kwh:
                 continue
             actual_kwh = round(float(meter_vpp_kwh[ev_id]), 4)
             event_result["actual_kwh"] = actual_kwh
-            baseline_kwh = event_result.get("demand_baseline_kwh")
-            if baseline_kwh is not None:
-                _update_event_reference_shed_diagnostics(event_result)
+            if method != "no_dr" and str(ev_id) in _vpp_event_by_id:
+                _attach_event_baseline_shed(
+                    event_result,
+                    _vpp_event_by_id[str(ev_id)],
+                    loop.power_trace_rows,
+                )
+            _update_event_reference_shed_diagnostics(event_result)
             _annotate_event_demand_achievement(event_result)
 
     kwh = loop.e_wh / 1000; occ = max(loop.occ_h, 1e-6)
@@ -3395,6 +3450,25 @@ All times are hour-of-day (0–23.9)."""
     _vpp_shed_total_kwh = 0.0
     _vpp_shed_avg_event_kwh = 0.0
     _vpp_shed_avg_hour_kwh = 0.0
+    _vpp_shed_values = []
+    for _event_result in loop.vpp_event_log:
+        try:
+            _shed_value = _event_result.get("actual_shed_kwh")
+            if _shed_value is None:
+                continue
+            _vpp_shed_values.append(max(0.0, float(_shed_value)))
+        except (TypeError, ValueError):
+            continue
+    if _vpp_shed_values:
+        _vpp_shed_total_kwh = round(sum(_vpp_shed_values), 6)
+        _vpp_shed_avg_event_kwh = round(_vpp_shed_total_kwh / len(_vpp_shed_values), 6)
+        _vpp_shed_avg_hour_kwh = (
+            round(_vpp_shed_total_kwh / _vpp_total_duration_h, 6)
+            if _vpp_total_duration_h > 0.0 else 0.0
+        )
+        _vpp_shed_basis = "event_baseline_estimate"
+    else:
+        _vpp_shed_basis = "unavailable_without_valid_event_baseline"
 
     return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
         weather=weather_label, method=method, exit_code=ec,
@@ -3416,7 +3490,7 @@ All times are hour-of-day (0–23.9)."""
         vpp_energy_reduction_total_kwh=_vpp_shed_total_kwh,
         vpp_energy_reduction_avg_per_event_kwh=_vpp_shed_avg_event_kwh,
         vpp_energy_reduction_avg_per_hour_kwh=_vpp_shed_avg_hour_kwh,
-        vpp_energy_reduction_basis="unavailable_without_same_run_no_dr_counterfactual",
+        vpp_energy_reduction_basis=_vpp_shed_basis,
         agent_setpoint_c=round(avg_sp, 1),
         user_pref_scores=pref_scores,
         user_pref_score=sum(pref_scores)/max(1,len(pref_scores)) if pref_scores else None,

@@ -247,6 +247,7 @@ def _summarize_job(job: Job, status: str, return_code: int | None, elapsed_s: fl
         "vpp_energy_reduction_total_kwh": _metric(data, "vpp_energy_reduction_total_kwh"),
         "vpp_energy_reduction_avg_per_event_kwh": _metric(data, "vpp_energy_reduction_avg_per_event_kwh"),
         "vpp_energy_reduction_avg_per_hour_kwh": _metric(data, "vpp_energy_reduction_avg_per_hour_kwh"),
+        "vpp_energy_reduction_basis": _metric(data, "vpp_energy_reduction_basis"),
         "vpp_demand_achievement_ratio": _metric(data, "vpp_demand_achievement_ratio"),
         "user_pref_score": _metric(data, "user_pref_score"),
         "appliance_task_completion_rate": _metric(data, "appliance_task_completion_rate"),
