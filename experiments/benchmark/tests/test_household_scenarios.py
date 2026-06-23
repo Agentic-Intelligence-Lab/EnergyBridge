@@ -4,6 +4,8 @@ from energybridge.roleplay.households import (
     load_household_config,
     load_household_member_personas,
 )
+from experiments.benchmark.run_multi_user_household import IndependentMemberRoleplay
+from experiments.benchmark.user_pref_scorer import StrategyPreference
 
 
 REQUIRED_SHARED_APPLIANCES = ("ac", "washer", "dryer", "dishwasher", "water_heater", "ev")
@@ -35,3 +37,59 @@ def test_fixed_households_are_reproducible_large_users():
         assert len(occupancy) == 7
         assert all(len(day) == 24 for day in occupancy)
         assert all(0.0 <= value <= 1.0 for day in occupancy for value in day)
+
+
+def test_multi_user_scoring_uses_each_members_own_preference():
+    household = load_household_config("household_s3_hybrid_work_from_home")
+    members = load_household_member_personas(household)[:2]
+    roleplay = IndependentMemberRoleplay(household, members)
+
+    def fake_get_pref(building, event_index, vpp_context, past_events, persona, human_mode=False):
+        member_id = persona["household_member"]["member_id"]
+        return StrategyPreference(
+            f"preference-from-{member_id}",
+            {"selected_strategy": {"id": member_id, "label": f"choice-{member_id}"}},
+        )
+
+    roleplay.choose_strategy(
+        orig_get_pref=fake_get_pref,
+        building="family",
+        event_index=1,
+        vpp_context={"trigger_h": 18.0, "end_h": 19.0},
+        past_events=[],
+    )
+
+    seen_preferences = {}
+
+    def fake_score(**kwargs):
+        member_id = kwargs["persona"]["household_member"]["member_id"]
+        seen_preferences[member_id] = kwargs["user_preference_text"]
+        return {
+            "score": 4,
+            "comfort_score": 4,
+            "energy_score": 4,
+            "vpp_score": 4,
+            "label": "satisfied",
+            "comment": "ok",
+            "source": "roleplay_llm",
+        }
+
+    aggregate = roleplay.score_event(
+        orig_score=fake_score,
+        building="family",
+        method="EnergyBridge",
+        mean_temp_c=25.0,
+        pmv_ok_fraction=1.0,
+        energy_kwh_per_day=20.0,
+        agent_setpoint_c=25.0,
+        event_index=1,
+        user_preference_text="aggregate-controller-feedback",
+        agent_reason="test",
+        kwargs={},
+    )
+
+    assert aggregate["source"] == "multi_user_independent_mean"
+    assert seen_preferences == {
+        member["household_member"]["member_id"]: f"preference-from-{member['household_member']['member_id']}"
+        for member in members
+    }

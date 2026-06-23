@@ -148,6 +148,7 @@ class IndependentMemberRoleplay:
             "score": {},
             "score_aggregate": {},
         }
+        self.member_preferences_by_event: dict[str, dict[str, str]] = {}
 
     @staticmethod
     def _member_key(persona: dict[str, Any]) -> str:
@@ -229,6 +230,10 @@ class IndependentMemberRoleplay:
         aggregate = self._synthesize_agent_feedback(event_index, vpp_context, member_entries)
         self.transcripts["strategy"][str(event_index)] = member_entries
         self.transcripts["strategy_aggregate"][str(event_index)] = aggregate
+        self.member_preferences_by_event[str(event_index)] = {
+            str(entry["member_id"]): str(entry.get("preference_text", ""))
+            for entry in member_entries
+        }
         for entry, persona in zip(member_entries, self.member_personas):
             selected = entry.get("selected_strategy") or {}
             self._remember(
@@ -314,8 +319,11 @@ class IndependentMemberRoleplay:
         print(f"  [Multi-user independent scoring] event {event_index}: each member scores separately")
         print(f"  {'='*62}")
         member_scores: list[dict[str, Any]] = []
+        event_member_preferences = self.member_preferences_by_event.get(str(event_index), {})
         for persona in self.member_personas:
             member_persona = self._persona_with_context(persona)
+            member_id = self._member_key(persona)
+            member_preference_text = event_member_preferences.get(member_id, user_preference_text)
             result = orig_score(
                 building=building,
                 method=method,
@@ -324,15 +332,17 @@ class IndependentMemberRoleplay:
                 energy_kwh_per_day=energy_kwh_per_day,
                 agent_setpoint_c=agent_setpoint_c,
                 event_index=event_index,
-                user_preference_text=user_preference_text,
+                user_preference_text=member_preference_text,
                 agent_reason=agent_reason,
                 persona=member_persona,
                 **kwargs,
             )
             entry = {
-                "member_id": self._member_key(persona),
+                "member_id": member_id,
                 "member_name": self._member_name(persona),
                 "persona_id": persona.get("id"),
+                "scored_against_preference": member_preference_text,
+                "agent_feedback_seen_by_controller": user_preference_text,
                 "score": float(result.get("score", 3.0) or 3.0),
                 "comfort_score": float(result.get("comfort_score", result.get("score", 3.0)) or 3.0),
                 "energy_score": float(result.get("energy_score", result.get("score", 3.0)) or 3.0),
