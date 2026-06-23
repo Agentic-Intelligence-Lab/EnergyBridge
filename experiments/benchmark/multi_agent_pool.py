@@ -110,11 +110,12 @@ class DiscussionPool:
          Returns a consensus score (1.0-5.0) + reason.
     """
 
-    def __init__(self, agents: List[PersonaAgent], max_rounds: int = 3) -> None:
+    def __init__(self, agents: List[PersonaAgent], max_rounds: int = 3, household_context: str = "") -> None:
         if not agents:
             raise ValueError("At least one PersonaAgent required.")
         self.agents = agents
         self.max_rounds = max_rounds
+        self.household_context = household_context.strip()
 
     # -- Public API -----------------------------------------------------------
 
@@ -139,6 +140,8 @@ class DiscussionPool:
             "The grid asks the household to reduce electricity use during this window.",
             "The AC setpoint may need to rise, and shiftable appliances such as washer or dishwasher should avoid this window.",
         ]
+        if self.household_context:
+            context_lines.append(f"Household-level policy: {self.household_context}")
         if past_events:
             prev_parts = []
             for pe in past_events[-2:]:
@@ -175,17 +178,62 @@ class DiscussionPool:
         sp           = float(event_outcome.get("setpoint", 26.5))
         mean_t       = float(event_outcome.get("mean_temp_c", sp))
         e_day        = event_outcome.get("energy_kwh_per_day", "?")
-        target       = event_outcome.get("target_kwh", "?")
         agent_reason = str(event_outcome.get("agent_reason", ""))[:80]
+        appliance_summary = event_outcome.get("appliance_summary") or {}
+        policy_context = event_outcome.get("policy_control_context") or {}
+        vpp_result = event_outcome.get("vpp_result_context") or {}
 
         context_lines = [
             f"VPP event {event_index} has ended.",
             f"AC setpoint: {sp:.1f}°C. VPP-window mean indoor temperature: {mean_t:.1f}°C.",
         ]
+        if self.household_context:
+            context_lines.append(f"Household-level policy: {self.household_context}")
         if isinstance(e_day, (int, float)):
             context_lines.append(f"Today's cumulative electricity use was about {e_day:.2f} kWh.")
-        if target not in ("?", None):
-            context_lines.append(f"VPP demand target: <= {target} kWh.")
+        if vpp_result:
+            actual = vpp_result.get("actual_kwh")
+            achieved = vpp_result.get("achieved", vpp_result.get("target_achieved"))
+            non_ac = vpp_result.get("non_ac_appliances_during_vpp") or []
+            if actual is not None:
+                context_lines.append(
+                    f"VPP-window actual electricity use: {float(actual):.2f} kWh (diagnostic only). "
+                    f"Appliance-avoidance achieved: {bool(achieved)}; "
+                    f"non-AC appliances during VPP: {non_ac or 'none'}."
+                )
+        present = policy_context.get("present_services") or []
+        emitted = policy_context.get("emitted_services") or []
+        missing = policy_context.get("missing_present_services") or []
+        unsupported = policy_context.get("unsupported_present_services") or []
+        if present or emitted or missing or unsupported:
+            context_lines.append(
+                "Appliance policy coverage: "
+                f"present={present or 'none'}, emitted={emitted or 'none'}, "
+                f"missing={missing or 'none'}, unsupported={unsupported or 'none'}."
+            )
+        if appliance_summary:
+            service_bits = []
+            for name in ("washer", "dishwasher", "dryer", "water_heater", "ev"):
+                info = appliance_summary.get(name)
+                if not isinstance(info, dict) or not info.get("present"):
+                    continue
+                if name in {"washer", "dishwasher", "dryer"}:
+                    service_bits.append(
+                        f"{name}: completed={bool(info.get('completed'))}, "
+                        f"during_vpp={bool(info.get('ran_during_vpp'))}, skipped={bool(info.get('skipped'))}"
+                    )
+                elif name == "water_heater":
+                    service_bits.append(
+                        f"{name}: ready_at_bath={bool(info.get('ready_at_bath'))}, "
+                        f"during_vpp={bool(info.get('ran_during_vpp'))}"
+                    )
+                elif name == "ev":
+                    service_bits.append(
+                        f"{name}: target_reached={bool(info.get('target_reached'))}, "
+                        f"during_vpp={bool(info.get('ran_during_vpp'))}"
+                    )
+            if service_bits:
+                context_lines.append("Physical appliance outcomes: " + "; ".join(service_bits) + ".")
         if agent_reason:
             context_lines.append(f"Agent decision rationale: {agent_reason}")
 

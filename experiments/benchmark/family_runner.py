@@ -149,7 +149,7 @@ def _calendar_occupied_or_return_home_sensitive(persona_config: dict | None, eve
 
 
 def _low_vpp_target_kw(demand_kw: float | None, *, threshold_kw: float = 0.75) -> bool:
-    """True when the VPP target is small enough that comfort should dominate."""
+    """True when the diagnostic capacity reference is small enough that comfort should dominate."""
     try:
         target_kw = float(demand_kw)
     except (TypeError, ValueError):
@@ -226,6 +226,7 @@ class BenchmarkResult:
     vpp_demand_targets: List[float] = field(default_factory=list)       # per-event equivalent consumption caps
     vpp_demand_targets_kw: List[float] = field(default_factory=list)    # per-event shed-capacity targets from quantification
     vpp_demand_achievement_ratio: Optional[float] = None
+    vpp_appliance_avoidance_success_rate: Optional[float] = None
     ev_target_reached_rate: float = 0.0         # fraction of days EV reached target SOC
     ewh_preheat_used_rate: float = 0.0          # fraction of days EWH preheat was active
     appliance_results: dict = field(default_factory=dict)  # per-device per-day details
@@ -646,47 +647,32 @@ def _update_event_reference_shed_diagnostics(event_result: dict) -> None:
         )
 
 
+def _non_ac_appliances_during_vpp(appliance_summary: dict | None) -> list[str]:
+    if not isinstance(appliance_summary, dict):
+        return []
+    services: list[str] = []
+    for name in ("washer", "dishwasher", "dryer", "water_heater", "ev"):
+        info = appliance_summary.get(name)
+        if isinstance(info, dict) and bool(info.get("present")) and bool(info.get("ran_during_vpp")):
+            services.append(name)
+    return services
+
+
 def _annotate_event_demand_achievement(event_result: dict) -> None:
-    """Annotate VPP target outcome only when the measured basis is valid."""
-    target_shed = event_result.get("demand_target_shed_kwh")
-    target_cap = event_result.get("demand_target_kwh")
-    actual_shed = event_result.get("actual_shed_kwh")
-    actual_kwh = event_result.get("actual_kwh")
-    try:
-        target_shed_f = float(target_shed) if target_shed is not None else None
-    except (TypeError, ValueError):
-        target_shed_f = None
-    if target_shed_f is not None and target_shed_f > 1e-9:
-        event_result["target_mode"] = "shed_requires_counterfactual"
-        event_result["demand_achievement_ratio"] = None
-        event_result["target_achieved"] = None
-        event_result["demand_achievement_basis"] = (
-            "actual_shed_unavailable_without_same_run_no_dr_counterfactual"
-        )
-        if actual_shed is not None:
-            try:
-                actual_shed_f = float(actual_shed)
-            except (TypeError, ValueError):
-                return
-            event_result["target_mode"] = "shed"
-            event_result["demand_achievement_ratio"] = round(actual_shed_f / target_shed_f, 4)
-            event_result["target_achieved"] = actual_shed_f + 1e-9 >= target_shed_f
-            event_result["demand_achievement_basis"] = "actual_shed_kwh"
-        return
-    if target_cap is None or actual_kwh is None:
-        return
-    try:
-        target_cap_f = float(target_cap)
-        actual_kwh_f = float(actual_kwh)
-    except (TypeError, ValueError):
-        return
-    event_result["target_mode"] = "energy_cap"
-    event_result["demand_achievement_ratio"] = (
-        round(actual_kwh_f / target_cap_f, 4)
-        if target_cap_f > 1e-9 else None
-    )
-    event_result["target_achieved"] = actual_kwh_f <= target_cap_f + 1e-9
-    event_result["demand_achievement_basis"] = "actual_vpp_window_energy_kwh"
+    """Annotate VPP success by non-AC appliance avoidance.
+
+    The benchmark-level VPP success criterion is no longer a shed/cap target.
+    A VPP event succeeds when no present non-AC appliance is scheduled or run
+    inside the VPP window.  Actual shed and reference-baseline fields remain as
+    diagnostics only.
+    """
+    overlapping = _non_ac_appliances_during_vpp(event_result.get("appliance_summary"))
+    event_result["target_mode"] = "non_ac_appliance_avoidance"
+    event_result["target_achieved"] = not overlapping
+    event_result["demand_achievement_ratio"] = 0.0 if overlapping else 1.0
+    event_result["demand_achievement_basis"] = "no_non_ac_appliance_in_vpp_window"
+    event_result["vpp_non_ac_appliances_during_event"] = overlapping
+    event_result["vpp_appliance_avoidance_success"] = not overlapping
 
 
 def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
@@ -974,12 +960,13 @@ def _benefit_explanation_prompt_text(
     if demand_kw is not None and 0.0 < demand_kw <= 0.75:
         return (
             "\nBENEFIT_EXPLANATION: this price/energy-sensitive user expects a brief quantified reason. "
-            f"This is a low-target event (~{demand_kw:.2f} kW), so explain the minimal action needed to meet that target. "
+            f"This is a low-capacity-reference event (~{demand_kw:.2f} kW), so avoid overreaction. "
+            "The VPP success criterion is keeping non-AC appliances out of the VPP window. "
             "Do not quote the full whole-home flexible-load estimate as if all of it must be curtailed."
         )
     target_text = ""
     if demand_kw is not None and demand_kw > 0:
-        target_text = f" VPP target is about {demand_kw:.2f} kW."
+        target_text = f" Diagnostic flexible-load reference is about {demand_kw:.2f} kW."
     return (
         "\nBENEFIT_EXPLANATION: this price/energy-sensitive user expects a brief quantified reason. "
         f"If no price file is available, estimate impact as controllable load shifted away from VPP_WINDOW "
@@ -1259,7 +1246,7 @@ def _persona_agent_policy_text(persona_config: dict | None) -> str:
         )
     if _price_sensitive_auto_saving_mode(persona_config):
         parts.append(
-            "This user is price-sensitive and explicitly trusts automation. For a real VPP target, use the warm but still preferred edge of the comfort range before asking for extra discomfort."
+            "This user is price-sensitive and explicitly trusts automation. During a VPP event, keep non-AC appliances out of the VPP window and use only the warm still-preferred edge of the comfort range before asking for extra discomfort."
         )
     if not parts:
         return ""
@@ -2083,18 +2070,16 @@ All times are hour-of-day (0–23.9)."""
                 )
                 prompt_vpp_demand = _call_vpp_demand_agent(_prompt_vid, _prompt_q90)
         prompt_vpp_demand_kw = prompt_vpp_demand.get("target_shed_kw") if prompt_vpp_demand else None
-        prompt_vpp_demand_kwh = prompt_vpp_demand.get("target_kwh") if prompt_vpp_demand else None
         if vpp_active:
-            _dkwh = prompt_vpp_demand_kwh
             _dkw = prompt_vpp_demand_kw
             _duration_h = max(1e-6, float(vpp_event.get("end_h", 0.0) - vpp_event.get("trigger_h", 0.0))) if vpp_event else 1.0
             if _dkw:
                 _dtag = (
-                    f"  Grid target: shed ≥{_dkw:.3f}kW for this {_duration_h:.2f}h window"
-                    + (f" (equivalent consumption cap ≤{_dkwh:.2f}kWh)." if _dkwh else ".")
+                    f"  Diagnostic capacity reference: possible shed ≈{_dkw:.3f}kW for this {_duration_h:.2f}h window. "
+                    "This is not the scoring target."
                 )
             else:
-                _dtag = f"  Grid target ≤{_dkwh:.2f}kWh this {_duration_h:.2f}h window." if _dkwh else ""
+                _dtag = ""
             _cap = getattr(loop, "current_vpp_capacity", {}).get("assessment", {})
             _ctag = (
                 f" Household capacity assessment: committable={float(_cap.get('committable_kw', 0.0)):.2f}kW,"
@@ -2103,7 +2088,9 @@ All times are hour-of-day (0–23.9)."""
             )
             vpp_tag = (
                 f"  *** VPP_ACTIVE (event {vpp_id}, VPP_WINDOW={vpp_window}): "
-                f"reduce load!{_dtag}{_ctag}  User will score your response ***"
+                "success criterion is no present non-AC appliance scheduled or run inside this window; "
+                "AC may be adjusted only within user comfort/consent. "
+                f"{_dtag}{_ctag}  User will score comfort, consent, and appliance avoidance. ***"
             )
         else:
             vpp_tag = ""
@@ -2617,33 +2604,20 @@ All times are hour-of-day (0–23.9)."""
             _attach_event_baseline_shed(_shed_context, ev, loop_ref.power_trace_rows)
             _update_event_reference_shed_diagnostics(_shed_context)
             _actual_shed_kwh = _shed_context.get("actual_shed_kwh")
-            _achieve_ratio = None
-            _achieved = None
-            _target_mode = "unknown"
-            _success_text = ""
-            if _actual_shed_kwh is not None and _target_shed_kwh is not None and float(_target_shed_kwh or 0.0) > 1e-9:
-                _achieve_ratio = round(_actual_shed_kwh / float(_target_shed_kwh), 4)
-                _achieved = _actual_shed_kwh + 1e-9 >= float(_target_shed_kwh)
-                _target_mode = "shed"
-                _success_text = "shed_ratio >= 1 means success"
-            elif _target_shed_kwh is not None and float(_target_shed_kwh or 0.0) > 1e-9:
-                _target_mode = "shed_requires_counterfactual"
-                _success_text = (
-                    "actual shed is unavailable without a same-run no-DR counterfactual; "
-                    "judge actual VPP-window energy and policy actions instead"
-                )
-            elif _target_kwh is not None:
-                _achieved = _actual_kwh <= float(_target_kwh) + 1e-9
-                if float(_target_kwh) > 1e-9:
-                    _achieve_ratio = round(_actual_kwh / float(_target_kwh), 4)
-                _target_mode = "energy_cap"
-                _success_text = "cap_ratio <= 1 means success"
+            _overlap_services = _non_ac_appliances_during_vpp(appliance_summary)
+            _achieve_ratio = 0.0 if _overlap_services else 1.0
+            _achieved = not _overlap_services
+            _target_mode = "non_ac_appliance_avoidance"
+            _success_text = (
+                "success means no present non-AC appliance is scheduled or run inside the VPP window"
+            )
             _achievement_text = (
-                "VPP target ACHIEVED; do not describe this event as missed."
+                "VPP appliance-avoidance criterion ACHIEVED; do not describe this event as missed."
                 if _achieved is True
-                else "VPP target NOT achieved; it is fair to describe this event as missed."
-                if _achieved is False
-                else "VPP target achievement unknown."
+                else (
+                    "VPP appliance-avoidance criterion NOT achieved; non-AC appliance(s) "
+                    f"ran during the event: {', '.join(_overlap_services)}."
+                )
             )
             vpp_result_context = {
                 "event_id": ev["id"],
@@ -2665,6 +2639,8 @@ All times are hour-of-day (0–23.9)."""
                 "target_shed_kw": _demand.get("target_shed_kw", None),
                 "achievement_ratio": _achieve_ratio,
                 "achieved": _achieved,
+                "non_ac_appliances_during_vpp": _overlap_services,
+                "appliance_avoidance_success": _achieved,
                 "success_text": _success_text,
                 "achievement_text": _achievement_text,
             }
@@ -2714,7 +2690,11 @@ All times are hour-of-day (0–23.9)."""
                 vpp_result_context=vpp_result_context,
                 policy_control_context=policy_control_context,
                 human_mode=human_mode)
-            if r.get("source") != "roleplay_llm" and not human_mode:
+            allowed_score_sources = {"roleplay_llm"}
+            _persona_type = ((persona_config or {}).get("meta") or {}).get("persona_type")
+            if _persona_type in {"multi_user_household", "multi_user_household_independent_roleplay"}:
+                allowed_score_sources.update({"multi_agent_discussion", "multi_user_independent_mean"})
+            if r.get("source") not in allowed_score_sources and not human_mode:
                 raise RuntimeError(f"role-play LLM required, got {r.get('source')}")
             sc = r.get("score") or 0.0
             comfort_sc = r.get("comfort_score")
@@ -2937,8 +2917,8 @@ All times are hour-of-day (0–23.9)."""
                     loop.current_vpp_demand_kw = _vpp_demand.get("target_shed_kw", 0.0)
                     print(
                         f"  [VPP Grid Agent] {vid} "
-                        f"shed_target={loop.current_vpp_demand_kw:.3f}kW "
-                        f"(cap={_vpp_demand['target_kwh']:.3f}kWh)  "
+                        f"diagnostic_shed_ref={loop.current_vpp_demand_kw:.3f}kW "
+                        f"(diagnostic_cap={_vpp_demand['target_kwh']:.3f}kWh)  "
                         f"[{_vpp_demand['reason']}]"
                     )
                     print(f"  {'='*62}")
@@ -2947,12 +2927,11 @@ All times are hour-of-day (0–23.9)."""
                         f"(Day{day_num}  {ev_window_text})"
                     )
                     print(
-                        f"    Goal : Shed ≥{loop.current_vpp_demand_kw:.3f} kW "
-                        f"for this {ev_duration_h:.2f}h window "
-                        f"(equivalent consumption cap ≤{_vpp_demand['target_kwh']:.2f} kWh)"
+                        "    Goal : Keep every present non-AC appliance out of this "
+                        f"{ev_duration_h:.2f}h VPP window; do not score by shed/cap target"
                     )
-                    print(f"    AC   : Raise setpoint {_ac_sp_vpp_min:.1f}-{_ac_sp_vpp_max:.1f}°C  (pre-cool before, drift during)")
-                    print(f"    Other: Shift washer/EWH preheat/EV delay away from {_event_window_text(triggered_vpp)}")
+                    print(f"    AC   : May adjust only within user comfort/consent bounds")
+                    print(f"    Other: Shift washer/dishwasher/dryer/EWH/EV away from {_event_window_text(triggered_vpp)}")
                     print(f"  {'='*62}")
                 elif triggered_daily_plan:
                     print(
@@ -3179,6 +3158,10 @@ All times are hour-of-day (0–23.9)."""
                     _cap_rows = loop.vpp_capacity_window_by_id.get(ev["id"], [])
                     if _cap_rows:
                         result["capacity_window_summary"] = _capacity_window_summary_from_rows(_cap_rows)
+                    _event_day_idx = max(0, min(sim_days - 1, int(ev.get("day", ev_idx)) - 1))
+                    # Attach per-appliance VPP summary before annotating VPP success.
+                    if loop.appliance_suite is not None:
+                        result["appliance_summary"] = loop.appliance_suite.vpp_day_summary(_event_day_idx)
                     if method != "no_dr":
                         _attach_event_baseline_shed(result, ev, loop.power_trace_rows)
                     _update_event_reference_shed_diagnostics(result)
@@ -3189,11 +3172,7 @@ All times are hour-of-day (0–23.9)."""
                     )
                     # Store all agent decisions for this day
                     result["vpp_trigger_actions"] = loop.vpp_trigger_actions.get(ev["id"], {})
-                    _event_day_idx = max(0, min(sim_days - 1, int(ev.get("day", ev_idx)) - 1))
                     result["day_decisions"] = loop.day_agent_decisions[_event_day_idx]
-                    # Attach per-appliance VPP summary to event log
-                    if loop.appliance_suite is not None:
-                        result["appliance_summary"] = loop.appliance_suite.vpp_day_summary(_event_day_idx)
                     loop.vpp_event_log.append(result)
                     loop.vpp_scored.add(ev["id"])
                     # Update memory context for subsequent LLM calls.
@@ -3349,21 +3328,14 @@ All times are hour-of-day (0–23.9)."""
                         for e in vpp_events]
         _vpp_targets_kw = [loop.vpp_demand_by_id.get(e["id"], {}).get("target_shed_kw", 0.0)
                            for e in vpp_events]
-        _vpp_shed_targets = [loop.vpp_demand_by_id.get(e["id"], {}).get("target_shed_kwh", 0.0)
-                             for e in vpp_events]
-        _vpp_actual_shed_values = []
-        for e in loop.vpp_event_log:
-            if e.get("actual_shed_kwh") is None:
-                continue
-            try:
-                _vpp_actual_shed_values.append(max(0.0, float(e.get("actual_shed_kwh"))))
-            except (TypeError, ValueError):
-                continue
-        _vpp_actual_shed_total = sum(_vpp_actual_shed_values)
-        _vpp_shed_target_total = sum(v for v in _vpp_shed_targets if v > 0)
+        _vpp_success_flags = [
+            bool(e.get("target_achieved"))
+            for e in loop.vpp_event_log
+            if e.get("target_achieved") is not None
+        ]
         _vpp_achieve_ratio = (
-            round(_vpp_actual_shed_total / _vpp_shed_target_total, 4)
-            if _vpp_shed_target_total > 0 and _vpp_actual_shed_values else None
+            round(sum(1 for flag in _vpp_success_flags if flag) / len(_vpp_success_flags), 4)
+            if _vpp_success_flags else None
         )
         # Per-day completion list (for JSON export and final summary)
         _task_per_day = []
@@ -3513,6 +3485,7 @@ All times are hour-of-day (0–23.9)."""
         vpp_demand_targets=_vpp_targets,
         vpp_demand_targets_kw=_vpp_targets_kw,
         vpp_demand_achievement_ratio=_vpp_achieve_ratio,
+        vpp_appliance_avoidance_success_rate=_vpp_achieve_ratio,
         ev_target_reached_rate=round(ev_target_rate, 3),
         ewh_preheat_used_rate=round(ewh_preheat_rate, 3),
         appliance_results=appl_results_dict,

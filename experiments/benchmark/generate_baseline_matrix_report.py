@@ -223,8 +223,11 @@ def _report_energy_metric(
     energy_kwh_total: float | None,
     energy_kwh_per_day: float | None,
     electricity_cost_eur: float | None,
+    days: float | None = None,
 ) -> tuple[float | None, str]:
     if city.strip().lower() == "germany" and electricity_cost_eur is not None:
+        if days and days > 0:
+            return electricity_cost_eur / days, "electricity_cost_eur_per_day"
         return electricity_cost_eur, "electricity_cost_eur"
     if energy_kwh_per_day is not None:
         return energy_kwh_per_day, "energy_kwh_per_day"
@@ -309,6 +312,7 @@ def _build_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
             energy_kwh_total=energy_kwh_total,
             energy_kwh_per_day=energy_kwh_per_day,
             electricity_cost_eur=electricity_cost_eur,
+            days=days,
         )
         shift_success = result.get(
             "appliance_shift_success_rate",
@@ -397,6 +401,11 @@ def _build_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
                 "energy_kwh_total": energy_kwh_total,
                 "energy_kwh_per_day": energy_kwh_per_day,
                 "electricity_cost_eur": electricity_cost_eur,
+                "electricity_cost_eur_per_day": (
+                    electricity_cost_eur / days
+                    if electricity_cost_eur is not None and days and days > 0
+                    else None
+                ),
                 "report_energy_metric": report_metric,
                 "report_energy_metric_name": report_metric_name,
                 "vpp_window_energy_kwh": _as_float(
@@ -469,13 +478,17 @@ def _build_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
 
 def _persona_present_appliance_services(persona_id: str) -> set[str]:
     persona_path = _PROJECT_ROOT / "energybridge" / "roleplay" / "personas" / f"{persona_id}.json"
+    household_path = _PROJECT_ROOT / "energybridge" / "roleplay" / "households" / f"{persona_id}.json"
+    if not persona_path.exists() and household_path.exists():
+        persona_path = household_path
     try:
         persona = json.loads(persona_path.read_text(encoding="utf-8"))
     except Exception:
         return set()
     services = set()
+    controllable_services = {"washer", "dishwasher", "dryer", "water_heater", "ev"}
     for name, cfg in (persona.get("appliances") or {}).items():
-        if name == "ac" or not isinstance(cfg, dict):
+        if name not in controllable_services or not isinstance(cfg, dict):
             continue
         if bool(cfg.get("present", False)):
             services.add(str(name))
@@ -602,8 +615,17 @@ def _report_energy_label(df: pd.DataFrame) -> tuple[str, str, str, bool]:
     metric_names = {str(name) for name in df["report_energy_metric_name"].dropna().unique()}
     if metric_names == {"electricity_cost_eur"}:
         return "Persona x Method Electricity Cost", "Total electricity cost EUR (lower is better)", ".2f", True
+    if metric_names == {"electricity_cost_eur_per_day"}:
+        return "Persona x Method Daily Electricity Cost", "Daily electricity cost EUR/day (lower is better)", ".2f", True
     if metric_names == {"energy_kwh_per_day"}:
         return "Persona x Method Daily Energy", "Daily energy kWh/day (lower is better)", ".2f", True
+    if metric_names <= {"energy_kwh_per_day", "electricity_cost_eur_per_day"}:
+        return (
+            "Persona x Method Daily Energy / Cost",
+            "Daily metric: Tianjin kWh/day, Germany EUR/day (lower is better)",
+            ".2f",
+            True,
+        )
     return "Persona x Method Energy/Cost", "Energy/cost report metric (lower is better)", ".2f", True
 
 
@@ -611,8 +633,12 @@ def _report_energy_quick_read_label(df: pd.DataFrame) -> str:
     metric_names = {str(name) for name in df["report_energy_metric_name"].dropna().unique()}
     if metric_names == {"electricity_cost_eur"}:
         return "Lowest average electricity cost"
+    if metric_names == {"electricity_cost_eur_per_day"}:
+        return "Lowest average daily electricity cost"
     if metric_names == {"energy_kwh_per_day"}:
         return "Lowest average daily energy"
+    if metric_names <= {"energy_kwh_per_day", "electricity_cost_eur_per_day"}:
+        return "Lowest average daily energy/cost metric"
     return "Lowest average energy/cost metric"
 
 
@@ -625,6 +651,7 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
                 "report_energy_metric",
                 "energy_kwh_per_day",
                 "electricity_cost_eur",
+                "electricity_cost_eur_per_day",
                 "energy_kwh_total",
                 "vpp_window_energy_per_hour_kwh",
                 "vpp_no_dr_window_energy_per_hour_kwh",
@@ -682,6 +709,7 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
                     "report_energy_metric_name",
                     "energy_kwh_per_day",
                     "electricity_cost_eur",
+                    "electricity_cost_eur_per_day",
                     "energy_kwh_total",
                     "vpp_window_energy_per_hour_kwh",
                     "vpp_no_dr_window_energy_per_hour_kwh",
@@ -716,22 +744,12 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
     lines.append("")
     best = summary["user_pref_score"].idxmax()
     lowest_energy = summary["report_energy_metric"].idxmin()
-    has_no_dr_reduction = (
-        "vpp_reduction_basis" in df
-        and (df["vpp_reduction_basis"] == "no_dr_counterfactual_window_energy_per_hour").any()
-    )
-    if has_no_dr_reduction:
-        best_vpp = summary["vpp_reduction_kwh"].idxmax()
-    else:
-        best_vpp = summary["vpp_window_energy_per_hour_kwh"].idxmin()
+    best_vpp = summary["vpp_window_energy_per_hour_kwh"].idxmin()
     best_shift = summary["appliance_task_completion_rate"].idxmax()
     cleanest_raw_actions = summary["raw_absent_appliance_action_count"].idxmin()
     lines.append(f"- Best average user score: **{best}**")
     lines.append(f"- {_report_energy_quick_read_label(df)}: **{lowest_energy}**")
-    if has_no_dr_reduction:
-        lines.append(f"- Highest average VPP energy reduction vs No-DR: **{best_vpp}**")
-    else:
-        lines.append(f"- Lowest average VPP-window energy per hour: **{best_vpp}**")
+    lines.append(f"- Lowest average VPP-window energy per hour: **{best_vpp}**")
     lines.append(f"- Best average policy appliance output completion: **{best_shift}**")
     lines.append(f"- Fewest actions targeting absent appliances: **{cleanest_raw_actions}**")
     lines.append("")
@@ -826,20 +844,10 @@ def _plot_report(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
 
     score_matrix = _metric_matrix("user_pref_score")
     energy_matrix = _metric_matrix("report_energy_metric")
-    has_no_dr_reduction = (
-        "vpp_reduction_basis" in df
-        and (df["vpp_reduction_basis"] == "no_dr_counterfactual_window_energy_per_hour").any()
-    )
-    if has_no_dr_reduction:
-        vpp_metric_col = "vpp_reduction_kwh"
-        vpp_title = "Persona x Method VPP Energy Reduction"
-        vpp_cbar = "Reduced kWh per VPP hour vs No-DR (higher is better)"
-        vpp_lower_is_better = False
-    else:
-        vpp_metric_col = "vpp_window_energy_per_hour_kwh"
-        vpp_title = "Persona x Method VPP-Window Energy"
-        vpp_cbar = "Actual kWh per VPP hour (lower is better)"
-        vpp_lower_is_better = True
+    vpp_metric_col = "vpp_window_energy_per_hour_kwh"
+    vpp_title = "Persona x Method VPP-Window Energy"
+    vpp_cbar = "Actual kWh per VPP hour (lower is better)"
+    vpp_lower_is_better = True
     vpp_energy_matrix = _metric_matrix(vpp_metric_col)
     coverage_matrix = _metric_matrix("appliance_task_completion_rate")
     energy_title, energy_cbar_label, energy_fmt, energy_lower_is_better = _report_energy_label(df)
@@ -919,8 +927,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--summary-json",
-        default="",
-        help="Optional explicit matrix summary JSON path. Overrides --date/--city/--days discovery.",
+        nargs="+",
+        default=None,
+        help="Optional explicit matrix summary JSON path(s). Multiple paths are combined into one report.",
     )
     parser.add_argument(
         "--output-dir",
@@ -931,6 +940,11 @@ def parse_args() -> argparse.Namespace:
         "--artifact-prefix",
         default="",
         help="Optional prefix for generated report artifact filenames, e.g. 3day_tianjin.",
+    )
+    parser.add_argument(
+        "--append-city-label",
+        action="store_true",
+        help="Append city to persona/household row labels. Auto-enabled when combining multiple cities.",
     )
     parser.add_argument(
         "--horizon",
@@ -952,25 +966,32 @@ def main() -> None:
         if not candidate.is_dir():
             raise FileNotFoundError(f"Date directory not found: {args.date}")
         date_dir = candidate
-    summary_json = (
-        Path(args.summary_json)
+    summary_paths = (
+        [Path(path) for path in args.summary_json]
         if args.summary_json
-        else _find_summary_json(results_root, date_dir, args.city, args.horizon, args.days)
+        else [_find_summary_json(results_root, date_dir, args.city, args.horizon, args.days)]
     )
-    if not summary_json.exists():
-        raise FileNotFoundError(f"Summary JSON not found: {summary_json}")
-    summary_root = summary_json.parent
+    for summary_json in summary_paths:
+        if not summary_json.exists():
+            raise FileNotFoundError(f"Summary JSON not found: {summary_json}")
+    summary_root = summary_paths[0].parent
     report_dir = Path(args.output_dir) if args.output_dir else summary_root / "baseline_matrix_report"
     report_dir.mkdir(parents=True, exist_ok=True)
 
-    rows = _load_matrix_rows(summary_json)
+    rows: list[dict[str, Any]] = []
+    for summary_json in summary_paths:
+        rows.extend(_load_matrix_rows(summary_json))
     df = _build_dataframe(rows)
     df = df.copy()
+    city_values = {str(city) for city in df["city"].dropna().astype(str)}
+    if args.append_city_label or len(city_values) > 1:
+        df["persona_id"] = df["persona_id"].astype(str) + " @ " + df["city"].astype(str)
     method_text = df["method"].astype(str)
     df["method_label"] = method_text.map(METHOD_LABEL).fillna(method_text)
     display_df = _report_display_dataframe(df)
 
-    md_path = _write_markdown(display_df, report_dir, summary_json, args.artifact_prefix)
+    source_label = ", ".join(str(path) for path in summary_paths)
+    md_path = _write_markdown(display_df, report_dir, Path(source_label), args.artifact_prefix)
     csv_path = _write_csv(display_df, report_dir, args.artifact_prefix)
     png_path = _plot_report(display_df, report_dir, args.artifact_prefix)
 

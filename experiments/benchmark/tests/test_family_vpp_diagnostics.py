@@ -18,6 +18,11 @@ def test_reference_pbase_minus_actual_is_diagnostic_not_actual_shed() -> None:
         "demand_target_shed_kwh": 1.0,
         "actual_kwh": 1.3298,
         "capacity_window_summary": {"recommended_bid_energy_kwh": 0.5453},
+        "appliance_summary": {
+            "washer": {"present": True, "ran_during_vpp": False},
+            "water_heater": {"present": True, "ran_during_vpp": False},
+            "ev": {"present": False, "ran_during_vpp": False},
+        },
     }
 
     _update_event_reference_shed_diagnostics(event)
@@ -26,9 +31,46 @@ def test_reference_pbase_minus_actual_is_diagnostic_not_actual_shed() -> None:
     assert event["reference_pbase_minus_actual_kwh"] == pytest.approx(7.5232)
     assert event["capacity_limited_reference_shed_kwh"] == pytest.approx(0.5453)
     assert event["actual_shed_kwh"] is None
-    assert event["target_mode"] == "shed_requires_counterfactual"
-    assert event["target_achieved"] is None
-    assert event["demand_achievement_ratio"] is None
+    assert event["target_mode"] == "non_ac_appliance_avoidance"
+    assert event["target_achieved"] is True
+    assert event["demand_achievement_ratio"] == 1.0
+
+
+def test_vpp_success_depends_on_non_ac_appliance_avoidance_not_shed_target() -> None:
+    event = {
+        "demand_target_shed_kwh": 99.0,
+        "actual_shed_kwh": 0.0,
+        "actual_kwh": 50.0,
+        "appliance_summary": {
+            "washer": {"present": True, "ran_during_vpp": False},
+            "dishwasher": {"present": True, "ran_during_vpp": False},
+            "dryer": {"present": True, "ran_during_vpp": False},
+            "water_heater": {"present": True, "ran_during_vpp": False},
+            "ev": {"present": True, "ran_during_vpp": False},
+        },
+    }
+
+    _annotate_event_demand_achievement(event)
+
+    assert event["target_achieved"] is True
+    assert event["vpp_non_ac_appliances_during_event"] == []
+
+
+def test_vpp_fails_when_non_ac_appliance_runs_during_window() -> None:
+    event = {
+        "demand_target_shed_kwh": 1.0,
+        "actual_shed_kwh": 10.0,
+        "appliance_summary": {
+            "washer": {"present": True, "ran_during_vpp": False},
+            "water_heater": {"present": True, "ran_during_vpp": True},
+        },
+    }
+
+    _annotate_event_demand_achievement(event)
+
+    assert event["target_achieved"] is False
+    assert event["demand_achievement_ratio"] == 0.0
+    assert event["vpp_non_ac_appliances_during_event"] == ["water_heater"]
 
 
 def test_no_dr_routine_schedules_shiftables_without_controller_policy() -> None:

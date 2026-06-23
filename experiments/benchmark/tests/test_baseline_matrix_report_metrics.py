@@ -5,6 +5,7 @@ import pytest
 from experiments.benchmark.generate_baseline_matrix_report import (
     _build_dataframe,
     _observed_appliance_action_services,
+    _persona_present_appliance_services,
     _vpp_window_energy_per_hour,
 )
 
@@ -103,3 +104,13 @@ def test_observed_services_require_ev_charge_window_not_mode_only() -> None:
     assert _observed_appliance_action_services(result) == {"ev"}
     result["vpp_event_log"][0]["day_decisions"] = []
     assert _observed_appliance_action_services(result) == set()
+
+
+def test_household_present_services_are_read_from_household_json() -> None:
+    assert _persona_present_appliance_services("household_s1_dual_commuter_standard") == {
+        "washer",
+        "dryer",
+        "dishwasher",
+        "water_heater",
+        "ev",
+    }

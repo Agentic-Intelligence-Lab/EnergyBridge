@@ -471,7 +471,7 @@ def build_vpp_preference_memory_notes(past_events: list | None, persona: dict | 
         )
     if any(e.get("target_achieved") is False for e in recent) and recent_clean and not _low_disruption_strategy_language(persona):
         notes.append(
-            "If a future VPP target is missed without comfort complaints, strengthen controllable load shifting and use the warmest still-comfortable AC setting inside the preferred range."
+            "If a future VPP event has non-AC appliance activity inside the VPP window without comfort complaints, strengthen controllable load shifting and use the warmest still-comfortable AC setting inside the preferred range."
         )
 
     deduped: list[str] = []
@@ -1387,23 +1387,27 @@ def score_user_preference(
             target_mode = vpp_result_context.get("target_mode", "unknown")
             success_text = vpp_result_context.get("success_text", "")
             achievement_text = vpp_result_context.get("achievement_text", "")
-            if ratio is not None:
+            if target_mode == "non_ac_appliance_avoidance":
+                non_ac = vpp_result_context.get("non_ac_appliances_during_vpp") or []
                 rationale += (
                     f" | Event-level VPP result: mode={target_mode}, achieved={achieved_text}, "
-                    f"actual_shed={vpp_result_context.get('actual_shed_kwh', 'n/a')}kWh, "
-                    f"target_shed={vpp_result_context.get('target_shed_kwh', 'n/a')}kWh, "
-                    f"ratio={ratio}; {success_text}. {achievement_text}"
+                    f"non_ac_appliances_during_vpp={non_ac or 'none'}, "
+                    f"actual_window_kwh={vpp_result_context.get('actual_kwh', 'n/a')}kWh diagnostic only; "
+                    f"{success_text}. {achievement_text}. "
+                    "Do not compare against shed/cap targets when judging VPP success."
+                )
+            elif ratio is not None:
+                rationale += (
+                    f" | Event-level VPP result: legacy mode={target_mode}, achieved={achieved_text}, "
+                    f"legacy_metric={ratio}; {success_text}. {achievement_text}. "
+                    "For current benchmarks, do not compare shed/cap targets; use non-AC appliance avoidance."
                 )
             else:
-                target_shed = vpp_result_context.get("target_shed_kwh")
-                shed_note = (
-                    f"target_shed={target_shed}kWh, actual_shed unavailable without same-run no-DR counterfactual, "
-                    if target_shed not in (None, "n/a") else ""
-                )
                 rationale += (
                     f" | Event-level VPP result: mode={target_mode}, achieved={achieved_text}, "
-                    f"{shed_note}actual_kwh={vpp_result_context.get('actual_kwh', 'n/a')}kWh, "
-                    f"target_cap={vpp_result_context.get('target_kwh', 'n/a')}kWh; {success_text}. {achievement_text}"
+                    f"actual_window_kwh={vpp_result_context.get('actual_kwh', 'n/a')}kWh diagnostic only; "
+                    f"{success_text}. {achievement_text}. "
+                    "For current benchmarks, VPP success is non-AC appliance avoidance, not shed/cap target comparison."
                 )
         if not washer_completed:
             rationale += " | NOTE: washing machine task was NOT completed today."
@@ -1574,7 +1578,7 @@ def score_user_preference(
                     result["score"] = 4
                     result["label"] = "satisfied"
                 if misleading_miss:
-                    result["comment"] = "VPP target achieved; comfort/routine were preserved."
+                    result["comment"] = "VPP appliance criterion achieved; comfort/routine were preserved."
                 result["factual_consistency_guard"] = "corrected_achieved_vpp_missed_label"
         if skipped_task_count > 0:
             skipped_names = ", ".join(skipped_devices)

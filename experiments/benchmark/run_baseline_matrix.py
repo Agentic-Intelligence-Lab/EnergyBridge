@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -249,6 +250,7 @@ def _summarize_job(job: Job, status: str, return_code: int | None, elapsed_s: fl
         "vpp_energy_reduction_avg_per_hour_kwh": _metric(data, "vpp_energy_reduction_avg_per_hour_kwh"),
         "vpp_energy_reduction_basis": _metric(data, "vpp_energy_reduction_basis"),
         "vpp_demand_achievement_ratio": _metric(data, "vpp_demand_achievement_ratio"),
+        "vpp_appliance_avoidance_success_rate": _metric(data, "vpp_appliance_avoidance_success_rate"),
         "user_pref_score": _metric(data, "user_pref_score"),
         "appliance_task_completion_rate": _metric(data, "appliance_task_completion_rate"),
         "physical_appliance_task_completion_rate": _metric(data, "physical_appliance_task_completion_rate"),
@@ -418,6 +420,12 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="Limit number of jobs, useful for a quick smoke check. Default: no limit.",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of jobs to run in parallel. Default: 1.",
+    )
     return parser.parse_args()
 
 
@@ -429,6 +437,8 @@ def main() -> None:
         raise SystemExit("--days must be >= 1")
     if args.vpp_duration_hours <= 0:
         raise SystemExit("--vpp-duration-hours must be > 0")
+    if args.workers < 1:
+        raise SystemExit("--workers must be >= 1")
     if not args.vpp_events_json and (float(args.vpp_start_hour) % 24.0) + float(args.vpp_duration_hours) > 24.0:
         raise SystemExit("VPP windows crossing midnight are not supported yet; choose start+duration <= 24")
     days = args.days if args.days is not None else (7 if args.city.lower() == "germany" else 3)
@@ -462,13 +472,32 @@ def main() -> None:
         return
 
     summary_rows: list[dict[str, Any]] = []
-    for idx, job in enumerate(jobs, start=1):
-        print(f"\n>>> Matrix progress: {idx}/{len(jobs)}", flush=True)
-        row = _run_job(job, resume=args.resume)
-        summary_rows.append(row)
-        _write_summaries(summary_rows, summary_json, summary_csv)
-        if args.fail_fast and row["status"] == "failed":
-            raise SystemExit(f"Stopping after failed job: {job.output_dir}")
+    if args.workers == 1:
+        for idx, job in enumerate(jobs, start=1):
+            print(f"\n>>> Matrix progress: {idx}/{len(jobs)}", flush=True)
+            row = _run_job(job, resume=args.resume)
+            summary_rows.append(row)
+            _write_summaries(summary_rows, summary_json, summary_csv)
+            if args.fail_fast and row["status"] == "failed":
+                raise SystemExit(f"Stopping after failed job: {job.output_dir}")
+    else:
+        print(f"\n>>> Running with {args.workers} parallel workers", flush=True)
+        with ThreadPoolExecutor(max_workers=args.workers) as executor:
+            future_to_job = {executor.submit(_run_job, job, resume=args.resume): job for job in jobs}
+            for idx, future in enumerate(as_completed(future_to_job), start=1):
+                job = future_to_job[future]
+                try:
+                    row = future.result()
+                except Exception as exc:
+                    row = _summarize_job(job, "failed", None, 0.0)
+                    row["error"] = str(exc)
+                print(f"\n>>> Matrix completed: {idx}/{len(jobs)} {job.output_dir.name} status={row['status']}", flush=True)
+                summary_rows.append(row)
+                _write_summaries(summary_rows, summary_json, summary_csv)
+                if args.fail_fast and row["status"] == "failed":
+                    for pending in future_to_job:
+                        pending.cancel()
+                    raise SystemExit(f"Stopping after failed job: {job.output_dir}")
 
     n_failed = sum(1 for row in summary_rows if row["status"] == "failed")
     n_skipped = sum(1 for row in summary_rows if row["status"] == "skipped_done")
