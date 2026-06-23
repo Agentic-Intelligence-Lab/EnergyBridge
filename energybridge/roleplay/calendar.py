@@ -160,6 +160,17 @@ def hourly_occupancy_from_persona(persona: dict[str, Any], days: int) -> list[li
     """
     calendar = persona.get("calendar") or {}
     calendar_days = calendar.get("days") or []
+    precomputed = calendar.get("household_occupancy_hourly") or calendar.get("occupancy_hourly")
+    if precomputed:
+        out: list[list[float]] = []
+        rows = list(precomputed)
+        for day_idx in range(max(1, int(days))):
+            src = rows[day_idx % len(rows)] if rows else [1.0] * 24
+            values = list(src)[:24]
+            while len(values) < 24:
+                values.append(values[-1] if values else 1.0)
+            out.append([round(max(0.0, min(1.0, float(value))), 4) for value in values])
+        return out
     if not calendar_days:
         return None
 

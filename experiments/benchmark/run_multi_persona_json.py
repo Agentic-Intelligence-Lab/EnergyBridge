@@ -30,7 +30,23 @@ if str(_BENCH_DIR) not in sys.path:
 
 import user_pref_scorer as _ups
 import family_runner as fr
+from energybridge.data.vpp_events import describe_vpp_events, load_vpp_events_config, make_daily_vpp_events
+from energybridge.roleplay.calendar import attach_calendar
+from energybridge.roleplay.households import (
+    build_household_persona,
+    list_household_ids,
+    load_household_config,
+    load_household_member_personas,
+)
 from multi_agent_pool import PersonaAgent, DiscussionPool
+from run_persona_json import (
+    ENERGYBRIDGE_METHOD_ID,
+    _canonical_method,
+    _controller_method,
+    _default_days_for_city,
+    _default_start_date_for_city,
+    _prepare_run_assets,
+)
 
 PERSONA_DIR = _PROJECT_ROOT / "energybridge" / "roleplay" / "personas"
 
@@ -42,10 +58,10 @@ PERSONA_DIR = _PROJECT_ROOT / "energybridge" / "roleplay" / "personas"
 def _load_persona_json(persona_arg: str) -> dict:
     p = Path(persona_arg)
     if p.exists() and p.suffix == ".json":
-        return json.loads(p.read_text(encoding="utf-8"))
+        return attach_calendar(json.loads(p.read_text(encoding="utf-8")), PERSONA_DIR)
     candidate = PERSONA_DIR / f"{persona_arg}.json"
     if candidate.exists():
-        return json.loads(candidate.read_text(encoding="utf-8"))
+        return attach_calendar(json.loads(candidate.read_text(encoding="utf-8")), PERSONA_DIR)
     raise FileNotFoundError(
         f"Persona '{persona_arg}' not found. Checked: {p}, {candidate}"
     )
@@ -100,6 +116,25 @@ def _household_pref_text(personas: list[dict]) -> str:
     )
 
 
+def _household_run_label(household_id: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in household_id).strip("_").lower()
+
+
+def _default_multi_output_dir(
+    household_id: str,
+    method: str,
+    city: str,
+    days: int,
+    mpc_horizon: int = 6,
+) -> Path:
+    method = _canonical_method(method)
+    token = f"{method}_H{int(mpc_horizon)}" if method in ("mpc_dynamic", "mpc_ep") else method
+    run_name = f"{_household_run_label(household_id)}_{token}_{city.lower()}_{int(days)}days"
+    from datetime import date
+
+    return DEFAULT_BENCHMARK_RESULTS_DIR / date.today().isoformat() / run_name
+
+
 def _make_patched_functions(pool: DiscussionPool, transcripts: dict, orig_score: Any):
     """Return patched get_user_preference_input and score_user_preference."""
 
@@ -121,7 +156,7 @@ def _make_patched_functions(pool: DiscussionPool, transcripts: dict, orig_score:
         mean_temp_c=25.0, pmv_ok_fraction=0.8,
         energy_kwh_per_day=5.0, agent_setpoint_c=26.5,
         event_index=1, user_preference_text="", agent_reason="",
-        persona=None, log_path=None,
+        persona=None, log_path=None, **kwargs,
     ) -> dict:
         # PMV-baseline: delegate to original rule-based scorer
         if method == "pmv":
@@ -131,17 +166,44 @@ def _make_patched_functions(pool: DiscussionPool, transcripts: dict, orig_score:
                 energy_kwh_per_day=energy_kwh_per_day,
                 agent_setpoint_c=agent_setpoint_c,
                 event_index=event_index,
+                user_preference_text=user_preference_text,
+                agent_reason=agent_reason,
+                persona=persona,
+                log_path=log_path,
+                **kwargs,
             )
         # Agent scoring: household discussion
         n = len(pool.agents)
         print(f"\n  {'='*62}")
         print(f"  [Multi-user discussion] VPP event {event_index} ended - {n} household members discuss score")
         print(f"  {'='*62}")
+        appliance_summary = kwargs.get("appliance_summary") or {}
+        policy_control_context = dict(kwargs.get("policy_control_context") or {})
+        present_services = {
+            name
+            for name, info in appliance_summary.items()
+            if name in {"washer", "dishwasher", "dryer", "water_heater", "ev"}
+            and isinstance(info, dict)
+            and bool(info.get("present"))
+        }
+        emitted_services = set(policy_control_context.get("emitted_services") or [])
+        action_space_services = set(policy_control_context.get("action_space_services") or [])
+        if present_services:
+            policy_control_context["present_services"] = sorted(present_services)
+            policy_control_context["missing_present_services"] = sorted(present_services - emitted_services)
+            if action_space_services:
+                policy_control_context["unsupported_present_services"] = sorted(present_services - action_space_services)
+
+        vpp_result_context = kwargs.get("vpp_result_context") or {}
         outcome = {
             "setpoint": agent_setpoint_c,
             "mean_temp_c": mean_temp_c,
             "energy_kwh_per_day": energy_kwh_per_day,
             "agent_reason": agent_reason,
+            "appliance_summary": appliance_summary,
+            "policy_control_context": policy_control_context,
+            "vpp_context": kwargs.get("vpp_context") or {},
+            "vpp_result_context": vpp_result_context,
         }
         score, reason, transcript = pool.discuss_score(outcome, event_index)
         transcripts.setdefault("score", {})[event_index] = transcript
@@ -180,17 +242,14 @@ def _wrap_text(text: str, width: int = 54) -> list:
 
 
 def _vpp_ratio_simple(rd: dict) -> str:
-    """One-line summary of VPP demand achievement (from event log)."""
+    """One-line summary of VPP non-AC appliance avoidance."""
     evts = rd.get("vpp_event_log", [])
     parts = []
     for e in evts:
         vid = e.get("id", "?")
-        a   = e.get("actual_kwh")
-        t   = e.get("demand_target_kwh")
-        if a is not None and t is not None and t > 0:
-            r   = round(a / t, 2)
-            met = "✓" if r <= 1.0 else "✗"
-            parts.append(f"{vid}:{r:.2f}{met}")
+        achieved = e.get("target_achieved")
+        if achieved is not None:
+            parts.append(f"{vid}:{'✓' if achieved else '✗'}")
     agg = rd.get("vpp_demand_achievement_ratio")
     agg_str = f"  (overall {agg:.2f})" if isinstance(agg, float) else ""
     return ("  ".join(parts) + agg_str) if parts else "N/A"
@@ -253,7 +312,7 @@ def _write_multi_run_summary(
     Structure per VPP event:
       Strategy discussion (N rounds * M members) -> consensus preference
       Execution strategy (AC + appliances)
-      VPP demand achievement
+      VPP non-AC appliance avoidance
       Satisfaction discussion (N rounds * M members) -> consensus score
     """
     import datetime
@@ -310,13 +369,24 @@ def _write_multi_run_summary(
         ]
 
     # ── VPP event details ─────────────────────────────────────────────────
-    VPP_DEFS = [
-        {"id": "vpp1", "day": 1, "trigger_h": 18.0, "end_h": 19.0},
-        {"id": "vpp2", "day": 2, "trigger_h": 42.0, "end_h": 43.0},
-        {"id": "vpp3", "day": 3, "trigger_h": 66.0, "end_h": 67.0},
-    ]
     lines += [SEP, "  VPP Event Details (discussion -> consensus -> execution -> score)", SEP]
-    for ev_num, vdef in enumerate(VPP_DEFS, 1):
+    vpp_defs = []
+    for idx, event in enumerate(evts, 1):
+        try:
+            trigger_h = float(event.get("trigger_h", (idx - 1) * 24 + 18.0))
+        except (TypeError, ValueError):
+            trigger_h = (idx - 1) * 24 + 18.0
+        try:
+            end_h = float(event.get("end_h", trigger_h + 1.0))
+        except (TypeError, ValueError):
+            end_h = trigger_h + 1.0
+        vpp_defs.append({
+            "id": event.get("id", f"vpp{idx}"),
+            "day": int(trigger_h // 24) + 1,
+            "trigger_h": trigger_h,
+            "end_h": end_h,
+        })
+    for ev_num, vdef in enumerate(vpp_defs, 1):
         vid = vdef["id"]
         e   = next((x for x in evts if x.get("id") == vid), {})
 
@@ -329,15 +399,17 @@ def _write_multi_run_summary(
         user_input      = e.get("user_input", "")
         agent_reason    = e.get("reason", "")
 
-        # Demand achievement line — from per-event log fields
-        t_kwh = e.get("demand_target_kwh")
-        a_kwh = e.get("actual_kwh")
-        if a_kwh is not None and t_kwh is not None and t_kwh > 0:
-            ratio = round(a_kwh / t_kwh, 2)
-            met   = "met" if ratio <= 1.0 else "not met"
-            demand_str = f"target<={t_kwh:.2f}kWh  actual={a_kwh:.3f}kWh  ratio={ratio:.2f} {met}"
-        elif t_kwh is not None:
-            demand_str = f"target<={t_kwh:.2f}kWh"
+        # VPP success line: appliance avoidance, not shed/cap target matching.
+        non_ac = e.get("vpp_non_ac_appliances_during_event") or []
+        achieved = e.get("target_achieved")
+        actual = e.get("actual_kwh")
+        if achieved is not None:
+            demand_str = (
+                f"non-AC appliance avoidance={'met' if achieved else 'not met'}; "
+                f"during_vpp={non_ac or 'none'}"
+            )
+            if actual is not None:
+                demand_str += f"; actual_window={actual:.3f}kWh diagnostic"
         else:
             demand_str = "N/A"
 
@@ -397,7 +469,7 @@ def _write_multi_run_summary(
     per_day_shift_str = "  ".join(f"Day{i+1}:{int(v*100)}%" for i, v in enumerate(per_day_shift)) if per_day_shift else "N/A"
     lines += [
         f"  VPP-window energy    : {f'{vpp_e:.3f} kWh (3 events total)' if isinstance(vpp_e, (int, float)) else 'N/A'}",
-        f"  Demand achievement   : {_vpp_ratio_simple(rd)}",
+        f"  VPP appliance avoid  : {_vpp_ratio_simple(rd)}",
         f"  Completion by day    : {per_day_str}",
         f"  Shift success by day : {per_day_shift_str}",
         f"  Task completion      : {rd.get('appliance_task_completion_rate', 1.0)*100:.0f}%"
@@ -428,49 +500,139 @@ def main() -> None:
         description="EnergyBridge multi-persona family benchmark (household discussion).",
     )
     parser.add_argument(
-        "personas", nargs="+",
-        help="2+ persona IDs or paths to JSON files.",
+        "personas", nargs="*",
+        help="2+ persona IDs or paths to JSON files. Omit when using --household.",
+    )
+    parser.add_argument(
+        "--household",
+        default="",
+        help="Fixed household ID or JSON path under energybridge/roleplay/households.",
+    )
+    parser.add_argument(
+        "--list-households",
+        action="store_true",
+        help="List available fixed household IDs and exit.",
     )
     parser.add_argument("--city", "-c", default="Tianjin",
-                        choices=["Tianjin", "Beijing", "Shanghai"])
+                        choices=["Tianjin", "Beijing", "Shanghai", "Germany"])
+    parser.add_argument("--days", type=int, default=None,
+                        help="Simulation length in days. Defaults to 3, or 7 for Germany.")
+    parser.add_argument("--start-date", default="",
+                        help="RunPeriod start date YYYY-MM-DD. Defaults to 2025-06-01 for Germany.")
+    parser.add_argument("--price-csv", default="",
+                        help="Optional day-ahead price CSV.")
+    parser.add_argument("--weather-csv", default="",
+                        help="Optional Germany real-weather CSV used to generate EPW.")
+    parser.add_argument("--epw", default="",
+                        help="Optional EPW override.")
+    parser.add_argument("--idf", default="",
+                        help="Optional family IDF template override.")
+    parser.add_argument("--regenerate-epw", action="store_true",
+                        help="Regenerate Germany EPW even if it already exists.")
+    parser.add_argument("--vpp-start-hour", type=float, default=18.0,
+                        help="Daily VPP event start hour-of-day. Default: 18.0.")
+    parser.add_argument("--vpp-duration-hours", type=float, default=1.0,
+                        help="Daily VPP event duration in hours. Default: 1.0.")
+    parser.add_argument("--vpp-events-json", default="",
+                        help="Optional JSON file defining VPP events.")
     parser.add_argument("--output", "-o", default=None,
                         help="Override output directory; defaults to benchmark_results/multi__<ids>.")
+    parser.add_argument(
+        "--method",
+        choices=[ENERGYBRIDGE_METHOD_ID, "agent", "mpc_dynamic", "mpc_ep", "mpc", "rule_milp", "rule+milp", "pmv_milp", "no_dr", "none", "baseline"],
+        default=ENERGYBRIDGE_METHOD_ID,
+        help="Controller method. Default: EnergyBridge.",
+    )
+    parser.add_argument("--mpc-horizon", type=int, default=6,
+                        help="MPC prediction horizon in 10-minute steps.")
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("--max-rounds", "-r", type=int, default=3,
                         help="Max discussion rounds per VPP event (default: 3)")
     args = parser.parse_args()
 
-    if len(args.personas) < 2:
-        parser.error("At least 2 personas required for household discussion mode.")
+    if args.list_households:
+        for household_id in list_household_ids():
+            print(household_id)
+        return
 
-    # Load personas
-    persona_data: list[dict] = []
-    for pid_arg in args.personas:
-        p = _load_persona_json(pid_arg)
-        persona_data.append(p)
+    days = _default_days_for_city(args.city, args.days)
+    start_date = _default_start_date_for_city(args.city, args.start_date.strip())
+    method = _canonical_method(args.method)
+    controller_method = _controller_method(method)
+    result_method = method
+    mpc_horizon = max(1, int(args.mpc_horizon))
+    vpp_start_hour = float(args.vpp_start_hour) % 24.0
+    vpp_duration_hours = float(args.vpp_duration_hours)
+    if vpp_duration_hours <= 0:
+        raise SystemExit("--vpp-duration-hours must be > 0")
+    if args.vpp_events_json:
+        vpp_events = load_vpp_events_config(
+            args.vpp_events_json,
+            sim_days=days,
+            default_start_h=vpp_start_hour,
+            default_duration_h=vpp_duration_hours,
+        )
+        vpp_schedule_source = str(Path(args.vpp_events_json))
+    else:
+        if vpp_start_hour + vpp_duration_hours > 24.0:
+            raise SystemExit("VPP windows crossing midnight are not supported yet; choose start+duration <= 24")
+        vpp_events = make_daily_vpp_events(days, start_h=vpp_start_hour, duration_h=vpp_duration_hours)
+        vpp_schedule_source = "daily_default"
+
+    household_config: dict | None = None
+    if args.household:
+        household_config = load_household_config(args.household)
+        persona_data = load_household_member_personas(household_config)
+        household_persona = build_household_persona(household_config, persona_data, days=days)
+    else:
+        # Convenience: a single positional household ID is accepted.
+        if len(args.personas) == 1 and args.personas[0] in set(list_household_ids()):
+            household_config = load_household_config(args.personas[0])
+            persona_data = load_household_member_personas(household_config)
+            household_persona = build_household_persona(household_config, persona_data, days=days)
+        else:
+            if len(args.personas) < 2:
+                parser.error("Use --household <id> or provide at least 2 personas.")
+            persona_data = [_load_persona_json(pid_arg) for pid_arg in args.personas]
+            household_config = {
+                "id": "ad_hoc_multi_persona_household",
+                "display_name": "Ad-hoc Multi-Persona Household",
+                "appliances": _merge_appliance_configs(persona_data),
+                "llm_prompts": {"system_prompt": _household_pref_text(persona_data)},
+            }
+            household_persona = build_household_persona(household_config, persona_data, days=days)
 
     agents = [PersonaAgent(p) for p in persona_data]
-    pool   = DiscussionPool(agents, max_rounds=args.max_rounds)
+    household_prompt = household_persona.get("llm_prompts", {}).get("system_prompt", "")
+    pool = DiscussionPool(agents, max_rounds=args.max_rounds, household_context=household_prompt)
 
-    # Output dir: join first 4 ID tokens from each persona with __
-    id_parts = ["_".join(p["id"].split("_")[:4]) for p in persona_data]
-    run_id   = "__".join(id_parts)
     output_dir = (
         Path(args.output) if args.output
-        else DEFAULT_BENCHMARK_RESULTS_DIR / f"multi__{run_id}"
+        else _default_multi_output_dir(household_persona["id"], result_method, args.city, days, mpc_horizon)
     )
+    idf_path, epw_path, price_profile = _prepare_run_assets(args, output_dir, days, start_date, household_persona)
 
     member_list = [p.get("display_name", p["id"]) for p in persona_data]
     print("=" * 70)
     print("  EnergyBridge Multi-user Household Benchmark")
+    print(f"  Household : {household_persona.get('display_name', household_persona['id'])}")
+    print(f"  ID        : {household_persona['id']}")
     print(f"  Members : {' | '.join(member_list)}")
-    print(f"  Rounds  : 2 rounds per decision point ({len(agents)} members speak in order each round)")
+    print(f"  Rounds  : up to {args.max_rounds} rounds per decision point ({len(agents)} members speak in order each round)")
     print(f"  City    : {args.city}")
+    print(f"  Method  : {result_method}")
+    print(f"  Days    : {days}")
+    print(f"  Start   : {start_date or '(template IDF)'}")
+    print(f"  VPP     : {describe_vpp_events(vpp_events)}")
+    print(f"  VPP SRC : {vpp_schedule_source}")
+    print(f"  IDF     : {idf_path}")
+    print(f"  EPW     : {epw_path}")
+    print(f"  PRICE   : {getattr(price_profile, 'source', '') or 'N/A'}")
     print(f"  OUTPUT  : {output_dir}")
     print("=" * 70)
 
-    merged_appliances = _merge_appliance_configs(persona_data)
-    household_pref    = _household_pref_text(persona_data)
+    merged_appliances = household_persona.get("appliances", {})
+    household_pref = household_prompt or _household_pref_text(persona_data)
     present_devs = [k for k, v in merged_appliances.items()
                     if isinstance(v, dict) and v.get("present")]
     print(f"\n  [Household setting] {household_pref[:140]}")
@@ -488,12 +650,24 @@ def main() -> None:
     result = None
     try:
         result = fr.run_family_agent(
+            idf_path         = idf_path,
+            epw_path         = epw_path,
             user_pref        = household_pref,
             appliance_config = merged_appliances,
+            persona_config   = household_persona,
             output_dir       = output_dir,
             weather_label    = args.city.lower(),
             verbose          = args.verbose,
             human_mode       = False,
+            method           = controller_method,
+            mpc_horizon_steps= mpc_horizon,
+            sim_days         = days,
+            start_date       = start_date or None,
+            day_ahead_price_profile = price_profile,
+            vpp_start_h      = vpp_start_hour,
+            vpp_duration_h   = vpp_duration_hours,
+            vpp_events_config= vpp_events,
+            vpp_schedule_source = vpp_schedule_source,
         )
     finally:
         _ups.get_user_preference_input = _orig_get_pref
@@ -502,6 +676,7 @@ def main() -> None:
     if result is None:
         print("  [ERROR] run_family_agent returned None — aborting.")
         sys.exit(1)
+    result.method = result_method
 
     print()
     print("=" * 70)
@@ -521,6 +696,9 @@ def main() -> None:
 
     meta = {
         "run_type": "multi_agent_household",
+        "household_id": household_persona["id"],
+        "household_display_name": household_persona.get("display_name", household_persona["id"]),
+        "household_source_path": (household_config or {}).get("_source_path", ""),
         "members": [
             {
                 "id": p["id"],
@@ -534,11 +712,17 @@ def main() -> None:
             }
             for p in persona_data
         ],
-        "discussion_rounds": 2,
+        "discussion_rounds": args.max_rounds,
         "city": args.city,
+        "days": days,
+        "start_date": start_date,
+        "method": result_method,
+        "vpp_schedule_source": vpp_schedule_source,
         "merged_appliances": {
             k: v for k, v in merged_appliances.items() if isinstance(v, dict)
         },
+        "household_calendar": household_persona.get("calendar", {}),
+        "household_prompt": household_pref,
         "transcripts": transcripts,
     }
     meta_path = output_dir / "household_meta.json"

@@ -1,0 +1,27 @@
+{
+  "schema_version": "household_v1",
+  "id": "household_s3_hybrid_work_from_home",
+  "display_name": "Hybrid Work-From-Home Household",
+  "description": "A three-person household with one WFH comfort-gated member, one EV commuter, and one irregular cautious member.",
+  "members": [
+    {"member_id": "wfh_member", "household_role": "daytime work-from-home comfort priority", "persona_id": "basic_role_b_home_comfort_gated", "decision_weight": 1.2},
+    {"member_id": "ev_partner", "household_role": "commuter with EV and price sensitivity", "persona_id": "basic_role_f_commuter_ev_optimizer", "decision_weight": 1.0},
+    {"member_id": "irregular_member", "household_role": "irregular schedule and cautious consent expectations", "persona_id": "basic_role_c_irregular_cautious", "decision_weight": 1.0}
+  ],
+  "tags": {"schedule": "hybrid_wfh_irregular", "comfort": "workday_stability", "task": "full_appliance_portfolio", "price": "mixed_price_sensitive", "control": "cautious_consensus", "grid_value": "moderate_flex"},
+  "preferences": {"scoring_weights": {"comfort": 0.48, "energy": 0.27, "vpp": 0.25}, "vpp_override_prob": 0.20},
+  "appliance_config_policy": "maximal_shared_device_set",
+  "appliances": {
+    "ac": {"present": true, "setpoint_preferred_min_c": 24.0, "setpoint_preferred_max_c": 26.0, "temp_tolerance_c": 0.8, "mode": "cooling"},
+    "washer": {"present": true, "earliest_h": 8.0, "latest_h": 22.0, "preferred_h": 14.0, "duration_h": 2.0, "power_kw": 1.5, "shiftable": true, "dr_adjustable": true},
+    "dryer": {"present": true, "earliest_h": 8.0, "latest_h": 22.0, "preferred_h": 16.0, "duration_h": 1.5, "power_kw": 2.5, "shiftable": true, "dr_adjustable": true},
+    "dishwasher": {"present": true, "earliest_h": 19.0, "latest_h": 7.0, "preferred_h": 21.5, "duration_h": 1.5, "power_kw": 1.2, "shiftable": true, "dr_adjustable": true},
+    "water_heater": {"present": true, "rated_kw": 2.0, "bath_required_h": 20.0, "dr_adjustable": true, "pre_heat_window_start_h": 13.0, "pre_heat_window_end_h": 18.0},
+    "ev": {"present": true, "charger_kw": 7.4, "capacity_kwh": 60.0, "target_soc": 0.8, "min_soc": 0.2, "arrival_h": 18.5, "departure_h": 7.5, "daily_drive_kwh": 18.0},
+    "refrigerator": {"present": true, "power_kw": 0.15}
+  },
+  "scoring_policy": {"type": "member_discussion_then_household_consensus", "hard_constraints": ["wfh_daytime_comfort", "irregular_schedule_buffer", "all_present_appliances_completed", "ev_ready_before_departure"]},
+  "llm_prompts": {
+    "system_prompt": "You represent a mixed work-from-home household. During work hours, any occupied home office needs stable comfort and should not be treated as away. The irregular member needs conservative assumptions when occupancy is uncertain. For this benchmark, the household physical configuration owns the full shared appliance set: AC, washer, dryer, dishwasher, water heater, EV, and refrigerator; individual member persona appliance fields do not override this shared appliance set. Washer, dryer, dishwasher, water heater, and EV are shared household services and must each receive explicit feasible schedules. Reward strategies that avoid VPP and high-cost periods without disturbing work comfort or uncertain routines."
+  }
+}

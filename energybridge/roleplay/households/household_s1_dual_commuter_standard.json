@@ -1,0 +1,28 @@
+{
+  "schema_version": "household_v1",
+  "id": "household_s1_dual_commuter_standard",
+  "display_name": "Standard Dual-Commuter Family",
+  "description": "A four-member city family: EV commuter father, high-trust commuter mother, task-rigid student, and comfort-sensitive elder.",
+  "members": [
+    {"member_id": "father", "household_role": "EV commuter and charging owner", "persona_id": "basic_role_f_commuter_ev_optimizer", "decision_weight": 1.0},
+    {"member_id": "mother", "household_role": "stable commuter and automation-friendly scheduler", "persona_id": "basic_role_d_commuter_ideal_dr", "decision_weight": 1.0},
+    {"member_id": "child", "household_role": "student with fixed evening study and task windows", "persona_id": "atom_task_rigid", "decision_weight": 0.8},
+    {"member_id": "elder", "household_role": "comfort-sensitive elder at home in evening", "persona_id": "atom_comfort_sensitive", "decision_weight": 1.2}
+  ],
+  "tags": {"schedule": "multi_user_commuter_evening_home", "comfort": "elder_priority", "task": "full_appliance_portfolio", "price": "mixed_price_sensitive", "control": "household_consensus", "grid_value": "moderate_flex"},
+  "preferences": {"scoring_weights": {"comfort": 0.42, "energy": 0.30, "vpp": 0.28}, "vpp_override_prob": 0.18},
+  "appliance_config_policy": "maximal_shared_device_set",
+  "appliances": {
+    "ac": {"present": true, "setpoint_preferred_min_c": 24.0, "setpoint_preferred_max_c": 26.0, "temp_tolerance_c": 1.0, "mode": "cooling"},
+    "washer": {"present": true, "earliest_h": 8.0, "latest_h": 22.0, "preferred_h": 13.0, "duration_h": 2.0, "power_kw": 1.5, "shiftable": true, "dr_adjustable": true},
+    "dryer": {"present": true, "earliest_h": 8.0, "latest_h": 22.0, "preferred_h": 15.0, "duration_h": 1.5, "power_kw": 2.5, "shiftable": true, "dr_adjustable": true},
+    "dishwasher": {"present": true, "earliest_h": 19.0, "latest_h": 7.0, "preferred_h": 21.5, "duration_h": 1.5, "power_kw": 1.2, "shiftable": true, "dr_adjustable": true},
+    "water_heater": {"present": true, "rated_kw": 2.0, "bath_required_h": 20.5, "dr_adjustable": true, "pre_heat_window_start_h": 13.0, "pre_heat_window_end_h": 18.0},
+    "ev": {"present": true, "charger_kw": 7.4, "capacity_kwh": 60.0, "target_soc": 0.8, "min_soc": 0.2, "arrival_h": 18.5, "departure_h": 7.5, "daily_drive_kwh": 20.0},
+    "refrigerator": {"present": true, "power_kw": 0.15}
+  },
+  "scoring_policy": {"type": "member_discussion_then_household_consensus", "hard_constraints": ["elder_evening_comfort", "all_present_appliances_completed", "ev_ready_before_departure"]},
+  "llm_prompts": {
+    "system_prompt": "You represent a four-person household: two commuting adults, one student with fixed evening routines, and one comfort-sensitive elder. Household satisfaction is a compromise, but elder comfort and the student's evening routine have priority. For this benchmark, the household physical configuration owns the full shared appliance set: AC, washer, dryer, dishwasher, water heater, EV, and refrigerator; individual member persona appliance fields do not override this shared appliance set. Every present shared appliance must receive an explicit feasible strategy: washer, dryer, dishwasher, water heater, and EV. Support VPP by shifting tasks and EV charging away from the event only if comfort, hot water, and next-day EV readiness remain safe."
+  }
+}

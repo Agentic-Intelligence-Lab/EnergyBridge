@@ -1,0 +1,28 @@
+{
+  "schema_version": "household_v1",
+  "id": "household_s5_shared_roommates_irregular",
+  "display_name": "Shared Roommates With Irregular Routines",
+  "description": "A four-person shared household with mixed incentives: EV owner, irregular schedule member, price-indifferent roommate, and task-rigid roommate.",
+  "members": [
+    {"member_id": "roommate_a_ev", "household_role": "regular worker with EV and savings interest", "persona_id": "basic_role_f_commuter_ev_optimizer", "decision_weight": 1.0},
+    {"member_id": "roommate_b_irregular", "household_role": "shift or irregular schedule member", "persona_id": "basic_role_c_irregular_cautious", "decision_weight": 1.0},
+    {"member_id": "roommate_c_convenience", "household_role": "price-indifferent convenience-oriented roommate", "persona_id": "atom_price_indifferent", "decision_weight": 1.0},
+    {"member_id": "roommate_d_rigid", "household_role": "fixed chore and hot-water routine member", "persona_id": "atom_task_rigid", "decision_weight": 1.0}
+  ],
+  "tags": {"schedule": "shared_irregular_overlay", "comfort": "mixed_comfort", "task": "shared_full_appliance_portfolio", "price": "conflicting_price_incentives", "control": "conflict_mediation", "grid_value": "uncertain_flex"},
+  "preferences": {"scoring_weights": {"comfort": 0.40, "energy": 0.28, "vpp": 0.32}, "vpp_override_prob": 0.22},
+  "appliance_config_policy": "maximal_shared_device_set",
+  "appliances": {
+    "ac": {"present": true, "setpoint_preferred_min_c": 24.0, "setpoint_preferred_max_c": 26.5, "temp_tolerance_c": 1.0, "mode": "cooling"},
+    "washer": {"present": true, "earliest_h": 8.0, "latest_h": 23.0, "preferred_h": 20.0, "duration_h": 2.0, "power_kw": 1.5, "shiftable": true, "dr_adjustable": true},
+    "dryer": {"present": true, "earliest_h": 8.0, "latest_h": 23.0, "preferred_h": 16.0, "duration_h": 1.5, "power_kw": 2.5, "shiftable": true, "dr_adjustable": true},
+    "dishwasher": {"present": true, "earliest_h": 19.0, "latest_h": 7.0, "preferred_h": 22.0, "duration_h": 1.5, "power_kw": 1.2, "shiftable": true, "dr_adjustable": true},
+    "water_heater": {"present": true, "rated_kw": 2.0, "bath_required_h": 21.0, "dr_adjustable": true, "pre_heat_window_start_h": 13.0, "pre_heat_window_end_h": 18.0},
+    "ev": {"present": true, "charger_kw": 7.4, "capacity_kwh": 60.0, "target_soc": 0.8, "min_soc": 0.2, "arrival_h": 18.5, "departure_h": 7.5, "daily_drive_kwh": 18.0},
+    "refrigerator": {"present": true, "power_kw": 0.15}
+  },
+  "scoring_policy": {"type": "member_discussion_then_household_consensus", "hard_constraints": ["shared_resource_conflict_avoidance", "all_present_appliances_completed", "ev_ready_before_departure", "no_member_strongly_dissatisfied"]},
+  "llm_prompts": {
+    "system_prompt": "You represent a four-roommate shared household. Preferences conflict: one roommate wants EV and savings optimization, one has an irregular schedule, one values convenience over price, and one has rigid task timing. Satisfaction should reflect the least satisfied member, not only the average. For this benchmark, the household physical configuration owns the full shared appliance set: AC, washer, dryer, dishwasher, water heater, EV, and refrigerator; individual member persona appliance fields do not override this shared appliance set. Washer, dryer, dishwasher, water heater, and EV are shared resources and must be scheduled explicitly without creating obvious conflicts. Do not assume the home is empty when an irregular member might be home."
+  }
+}
