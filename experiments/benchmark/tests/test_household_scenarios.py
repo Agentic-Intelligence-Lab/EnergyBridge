@@ -4,7 +4,10 @@ from energybridge.roleplay.households import (
     load_household_config,
     load_household_member_personas,
 )
-from experiments.benchmark.run_multi_user_household import IndependentMemberRoleplay
+from experiments.benchmark.run_multi_user_household import (
+    IndependentMemberRoleplay,
+    _make_roleplay_callbacks,
+)
 from experiments.benchmark.user_pref_scorer import StrategyPreference
 
 
@@ -93,3 +96,18 @@ def test_multi_user_scoring_uses_each_members_own_preference():
         member["household_member"]["member_id"]: f"preference-from-{member['household_member']['member_id']}"
         for member in members
     }
+
+
+def test_multi_user_callbacks_do_not_mutate_global_scorer_functions():
+    import experiments.benchmark.user_pref_scorer as scorer
+
+    household = load_household_config("household_s3_hybrid_work_from_home")
+    members = load_household_member_personas(household)[:2]
+    roleplay = IndependentMemberRoleplay(household, members)
+    original_get = scorer.get_user_preference_input
+    original_score = scorer.score_user_preference
+
+    _make_roleplay_callbacks(roleplay, original_get, original_score)
+
+    assert scorer.get_user_preference_input is original_get
+    assert scorer.score_user_preference is original_score

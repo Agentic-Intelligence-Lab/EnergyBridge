@@ -399,8 +399,8 @@ def _label_for_score(score: float) -> str:
     }[rounded]
 
 
-def _make_patched_functions(roleplay: IndependentMemberRoleplay, orig_get_pref, orig_score):
-    def patched_get_user_preference_input(
+def _make_roleplay_callbacks(roleplay: IndependentMemberRoleplay, orig_get_pref, orig_score):
+    def pre_event_preference_callback(
         building,
         event_index,
         vpp_context,
@@ -418,7 +418,7 @@ def _make_patched_functions(roleplay: IndependentMemberRoleplay, orig_get_pref, 
             human_mode=human_mode,
         )
 
-    def patched_score_user_preference(
+    def post_event_score_callback(
         building,
         method="agent",
         mean_temp_c=25.0,
@@ -447,7 +447,7 @@ def _make_patched_functions(roleplay: IndependentMemberRoleplay, orig_get_pref, 
             kwargs={**kwargs, "log_path": log_path, "human_mode": human_mode},
         )
 
-    return patched_get_user_preference_input, patched_score_user_preference
+    return pre_event_preference_callback, post_event_score_callback
 
 
 def parse_args() -> argparse.Namespace:
@@ -539,36 +539,33 @@ def main() -> None:
     print(f"  OUTPUT    : {output_dir}")
     print("=" * 78)
 
-    orig_get_pref = _ups.get_user_preference_input
-    orig_score = _ups.score_user_preference
-    patched_get, patched_score = _make_patched_functions(roleplay, orig_get_pref, orig_score)
-    _ups.get_user_preference_input = patched_get
-    _ups.score_user_preference = patched_score
-    result = None
-    try:
-        result = fr.run_family_agent(
-            idf_path=idf_path,
-            epw_path=epw_path,
-            user_pref=physical_persona["llm_prompts"]["agent_context"],
-            appliance_config=physical_persona.get("appliances", {}),
-            persona_config=physical_persona,
-            output_dir=output_dir,
-            weather_label=args.city.lower(),
-            verbose=args.verbose,
-            human_mode=False,
-            method=controller_method,
-            mpc_horizon_steps=mpc_horizon,
-            sim_days=days,
-            start_date=start_date or None,
-            day_ahead_price_profile=price_profile,
-            vpp_start_h=vpp_start_hour,
-            vpp_duration_h=vpp_duration_hours,
-            vpp_events_config=vpp_events,
-            vpp_schedule_source=vpp_schedule_source,
-        )
-    finally:
-        _ups.get_user_preference_input = orig_get_pref
-        _ups.score_user_preference = orig_score
+    pre_event_callback, post_event_callback = _make_roleplay_callbacks(
+        roleplay,
+        _ups.get_user_preference_input,
+        _ups.score_user_preference,
+    )
+    result = fr.run_family_agent(
+        idf_path=idf_path,
+        epw_path=epw_path,
+        user_pref=physical_persona["llm_prompts"]["agent_context"],
+        appliance_config=physical_persona.get("appliances", {}),
+        persona_config=physical_persona,
+        output_dir=output_dir,
+        weather_label=args.city.lower(),
+        verbose=args.verbose,
+        human_mode=False,
+        method=controller_method,
+        mpc_horizon_steps=mpc_horizon,
+        sim_days=days,
+        start_date=start_date or None,
+        day_ahead_price_profile=price_profile,
+        vpp_start_h=vpp_start_hour,
+        vpp_duration_h=vpp_duration_hours,
+        vpp_events_config=vpp_events,
+        vpp_schedule_source=vpp_schedule_source,
+        pre_event_preference_callback=pre_event_callback,
+        post_event_score_callback=post_event_callback,
+    )
 
     if result is None:
         raise SystemExit("run_family_agent returned None")

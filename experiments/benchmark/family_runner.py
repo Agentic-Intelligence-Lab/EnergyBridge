@@ -1806,8 +1806,16 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
                      vpp_start_h: float = 18.0,
                      vpp_duration_h: float = 1.0,
                      vpp_events_config: list[dict] | None = None,
-                     vpp_schedule_source: str = ""):
-    """Event-driven LLM control: one VPP event per simulated day. Score after each."""
+                     vpp_schedule_source: str = "",
+                     pre_event_preference_callback: Any = None,
+                     post_event_score_callback: Any = None):
+    """Event-driven home control: one VPP event per simulated day.
+
+    ``pre_event_preference_callback`` and ``post_event_score_callback`` are
+    optional extension hooks for non-standard role-play flows such as
+    independent multi-user households.  When omitted, the single-user
+    benchmark path uses the standard role-play scorer unchanged.
+    """
     method = (method or "agent").strip().lower()
     if method in ("agent", "energybridge"):
         method = "agent"
@@ -2572,7 +2580,11 @@ All times are hour-of-day (0–23.9)."""
     def _score_event(ev, loop_ref, sim_h, event_index=1, human_mode: bool = False):
         """Score agent strategy for a VPP event window after it ends (roleplay LLM)."""
         try:
-            from user_pref_scorer import score_user_preference
+            if post_event_score_callback is None:
+                from user_pref_scorer import score_user_preference
+                score_fn = score_user_preference
+            else:
+                score_fn = post_event_score_callback
             event_day_idx = max(0, min(sim_days - 1, int(ev.get("day", event_index)) - 1))
             wd = loop_ref.vpp_window_data.get(ev["id"], {})
             wtemps = wd.get("temps", [])
@@ -2677,7 +2689,7 @@ All times are hour-of-day (0–23.9)."""
                     if isinstance(item, dict) and item.get("ac_mode") is not None
                 ],
             }
-            r = score_user_preference(
+            r = score_fn(
                 building="family", method=method,
                 mean_temp_c=mean_t, pmv_ok_fraction=pmv_ok,
                 energy_kwh_per_day=e_day, agent_setpoint_c=sp_w,
@@ -2942,7 +2954,11 @@ All times are hour-of-day (0–23.9)."""
                 # User in the loop: get roleplay user preference BEFORE agent acts
                 if is_vpp and method == "agent":
                     try:
-                        from user_pref_scorer import get_user_preference_input
+                        if pre_event_preference_callback is None:
+                            from user_pref_scorer import get_user_preference_input
+                            preference_fn = get_user_preference_input
+                        else:
+                            preference_fn = pre_event_preference_callback
                         ev_idx = next((i+1 for i,ev in enumerate(vpp_events)
                                        if ev["id"]==vid), 1)
                         _acfg = appliance_config or {}
@@ -2953,7 +2969,7 @@ All times are hour-of-day (0–23.9)."""
                             "water_heater": bool((_acfg.get("water_heater", {}) or {}).get("present", False)),
                             "ev": bool((_acfg.get("ev", {}) or {}).get("present", False)),
                         }
-                        _pref_result = get_user_preference_input(
+                        _pref_result = preference_fn(
                             "family", ev_idx,
                             {"vpp_id": vid, "hour": sim_h, "trigger_h": triggered_vpp["trigger_h"],
                              "end_h": triggered_vpp["end_h"], "day": triggered_vpp.get("day", day_num),
