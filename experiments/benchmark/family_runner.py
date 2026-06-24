@@ -1661,6 +1661,8 @@ def _build_decision_time_state(
             "occupied": bool(getattr(loop, "current_occupied", True)),
             "occupancy_count": float(getattr(loop, "current_occupancy_count", 0.0) or 0.0),
             "occupancy_source": getattr(loop, "current_occupancy_source", "unknown"),
+            "sim_days": int(getattr(loop, "sim_days", 1) or 1),
+            "run_end_abs_h": float(int(getattr(loop, "sim_days", 1) or 1) * 24.0),
         }
     )
     return state
@@ -2730,6 +2732,12 @@ All times are hour-of-day (0–23.9)."""
                     "target_achieved": _achieved,
                     "demand_achievement_ratio": _achieve_ratio,
                     "comment": cmt,
+                    "controller_feedback": r.get("controller_feedback"),
+                    "member_feedback_summary": r.get("member_feedback_summary"),
+                    "member_scores": r.get("member_scores"),
+                    "member_score_min": r.get("member_score_min"),
+                    "member_score_max": r.get("member_score_max"),
+                    "member_score_std": r.get("member_score_std"),
                     "user_input": loop_ref.vpp_user_input_by_id.get(ev["id"], loop_ref.vpp_user_input),
                     "reason": loop_ref.vpp_trigger_reason_by_id.get(ev["id"], loop_ref.vpp_last_reason),
                     "policy_control_context": policy_control_context,
@@ -2745,6 +2753,114 @@ All times are hour-of-day (0–23.9)."""
             return {"id": ev["id"], "setpoint": loop_ref.sp, "score": None, "label": "?",
                     "comfort_score": None, "energy_score": None, "vpp_score": None,
                     "comment": str(e)[:60], "user_input": "", "source": "error"}
+
+    def _event_score_due_hour(ev: dict, event_index: int) -> float:
+        """Score each event at the end of its simulation day, i.e. day 24:00."""
+        try:
+            event_day = int(ev.get("day", event_index) or event_index)
+        except (TypeError, ValueError):
+            event_day = int(float(ev.get("end_h", 0.0)) // 24.0) + 1
+        event_day = max(1, event_day)
+        return float(event_day * 24.0)
+
+    def _score_and_record_vpp_event(ev: dict, event_index: int, score_sim_h: float, *, human_mode: bool = False) -> None:
+        if ev["id"] in loop.vpp_scored:
+            return
+        if method == "no_dr":
+            wd = loop.vpp_window_data.get(ev["id"], {})
+            result = {
+                "id": ev["id"],
+                "setpoint": wd.get("sp", loop.sp),
+                "score": None,
+                "label": "no_dr_counterfactual",
+                "trigger_h": float(ev.get("trigger_h", 0.0)),
+                "end_h": float(ev.get("end_h", 0.0)),
+                "day": int(ev.get("day", event_index)),
+                "comfort_score": None,
+                "energy_score": None,
+                "vpp_score": None,
+                "target_mode": "counterfactual",
+                "target_achieved": None,
+                "demand_achievement_ratio": None,
+                "comment": "No-DR counterfactual; role-play score intentionally skipped.",
+                "user_input": "",
+                "reason": "No controller response; normal AC and random routine appliances.",
+                "source": "no_dr_counterfactual",
+            }
+        else:
+            result = _score_event(ev, loop, score_sim_h, event_index=event_index, human_mode=human_mode)
+        # Attach actual energy and demand targets to event log.
+        _demand = loop.vpp_demand_by_id.get(ev["id"], {})
+        result["actual_kwh"] = round(loop.vpp_event_energy_wh.get(ev["id"], 0.0) / 1000.0, 4)
+        result["demand_target_kwh"] = _demand.get("target_kwh", None)
+        result["demand_baseline_kwh"] = _demand.get("baseline_kwh", None)
+        result["demand_target_kw"] = _demand.get("target_shed_kw", None)
+        result["demand_target_shed_kwh"] = _demand.get("target_shed_kwh", None)
+        result["capacity_assessment"] = loop.vpp_capacity_by_id.get(ev["id"], {})
+        _cap_rows = loop.vpp_capacity_window_by_id.get(ev["id"], [])
+        if _cap_rows:
+            result["capacity_window_summary"] = _capacity_window_summary_from_rows(_cap_rows)
+        _event_day_idx = max(0, min(sim_days - 1, int(ev.get("day", event_index)) - 1))
+        # Attach per-appliance VPP summary before annotating VPP success.
+        if loop.appliance_suite is not None:
+            result["appliance_summary"] = loop.appliance_suite.vpp_day_summary(_event_day_idx)
+        if method != "no_dr":
+            _attach_event_baseline_shed(result, ev, loop.power_trace_rows)
+        _update_event_reference_shed_diagnostics(result)
+        _annotate_event_demand_achievement(result)
+        result["total_quantification_90"] = loop.total_quantification_by_id.get(
+            ev["id"],
+            {"status": "not_computed", "reason": "Reference A3 quantification unavailable"},
+        )
+        # Store all agent decisions for this day.
+        result["vpp_trigger_actions"] = loop.vpp_trigger_actions.get(ev["id"], {})
+        result["day_decisions"] = loop.day_agent_decisions[_event_day_idx]
+        loop.vpp_event_log.append(result)
+        loop.vpp_scored.add(ev["id"])
+        # Update memory context for subsequent LLM calls.
+        # Keep it compact, but convert repeated feedback into actionable rules
+        # so the next strategy does not relearn the same preference from scratch.
+        mem_entries = []
+        for e in loop.vpp_event_log:
+            _feedback = (
+                e.get("controller_feedback")
+                or e.get("member_feedback_summary")
+                or e.get("comment", "")
+            )
+            _member_scores = e.get("member_scores") or []
+            mem_entries.append({
+                "event": e["id"],
+                "sp": e["setpoint"],
+                "score": e["score"],
+                "user_said": e.get("user_input", "")[:220],
+                "feedback": str(_feedback)[:700],
+                "member_scores": [
+                    {
+                        "member_id": item.get("member_id"),
+                        "score": item.get("score"),
+                        "comment": str(item.get("comment", ""))[:180],
+                    }
+                    for item in _member_scores
+                    if isinstance(item, dict)
+                ],
+            })
+        try:
+            from user_pref_scorer import build_vpp_preference_memory_notes
+            mem_rules = build_vpp_preference_memory_notes(
+                loop.vpp_event_log,
+                persona_config,
+            )
+        except Exception:
+            mem_rules = []
+        loop.vpp_mem_ctx = (
+            "\nPast VPP responses (user in the loop): "
+            + json.dumps(mem_entries, ensure_ascii=False)
+        )
+        if mem_rules:
+            loop.vpp_mem_ctx += (
+                "\nLearned preference rules for next decisions: "
+                + json.dumps(mem_rules, ensure_ascii=False)
+            )
 
     def cb(s):
         if not loop.init(ex, s): return
@@ -2862,6 +2978,20 @@ All times are hour-of-day (0–23.9)."""
                     if _day_idx not in loop.days_evaluated:
                         loop.days_evaluated.add(_day_idx)
                         _print_prev_day_completion(loop.appliance_suite, _day_idx, _day_idx + 1)
+            # Role-play scoring happens at the end of the event day (24:00),
+            # after appliance service outcomes such as laundry, hot water, and
+            # evening routines have had time to materialize.
+            for ev in vpp_events:
+                if ev["id"] in loop.vpp_scored:
+                    continue
+                ev_idx = next((i + 1 for i, item in enumerate(vpp_events) if item["id"] == ev["id"]), 1)
+                score_due_h = _event_score_due_hour(ev, ev_idx)
+                if psim < score_due_h <= sim_h:
+                    print(
+                        f"  [VPP Day-End Score] event={ev['id']} "
+                        f"due={score_due_h:.1f}h current={sim_h:.1f}h"
+                    )
+                    _score_and_record_vpp_event(ev, ev_idx, sim_h, human_mode=human_mode)
 
             triggered = False
             triggered_vpp = None
@@ -3135,88 +3265,8 @@ All times are hour-of-day (0–23.9)."""
                     except Exception as _ce:
                         print(f"  [Capacity Window] failed: {_ce}")
 
-            # Score VPP event after its window ends
-            psim = loop.prev_sim_h
-            for ev in vpp_events:
-                if psim < ev["end_h"] <= sim_h and ev["id"] not in loop.vpp_scored:
-                    ev_idx = next((i+1 for i,e in enumerate(vpp_events) if e["id"]==ev["id"]), 1)
-                    if method == "no_dr":
-                        wd = loop.vpp_window_data.get(ev["id"], {})
-                        result = {
-                            "id": ev["id"],
-                            "setpoint": wd.get("sp", loop.sp),
-                            "score": None,
-                            "label": "no_dr_counterfactual",
-                            "trigger_h": float(ev.get("trigger_h", 0.0)),
-                            "end_h": float(ev.get("end_h", 0.0)),
-                            "day": int(ev.get("day", ev_idx)),
-                            "comfort_score": None,
-                            "energy_score": None,
-                            "vpp_score": None,
-                            "target_mode": "counterfactual",
-                            "target_achieved": None,
-                            "demand_achievement_ratio": None,
-                            "comment": "No-DR counterfactual; role-play score intentionally skipped.",
-                            "user_input": "",
-                            "reason": "No controller response; normal AC and random routine appliances.",
-                            "source": "no_dr_counterfactual",
-                        }
-                    else:
-                        result = _score_event(ev, loop, sim_h, event_index=ev_idx, human_mode=human_mode)
-                    # Attach actual energy and demand targets to event log.
-                    _demand = loop.vpp_demand_by_id.get(ev["id"], {})
-                    result["actual_kwh"] = round(loop.vpp_event_energy_wh.get(ev["id"], 0.0) / 1000.0, 4)
-                    result["demand_target_kwh"] = _demand.get("target_kwh", None)
-                    result["demand_baseline_kwh"] = _demand.get("baseline_kwh", None)
-                    result["demand_target_kw"] = _demand.get("target_shed_kw", None)
-                    result["demand_target_shed_kwh"] = _demand.get("target_shed_kwh", None)
-                    result["capacity_assessment"] = loop.vpp_capacity_by_id.get(ev["id"], {})
-                    _cap_rows = loop.vpp_capacity_window_by_id.get(ev["id"], [])
-                    if _cap_rows:
-                        result["capacity_window_summary"] = _capacity_window_summary_from_rows(_cap_rows)
-                    _event_day_idx = max(0, min(sim_days - 1, int(ev.get("day", ev_idx)) - 1))
-                    # Attach per-appliance VPP summary before annotating VPP success.
-                    if loop.appliance_suite is not None:
-                        result["appliance_summary"] = loop.appliance_suite.vpp_day_summary(_event_day_idx)
-                    if method != "no_dr":
-                        _attach_event_baseline_shed(result, ev, loop.power_trace_rows)
-                    _update_event_reference_shed_diagnostics(result)
-                    _annotate_event_demand_achievement(result)
-                    result["total_quantification_90"] = loop.total_quantification_by_id.get(
-                        ev["id"],
-                        {"status": "not_computed", "reason": "Reference A3 quantification unavailable"},
-                    )
-                    # Store all agent decisions for this day
-                    result["vpp_trigger_actions"] = loop.vpp_trigger_actions.get(ev["id"], {})
-                    result["day_decisions"] = loop.day_agent_decisions[_event_day_idx]
-                    loop.vpp_event_log.append(result)
-                    loop.vpp_scored.add(ev["id"])
-                    # Update memory context for subsequent LLM calls.
-                    # Keep it compact, but convert repeated feedback into
-                    # actionable rules so the next strategy does not relearn
-                    # the same preference from scratch.
-                    mem_entries = [{"event": e["id"], "sp": e["setpoint"],
-                                    "score": e["score"],
-                                    "user_said": e.get("user_input","")[:50],
-                                    "feedback": e["comment"][:60]}
-                                   for e in loop.vpp_event_log]
-                    try:
-                        from user_pref_scorer import build_vpp_preference_memory_notes
-                        mem_rules = build_vpp_preference_memory_notes(
-                            loop.vpp_event_log,
-                            persona_config,
-                        )
-                    except Exception:
-                        mem_rules = []
-                    loop.vpp_mem_ctx = (
-                        "\nPast VPP responses (user in the loop): "
-                        + json.dumps(mem_entries, ensure_ascii=False)
-                    )
-                    if mem_rules:
-                        loop.vpp_mem_ctx += (
-                            "\nLearned preference rules for next decisions: "
-                            + json.dumps(mem_rules, ensure_ascii=False)
-                        )
+            # VPP role-play scoring is intentionally deferred to the event day's
+            # 24:00 boundary above, after service outcomes are observable.
 
         if loop.h_cool != -1: ex.set_actuator_value(s, loop.h_cool, loop.sp)
         if loop.h_heat != -1: ex.set_actuator_value(s, loop.h_heat, HTG_SP)
@@ -3246,6 +3296,17 @@ All times are hour-of-day (0–23.9)."""
     api.runtime.callback_end_system_timestep_after_hvac_reporting(state, cb)
     ec = api.runtime.run_energyplus(state, ["-w", str(epw_path), "-d", str(output_dir), str(idf_path)])
     api.state_manager.delete_state(state)
+
+    final_score_h = max(float(loop.prev_sim_h), total_sim_hours)
+    for ev_idx, ev in enumerate(vpp_events, start=1):
+        if ev["id"] in loop.vpp_scored:
+            continue
+        if _event_score_due_hour(ev, ev_idx) <= final_score_h + 1e-6:
+            print(
+                f"  [VPP Day-End Score] event={ev['id']} "
+                f"due={_event_score_due_hour(ev, ev_idx):.1f}h final={final_score_h:.1f}h"
+            )
+            _score_and_record_vpp_event(ev, ev_idx, final_score_h, human_mode=human_mode)
 
     meter_vpp_kwh = _read_ep_vpp_window_energy(output_dir, vpp_events)
     if meter_vpp_kwh:

@@ -317,13 +317,16 @@ def _prepare_run_assets(
     )
     idf_path = template_idf
     occupancy_profile = hourly_occupancy_from_persona(persona or {}, days)
-    if start_date or occupancy_profile:
+    template_days = set(DEFAULT_FAMILY_IDF_BY_DAYS)
+    needs_custom_runperiod = bool(start_date) or days not in template_days
+    if needs_custom_runperiod or occupancy_profile:
         assets_dir = output_dir.parent / "_run_assets" / output_dir.name
-        if start_date:
+        if needs_custom_runperiod:
+            run_start = date.fromisoformat(start_date) if start_date else date(2007, 7, 1)
             idf_path = generate_runperiod_idf(
                 template_idf,
                 assets_dir,
-                start_date=date.fromisoformat(start_date),
+                start_date=run_start,
                 days=days,
             )
         else:

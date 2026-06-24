@@ -237,6 +237,54 @@ def _services_from_actions(actions: dict | None) -> set[str]:
     return services
 
 
+def _iter_policy_action_dicts(policy_control_context: dict | None):
+    if not isinstance(policy_control_context, dict):
+        return
+    actions = policy_control_context.get("vpp_trigger_actions")
+    if isinstance(actions, dict):
+        yield actions
+    for decision in policy_control_context.get("day_decisions") or []:
+        if not isinstance(decision, dict):
+            continue
+        for key in ("actions", "raw_appliance_actions"):
+            actions = decision.get(key)
+            if isinstance(actions, dict):
+                yield actions
+
+
+def _invalid_ev_policy_windows(policy_control_context: dict | None, persona: dict | None) -> list[str]:
+    """Find EV charge windows that cannot serve the current day's post-arrival need."""
+    ev_cfg = ((persona or {}).get("appliances") or {}).get("ev", {}) or {}
+    if not bool(ev_cfg.get("present")):
+        return []
+    try:
+        arrival_h = float(ev_cfg.get("arrival_h", 18.0)) % 24.0
+        departure_h = float(ev_cfg.get("departure_h", 7.5)) % 24.0
+    except (TypeError, ValueError):
+        return []
+    invalid: list[str] = []
+    for actions in _iter_policy_action_dicts(policy_control_context):
+        if actions.get("ev_charge_start_h") is None or actions.get("ev_charge_end_h") is None:
+            continue
+        try:
+            start_h = float(actions.get("ev_charge_start_h")) % 24.0
+            end_h = float(actions.get("ev_charge_end_h")) % 24.0
+        except (TypeError, ValueError):
+            invalid.append(f"{actions.get('ev_charge_start_h')}-{actions.get('ev_charge_end_h')}")
+            continue
+        if arrival_h > departure_h:
+            # For an arrival-day policy, a same-day early-morning window such as
+            # 04:30-07:30 happens before the evening arrival and cannot recharge
+            # the commute energy consumed at departure.  Use an evening start or
+            # an overnight window (start > end) instead.
+            feasible = start_h >= arrival_h or start_h > end_h
+        else:
+            feasible = start_h < end_h and start_h < departure_h and end_h > arrival_h
+        if not feasible:
+            invalid.append(f"{_fmt_hour_for_window(start_h)}-{_fmt_hour_for_window(end_h)}")
+    return invalid
+
+
 def _fmt_hour_for_window(hour: float) -> str:
     h = float(hour) % 24.0
     hh = int(h)
@@ -1244,6 +1292,7 @@ def score_user_preference(
     if vpp_result_context:
         home_state["vpp_result"] = vpp_result_context
     appliance_summary = appliance_summary or {}
+    policy_control_context = dict(policy_control_context or {})
     skipped_devices = [
         name for name, info in appliance_summary.items()
         if name in {"washer", "dishwasher", "dryer"} and bool(info.get("present")) and bool(info.get("skipped"))
@@ -1255,8 +1304,46 @@ def score_user_preference(
 
     wh_info = appliance_summary.get("water_heater", {}) if appliance_summary else {}
     water_heater_during_vpp = bool(wh_info.get("present") and wh_info.get("ran_during_vpp"))
+    water_heater_not_ready = bool(
+        wh_info.get("present")
+        and (wh_info.get("bath_check_done") is True or "ready_at_bath" in wh_info)
+        and wh_info.get("ready_at_bath") is False
+    )
+    ev_info = appliance_summary.get("ev", {}) if appliance_summary else {}
+    ev_target_missed = bool(
+        ev_info.get("present")
+        and "target_reached" in ev_info
+        and ev_info.get("target_reached") is False
+    )
+    ev_target_reached = bool(
+        ev_info.get("present")
+        and "target_reached" in ev_info
+        and ev_info.get("target_reached") is True
+    )
     if water_heater_during_vpp:
         home_state["water_heater_during_vpp"] = True
+    if water_heater_not_ready:
+        home_state["water_heater_not_ready_at_bath"] = True
+        home_state["service_rule_violated"] = True
+    if ev_target_missed:
+        home_state["ev_target_not_reached"] = True
+        home_state["service_rule_violated"] = True
+    invalid_ev_windows = _invalid_ev_policy_windows(policy_control_context, persona)
+    invalid_ev_windows_hard_failure = bool(invalid_ev_windows and not ev_target_reached)
+    if invalid_ev_windows:
+        home_state["invalid_ev_policy_windows"] = invalid_ev_windows
+        if invalid_ev_windows_hard_failure:
+            home_state["service_rule_violated"] = True
+        else:
+            home_state["invalid_ev_policy_windows_repaired_by_later_policy"] = True
+    unserved_service_devices = []
+    if water_heater_not_ready:
+        unserved_service_devices.append("water_heater")
+    if ev_target_missed:
+        unserved_service_devices.append("ev")
+    if invalid_ev_windows_hard_failure:
+        unserved_service_devices.append("ev")
+    unserved_service_devices = list(dict.fromkeys(unserved_service_devices))
     nonfixed_appliances_during_vpp = [
         name
         for name, info in appliance_summary.items()
@@ -1265,7 +1352,6 @@ def score_user_preference(
         and bool(info.get("ran_during_vpp"))
         and name not in fixed_appliances
     ]
-    policy_control_context = dict(policy_control_context or {})
     policy_action_space = set(policy_control_context.get("action_space_services") or [])
     emitted_policy_services = set(policy_control_context.get("emitted_services") or [])
     if not emitted_policy_services:
@@ -1286,10 +1372,15 @@ def score_user_preference(
             ):
                 present_required_services.add(name)
         elif name == "water_heater":
-            if bool(info.get("ran_during_vpp")) or info.get("ready_at_bath") is False:
+            if bool(info.get("ran_during_vpp")) or (
+                (info.get("bath_check_done") is True or "ready_at_bath" in info)
+                and info.get("ready_at_bath") is False
+            ):
                 present_required_services.add(name)
         elif name == "ev":
-            if bool(info.get("ran_during_vpp")) or info.get("target_reached") is False:
+            if bool(info.get("ran_during_vpp")) or (
+                "target_reached" in info and info.get("target_reached") is False
+            ):
                 present_required_services.add(name)
     if policy_action_space:
         present_required_services |= {
@@ -1304,6 +1395,11 @@ def score_user_preference(
     missing_policy_services = sorted(
         present_required_services - emitted_policy_services
     ) if policy_control_context else []
+    ev_policy_explicit = bool(
+        ev_info.get("present")
+        and ev_target_reached
+        and "ev" in emitted_policy_services
+    )
     if policy_control_context:
         home_state["policy_control_context"] = {
             "method": policy_control_context.get("method", method),
@@ -1422,6 +1518,29 @@ def score_user_preference(
                 )
             else:
                 rationale += " | NOTE: water heater ran DURING VPP window (added peak load)."
+        if water_heater_not_ready:
+            rationale += (
+                " | CRITICAL SERVICE VIOLATION: water heater was present but was not ready at the required bath/shower time. "
+                "The user should strongly penalize this service failure even if VPP appliance avoidance succeeded."
+            )
+        if invalid_ev_windows_hard_failure:
+            rationale += (
+                " | CRITICAL SERVICE VIOLATION: EV was present but the emitted charge window is infeasible for the "
+                "arrival-day charging need "
+                f"(invalid windows: {', '.join(invalid_ev_windows)}). "
+                "The user, especially an EV owner/commuter, should strongly penalize this policy failure even if the VPP window was clean."
+            )
+        elif invalid_ev_windows:
+            rationale += (
+                " | NOTE: an earlier EV charge window was infeasible for the arrival-day charging need "
+                f"(invalid windows: {', '.join(invalid_ev_windows)}), but final EV target SOC was reached; "
+                "treat this as policy clarity/robustness weakness rather than an unmet service target."
+            )
+        if ev_target_missed:
+            rationale += (
+                " | CRITICAL SERVICE VIOLATION: EV was present but did not reach the required target SOC by the departure/check time. "
+                "The user, especially an EV owner/commuter, should strongly penalize this service failure even if the VPP window was clean."
+            )
         if skipped_devices:
             rationale += (
                 " | CRITICAL SERVICE VIOLATION: agent skipped required appliance task(s): "
@@ -1439,6 +1558,12 @@ def score_user_preference(
                 "Only count appliance service as method-controlled when it appears in emitted policy actions; "
                 "do not credit baseline routines or simulator default completion as policy success."
             )
+            if ev_policy_explicit:
+                rationale += (
+                    " EV factual evidence: the method emitted an explicit EV charging action/window "
+                    "and the simulator reached the EV target SOC; do not describe the EV schedule as "
+                    "missing, absent, or not explicit."
+                )
             if missing_policy_services:
                 rationale += (
                     " | CRITICAL APPLIANCE STRATEGY FAILURE: required present controllable appliances "
@@ -1569,7 +1694,10 @@ def score_user_preference(
                 for token in ("missed", "failed", "not met", "not achieved")
             )
             severe_service_issue = bool(
-                skipped_task_count or nonfixed_appliances_during_vpp or missing_policy_services
+                skipped_task_count
+                or nonfixed_appliances_during_vpp
+                or missing_policy_services
+                or unserved_service_devices
             )
             if (misleading_miss or result["vpp_score"] <= 2) and not severe_service_issue:
                 result["vpp_score"] = max(result["vpp_score"], 4)
@@ -1580,6 +1708,46 @@ def score_user_preference(
                 if misleading_miss:
                     result["comment"] = "VPP appliance criterion achieved; comfort/routine were preserved."
                 result["factual_consistency_guard"] = "corrected_achieved_vpp_missed_label"
+        if ev_policy_explicit:
+            comment_lower = str(result.get("comment", "")).lower()
+            false_ev_missing = (
+                "ev" in comment_lower
+                and any(
+                    token in comment_lower
+                    for token in (
+                        "missing",
+                        "not explicit",
+                        "not scheduled",
+                        "no ev",
+                        "absent",
+                    )
+                )
+            )
+            severe_service_issue = bool(
+                skipped_task_count
+                or nonfixed_appliances_during_vpp
+                or missing_policy_services
+                or unserved_service_devices
+            )
+            if false_ev_missing and not severe_service_issue:
+                result["energy_score"] = max(result["energy_score"], 3)
+                if vpp_result_context and vpp_result_context.get("achieved") is True:
+                    result["vpp_score"] = max(result["vpp_score"], 4)
+                result["score"] = max(result["score"], 3)
+                if result["comfort_score"] >= 4 and result["vpp_score"] >= 4:
+                    result["score"] = max(result["score"], 4)
+                result["label"] = [
+                    "very_dissatisfied",
+                    "dissatisfied",
+                    "neutral",
+                    "satisfied",
+                    "very_satisfied",
+                ][max(1, min(5, int(result["score"]))) - 1]
+                result["comment"] = (
+                    "EV charging schedule was emitted and target SOC was reached; "
+                    "remaining concerns are comfort/routine only."
+                )
+                result["factual_consistency_guard"] = "corrected_false_ev_missing_label"
         if skipped_task_count > 0:
             skipped_names = ", ".join(skipped_devices)
             result.update({
@@ -1593,6 +1761,16 @@ def score_user_preference(
                     "this violates the user's service rule."
                 ),
             })
+        if unserved_service_devices:
+            result["score"] = min(result["score"], 2)
+            result["energy_score"] = min(result["energy_score"], 2)
+            result["vpp_score"] = min(result["vpp_score"], 2)
+            result["label"] = "dissatisfied" if result["score"] == 2 else "very_dissatisfied"
+            result["comment"] = (
+                "Required appliance service target(s) were not met "
+                f"({', '.join(unserved_service_devices)}); "
+                + (result.get("comment", "") or "this violates the user's service rule.")
+            )
         if (
             _low_disruption_strategy_language(persona)
             and fixed_appliances
