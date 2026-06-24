@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import random
+import threading
 import time
 
 from openai import OpenAI
@@ -13,6 +15,9 @@ logger = logging.getLogger(__name__)
 
 
 class LLMClient:
+    _pool_lock = threading.Lock()
+    _pool_counter = random.randint(0, 1_000_000)
+
     def __init__(
         self,
         config: LLMConfig | None = None,
@@ -45,6 +50,15 @@ class LLMClient:
             self._client = OpenAI(api_key=key, base_url=self.config.base_url)
         return self._client
 
+    @classmethod
+    def _next_pool_start(cls, n_pool: int) -> int:
+        if n_pool <= 1:
+            return 0
+        with cls._pool_lock:
+            idx = cls._pool_counter % n_pool
+            cls._pool_counter += 1
+        return idx
+
     def chat(self, system_prompt: str, user_prompt: str,
              max_retries: int = 3, retry_base_delay: float = 2.0,
              validate_fn=None) -> str:
@@ -65,18 +79,21 @@ class LLMClient:
                           validate_fn=None) -> dict:
         """Call the LLM with key-pool rotation and retry on empty/invalid responses.
 
-        Rotation strategy: attempt i uses pool[i % len(pool)], so with a
-        3-key pool and max_retries=3 each key is tried once before giving up.
+        Rotation strategy: each request starts at a process-local round-robin
+        key index, then retries advance through the pool. This keeps concurrent
+        benchmark runs from all hammering pool[0] before any other key is used.
         Between retries the call sleeps retry_base_delay seconds (flat, not
         exponential) to keep the simulation responsive.
         """
         pool = self.config.api_key_pool or [self.config.api_key]
         n_pool = len(pool)
+        start_idx = self._next_pool_start(n_pool)
         last_exc: Exception | None = None
 
         for attempt in range(max_retries):
-            key = pool[attempt % n_pool]
-            key_hint = f"pool[{attempt % n_pool}]...{key[-6:]}" if len(key) > 6 else f"pool[{attempt % n_pool}]"
+            pool_idx = (start_idx + attempt) % n_pool
+            key = pool[pool_idx]
+            key_hint = f"pool[{pool_idx}]...{key[-6:]}" if len(key) > 6 else f"pool[{pool_idx}]"
             client = self._get_client_for_key(key)
             try:
                 start_time = time.perf_counter()
@@ -117,21 +134,22 @@ class LLMClient:
                         "latency_seconds": round(latency_seconds, 3),
                         "token_usage": token_usage,
                         "retries": attempt,
-                        "key_index": attempt % n_pool,
+                        "key_index": pool_idx,
                     },
                 }
             except Exception as exc:
                 last_exc = exc
                 if attempt < max_retries - 1:
-                    next_key = pool[(attempt + 1) % n_pool]
+                    next_key = pool[(start_idx + attempt + 1) % n_pool]
                     rotated = next_key != key
+                    exc_text = f"{type(exc).__name__}: {exc}"
                     logger.warning(
                         "LLM attempt %d/%d failed (%s)%s: %s",
                         attempt + 1, max_retries, key_hint,
-                        " — rotating key" if rotated else "", exc,
+                        " — rotating key" if rotated else "", exc_text,
                     )
                     print(f"  [LLMClient] ⚠ attempt {attempt+1}/{max_retries} {key_hint}"
-                          f"{' → rotating key' if rotated else ''}: {exc}")
+                          f"{' → rotating key' if rotated else ''}: {exc_text}")
                     time.sleep(retry_base_delay)
 
         print(f"  [LLMClient] ✗ all {max_retries} attempts exhausted — raising for fallback")
