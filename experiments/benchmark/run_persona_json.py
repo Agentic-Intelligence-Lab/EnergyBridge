@@ -354,6 +354,11 @@ def _canonical_method(method: str) -> str:
         "rule_milp": "rule_milp",
         "rule+milp": "rule_milp",
         "pmv_milp": "rule_milp",
+        "eb_rule_milp": "eb_rule_milp",
+        "eb+rule+milp": "eb_rule_milp",
+        "energybridge_rule_milp": "eb_rule_milp",
+        "agent_milp": "eb_rule_milp",
+        "agent+milp": "eb_rule_milp",
         "no_dr": "no_dr",
         "none": "no_dr",
         "baseline": "no_dr",
@@ -376,6 +381,7 @@ def _method_label(method: str) -> str:
         "rl_ppo_3day": "RL PPO 3-day baseline",
         "rl_ppo_pref_v2": "RL PPO Pref-v2",
         "rule_milp": "Rule+MILP oracle baseline",
+        "eb_rule_milp": "EB+rule+MILP hybrid agent",
         "no_dr": "No-DR counterfactual",
     }
     return labels.get(method, method or "unknown")
@@ -462,7 +468,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--method",
-        choices=[ENERGYBRIDGE_METHOD_ID, "agent", "mpc_dynamic", "mpc_ep", "mpc", "rl", "rl_ppo", "rl_ppo_3day", "rl_ppo_pref_v2", "rl_pref_v2", "rule_milp", "rule+milp", "pmv_milp", "no_dr", "none", "baseline"],
+        choices=[ENERGYBRIDGE_METHOD_ID, "agent", "mpc_dynamic", "mpc_ep", "mpc", "rl", "rl_ppo", "rl_ppo_3day", "rl_ppo_pref_v2", "rl_pref_v2", "rule_milp", "rule+milp", "pmv_milp", "eb_rule_milp", "EB+rule+MILP", "eb+rule+milp", "energybridge_rule_milp", "agent_milp", "agent+milp", "no_dr", "none", "baseline"],
         default=ENERGYBRIDGE_METHOD_ID,
         help="Controller method. Use EnergyBridge for our agent; 'agent' is kept as a deprecated alias.",
     )

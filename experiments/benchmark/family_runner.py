@@ -234,6 +234,8 @@ class BenchmarkResult:
     day_ahead_price_metrics: dict = field(default_factory=dict)
     control_decisions: List[Tuple[float, float, float]] = field(default_factory=list)
     vpp_event_log: List[dict] = field(default_factory=list)  # scored VPP events with reason
+    agent_preference_memory_path: str = ""
+    agent_preference_memory_md_path: str = ""
     output_dir: str = ""; error: str = ""
     def as_dict(self):
         _skip = {"control_decisions", "appliance_results"}
@@ -333,6 +335,9 @@ class _FamilyLoop:
         self.day_agent_decisions: List[List[dict]] = [[], [], []]  # per day: list of {h, sp, actions}
         self.daily_plans_done: set[int] = set()
         self.no_dr_routine_actions: List[dict] = []
+        self.agent_preference_memory: Dict[str, Any] = {}
+        self.agent_memory_path: Optional[Path] = None
+        self.agent_memory_md_path: Optional[Path] = None
         # Appliance suite — initialised by run_family_agent when persona is known
         self.appliance_suite = None                 # ApplianceSuite | None
 
@@ -787,7 +792,7 @@ def _method_policy_action_space_services(method: str) -> set[str]:
         return {"washer", "water_heater"}
     if method == "rl_ppo_pref_v2":
         return {"washer", "dishwasher", "water_heater", "ev"}
-    if method in ("agent", "mpc_dynamic", "mpc_ep", "hema_agent", "rule_milp"):
+    if method in ("agent", "eb_rule_milp", "mpc_dynamic", "mpc_ep", "hema_agent", "rule_milp"):
         return {"washer", "dishwasher", "dryer", "water_heater", "ev"}
     return set()
 
@@ -1713,6 +1718,199 @@ def _compute_posthoc_decision_objective(
     )
 
 
+def _init_agent_preference_memory(
+    loop,
+    output_dir: Path,
+    *,
+    method: str,
+    persona_config: dict | None,
+) -> None:
+    """Create a run-local preference memory file for hybrid agent methods."""
+    if method != "eb_rule_milp":
+        return
+    persona_id = (persona_config or {}).get("id", "unknown_persona")
+    memory = {
+        "version": "eb_rule_milp_preference_memory_v1",
+        "method": method,
+        "persona_id": persona_id,
+        "purpose": (
+            "Run-local memory for EB+rule+MILP. It records daily role-play "
+            "feedback so later decisions can select among MILP candidates using "
+            "learned user preferences."
+        ),
+        "events": [],
+        "learned_preference_rules": [],
+        "latest_summary": "No scored VPP feedback yet.",
+    }
+    loop.agent_preference_memory = memory
+    loop.agent_memory_path = Path(output_dir) / "agent_preference_memory.json"
+    loop.agent_memory_md_path = Path(output_dir) / "agent_preference_memory.md"
+    _write_agent_preference_memory(loop)
+
+
+def _agent_preference_memory_prompt_text(loop) -> str:
+    memory = getattr(loop, "agent_preference_memory", {}) or {}
+    if not memory:
+        return ""
+    prompt_memory = {
+        "latest_summary": memory.get("latest_summary", ""),
+        "learned_preference_rules": memory.get("learned_preference_rules", []),
+        "recent_events": (memory.get("events") or [])[-3:],
+    }
+    return (
+        "\n[EB+rule+MILP USER MEMORY]\n"
+        "Use this run-local memory as a decision input. It resets for every fresh benchmark run.\n"
+        f"{json.dumps(prompt_memory, ensure_ascii=False)}"
+    )
+
+
+def _write_agent_preference_memory(loop) -> None:
+    memory_path = getattr(loop, "agent_memory_path", None)
+    md_path = getattr(loop, "agent_memory_md_path", None)
+    memory = getattr(loop, "agent_preference_memory", {}) or {}
+    if memory_path is None or md_path is None or not memory:
+        return
+    try:
+        memory_path.write_text(json.dumps(memory, indent=2, ensure_ascii=False), encoding="utf-8")
+        lines = [
+            "# EB+rule+MILP Preference Memory",
+            "",
+            f"- Method: `{memory.get('method', '')}`",
+            f"- Persona: `{memory.get('persona_id', '')}`",
+            f"- Version: `{memory.get('version', '')}`",
+            "",
+            "## Latest Summary",
+            "",
+            str(memory.get("latest_summary", "")),
+            "",
+            "## Learned Preference Rules",
+            "",
+        ]
+        rules = list(memory.get("learned_preference_rules") or [])
+        lines.extend([f"- {rule}" for rule in rules] or ["- No learned rules yet."])
+        lines.extend(["", "## Event Feedback", ""])
+        for event in memory.get("events") or []:
+            lines.extend(
+                [
+                    f"### {event.get('event_id', '?')}",
+                    "",
+                    f"- Score: {event.get('score')} / 5",
+                    f"- Comfort/Energy/VPP: {event.get('comfort_score')}/"
+                    f"{event.get('energy_score')}/{event.get('vpp_score')}",
+                    f"- User before action: {event.get('user_input', '')}",
+                    f"- Controller reason: {event.get('controller_reason', '')}",
+                    f"- Feedback: {event.get('feedback', '')}",
+                    "",
+                ]
+            )
+        md_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    except Exception as exc:
+        print(f"  [EB+rule+MILP Memory] write failed: {exc}")
+
+
+def _update_agent_preference_memory(
+    loop,
+    event_result: dict,
+    *,
+    persona_config: dict | None,
+) -> None:
+    memory = getattr(loop, "agent_preference_memory", {}) or {}
+    if not memory:
+        return
+    event_entry = {
+        "event_id": event_result.get("id"),
+        "day": event_result.get("day"),
+        "score": event_result.get("score"),
+        "comfort_score": event_result.get("comfort_score"),
+        "energy_score": event_result.get("energy_score"),
+        "vpp_score": event_result.get("vpp_score"),
+        "user_input": str(event_result.get("user_input", ""))[:500],
+        "controller_reason": str(event_result.get("reason", ""))[:500],
+        "feedback": str(
+            event_result.get("controller_feedback")
+            or event_result.get("member_feedback_summary")
+            or event_result.get("comment", "")
+        )[:1200],
+        "target_achieved": event_result.get("target_achieved"),
+        "selected_strategy": event_result.get("selected_strategy", {}),
+    }
+    events = list(memory.get("events") or [])
+    events.append(event_entry)
+    memory["events"] = events
+    try:
+        from user_pref_scorer import build_vpp_preference_memory_notes
+
+        rules = build_vpp_preference_memory_notes(list(getattr(loop, "vpp_event_log", [])), persona_config)
+    except Exception:
+        rules = []
+    memory["learned_preference_rules"] = list(dict.fromkeys(rules))[:8]
+    score_bits = [
+        f"{item.get('event_id')}: score={item.get('score')}, feedback={str(item.get('feedback', ''))[:160]}"
+        for item in events[-3:]
+    ]
+    memory["latest_summary"] = (
+        "Recent user feedback suggests: "
+        + (" | ".join(score_bits) if score_bits else "No scored feedback yet.")
+    )
+    loop.agent_preference_memory = memory
+    _write_agent_preference_memory(loop)
+
+
+def _hybrid_rule_milp_guidance_text(options: dict | None) -> str:
+    if not options:
+        return ""
+    compact = {
+        "hvac": options.get("hvac", {}),
+        "strategy_options": options.get("strategy_options", []),
+        "selected_rule_milp_action": options.get("selected_rule_milp_action", {}),
+        "solver": options.get("solver", {}),
+        "notes": options.get("notes", []),
+    }
+    return (
+        "\n[EB+rule+MILP CANDIDATES]\n"
+        "Rule+MILP proposes appliance schedules that are cost/VPP-optimal under the current physical model. "
+        "PMV guidance gives the comfort-feasible AC range. Choose the option that best matches the user's "
+        "preference memory and live preference. You may lightly adjust times or AC setpoint for user preference, "
+        "but keep every present appliance explicitly controlled and avoid VPP-window non-AC load when feasible. "
+        "If you deviate from a MILP option, explain the user-preference reason in the `reason` field.\n"
+        f"{json.dumps(compact, ensure_ascii=False)}"
+    )
+
+
+def _build_hybrid_rule_milp_options(
+    loop,
+    *,
+    sim_h: float,
+    hod: float,
+    temp: float | None,
+    out_t: float | None,
+    facility_w: float | None,
+    vpp_event: dict | None,
+    appliance_config: dict | None,
+    price_profile: Any,
+    run_start_date: Any,
+) -> dict:
+    from experiments.benchmark.baselines.rule_milp import plan_rule_milp_options
+
+    state_dict = _build_decision_time_state(
+        loop,
+        sim_h=sim_h,
+        hod=hod,
+        temp=temp,
+        out_t=out_t,
+        facility_w=facility_w,
+        vpp_event=vpp_event,
+        vpp_target_kwh=None,
+        appliance_config=appliance_config or {},
+    )
+    return plan_rule_milp_options(
+        state=state_dict,
+        price_profile=price_profile,
+        run_start_date=run_start_date,
+        max_options=5,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Appliance actuator write-back helper
 # Called each EnergyPlus timestep to push appliance_sim powers into EnergyPlus.
@@ -1850,11 +2048,16 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
         "rule_milp": "rule_milp",
         "rule+milp": "rule_milp",
         "pmv_milp": "rule_milp",
+        "eb_rule_milp": "eb_rule_milp",
+        "eb+rule+milp": "eb_rule_milp",
+        "energybridge_rule_milp": "eb_rule_milp",
+        "agent_milp": "eb_rule_milp",
+        "agent+milp": "eb_rule_milp",
         "no_dr": "no_dr",
         "none": "no_dr",
         "baseline": "no_dr",
     }.get(str(method or "agent").lower(), method)
-    if method not in ("agent", "mpc_dynamic", "mpc_ep", "rl_ppo_3day", "rl_ppo_pref_v2", "rule_milp", "no_dr"):
+    if method not in ("agent", "eb_rule_milp", "mpc_dynamic", "mpc_ep", "rl_ppo_3day", "rl_ppo_pref_v2", "rule_milp", "no_dr"):
         raise ValueError(f"Unsupported family control method: {method}")
     if output_dir is None:
         output_dir = BENCHMARK_DIR / "results" / f"family_{method}_{weather_label}"
@@ -1873,6 +2076,12 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     loop.day_agent_decisions = [[] for _ in range(sim_days)]
     loop.daily_plans_done = set()
     loop.next_check = planning_hour
+    _init_agent_preference_memory(
+        loop,
+        output_dir,
+        method=method,
+        persona_config=persona_config,
+    )
     ex = api.exchange
     ex.request_variable(state, "Zone Mean Air Temperature", "living_unit1")
     ex.request_variable(state, "Facility Total Electricity Demand Rate", "Whole Building")
@@ -1962,6 +2171,16 @@ Treat DR as advisory/minimal-control: keep HVAC within {_ac_sp_min:.1f}-{_ac_sp_
 If grid goals conflict with comfort, safety, consent, or caregiving routines, choose comfort/safety and explain that only low-risk actions were taken.
 """
     _persona_policy = _persona_agent_policy_text(persona_config)
+    _hybrid_policy = ""
+    if method == "eb_rule_milp":
+        _hybrid_policy = """
+[EB+RULE+MILP HYBRID MODE]
+You are EnergyBridge augmented with Rule+MILP candidates.
+Rule+MILP generates physically feasible, cost/VPP-optimal appliance strategy options; PMV rule gives an AC comfort/efficiency range.
+Your job is not to ignore these candidates. Your job is to choose among them using the user's live preference and run-local memory, and to make only small user-preference adjustments when justified.
+If you deviate from the MILP option, keep every present appliance explicitly controlled, keep VPP-window non-AC avoidance when feasible, and explain the user-preference reason briefly.
+Use the run-local memory file as learned preference evidence. It resets for each fresh benchmark run.
+"""
 
     _run_location_text = (weather_label or "default").strip() or "default"
     _run_start_text = run_start_date.isoformat() if run_start_date else "simulation day 1"
@@ -1992,6 +2211,7 @@ Plan appliance schedules before the event. Waiting until the VPP start time is t
 All flexible schedule commands must be executable from the CURRENT clock time. Do not "fix" an active VPP event by assigning a washer/dishwasher/dryer start time in the past; if a flexible cycle was not already safely completed, move it after VPP_WINDOW. For fixed/routine appliances, keep the stated preferred routine and emit it explicitly.
 {_protective_policy}
 {_persona_policy}
+{_hybrid_policy}
 
 [APPLIANCE CONTROL — explicit commands & available parameters]
 
@@ -2055,7 +2275,7 @@ Use null only for appliances that are absent from the home, or for optional ev_m
 All times are hour-of-day (0–23.9)."""
 
     def _llm_trigger(temp, out_t, hod, sim_h, remaining_h, vpp_active=False, vpp_id="",
-                     user_pref_input=""):
+                     user_pref_input="", facility_w=None):
         import json as _j
         hh = int(hod % 24)
         vpp_event = _find_active_or_upcoming_vpp_event(
@@ -2143,6 +2363,28 @@ All times are hour-of-day (0–23.9)."""
                 price_tag = "\n" + day_ahead_price_profile.prompt_context_for_day(current_day)
             except Exception as _pe:
                 price_tag = f"\nDAY_AHEAD_PRICE: unavailable ({str(_pe)[:80]})."
+        hybrid_options: dict | None = None
+        hybrid_tag = ""
+        hybrid_memory_tag = ""
+        if method == "eb_rule_milp":
+            try:
+                hybrid_options = _build_hybrid_rule_milp_options(
+                    loop,
+                    sim_h=sim_h,
+                    hod=hod,
+                    temp=temp,
+                    out_t=out_t,
+                    facility_w=facility_w,
+                    vpp_event=vpp_event,
+                    appliance_config=appliance_config or {},
+                    price_profile=day_ahead_price_profile,
+                    run_start_date=run_start_date,
+                )
+                hybrid_tag = _hybrid_rule_milp_guidance_text(hybrid_options)
+            except Exception as _hme:
+                hybrid_tag = f"\n[EB+rule+MILP CANDIDATES unavailable: {str(_hme)[:160]}]"
+                hybrid_options = {}
+            hybrid_memory_tag = _agent_preference_memory_prompt_text(loop)
         benefit_tag = _benefit_explanation_prompt_text(
             persona_config,
             appliance_config,
@@ -2178,7 +2420,7 @@ All times are hour-of-day (0–23.9)."""
                   f"{occupancy_tag}"
                   f"zone_temp={temp:.1f}C  outdoor={out_t:.1f}C\n"
                   f"remaining_sim_hours={remaining_h:.0f}\n"
-                  f"user_pref: {user_pref}{user_now_tag}{price_tag}{benefit_tag}{learned_efficiency_tag}{intensity_tag}{appl_tag}{fixed_appliance_tag}{explicit_appliance_tag}{mem_tag}")
+                  f"user_pref: {user_pref}{user_now_tag}{price_tag}{benefit_tag}{learned_efficiency_tag}{intensity_tag}{appl_tag}{fixed_appliance_tag}{explicit_appliance_tag}{hybrid_tag}{hybrid_memory_tag}{mem_tag}")
         if vpp_active:
             fb_sp = min(_run_sp_max, _ac_sp_default if _protective_mode else 26.5)
             fb_nch = None
@@ -2362,8 +2604,21 @@ All times are hour-of-day (0–23.9)."""
                 for _line in _jj.dumps(data, ensure_ascii=False, indent=2).splitlines():
                     print(f"  │ {_line}")
                 print(f"  └{'─'*56}")
-            return {"setpoint": sp, "next_check_hour": nch, "reason": reason,
+            result = {"setpoint": sp, "next_check_hour": nch, "reason": reason,
                     "appliance_actions": appl_actions if isinstance(appl_actions, dict) else {}}
+            if method == "eb_rule_milp":
+                result["objective_source"] = "eb_rule_milp_agent_choice_v1"
+                result["strategy_trace"] = {
+                    "source": "eb_rule_milp_candidates",
+                    "candidates": (hybrid_options or {}).get("strategy_options", []),
+                    "selected_rule_milp_action": (hybrid_options or {}).get("selected_rule_milp_action", {}),
+                    "hvac": (hybrid_options or {}).get("hvac", {}),
+                    "solver": (hybrid_options or {}).get("solver", {}),
+                    "agent_actions": appl_actions if isinstance(appl_actions, dict) else {},
+                    "agent_setpoint": sp,
+                    "memory_path": str(getattr(loop, "agent_memory_path", "") or ""),
+                }
+            return result
         except Exception as e:
             print(f"  [FamilyAgent] LLM error at h={sim_h:.1f}: {e}")
             loop.llm_failures += 1
@@ -2861,6 +3116,12 @@ All times are hour-of-day (0–23.9)."""
                 "\nLearned preference rules for next decisions: "
                 + json.dumps(mem_rules, ensure_ascii=False)
             )
+        if method == "eb_rule_milp":
+            _update_agent_preference_memory(
+                loop,
+                result,
+                persona_config=persona_config,
+            )
 
     def cb(s):
         if not loop.init(ex, s): return
@@ -3082,7 +3343,7 @@ All times are hour-of-day (0–23.9)."""
                     )
 
                 # User in the loop: get roleplay user preference BEFORE agent acts
-                if is_vpp and method == "agent":
+                if is_vpp and method in ("agent", "eb_rule_milp"):
                     try:
                         if pre_event_preference_callback is None:
                             from user_pref_scorer import get_user_preference_input
@@ -3157,7 +3418,8 @@ All times are hour-of-day (0–23.9)."""
                 else:
                     res = _llm_trigger(temp, out_t, hod, sim_h, total_sim_hours - sim_h,
                                        vpp_active=is_vpp, vpp_id=vid,
-                                       user_pref_input=loop.vpp_user_input)
+                                       user_pref_input=loop.vpp_user_input,
+                                       facility_w=fac)
                     try:
                         res["objective_terms_posthoc"] = _compute_posthoc_decision_objective(
                             loop,
@@ -3173,7 +3435,11 @@ All times are hour-of-day (0–23.9)."""
                             ),
                             appliance_config=appliance_config or {},
                         )
-                        res["objective_source"] = "posthoc_agent_decision_time_pdf_v15"
+                        if method == "eb_rule_milp":
+                            res.setdefault("objective_source", "eb_rule_milp_agent_choice_v1")
+                            res["posthoc_objective_source"] = "posthoc_agent_decision_time_pdf_v15"
+                        else:
+                            res["objective_source"] = "posthoc_agent_decision_time_pdf_v15"
                     except Exception as _oe:
                         print(f"  [Agent Objective] posthoc objective error: {_oe}")
                 _raw_appliance_actions = dict(res.get("appliance_actions", {}) or {})
@@ -3227,10 +3493,18 @@ All times are hour-of-day (0–23.9)."""
                     _decision_log["objective_terms"] = res.get("objective_terms", {})
                 if res.get("objective_terms_posthoc"):
                     _decision_log["objective_terms_posthoc"] = res.get("objective_terms_posthoc", {})
+                if res.get("posthoc_objective_source"):
+                    _decision_log["posthoc_objective_source"] = res.get("posthoc_objective_source")
+                if res.get("strategy_trace"):
+                    _decision_log["strategy_trace"] = res.get("strategy_trace", {})
                 loop.day_agent_decisions[_day_i].append(_decision_log)
                 if is_vpp and triggered_vpp is not None:
                     loop.vpp_trigger_actions[vid] = res.get("appliance_actions", {})
                     loop.vpp_trigger_reason_by_id[vid] = res.get("reason", "")
+                    if res.get("strategy_trace"):
+                        existing_trace = dict(loop.vpp_strategy_trace_by_id.get(vid, {}) or {})
+                        existing_trace.update(res.get("strategy_trace", {}))
+                        loop.vpp_strategy_trace_by_id[vid] = existing_trace
                 if loop.appliance_suite is not None:
                     _apply_appliance_actions(
                         loop.appliance_suite,
@@ -3569,6 +3843,8 @@ All times are hour-of-day (0–23.9)."""
         no_dr_routine_actions=list(loop.no_dr_routine_actions),
         day_ahead_price_metrics=price_metrics,
         vpp_event_log=loop.vpp_event_log,
+        agent_preference_memory_path=str(getattr(loop, "agent_memory_path", "") or ""),
+        agent_preference_memory_md_path=str(getattr(loop, "agent_memory_md_path", "") or ""),
         control_decisions=loop.decisions[-50:], output_dir=str(output_dir))
 
 # Compatibility aliases for benchmark scripts that still reference older method names.

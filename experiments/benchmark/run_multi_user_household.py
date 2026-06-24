@@ -587,6 +587,7 @@ def _method_label(method: str) -> str:
         "mpc_dynamic": "MPC Dynamic",
         "mpc_ep": "MPC EP",
         "rule_milp": "Rule+MILP",
+        "eb_rule_milp": "EB+rule+MILP",
     }
     return labels.get(str(method), str(method))
 

@@ -98,6 +98,173 @@ def plan_rule_milp_action(
     return action
 
 
+def plan_rule_milp_options(
+    *,
+    state: dict,
+    price_profile: Any = None,
+    run_start_date: Any = None,
+    max_options: int = 5,
+) -> dict:
+    """Return PMV setpoint guidance plus equal-objective MILP appliance options.
+
+    This is intended for hybrid agent methods: Rule+MILP proposes physically
+    valid cost/VPP-optimal appliance schedules, then an agent can choose among
+    them or make a small user-preference adjustment.
+    """
+    groups = _build_candidate_groups(
+        state,
+        price_profile=price_profile,
+        run_start_date=run_start_date,
+    )
+    selected, solver_meta = _solve_binary_choice_milp(groups)
+    optimal_groups = {
+        name: _optimal_candidates(candidates)
+        for name, candidates in groups.items()
+        if candidates
+    }
+    options = _assemble_strategy_options(optimal_groups, max_options=max_options)
+    selected_action = {key: None for key in APPLIANCE_ACTION_KEYS}
+    for candidate in selected:
+        selected_action.update(candidate.get("appliances") or {})
+    return {
+        "version": "rule_milp_candidate_options_v1",
+        "hvac": _pmv_setpoint_options(state),
+        "solver": solver_meta,
+        "selected_rule_milp_action": selected_action,
+        "appliance_candidate_groups": {
+            name: [_candidate_public_view(candidate) for candidate in candidates]
+            for name, candidates in optimal_groups.items()
+        },
+        "strategy_options": options,
+        "notes": [
+            "Each strategy option combines per-appliance equal-objective MILP choices.",
+            "Options avoid VPP-window non-AC appliance operation when such a schedule is feasible.",
+            "No user preference is encoded here; the agent should select or lightly adjust using user memory.",
+        ],
+    }
+
+
+def _pmv_setpoint_options(state: dict) -> dict:
+    cfg = ((state.get("appliance_config") or {}).get("ac", {}) or {})
+    pref_min = _float(cfg.get("setpoint_preferred_min_c"), 24.0)
+    pref_max = _float(cfg.get("setpoint_preferred_max_c"), 26.0)
+    tol = _float(cfg.get("temp_tolerance_c"), 1.0)
+    allowed_min = max(22.0, pref_min - tol)
+    allowed_max = min(28.0, pref_max + tol)
+    candidates = [
+        round(allowed_min + idx * 0.5, 1)
+        for idx in range(int(round((allowed_max - allowed_min) / 0.5)) + 1)
+    ]
+    rows = [
+        {
+            "setpoint_c": sp,
+            "pmv": round(_pmv(sp), 3),
+            "pmv_ok": abs(_pmv(sp)) <= 0.5,
+        }
+        for sp in candidates
+    ]
+    feasible = [row["setpoint_c"] for row in rows if row["pmv_ok"]]
+    recommended = max(feasible) if feasible else _choose_pmv_cost_min_setpoint(state)
+    return {
+        "preferred_range_c": [round(pref_min, 1), round(pref_max, 1)],
+        "allowed_range_c": [round(allowed_min, 1), round(allowed_max, 1)],
+        "pmv_feasible_setpoints_c": feasible,
+        "cost_min_pmv_setpoint_c": round(float(recommended), 1),
+        "candidate_setpoints": rows,
+        "rule": "choose the warmest PMV-feasible setpoint for pure cost minimization",
+    }
+
+
+def _optimal_candidates(candidates: list[dict]) -> list[dict]:
+    if not candidates:
+        return []
+    min_objective = min(float(item.get("objective", 0.0)) for item in candidates)
+    optimal = [
+        item
+        for item in candidates
+        if abs(float(item.get("objective", 0.0)) - min_objective) <= 1e-9
+    ]
+    return sorted(
+        optimal,
+        key=lambda item: (
+            float(item.get("objective", 0.0)),
+            float(item.get("cost", 0.0)),
+            float(item.get("start_abs", 10**9)),
+            str(item.get("label", "")),
+        ),
+    )
+
+
+def _assemble_strategy_options(
+    optimal_groups: dict[str, list[dict]],
+    *,
+    max_options: int,
+) -> list[dict]:
+    group_names = sorted(name for name, candidates in optimal_groups.items() if candidates)
+    if not group_names:
+        return [
+            {
+                "option_id": "milp_opt_1",
+                "appliances": {},
+                "selected_labels": [],
+                "objective_total": 0.0,
+                "cost_total": 0.0,
+                "vpp_penalty_total": 0.0,
+                "optimality": "no_unlocked_present_services",
+            }
+        ]
+    count = max(1, min(int(max_options), max(len(optimal_groups[name]) for name in group_names)))
+    options: list[dict] = []
+    seen: set[tuple] = set()
+    for idx in range(count):
+        appliances = {key: None for key in APPLIANCE_ACTION_KEYS}
+        selected_labels: list[str] = []
+        objective_total = 0.0
+        cost_total = 0.0
+        vpp_penalty_total = 0.0
+        for group_name in group_names:
+            candidates = optimal_groups[group_name]
+            candidate = candidates[idx % len(candidates)]
+            appliances.update(candidate.get("appliances") or {})
+            selected_labels.append(str(candidate.get("label", group_name)))
+            objective_total += float(candidate.get("objective", 0.0))
+            cost_total += float(candidate.get("cost", 0.0))
+            vpp_penalty_total += float(candidate.get("vpp_penalty", 0.0))
+        non_null = {key: value for key, value in appliances.items() if value is not None}
+        signature = tuple(sorted(non_null.items()))
+        if signature in seen:
+            continue
+        seen.add(signature)
+        options.append(
+            {
+                "option_id": f"milp_opt_{len(options) + 1}",
+                "appliances": non_null,
+                "selected_labels": selected_labels,
+                "objective_total": round(objective_total, 6),
+                "cost_total": round(cost_total, 6),
+                "vpp_penalty_total": round(vpp_penalty_total, 6),
+                "optimality": "equal_objective_milp",
+            }
+        )
+    return options
+
+
+def _candidate_public_view(candidate: dict) -> dict:
+    return {
+        "label": candidate.get("label"),
+        "appliances": {
+            key: value
+            for key, value in (candidate.get("appliances") or {}).items()
+            if value is not None
+        },
+        "objective": round(float(candidate.get("objective", 0.0)), 6),
+        "cost": round(float(candidate.get("cost", 0.0)), 6),
+        "vpp_penalty": round(float(candidate.get("vpp_penalty", 0.0)), 6),
+        "start_abs": candidate.get("start_abs"),
+        "duration_h": candidate.get("duration_h"),
+    }
+
+
 def _choose_pmv_cost_min_setpoint(state: dict) -> float:
     cfg = ((state.get("appliance_config") or {}).get("ac", {}) or {})
     pref_min = _float(cfg.get("setpoint_preferred_min_c"), 24.0)
@@ -327,6 +494,9 @@ def _candidate(
         "objective": float(cost + vpp_penalty),
         "cost": float(cost),
         "vpp_penalty": float(vpp_penalty),
+        "start_abs": round(float(start_abs), 6),
+        "duration_h": round(float(duration_h), 6),
+        "power_kw": round(float(power_kw), 6),
     }
 
 

@@ -1416,6 +1416,7 @@ def score_user_preference(
     policy_scored_method = (
         method in (
             "agent",
+            "eb_rule_milp",
             "agent_pmv",
             "EnergyBridge",
             "hema_agent",
@@ -1438,6 +1439,8 @@ def score_user_preference(
             controller = "MPC baseline"
         elif method == "rule_milp":
             controller = "Rule+MILP baseline"
+        elif method == "eb_rule_milp":
+            controller = "EB+rule+MILP agent"
         else:
             controller = "LLM agent"
         within_preferred = pref_min - pref_tol <= float(agent_setpoint_c) <= pref_max + pref_tol

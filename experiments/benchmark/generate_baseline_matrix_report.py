@@ -32,6 +32,7 @@ METHOD_ORDER = [
     "mpc_dynamic",
     "mpc_ep",
     "rule_milp",
+    "eb_rule_milp",
     "rl",
     "hema_agent",
     "rl_ppo_3day",
@@ -45,6 +46,7 @@ METHOD_LABEL = {
     "mpc_dynamic": "MPC Dynamic",
     "mpc_ep": "MPC EP",
     "rule_milp": "Rule+MILP",
+    "eb_rule_milp": "EB+rule+MILP",
     "rl": "RL",
     "hema_agent": "HEMA agent",
     "rl_ppo_3day": "RL PPO",
@@ -58,6 +60,7 @@ POLICY_APPLIANCE_CAPABILITIES = {
     "mpc_dynamic": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "mpc_ep": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "rule_milp": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
+    "eb_rule_milp": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "hema_agent": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "rl_ppo_3day": {"washer", "water_heater"},
     "rl_ppo_pref_v2": {"washer", "dishwasher", "water_heater", "ev"},
@@ -79,6 +82,7 @@ MANUAL_APPLIANCE_SERVICES = {
 
 MANUAL_METHOD_CAPABILITIES = {
     "rule_milp": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
+    "eb_rule_milp": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "hema_agent": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "rl_ppo_pref_v2": {"washer", "dishwasher", "water_heater", "ev"},
 }
@@ -102,6 +106,11 @@ def _canonical_method(method: str) -> str:
         "rule_milp": "rule_milp",
         "rule+milp": "rule_milp",
         "pmv_milp": "rule_milp",
+        "eb_rule_milp": "eb_rule_milp",
+        "eb+rule+milp": "eb_rule_milp",
+        "energybridge_rule_milp": "eb_rule_milp",
+        "agent_milp": "eb_rule_milp",
+        "agent+milp": "eb_rule_milp",
         "no_dr": "no_dr",
         "none": "no_dr",
         "baseline": "no_dr",
