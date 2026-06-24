@@ -48,7 +48,7 @@ METHOD_LABEL = {
     "rl": "RL",
     "hema_agent": "HEMA agent",
     "rl_ppo_3day": "RL PPO",
-    "rl_ppo_pref_v2": "rl",
+    "rl_ppo_pref_v2": "RL",
     "no_dr": "No-DR",
 }
 

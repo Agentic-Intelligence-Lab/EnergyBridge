@@ -668,7 +668,12 @@ class EnergyPlusFamilyEnvV2(gym.Env):
         state = 0.0 if (not appliance.present or skipped) else (
             3.0 if (record is not None and record.completed) else (
                 2.0 if (record is not None and record.run_start_abs_h is not None) else 1.0))
-        scheduled_h = (record.scheduled_abs_h % 24.0 if record is not None and np.isfinite(record.scheduled_abs_h) else -24.0)
+        scheduled_raw = getattr(record, "scheduled_abs_h", None) if record is not None else None
+        try:
+            scheduled_float = float(scheduled_raw)
+        except (TypeError, ValueError):
+            scheduled_float = float("nan")
+        scheduled_h = scheduled_float % 24.0 if np.isfinite(scheduled_float) else -24.0
         return [
             float(appliance.present), state / 3.0, scheduled_h / 24.0,
             float(appliance.earliest_h) / 24.0, float(appliance.latest_h) / 24.0,
