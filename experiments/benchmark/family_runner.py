@@ -696,6 +696,80 @@ def _shiftable_has_existing_service_plan(suite, name: str, day_idx: int) -> bool
         return False
 
 
+def _ev_window_remaining_hours(day_idx: int, start_h: Any, end_h: Any, sim_h: float) -> float:
+    try:
+        interval = _abs_interval_from_hod(day_idx, start_h, end_h)
+    except Exception:
+        interval = None
+    if interval is None:
+        return 0.0
+    start_abs, end_abs = interval
+    if end_abs <= sim_h:
+        return 0.0
+    return max(0.0, end_abs - max(start_abs, sim_h))
+
+
+def _ev_replan_would_reduce_existing_charge(
+    suite,
+    day_idx: int,
+    start_h: Any,
+    end_h: Any,
+    sim_h: float,
+) -> bool:
+    ev = getattr(suite, "_ev", None)
+    if ev is None or not getattr(ev, "present", False):
+        return False
+    try:
+        if float(getattr(ev, "_soc", 0.0)) >= float(getattr(ev, "target_soc", 0.8)) - 1e-6:
+            return False
+    except Exception:
+        pass
+    current_start = (getattr(ev, "_day_charge_start", {}) or {}).get(day_idx)
+    current_end = (getattr(ev, "_day_charge_end", {}) or {}).get(day_idx)
+    if current_start is None or current_end is None:
+        return False
+    current_remaining = _ev_window_remaining_hours(day_idx, current_start, current_end, sim_h)
+    proposed_remaining = _ev_window_remaining_hours(day_idx, start_h, end_h, sim_h)
+    return current_remaining > 1e-6 and proposed_remaining + 1e-6 < current_remaining
+
+
+def _water_heater_configured_preheat_hours(suite) -> float:
+    wh = getattr(suite, "_water_heater", None)
+    if wh is None:
+        return 4.0
+    start_h = getattr(wh, "pre_heat_window_start_h", 15.0)
+    end_h = getattr(wh, "pre_heat_window_end_h", 18.0)
+    interval = _abs_interval_from_hod(0, start_h, end_h)
+    if interval is None:
+        return 4.0
+    return max(1.0, float(interval[1] - interval[0]))
+
+
+def _bounded_water_heater_preheat_window(
+    suite,
+    day_idx: int,
+    start_h: Any,
+    end_h: Any,
+    sim_h: float,
+) -> tuple[Any, Any, str | None]:
+    if start_h is None or end_h is None:
+        return start_h, end_h, None
+    interval = _abs_interval_from_hod(day_idx, start_h, end_h)
+    if interval is None:
+        return start_h, end_h, "invalid"
+    start_abs, end_abs = interval
+    if end_abs <= sim_h + 1e-6:
+        return start_h, end_h, "past"
+    duration = end_abs - start_abs
+    max_duration = min(8.0, _water_heater_configured_preheat_hours(suite) + 1.0)
+    if duration <= max_duration + 1e-6:
+        return start_h, end_h, None
+    bounded_start_abs = max(sim_h, end_abs - max_duration)
+    if bounded_start_abs >= end_abs - 1e-6:
+        return start_h, end_h, "past"
+    return round(bounded_start_abs % 24.0, 3), round(end_abs % 24.0, 3), "bounded"
+
+
 def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
     """Apply independent per-appliance scheduling commands from the LLM agent.
 
@@ -743,15 +817,34 @@ def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
                 # explicit disable-only: no-op (preheat stays inactive)
                 print(f"    [Appliance] water_heater preheat=False -> no-op")
             else:
-                ok = suite.set_ewh_preheat_schedule(
+                bounded_start, bounded_end, wh_guard = _bounded_water_heater_preheat_window(
+                    suite,
                     day_idx,
-                    start_h=float(ph_start) if ph_start is not None else None,
-                    end_h=float(ph_end)     if ph_end   is not None else None,
-                    temp_c=float(ph_temp)   if ph_temp  is not None else None,
+                    ph_start,
+                    ph_end,
+                    sim_h,
                 )
-                print(f"    [Appliance] water_heater preheat schedule: "
-                      f"start={ph_start} end={ph_end} temp={ph_temp} "
-                      f"-> {'ok' if ok else 'rejected'}")
+                if wh_guard in {"invalid", "past"}:
+                    print(
+                        f"    [Appliance] water_heater preheat schedule: "
+                        f"start={ph_start} end={ph_end} temp={ph_temp} -> rejected ({wh_guard})"
+                    )
+                else:
+                    if wh_guard == "bounded":
+                        print(
+                            f"    [Appliance] water_heater preheat schedule adjusted: "
+                            f"{ph_start}-{ph_end} -> {bounded_start}-{bounded_end}"
+                        )
+                    ph_start, ph_end = bounded_start, bounded_end
+                    ok = suite.set_ewh_preheat_schedule(
+                        day_idx,
+                        start_h=float(ph_start) if ph_start is not None else None,
+                        end_h=float(ph_end)     if ph_end   is not None else None,
+                        temp_c=float(ph_temp)   if ph_temp  is not None else None,
+                    )
+                    print(f"    [Appliance] water_heater preheat schedule: "
+                          f"start={ph_start} end={ph_end} temp={ph_temp} "
+                          f"-> {'ok' if ok else 'rejected'}")
         except Exception as e:
             print(f"    [Appliance] water_heater preheat error: {e}")
 
@@ -767,6 +860,12 @@ def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
             print(f"    [Appliance] ev mode error: {e}")
     if ev_ch_start is not None or ev_ch_end is not None:
         try:
+            if _ev_replan_would_reduce_existing_charge(suite, day_idx, ev_ch_start, ev_ch_end, sim_h):
+                print(
+                    f"    [Appliance] ev charge_window={ev_ch_start}-{ev_ch_end} -> rejected "
+                    "(would shorten existing target-serving window)"
+                )
+                return
             ok = suite.set_ev_charge_window(
                 day_idx,
                 start_h=float(ev_ch_start) if ev_ch_start is not None else None,
@@ -1894,6 +1993,7 @@ def _hybrid_rule_milp_guidance_text(options: dict | None) -> str:
         "PMV guidance gives the comfort-feasible AC range. Choose the option that best matches the user's "
         "preference memory and live preference. You may lightly adjust times or AC setpoint for user preference, "
         "but keep every present appliance explicitly controlled and avoid VPP-window non-AC load when feasible. "
+        "Water-heater preheat must stay close to the candidate/configured short window; never stretch it into all-day heating. "
         "If you deviate from a MILP option, explain the user-preference reason in the `reason` field.\n"
         f"{json.dumps(compact, ensure_ascii=False)}"
     )
@@ -2258,6 +2358,8 @@ WATER HEATER (electric tank, thermal storage)
   Emit a preheat schedule if hot water should be prepared for bath time.
   On VPP days: move the preheat window away from VPP_WINDOW, preferably ending about 1 hour before the event.
   If the water heater is fixed/non-DR-adjustable, emit its configured routine preheat window and temperature; do not leave it null.
+  Preheat is a short preparation window, not all-day heating. Keep duration near the configured/candidate window and never exceed it by more than about 1 hour.
+  At a later replan, do not rewrite water-heater preheat into a time window that has already ended.
   Hotter tank = more thermal storage = less chance of heating during VPP.
   Parameters:
     water_heater_preheat_start_h : float  — hour-of-day to begin preheating.
