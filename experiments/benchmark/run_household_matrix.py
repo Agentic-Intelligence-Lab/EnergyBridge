@@ -154,6 +154,7 @@ def _summarize_job(job: HouseholdJob, status: str, return_code: int | None, elap
         "elapsed_s": round(elapsed_s, 1),
         "output_dir": str(job.output_dir),
         "log_file": str(job.log_file),
+        "run_summary_path": str(job.output_dir / "run_summary.txt"),
         "exit_code": _metric(data, "exit_code"),
         "energy_kwh": _first_metric(data, ("energy_kwh", "energy_kwh_total")),
         "energy_kwh_per_day": _metric(data, "energy_kwh_per_day"),

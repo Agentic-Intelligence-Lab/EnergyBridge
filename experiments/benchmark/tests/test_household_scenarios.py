@@ -6,6 +6,7 @@ from energybridge.roleplay.households import (
 )
 from experiments.benchmark.run_multi_user_household import (
     IndependentMemberRoleplay,
+    _build_physical_household_persona,
     _make_roleplay_callbacks,
 )
 from experiments.benchmark.user_pref_scorer import StrategyPreference
@@ -96,6 +97,40 @@ def test_multi_user_scoring_uses_each_members_own_preference():
         member["household_member"]["member_id"]: f"preference-from-{member['household_member']['member_id']}"
         for member in members
     }
+    assert "controller_feedback" in aggregate
+    assert all(member["household_member"]["member_id"] in aggregate["controller_feedback"] for member in members)
+
+
+def test_household_agent_context_exposes_members_calendars_and_service_contract():
+    household = load_household_config("household_s1_dual_commuter_standard")
+    members = load_household_member_personas(household)
+    physical = _build_physical_household_persona(household, members, days=7)
+    agent_context = physical["llm_prompts"]["agent_context"]
+
+    for token in ("father", "mother", "child", "elder"):
+        assert token in agent_context
+    for token in ("washer", "dryer", "dishwasher", "water_heater", "EV"):
+        assert token in agent_context
+    assert "skip=true is allowed only" in agent_context
+    assert "All household member calendars visible to the controller" in agent_context
+    assert "Day 1" in agent_context
+
+
+def test_member_roleplay_uses_household_shared_appliances_without_losing_ac_preferences():
+    household = load_household_config("household_s1_dual_commuter_standard")
+    members = load_household_member_personas(household)
+    roleplay = IndependentMemberRoleplay(household, members)
+    original_ac = members[0].get("appliances", {}).get("ac", {})
+
+    persona = roleplay._persona_with_context(members[0])
+
+    assert persona["appliances"]["washer"]["present"] is True
+    assert persona["appliances"]["dryer"]["present"] is True
+    assert persona["appliances"]["dishwasher"]["present"] is True
+    assert persona["appliances"]["water_heater"]["present"] is True
+    assert persona["appliances"]["ev"]["present"] is True
+    if original_ac:
+        assert persona["appliances"]["ac"] == original_ac
 
 
 def test_multi_user_callbacks_do_not_mutate_global_scorer_functions():

@@ -27,7 +27,17 @@ _PROJECT_ROOT = _BENCH_DIR.parent.parent
 DEFAULT_RESULTS_ROOT = _PROJECT_ROOT / "benchmark_results"
 
 ENERGYBRIDGE_METHOD_ID = "EnergyBridge"
-METHOD_ORDER = [ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "mpc_ep", "rule_milp", "hema_agent", "rl_ppo_3day", "rl_ppo_pref_v2", "no_dr"]
+METHOD_ORDER = [
+    ENERGYBRIDGE_METHOD_ID,
+    "mpc_dynamic",
+    "mpc_ep",
+    "rule_milp",
+    "rl",
+    "hema_agent",
+    "rl_ppo_3day",
+    "rl_ppo_pref_v2",
+    "no_dr",
+]
 REFERENCE_ONLY_METHODS = {"no_dr"}
 METHOD_LABEL = {
     ENERGYBRIDGE_METHOD_ID: "EnergyBridge",
@@ -35,7 +45,8 @@ METHOD_LABEL = {
     "mpc_dynamic": "MPC Dynamic",
     "mpc_ep": "MPC EP",
     "rule_milp": "Rule+MILP",
-    "hema_agent": "HEMA Agent",
+    "rl": "RL",
+    "hema_agent": "HEMA agent",
     "rl_ppo_3day": "RL PPO",
     "rl_ppo_pref_v2": "rl",
     "no_dr": "No-DR",
@@ -83,7 +94,7 @@ def _canonical_method(method: str) -> str:
         "hema_agent": "hema_agent",
         "hema control agent": "hema_agent",
         "hema_control_agent": "hema_agent",
-        "rl": "rl_ppo_3day",
+        "rl": "rl",
         "rl_ppo": "rl_ppo_3day",
         "rl_ppo_3day": "rl_ppo_3day",
         "rl_ppo_pref_v2": "rl_ppo_pref_v2",
@@ -611,22 +622,22 @@ def _artifact_name(prefix: str, filename: str) -> str:
     return f"{prefix}_{filename}" if prefix else filename
 
 
-def _report_energy_label(df: pd.DataFrame) -> tuple[str, str, str, bool]:
+def _report_energy_label(df: pd.DataFrame, row_label: str = "Persona") -> tuple[str, str, str, bool]:
     metric_names = {str(name) for name in df["report_energy_metric_name"].dropna().unique()}
     if metric_names == {"electricity_cost_eur"}:
-        return "Persona x Method Electricity Cost", "Total electricity cost EUR (lower is better)", ".2f", True
+        return f"{row_label} x Method Electricity Cost", "Total electricity cost EUR (lower is better)", ".2f", True
     if metric_names == {"electricity_cost_eur_per_day"}:
-        return "Persona x Method Daily Electricity Cost", "Daily electricity cost EUR/day (lower is better)", ".2f", True
+        return f"{row_label} x Method Daily Electricity Cost", "Daily electricity cost EUR/day (lower is better)", ".2f", True
     if metric_names == {"energy_kwh_per_day"}:
-        return "Persona x Method Daily Energy", "Daily energy kWh/day (lower is better)", ".2f", True
+        return f"{row_label} x Method Daily Energy", "Daily energy kWh/day (lower is better)", ".2f", True
     if metric_names <= {"energy_kwh_per_day", "electricity_cost_eur_per_day"}:
         return (
-            "Persona x Method Daily Energy / Cost",
+            f"{row_label} x Method Daily Energy / Cost",
             "Daily metric: Tianjin kWh/day, Germany EUR/day (lower is better)",
             ".2f",
             True,
         )
-    return "Persona x Method Energy/Cost", "Energy/cost report metric (lower is better)", ".2f", True
+    return f"{row_label} x Method Energy/Cost", "Energy/cost report metric (lower is better)", ".2f", True
 
 
 def _report_energy_quick_read_label(df: pd.DataFrame) -> str:
@@ -763,7 +774,14 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
     return md_path
 
 
-def _plot_report(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
+def _plot_report(
+    df: pd.DataFrame,
+    report_dir: Path,
+    prefix: str = "",
+    *,
+    row_label: str = "Persona",
+    completion_metric: str = "policy",
+) -> Path:
     plt.style.use("seaborn-v0_8-whitegrid")
     fig, axes_arr = plt.subplots(2, 2, figsize=(22, 15), constrained_layout=True)
     axes = {
@@ -813,7 +831,14 @@ def _plot_report(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
         im = ax.imshow(data, cmap=_soft_cmap(cmap_name), aspect="auto", vmin=vmin, vmax=vmax)
         ax.set_title(title, fontsize=14, fontweight="bold")
         ax.set_xticks(np.arange(len(pivot.columns)))
-        ax.set_xticklabels(list(pivot.columns), rotation=0)
+        xtick_labels = []
+        for col in pivot.columns:
+            mean_value = pivot[col].mean(skipna=True)
+            if pd.isna(mean_value):
+                xtick_labels.append(str(col))
+            else:
+                xtick_labels.append(f"{col}\nμ={mean_value:{fmt}}{suffix}")
+        ax.set_xticklabels(xtick_labels, rotation=0, fontsize=9)
         ax.set_yticks(np.arange(len(pivot.index)))
         ax.set_yticklabels(list(pivot.index), fontsize=9)
         ax.set_xlabel("")
@@ -845,17 +870,24 @@ def _plot_report(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
     score_matrix = _metric_matrix("user_pref_score")
     energy_matrix = _metric_matrix("report_energy_metric")
     vpp_metric_col = "vpp_window_energy_per_hour_kwh"
-    vpp_title = "Persona x Method VPP-Window Energy"
+    vpp_title = f"{row_label} x Method VPP-Window Energy"
     vpp_cbar = "Actual kWh per VPP hour (lower is better)"
     vpp_lower_is_better = True
     vpp_energy_matrix = _metric_matrix(vpp_metric_col)
-    coverage_matrix = _metric_matrix("appliance_task_completion_rate")
-    energy_title, energy_cbar_label, energy_fmt, energy_lower_is_better = _report_energy_label(df)
+    if completion_metric == "physical":
+        coverage_matrix = _metric_matrix("physical_appliance_task_completion_rate")
+        coverage_title = f"{row_label} x Method Appliance Service Completion"
+        coverage_cbar = "Present appliance services completed in simulator"
+    else:
+        coverage_matrix = _metric_matrix("appliance_task_completion_rate")
+        coverage_title = f"{row_label} x Method Policy Appliance Output"
+        coverage_cbar = "Present appliances with emitted policy action"
+    energy_title, energy_cbar_label, energy_fmt, energy_lower_is_better = _report_energy_label(df, row_label)
 
     _draw_metric_table(
         axes["score"],
         score_matrix,
-        title="Persona x Method User Score",
+        title=f"{row_label} x Method User Score",
         cmap="YlGnBu",
         fmt=".2f",
         cbar_label="User score / 5",
@@ -884,10 +916,10 @@ def _plot_report(df: pd.DataFrame, report_dir: Path, prefix: str = "") -> Path:
     _draw_metric_table(
         axes["coverage"],
         coverage_matrix,
-        title="Persona x Method Policy Appliance Output",
+        title=coverage_title,
         cmap="PuBuGn",
         fmt=".0%",
-        cbar_label="Present appliances with emitted policy action",
+        cbar_label=coverage_cbar,
         vmin=0,
         vmax=1,
     )
@@ -947,6 +979,17 @@ def parse_args() -> argparse.Namespace:
         help="Append city to persona/household row labels. Auto-enabled when combining multiple cities.",
     )
     parser.add_argument(
+        "--row-label",
+        default="Persona",
+        help="Label used in heatmap titles for the row dimension, e.g. Persona or Scenario.",
+    )
+    parser.add_argument(
+        "--completion-metric",
+        choices=["policy", "physical"],
+        default="policy",
+        help="Metric shown in the bottom-right heatmap. Defaults to policy output coverage.",
+    )
+    parser.add_argument(
         "--horizon",
         type=int,
         default=6,
@@ -993,7 +1036,13 @@ def main() -> None:
     source_label = ", ".join(str(path) for path in summary_paths)
     md_path = _write_markdown(display_df, report_dir, Path(source_label), args.artifact_prefix)
     csv_path = _write_csv(display_df, report_dir, args.artifact_prefix)
-    png_path = _plot_report(display_df, report_dir, args.artifact_prefix)
+    png_path = _plot_report(
+        display_df,
+        report_dir,
+        args.artifact_prefix,
+        row_label=args.row_label,
+        completion_metric=args.completion_metric,
+    )
 
     print(f"[OK] markdown: {md_path}")
     print(f"[OK] csv     : {csv_path}")

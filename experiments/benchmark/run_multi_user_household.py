@@ -13,7 +13,7 @@ import copy
 import json
 import statistics
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +32,7 @@ if str(_BENCH_DIR) not in sys.path:
 import family_runner as fr
 import user_pref_scorer as _ups
 from energybridge.data.vpp_events import describe_vpp_events, load_vpp_events_config, make_daily_vpp_events
+from energybridge.roleplay.calendar import calendar_context_for_event
 from energybridge.roleplay.households import (
     list_household_ids,
     load_household_config,
@@ -49,6 +50,7 @@ from run_persona_json import (
 
 
 MEMBER_SERVICE_KEYS = ("washer", "dishwasher", "dryer", "water_heater", "ev")
+FULL_SHARED_APPLIANCES = ("ac", "washer", "dryer", "dishwasher", "water_heater", "ev", "refrigerator")
 
 
 def _slug(value: str) -> str:
@@ -65,14 +67,166 @@ def _default_output_dir(household_id: str, method: str, city: str, days: int, ho
 
 def _household_system_prompt(household: dict[str, Any]) -> str:
     base = str(((household.get("llm_prompts") or {}).get("system_prompt")) or "")
-    appliance_names = ", ".join(MEMBER_SERVICE_KEYS)
+    appliance_names = ", ".join(FULL_SHARED_APPLIANCES)
     addendum = (
         "This benchmark household physically owns the full shared appliance set: "
         f"{appliance_names}. Do not infer missing appliances from any individual member JSON; "
         "individual persona JSON files are used only for role-play preference, comments, choices, "
-        "and scoring. Shared appliance feasibility is defined by the household JSON."
+        "and scoring. Shared appliance feasibility is defined by the household JSON.\n"
+        "Each shared appliance service has exactly one household device, not one device per member. "
+        "Coordinate all member preferences into one feasible schedule per device.\n"
+        "Controller service contract: washer, dryer, dishwasher, water heater, and EV are shared "
+        "household services. If a service is present, give it an explicit feasible policy. "
+        "Do not use washer_skip/dryer_skip/dishwasher_skip to avoid VPP or because scheduling is hard; "
+        "skip=true is allowed only when the member feedback or appliance status explicitly says the task "
+        "is unnecessary today. Otherwise schedule the task outside the VPP window and set skip=false. "
+        "At every replan, all emitted start/preheat/charge times must be executable from the current clock time: "
+        "never output a past time, and never output a window that overlaps an elapsed or active VPP window. "
+        "After a VPP window begins, only move services that were originally inside that VPP window to after it; "
+        "do not reschedule already-safe services backward into the event window."
     )
     return f"{base}\n\n{addendum}".strip()
+
+
+def _member_label(persona: dict[str, Any]) -> str:
+    member = persona.get("household_member", {}) or {}
+    member_id = str(member.get("member_id") or persona.get("id"))
+    role = str(member.get("household_role") or "")
+    display = str(persona.get("display_name") or persona.get("id") or member_id)
+    persona_id = str(persona.get("id") or "")
+    role_text = f"; role={role}" if role else ""
+    return f"{member_id} ({display}; persona={persona_id}{role_text})"
+
+
+def _fmt_h(value: Any) -> str:
+    try:
+        h = float(value) % 24.0
+    except (TypeError, ValueError):
+        return "?"
+    hh = int(h)
+    mm = int(round((h - hh) * 60.0))
+    if mm >= 60:
+        hh = (hh + 1) % 24
+        mm = 0
+    return f"{hh:02d}:{mm:02d}"
+
+
+def _calendar_day_summary(persona: dict[str, Any], day_idx: int) -> str:
+    ctx = calendar_context_for_event(
+        persona,
+        day_idx,
+        {"day": day_idx, "trigger_h": 18.0, "duration_h": 1.0},
+    )
+    if not ctx.get("available"):
+        return f"Day {day_idx}: calendar unavailable"
+    events = ctx.get("events") or []
+    event_text = "; ".join(
+        f"{_fmt_h(e.get('start_h'))}-{_fmt_h(e.get('end_h'))} {e.get('title', '')} @{e.get('location', '')}"
+        for e in events
+    ) or "no scheduled events"
+    conflicts = ctx.get("vpp_conflicts") or []
+    conflict_text = "; ".join(
+        f"{_fmt_h(e.get('start_h'))}-{_fmt_h(e.get('end_h'))} {e.get('title', '')}"
+        for e in conflicts
+    ) or "none"
+    deadlines = ctx.get("appliance_deadlines") or {}
+    return (
+        f"Day {day_idx} {ctx.get('weekday', '')}: {event_text}; "
+        f"VPP-window conflicts={conflict_text}; appliance_deadlines={json.dumps(deadlines, ensure_ascii=False)}"
+    )
+
+
+def _member_calendar_context_text(member_personas: list[dict[str, Any]], *, days: int) -> str:
+    horizon = max(1, min(int(days), 7))
+    lines = [
+        "[All household member calendars visible to the controller]",
+        "Use these member calendars as first-class constraints. They are the source of household occupancy, "
+        "return-home comfort needs, chore deadlines, bath/hot-water needs, and EV departure readiness.",
+    ]
+    for persona in member_personas:
+        lines.append(f"- {_member_label(persona)}")
+        for day_idx in range(1, horizon + 1):
+            lines.append(f"  * {_calendar_day_summary(persona, day_idx)}")
+    return "\n".join(lines)
+
+
+def _calendar_context_brief(ctx: dict[str, Any]) -> str:
+    if not ctx or not ctx.get("available", False):
+        return "calendar unavailable"
+    conflicts = ctx.get("vpp_conflicts") or []
+    conflict_text = "; ".join(
+        f"{_fmt_h(e.get('start_h'))}-{_fmt_h(e.get('end_h'))} {e.get('title', '')}"
+        for e in conflicts
+    ) or "none"
+    deadlines = ctx.get("appliance_deadlines") or {}
+    events = ctx.get("events") or []
+    events_text = "; ".join(
+        f"{_fmt_h(e.get('start_h'))}-{_fmt_h(e.get('end_h'))} {e.get('title', '')}"
+        for e in events[:8]
+    ) or "none"
+    return (
+        f"day={ctx.get('day')}, events={events_text}, "
+        f"vpp_conflicts={conflict_text}, deadlines={json.dumps(deadlines, ensure_ascii=False)}"
+    )
+
+
+def _controller_feedback_from_member_scores(event_index: int, member_scores: list[dict[str, Any]]) -> str:
+    parts = []
+    low_score_members = []
+    skip_mentions = []
+    for item in member_scores:
+        member_id = str(item.get("member_id", "member"))
+        score = float(item.get("score", 3.0) or 3.0)
+        comment = str(item.get("comment", "")).strip()
+        parts.append(f"{member_id}={score:.1f}/5: {comment[:180]}")
+        if score <= 2.0:
+            low_score_members.append(member_id)
+        if "skip" in comment.lower() or "skipped" in comment.lower():
+            skip_mentions.append(member_id)
+    guidance = (
+        "Next event controller guidance: preserve each member's comfort and routine constraints; "
+        "schedule every present shared appliance explicitly; do not use skip=true for required "
+        "washer/dryer/dishwasher tasks unless a member explicitly says the task is unnecessary today."
+    )
+    if low_score_members:
+        guidance += " Low-scoring members need priority correction: " + ", ".join(low_score_members) + "."
+    if skip_mentions:
+        guidance += " The skipped-task complaint must be treated as a hard service violation."
+    return f"Multi-user post-event {event_index} feedback: " + " | ".join(parts) + " | " + guidance
+
+
+def _household_agent_context(
+    household: dict[str, Any],
+    member_personas: list[dict[str, Any]],
+    *,
+    days: int,
+) -> str:
+    prompt = _household_system_prompt(household)
+    members = "\n".join(f"- {_member_label(persona)}" for persona in member_personas)
+    present = [
+        name for name, cfg in (household.get("appliances") or {}).items()
+        if isinstance(cfg, dict) and bool(cfg.get("present"))
+    ]
+    service_contract = (
+        "[Shared appliance service contract]\n"
+        f"Present shared appliances: {', '.join(present) if present else 'none'}.\n"
+        "There is one shared unit per service: one washer, one dryer, one dishwasher, one water heater, and one EV charger. "
+        "Do not create per-member duplicate appliance schedules.\n"
+        "Every VPP-day controller prompt must treat the household appliance set, not any individual "
+        "persona appliance list, as the physical truth. Washer, dryer, dishwasher, water heater, and EV "
+        "need explicit commands when present. For washer/dryer/dishwasher, the normal valid command is "
+        "start_h plus skip=false. Do not output skip=true unless member feedback or runtime appliance "
+        "status explicitly says the task is unnecessary today. VPP shifting means moving the task outside "
+        "the VPP window, not cancelling it. Replans must use future feasible times only; after VPP starts, "
+        "do not output appliance times earlier than the current clock or inside the VPP window that just started."
+    )
+    return "\n\n".join([
+        prompt,
+        "[Household members]",
+        members,
+        service_contract,
+        _member_calendar_context_text(member_personas, days=days),
+    ]).strip()
 
 
 def _build_physical_household_persona(
@@ -83,6 +237,7 @@ def _build_physical_household_persona(
 ) -> dict[str, Any]:
     """Persona-like object used only for EP occupancy and shared appliances."""
     prompt = _household_system_prompt(household)
+    agent_context = _household_agent_context(household, member_personas, days=days)
     return {
         "schema_version": "multi_user_physical_household_v1",
         "id": household["id"],
@@ -107,7 +262,7 @@ def _build_physical_household_persona(
         ],
         "llm_prompts": {
             "system_prompt": prompt,
-            "agent_context": prompt,
+            "agent_context": agent_context,
         },
         "calendar": merge_member_calendars(household, member_personas, days=days),
         "meta": {
@@ -133,10 +288,13 @@ class IndependentMemberRoleplay:
         household: dict[str, Any],
         member_personas: list[dict[str, Any]],
         *,
+        days: int = 7,
         max_memory_items: int = 10,
     ) -> None:
         self.household = household
         self.household_prompt = _household_system_prompt(household)
+        self.household_agent_context = _household_agent_context(household, member_personas, days=days)
+        self.shared_appliances = copy.deepcopy(household.get("appliances") or {})
         self.member_personas = [copy.deepcopy(p) for p in member_personas]
         self.max_memory_items = max(1, int(max_memory_items))
         self.memory: dict[str, list[dict[str, str]]] = {
@@ -160,8 +318,18 @@ class IndependentMemberRoleplay:
         name = persona.get("display_name", persona.get("id", self._member_key(persona)))
         return f"{self._member_key(persona)} ({name}; {role})" if role else f"{self._member_key(persona)} ({name})"
 
+    def _persona_appliances_for_roleplay(self, persona: dict[str, Any]) -> dict[str, Any]:
+        """Use household non-AC appliances while preserving member comfort AC preferences."""
+        merged = copy.deepcopy(persona.get("appliances") or {})
+        for name, cfg in self.shared_appliances.items():
+            if name == "ac" and name in merged:
+                continue
+            merged[name] = copy.deepcopy(cfg)
+        return merged
+
     def _persona_with_context(self, persona: dict[str, Any]) -> dict[str, Any]:
         out = copy.deepcopy(persona)
+        out["appliances"] = self._persona_appliances_for_roleplay(out)
         prompts = dict(out.get("llm_prompts") or {})
         original = str(prompts.get("system_prompt", ""))
         member = out.get("household_member", {}) or {}
@@ -173,7 +341,10 @@ class IndependentMemberRoleplay:
             self.household_prompt,
             f"Your household member role: {member.get('household_role', '')}",
             "You speak and score independently as this member. Do not average your view with others.",
+            "Use your personal comfort/consent/routine preferences, but use the household shared appliance set as physical truth.",
             "Assume the physical household owns AC, washer, dryer, dishwasher, water heater, EV, and refrigerator.",
+            "There is one shared unit per appliance service, coordinated across all members.",
+            "A required shared appliance task being skipped is a serious service failure unless you explicitly said it is unnecessary today.",
         ]
         if memory_lines:
             context.append("[Your own past-event memory]")
@@ -263,27 +434,35 @@ class IndependentMemberRoleplay:
             "Every listed household member has independently commented and selected a preference.",
             "Summarize these independent preferences into concise actionable feedback for an EnergyBridge control agent.",
             "The home owns all shared appliances: washer, dryer, dishwasher, water heater, EV, and refrigerator.",
+            "There is one shared unit per appliance service; produce one coordinated schedule per service.",
+            "Hard appliance rule: do not cancel required washer/dryer/dishwasher service; tell the controller to schedule it outside the VPP window with skip=false unless a member explicitly says the task is unnecessary today.",
+            "Hard timing rule: all controller times must be future-feasible from the current replan time; never schedule a preheat, charge, washer, dryer, or dishwasher command into the past or into an elapsed/active VPP window.",
             "Do not discard minority concerns; preserve conflicts and hard constraints.",
         ]
         for entry in entries:
             selected = entry.get("selected_strategy") or {}
+            calendar_text = _calendar_context_brief(entry.get("calendar_context") or {})
             lines.append(
                 f"- {entry['member_name']}: selected {selected.get('id', selected.get('label', 'custom'))}; "
-                f"preference={entry.get('preference_text', '')}"
+                f"preference={entry.get('preference_text', '')}; calendar={calendar_text}"
             )
         fallback = (
             "Multi-user feedback: "
             + " | ".join(
-                f"{e['member_id']} says {e.get('preference_text', '')[:120]}" for e in entries
+                f"{e['member_id']} says {e.get('preference_text', '')[:180]}" for e in entries
             )
+            + " | Required household appliance tasks must be scheduled, not skipped. Use one shared device schedule per service and future-feasible times only."
         )
         try:
             from energybridge.llm.client import LLMClient
 
             sys_prompt = (
                 "You summarize independent household member preferences for a home energy control agent. "
-                "Return JSON only: {\"agent_feedback\": \"<=140 words\", \"conflicts\": [\"...\"], "
-                "\"hard_constraints\": [\"...\"]}."
+                "Return JSON only: {\"agent_feedback\": \"<=260 words\", \"conflicts\": [\"...\"], "
+                "\"hard_constraints\": [\"...\"]}. Preserve every member's hard constraint. "
+                "Be explicit that required shared appliance tasks should be scheduled outside the VPP window, "
+                "not skipped, unless the task is explicitly unnecessary today. Also be explicit that replans must "
+                "use future feasible times only, never past times or elapsed/active VPP-window times."
             )
             resp = LLMClient().chat_with_metrics(
                 sys_prompt,
@@ -365,6 +544,7 @@ class IndependentMemberRoleplay:
         vpp_avg = _avg([m["vpp_score"] for m in member_scores])
         label = _label_for_score(avg)
         comments = "; ".join(f"{m['member_id']}={m['score']:.1f}: {m['comment'][:80]}" for m in member_scores)
+        controller_feedback = _controller_feedback_from_member_scores(event_index, member_scores)
         aggregate = {
             "score": round(avg, 3),
             "comfort_score": round(comfort_avg, 3),
@@ -372,6 +552,8 @@ class IndependentMemberRoleplay:
             "vpp_score": round(vpp_avg, 3),
             "label": label,
             "comment": f"mean of {len(member_scores)} independent member scores; {comments}",
+            "controller_feedback": controller_feedback,
+            "member_feedback_summary": controller_feedback,
             "source": "multi_user_independent_mean",
             "member_scores": member_scores,
             "member_score_min": round(min(m["score"] for m in member_scores), 3),
@@ -397,6 +579,183 @@ def _label_for_score(score: float) -> str:
         4: "satisfied",
         5: "very_satisfied",
     }[rounded]
+
+
+def _method_label(method: str) -> str:
+    labels = {
+        ENERGYBRIDGE_METHOD_ID: "EnergyBridge",
+        "mpc_dynamic": "MPC Dynamic",
+        "mpc_ep": "MPC EP",
+        "rule_milp": "Rule+MILP",
+    }
+    return labels.get(str(method), str(method))
+
+
+def _short_text(value: Any, limit: int = 220) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _first_action_dict(event: dict[str, Any]) -> dict[str, Any]:
+    for decision in event.get("day_decisions") or []:
+        if not isinstance(decision, dict):
+            continue
+        actions = decision.get("actions") or decision.get("raw_appliance_actions") or {}
+        if isinstance(actions, dict) and actions:
+            return actions
+    actions = event.get("vpp_trigger_actions") or {}
+    return actions if isinstance(actions, dict) else {}
+
+
+def _action_summary(actions: dict[str, Any]) -> str:
+    if not actions:
+        return "no explicit appliance actions"
+    parts: list[str] = []
+    for service in ("washer", "dishwasher", "dryer"):
+        start = actions.get(f"{service}_start_h")
+        skip = actions.get(f"{service}_skip")
+        if skip is True:
+            parts.append(f"{service}:skip")
+        elif start is not None:
+            parts.append(f"{service}:{_fmt_h(start)}")
+    if actions.get("water_heater_preheat"):
+        wh_start = actions.get("water_heater_preheat_start_h")
+        wh_end = actions.get("water_heater_preheat_end_h")
+        parts.append(f"water_heater:{_fmt_h(wh_start)}-{_fmt_h(wh_end)}")
+    ev_start = actions.get("ev_charge_start_h")
+    ev_end = actions.get("ev_charge_end_h")
+    if ev_start is not None and ev_end is not None:
+        parts.append(f"ev:{_fmt_h(ev_start)}-{_fmt_h(ev_end)}")
+    return "; ".join(parts) if parts else "no appliance start/charge/preheat commands"
+
+
+def _service_outcome_summary(event: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for name, info in (event.get("appliance_summary") or {}).items():
+        if not isinstance(info, dict) or not info.get("present"):
+            continue
+        if info.get("ran_during_vpp"):
+            status = "ran_in_vpp"
+        elif info.get("skipped"):
+            status = "skipped"
+        elif info.get("completed") is False:
+            status = "not_completed_yet"
+        else:
+            status = "avoided_vpp"
+        parts.append(f"{name}:{status}")
+    return "; ".join(parts) if parts else "no controllable services"
+
+
+def _write_household_run_summary(
+    *,
+    result,
+    household: dict[str, Any],
+    member_personas: list[dict[str, Any]],
+    city: str,
+    output_dir: Path,
+    roleplay: IndependentMemberRoleplay,
+) -> Path:
+    """Write a compact human-readable summary for multi-user household runs."""
+    data = result.as_dict()
+    events = list(data.get("vpp_event_log") or [])
+    scores = data.get("user_pref_scores") or []
+    avg_score = data.get("user_pref_score")
+    members = [
+        (
+            persona.get("household_member", {}).get("member_id", persona.get("id")),
+            persona.get("id"),
+            persona.get("display_name", persona.get("id")),
+        )
+        for persona in member_personas
+    ]
+    present_appliances = [
+        name for name, cfg in (household.get("appliances") or {}).items()
+        if isinstance(cfg, dict) and cfg.get("present")
+    ]
+    lines = [
+        "=" * 72,
+        "  EnergyBridge Multi-User Household Run Summary  (run_summary.txt)",
+        "=" * 72,
+        f"  Household : {household.get('display_name') or household.get('id')}",
+        f"  ID        : {household.get('id')}",
+        f"  Method    : {_method_label(str(data.get('method') or ''))} ({data.get('method') or 'unknown'})",
+        f"  City      : {city}",
+        f"  Days      : {data.get('sim_days')}",
+        f"  Generated : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"  Output dir: {output_dir}",
+        "",
+        "Members:",
+    ]
+    for member_id, persona_id, display_name in members:
+        lines.append(f"  - {member_id}: {display_name} ({persona_id})")
+    lines.extend([
+        "",
+        "Shared physical appliances:",
+        f"  {', '.join(present_appliances) if present_appliances else 'none'}",
+        "",
+        "Key metrics:",
+        f"  - Average member score       : {avg_score:.3g}/5" if avg_score is not None else "  - Average member score       : N/A",
+        f"  - Per-event mean scores      : {', '.join(str(x) for x in scores) if scores else 'N/A'}",
+        f"  - Total energy               : {float(data.get('energy_kwh_total') or 0.0):.3f} kWh",
+        f"  - Daily energy               : {float(data.get('energy_kwh_per_day') or 0.0):.3f} kWh/day",
+        f"  - VPP-window energy          : {float(data.get('vpp_window_energy_kwh') or 0.0):.3f} kWh",
+        f"  - VPP-window avg per hour    : {float(data.get('vpp_window_energy_avg_per_hour_kwh') or 0.0):.3f} kWh/h",
+        f"  - Policy appliance output    : {float(data.get('appliance_task_completion_rate') or 0.0) * 100:.0f}%",
+        f"  - Physical service completion: {float(data.get('physical_appliance_task_completion_rate') or 0.0) * 100:.0f}%",
+        f"  - VPP appliance avoidance    : {float(data.get('appliance_vpp_avoidance_rate') or 0.0) * 100:.0f}%",
+        f"  - LLM calls/failures         : {data.get('llm_call_count', 0)} / {data.get('llm_call_failures', 0)}",
+        "",
+        "-" * 72,
+        "Per-event independent role-play",
+        "-" * 72,
+    ])
+    for idx, event in enumerate(events, start=1):
+        event_id = event.get("id") or f"vpp{idx}"
+        trigger = event.get("trigger_h")
+        end = event.get("end_h")
+        lines.extend([
+            f"[Event {idx}] {event_id} Day{event.get('day', idx)} {_fmt_h(trigger)}-{_fmt_h(end)}",
+            f"  Household mean score : {event.get('score', 'N/A')}/5 ({event.get('label', 'N/A')})",
+            f"  Controller actions   : {_action_summary(_first_action_dict(event))}",
+            f"  Service outcomes     : {_service_outcome_summary(event)}",
+        ])
+        trace = event.get("strategy_trace") or {}
+        member_choices = trace.get("member_choices") or roleplay.transcripts.get("strategy", {}).get(str(idx), [])
+        if member_choices:
+            lines.append("  Member choices:")
+            for choice in member_choices:
+                selected = choice.get("selected_strategy") or {}
+                selected_id = selected.get("id") or selected.get("label") or "custom"
+                pref = _short_text(choice.get("preference_text"), 180)
+                lines.append(f"    - {choice.get('member_id')}: {selected_id}; {pref}")
+        member_scores = event.get("member_scores") or roleplay.transcripts.get("score", {}).get(str(idx), [])
+        if member_scores:
+            lines.append("  Member scores:")
+            for item in member_scores:
+                comment = _short_text(item.get("comment"), 160)
+                lines.append(
+                    f"    - {item.get('member_id')}: {float(item.get('score', 0.0)):.2f}/5 "
+                    f"(comfort={float(item.get('comfort_score', 0.0)):.2f}, "
+                    f"energy={float(item.get('energy_score', 0.0)):.2f}, "
+                    f"vpp={float(item.get('vpp_score', 0.0)):.2f}) {comment}"
+                )
+        feedback = event.get("controller_feedback") or event.get("member_feedback_summary")
+        if feedback:
+            lines.append(f"  Feedback to next event: {_short_text(feedback, 320)}")
+        lines.append("")
+    lines.extend([
+        "-" * 72,
+        "Role-play storage",
+        "-" * 72,
+        "  - multi_user_roleplay.json keeps full independent member strategy and scoring transcripts.",
+        "  - benchmark_result.json keeps aggregate metrics plus per-event member_scores/controller_feedback.",
+        "=" * 72,
+    ])
+    path = output_dir / "run_summary.txt"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
 
 
 def _make_roleplay_callbacks(roleplay: IndependentMemberRoleplay, orig_get_pref, orig_score):
@@ -511,6 +870,7 @@ def main() -> None:
     roleplay = IndependentMemberRoleplay(
         household_config,
         member_personas,
+        days=days,
         max_memory_items=args.max_memory_items,
     )
 
@@ -594,8 +954,17 @@ def main() -> None:
         ),
         encoding="utf-8",
     )
+    summary_path = _write_household_run_summary(
+        result=result,
+        household=household_config,
+        member_personas=member_personas,
+        city=args.city,
+        output_dir=output_dir,
+        roleplay=roleplay,
+    )
     print(f"\n[Saved] benchmark_result.json -> {result_path}")
     print(f"[Saved] multi_user_roleplay.json -> {meta_path}")
+    print(f"[Saved] run_summary.txt -> {summary_path}")
 
 
 if __name__ == "__main__":
