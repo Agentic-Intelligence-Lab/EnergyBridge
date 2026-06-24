@@ -47,6 +47,7 @@ experiments/fanger_thermal_comfort/*.pdf
 
 # Docs (internal, not for distribution)
 docs/
+TECHNICAL_INNOVATION_POINTS_ZH.md
 
 # OS artefacts
 .DS_Store
@@ -54,4 +55,4 @@ Thumbs.db
 
 # wget log
 wget-log
-TECHNICAL_INNOVATION_POINTS_ZH.md
+
