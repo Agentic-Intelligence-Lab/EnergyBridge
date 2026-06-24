@@ -338,6 +338,7 @@ class _FamilyLoop:
         self.agent_preference_memory: Dict[str, Any] = {}
         self.agent_memory_path: Optional[Path] = None
         self.agent_memory_md_path: Optional[Path] = None
+        self.persist_agent_preference_memory: bool = False
         # Appliance suite — initialised by run_family_agent when persona is known
         self.appliance_suite = None                 # ApplianceSuite | None
 
@@ -1846,9 +1847,12 @@ def _init_agent_preference_memory(
     method: str,
     persona_config: dict | None,
 ) -> None:
-    """Create a run-local preference memory file for hybrid agent methods."""
+    """Create run-local preference memory state for hybrid agent methods."""
     if method != "eb_rule_milp":
         return
+    persist_memory = str(os.getenv("ENERGYBRIDGE_PERSIST_AGENT_MEMORY", "")).strip().lower() in {
+        "1", "true", "yes", "on"
+    }
     persona_id = (persona_config or {}).get("id", "unknown_persona")
     memory = {
         "version": "eb_rule_milp_preference_memory_v1",
@@ -1864,9 +1868,15 @@ def _init_agent_preference_memory(
         "latest_summary": "No scored VPP feedback yet.",
     }
     loop.agent_preference_memory = memory
-    loop.agent_memory_path = Path(output_dir) / "agent_preference_memory.json"
-    loop.agent_memory_md_path = Path(output_dir) / "agent_preference_memory.md"
-    _write_agent_preference_memory(loop)
+    loop.persist_agent_preference_memory = persist_memory
+    if persist_memory:
+        loop.agent_memory_path = Path(output_dir) / "agent_preference_memory.json"
+        loop.agent_memory_md_path = Path(output_dir) / "agent_preference_memory.md"
+        _write_agent_preference_memory(loop)
+    else:
+        loop.agent_memory_path = None
+        loop.agent_memory_md_path = None
+        print("  [EB+rule+MILP Memory] in-prompt memory only; set ENERGYBRIDGE_PERSIST_AGENT_MEMORY=1 to write review files.")
 
 
 def _agent_preference_memory_prompt_text(loop) -> str:
@@ -1880,7 +1890,7 @@ def _agent_preference_memory_prompt_text(loop) -> str:
     }
     return (
         "\n[EB+rule+MILP USER MEMORY]\n"
-        "Use this run-local memory as a decision input. It resets for every fresh benchmark run.\n"
+        "Use this run-local memory context as a decision input. It resets for every fresh benchmark run.\n"
         f"{json.dumps(prompt_memory, ensure_ascii=False)}"
     )
 
@@ -1889,6 +1899,8 @@ def _write_agent_preference_memory(loop) -> None:
     memory_path = getattr(loop, "agent_memory_path", None)
     md_path = getattr(loop, "agent_memory_md_path", None)
     memory = getattr(loop, "agent_preference_memory", {}) or {}
+    if not getattr(loop, "persist_agent_preference_memory", False):
+        return
     if memory_path is None or md_path is None or not memory:
         return
     try:
@@ -2301,7 +2313,7 @@ You are EnergyBridge augmented with Rule+MILP candidates.
 Rule+MILP generates physically feasible, cost/VPP-optimal appliance strategy options; PMV rule gives an AC comfort/efficiency range.
 Your job is not to ignore these candidates. Your job is to choose among them using the user's live preference and run-local memory, and to make only small user-preference adjustments when justified.
 If you deviate from the MILP option, keep every present appliance explicitly controlled, keep VPP-window non-AC avoidance when feasible, and explain the user-preference reason briefly.
-Use the run-local memory file as learned preference evidence. It resets for each fresh benchmark run.
+Use the run-local memory context as learned preference evidence. It resets for each fresh benchmark run.
 """
 
     _run_location_text = (weather_label or "default").strip() or "default"
@@ -2690,6 +2702,11 @@ All times are hour-of-day (0–23.9)."""
             sp_lower = locals().get("sp_lower", _energy_saving_sp_floor)
             if learned_floor is not None:
                 sp_lower = max(sp_lower, learned_floor)
+            if method == "eb_rule_milp":
+                # In the hybrid method, Rule+MILP/PMV provides candidates; it
+                # must not force HVAC beyond the household's stated comfort max.
+                sp_upper = min(sp_upper, _ac_sp_max)
+                sp_lower = min(sp_lower, sp_upper)
             if sp_lower > sp_upper:
                 sp_lower = sp_upper
             sp = round(max(sp_lower, min(sp_upper, raw_sp)), 1)
@@ -2704,6 +2721,12 @@ All times are hour-of-day (0–23.9)."""
                 nch = float(nch)
                 if nch <= sim_h + 0.25 or nch > total_sim_hours:
                     nch = None
+            if method == "eb_rule_milp":
+                # Keep the hybrid benchmark on deterministic decision points:
+                # daily plans plus system-triggered VPP start/end. Free-form
+                # LLM next_check callbacks slow the matrix and can create
+                # post-hoc replans for already scheduled appliance work.
+                nch = None
             reason = _comfort_reason_for_low_dr_user(str(data.get("reason", "")), persona_config)
             reason = _ensure_price_sensitive_reason_estimate(
                 reason,
