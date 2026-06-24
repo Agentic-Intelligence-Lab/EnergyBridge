@@ -13,6 +13,13 @@ class _FakePriceProfile:
         return 0.01 if local_time.hour in cheap_hours else 0.50
 
 
+class _OvernightOnlyCheapProfile:
+    source = "fake_overnight"
+
+    def price_at(self, local_time: datetime) -> float:
+        return 0.01 if local_time.hour in {0, 1, 2, 3} else 0.50
+
+
 def _state() -> dict:
     return {
         "sim_h": 0.1,
@@ -66,7 +73,7 @@ def test_rule_milp_uses_low_price_window_and_avoids_vpp() -> None:
 
     appliances = action["appliances"]
     assert appliances["washer_skip"] is False
-    assert appliances["washer_start_h"] == 20.0
+    assert appliances["washer_start_h"] in {20.0, 20.5, 21.0}
     assert appliances["water_heater_preheat"] is True
     assert appliances["water_heater_preheat_start_h"] != 18.0
     assert 22.0 <= action["setpoint"] <= 28.0
@@ -146,3 +153,106 @@ def test_rule_milp_ev_command_uses_charge_window_without_required_mode() -> None
     assert action["appliances"]["ev_mode"] is None
     assert action["appliances"]["ev_charge_start_h"] is not None
     assert action["appliances"]["ev_charge_end_h"] is not None
+
+
+def test_rule_milp_ev_avoids_unexecutable_next_morning_only_window() -> None:
+    state = _state()
+    state["sim_days"] = 7
+    state["run_end_abs_h"] = 168.0
+    state["appliance_config"]["washer"]["present"] = False
+    state["appliance_config"]["water_heater"]["present"] = False
+    state["appliance_config"]["ev"] = {
+        "present": True,
+        "charger_kw": 7.4,
+        "efficiency": 0.92,
+        "capacity_kwh": 60.0,
+        "target_soc": 0.8,
+        "daily_drive_kwh": 20.0,
+        "arrival_h": 18.5,
+        "departure_h": 7.5,
+        "dr_adjustable": True,
+    }
+
+    action = plan_rule_milp_action(
+        state=state,
+        price_profile=_OvernightOnlyCheapProfile(),
+        run_start_date=datetime(2025, 6, 1).date(),
+    )
+
+    appliances = action["appliances"]
+    ev_start = appliances["ev_charge_start_h"]
+    ev_end = appliances["ev_charge_end_h"]
+    ev_abs_end = ev_end if ev_end > ev_start else ev_end + 24.0
+    assert ev_start >= 18.5
+    assert ev_abs_end <= 24.0
+    assert ev_abs_end - ev_start >= 3.0
+
+
+def test_rule_milp_shiftable_overnight_window_completes_before_midnight() -> None:
+    state = _state()
+    state["sim_days"] = 7
+    state["run_end_abs_h"] = 168.0
+    state["appliance_config"]["washer"]["present"] = False
+    state["appliance_config"]["water_heater"]["present"] = False
+    state["appliance_config"]["dishwasher"] = {
+        "present": True,
+        "earliest_h": 19.0,
+        "latest_h": 7.0,
+        "preferred_h": 1.5,
+        "duration_h": 1.5,
+        "power_kw": 1.2,
+        "shiftable": True,
+        "dr_adjustable": True,
+    }
+
+    action = plan_rule_milp_action(
+        state=state,
+        price_profile=_OvernightOnlyCheapProfile(),
+        run_start_date=datetime(2025, 6, 1).date(),
+    )
+
+    start_h = action["appliances"]["dishwasher_start_h"]
+    assert start_h >= 19.0
+    assert start_h + 1.5 <= 23.5
+
+
+def test_rule_milp_keeps_last_day_overnight_services_inside_run() -> None:
+    state = _state()
+    state["sim_days"] = 1
+    state["run_end_abs_h"] = 24.0
+    state["appliance_config"]["washer"]["present"] = False
+    state["appliance_config"]["dishwasher"] = {
+        "present": True,
+        "earliest_h": 19.0,
+        "latest_h": 7.0,
+        "preferred_h": 21.5,
+        "duration_h": 1.5,
+        "power_kw": 1.2,
+        "shiftable": True,
+        "dr_adjustable": True,
+    }
+    state["appliance_config"]["ev"] = {
+        "present": True,
+        "charger_kw": 7.4,
+        "efficiency": 0.92,
+        "capacity_kwh": 60.0,
+        "target_soc": 0.8,
+        "daily_drive_kwh": 20.0,
+        "arrival_h": 18.5,
+        "departure_h": 7.5,
+        "dr_adjustable": True,
+    }
+
+    action = plan_rule_milp_action(
+        state=state,
+        price_profile=_FakePriceProfile(),
+        run_start_date=datetime(2025, 6, 1).date(),
+    )
+    appliances = action["appliances"]
+
+    assert appliances["dishwasher_start_h"] + 1.5 <= 23.5
+    assert appliances["ev_charge_start_h"] >= 18.5
+    ev_start = appliances["ev_charge_start_h"]
+    ev_end = appliances["ev_charge_end_h"]
+    ev_abs_end = ev_end if ev_end > ev_start else ev_end + 24.0
+    assert ev_abs_end <= 23.5

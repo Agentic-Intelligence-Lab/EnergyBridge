@@ -10,6 +10,7 @@ problem is solved by exact enumeration.
 
 from __future__ import annotations
 
+import random
 from datetime import datetime, timedelta
 from math import ceil
 from typing import Any
@@ -147,24 +148,35 @@ def _shiftable_candidates(
     sim_h = _float(state.get("sim_h"), day_idx * 24.0)
     earliest = _float(cfg.get("earliest_h"), 8.0)
     latest = _float(cfg.get("latest_h"), 22.0)
-    preferred = _float(cfg.get("preferred_h"), earliest)
     duration = max(GRID_H, _float(cfg.get("duration_h"), 1.0))
     power_kw = _float(cfg.get("power_kw"), 1.5)
     flexible = bool(cfg.get("shiftable", True)) and bool(cfg.get("dr_adjustable", True))
 
     if not flexible:
-        starts = [_abs_hour(preferred, day_idx, earliest, latest)]
+        fixed_start = _float(cfg.get("fixed_start_h"), earliest)
+        starts = [_abs_hour(fixed_start, day_idx, earliest, latest)]
     else:
         start_min, start_max = _window_abs(day_idx, earliest, latest)
         start_max -= duration
         start_min = max(start_min, _ceil_to_grid(sim_h))
+        # Role-play scoring is performed at 24:00 for each event day.  A
+        # next-morning start from an overnight user window cannot satisfy the
+        # same-day service check, and hour-of-day actions such as 01:30 are
+        # also rejected by the current per-day shift API.  Keep emitted
+        # starts executable and completed before midnight.
+        day_end_abs = (day_idx + 1) * 24.0
+        start_max = min(
+            start_max,
+            day_end_abs - duration - GRID_H,
+            _latest_start_before_run_end(state, duration),
+        )
         starts = _grid_values(start_min, start_max, GRID_H)
-        pref_abs = _abs_hour(preferred, day_idx, earliest, latest)
-        if start_min <= pref_abs <= start_max:
-            starts.append(pref_abs)
     candidates = []
+    latest_start = _latest_start_before_run_end(state, duration)
     for start_abs in sorted(set(round(v, 6) for v in starts)):
         if start_abs + 1e-6 < sim_h:
+            continue
+        if start_abs > latest_start + 1e-6:
             continue
         hod = start_abs % 24.0
         appliances = {
@@ -178,7 +190,6 @@ def _shiftable_candidates(
                 start_abs=start_abs,
                 duration_h=duration,
                 power_kw=power_kw,
-                preferred_abs=_abs_hour(preferred, day_idx, earliest, latest),
                 state=state,
                 price_profile=price_profile,
                 run_start_date=run_start_date,
@@ -205,7 +216,7 @@ def _water_heater_candidates(
     # deadline, but allow thermal preheat to move away from VPP/expensive
     # windows even for personas whose ordinary routine is non-DR-adjustable.
     start_min = max(day_idx * 24.0, _ceil_to_grid(sim_h))
-    start_max = max(start_min, bath_abs - duration)
+    start_max = min(max(start_min, bath_abs - duration), _latest_start_before_run_end(state, duration))
     starts = _grid_values(start_min, start_max, GRID_H)
     default_abs = day_idx * 24.0 + default_start
     if start_min <= default_abs <= start_max:
@@ -226,7 +237,6 @@ def _water_heater_candidates(
                 start_abs=start_abs,
                 duration_h=duration,
                 power_kw=power_kw,
-                preferred_abs=day_idx * 24.0 + default_start,
                 state=state,
                 price_profile=price_profile,
                 run_start_date=run_start_date,
@@ -253,7 +263,17 @@ def _ev_candidates(
     end_abs = day_idx * 24.0 + departure
     if departure <= arrival:
         end_abs += 24.0
-    start_max = end_abs - duration
+    # The EV simulator stores explicit charge windows by the current day_idx.
+    # A pure next-morning window such as 00:00-03:00 is cheap but cannot serve
+    # today's evening arrival: after midnight the simulator reads the next
+    # day's window instead.  Keep Rule+MILP's EV candidates inside the same
+    # local day so every emitted window is physically executable.
+    day_end_abs = (day_idx + 1) * 24.0
+    start_max = min(
+        end_abs - duration,
+        day_end_abs - duration,
+        _latest_start_before_run_end(state, duration),
+    )
     starts = _grid_values(start_min, start_max, GRID_H)
     candidates = []
     for start_abs in sorted(set(round(v, 6) for v in starts)):
@@ -270,7 +290,6 @@ def _ev_candidates(
                 start_abs=start_abs,
                 duration_h=duration,
                 power_kw=charger_kw,
-                preferred_abs=end_abs - duration,
                 state=state,
                 price_profile=price_profile,
                 run_start_date=run_start_date,
@@ -296,18 +315,16 @@ def _candidate(
     start_abs: float,
     duration_h: float,
     power_kw: float,
-    preferred_abs: float,
     state: dict,
     price_profile: Any,
     run_start_date: Any,
 ) -> dict:
     cost = _interval_cost(start_abs, duration_h, power_kw, price_profile, run_start_date)
     vpp_penalty = BIG_VPP_PENALTY if _overlaps_any_vpp(start_abs, start_abs + duration_h, state) else 0.0
-    time_penalty = abs(float(start_abs) - float(preferred_abs)) * 1e-4
     return {
         "label": label,
         "appliances": dict(appliances),
-        "objective": float(cost + vpp_penalty + time_penalty),
+        "objective": float(cost + vpp_penalty),
         "cost": float(cost),
         "vpp_penalty": float(vpp_penalty),
     }
@@ -316,6 +333,7 @@ def _candidate(
 def _solve_binary_choice_milp(groups: dict[str, list[dict]]) -> tuple[list[dict], dict]:
     if not groups:
         return [], {"solver": "no_present_unlocked_services", "status": "empty"}
+    tie_meta: list[dict] = []
     try:
         import pulp  # type: ignore
 
@@ -336,18 +354,53 @@ def _solve_binary_choice_milp(groups: dict[str, list[dict]]) -> tuple[list[dict]
         status = problem.solve(pulp.PULP_CBC_CMD(msg=False))
         selected = []
         for group, candidates in groups.items():
-            chosen_idx = min(
-                range(len(candidates)),
-                key=lambda idx: (
-                    -float(variables[(group, idx)].value() or 0.0),
-                    float(candidates[idx].get("objective", 0.0)),
-                ),
-            )
-            selected.append(candidates[chosen_idx])
-        return selected, {"solver": "pulp_cbc_milp", "status": pulp.LpStatus.get(status, str(status))}
+            # The current MILP has one independent choose-one constraint per
+            # appliance.  If several candidates have identical cost/VPP
+            # objective, treat them as equivalent optima and randomly select
+            # one instead of encoding an implicit user-time preference.
+            choice, tie = _random_min_objective_candidate(group, candidates)
+            selected.append(choice)
+            if tie is not None:
+                tie_meta.append(tie)
+        return selected, {
+            "solver": "pulp_cbc_milp",
+            "status": pulp.LpStatus.get(status, str(status)),
+            "tie_break": "random_among_equal_objective",
+            "random_tie_groups": tie_meta,
+        }
     except Exception as exc:
-        selected = [min(candidates, key=lambda item: float(item.get("objective", 0.0))) for candidates in groups.values()]
-        return selected, {"solver": "exact_enumeration_fallback", "status": "ok", "fallback_reason": str(exc)[:120]}
+        selected = []
+        for group, candidates in groups.items():
+            choice, tie = _random_min_objective_candidate(group, candidates)
+            selected.append(choice)
+            if tie is not None:
+                tie_meta.append(tie)
+        return selected, {
+            "solver": "exact_enumeration_fallback",
+            "status": "ok",
+            "fallback_reason": str(exc)[:120],
+            "tie_break": "random_among_equal_objective",
+            "random_tie_groups": tie_meta,
+        }
+
+
+def _random_min_objective_candidate(group: str, candidates: list[dict]) -> tuple[dict, dict | None]:
+    min_objective = min(float(item.get("objective", 0.0)) for item in candidates)
+    tied = [
+        item
+        for item in candidates
+        if abs(float(item.get("objective", 0.0)) - min_objective) <= 1e-9
+    ]
+    choice = random.choice(tied)
+    if len(tied) <= 1:
+        return choice, None
+    return choice, {
+        "group": group,
+        "objective": round(min_objective, 6),
+        "candidate_count": len(tied),
+        "selected_label": choice.get("label"),
+        "candidate_labels": [item.get("label") for item in tied],
+    }
 
 
 def _service_locked_for_today(name: str, state: dict) -> bool:
@@ -437,6 +490,36 @@ def _window_abs(day_idx: int, earliest_h: float, latest_h: float) -> tuple[float
     if latest_h < earliest_h:
         end += 24.0
     return base + earliest_h, end
+
+
+def _run_end_abs(state: dict) -> float:
+    for key in ("run_end_abs_h", "run_end_h"):
+        try:
+            value = float(state.get(key))
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+    try:
+        sim_days = int(state.get("sim_days", 0) or 0)
+        if sim_days > 0:
+            return float(sim_days * 24.0)
+    except (TypeError, ValueError):
+        pass
+    return float("inf")
+
+
+def _latest_start_before_run_end(state: dict, duration_h: float) -> float:
+    """Latest start that can complete before the simulation stops.
+
+    EnergyPlus may not call the appliance step exactly at the final boundary, so
+    a schedule ending precisely at run_end can be physically executed yet not
+    marked completed.  Keep one planning grid of slack at finite run endings.
+    """
+    run_end = _run_end_abs(state)
+    if run_end == float("inf"):
+        return run_end
+    return run_end - float(duration_h) - GRID_H
 
 
 def _abs_hour(hod: float, day_idx: int, earliest_h: float, latest_h: float) -> float:
