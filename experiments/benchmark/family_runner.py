@@ -680,6 +680,22 @@ def _annotate_event_demand_achievement(event_result: dict) -> None:
     event_result["vpp_appliance_avoidance_success"] = not overlapping
 
 
+def _shiftable_has_existing_service_plan(suite, name: str, day_idx: int) -> bool:
+    """True when a later skip would cancel an already emitted real policy."""
+    try:
+        app = getattr(suite, "_shiftable", {}).get(name)
+        rec = (getattr(app, "_days", {}) or {}).get(day_idx) if app is not None else None
+        if rec is None:
+            return False
+        return (
+            getattr(rec, "scheduled_abs_h", None) is not None
+            or getattr(rec, "run_start_abs_h", None) is not None
+            or bool(getattr(rec, "completed", False))
+        )
+    except Exception:
+        return False
+
+
 def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
     """Apply independent per-appliance scheduling commands from the LLM agent.
 
@@ -694,6 +710,12 @@ def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
     for name in ("washer", "dishwasher", "dryer"):
         skip_val = actions.get(f"{name}_skip")
         if skip_val is True:
+            if _shiftable_has_existing_service_plan(suite, name, day_idx):
+                print(
+                    f"    [Appliance] skip {name} day={day_idx} -> rejected "
+                    "(existing schedule/run preserved)"
+                )
+                continue
             ok = suite.skip_appliance(name, day_idx)
             print(f"    [Appliance] skip {name} day={day_idx} -> {'ok' if ok else 'rejected'}")
             continue  # don't shift if skipping
