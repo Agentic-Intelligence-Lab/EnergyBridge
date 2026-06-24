@@ -29,7 +29,7 @@ DEFAULT_MODEL_CANDIDATES = (
     PROJECT_ROOT / "benchmark_results" / "rl_ppo_pref_v2_4h" / "ppo_energyplus_3day.zip",
 )
 DECISION_INTERVAL_H = 1.0 / 6.0
-OBS_DIM = 41  # must match environment_pref_v2.OBS_DIM_V2
+OBS_DIM = 42  # must match environment_pref_v2.OBS_DIM_V2 (42 after v2.1)
 
 _MODEL_CACHE: dict[tuple[Path, str], Any] = {}
 
@@ -69,27 +69,28 @@ def load_policy(model_path: str | Path | None = None, *, device: str = "cpu") ->
 
 def decode_action(action: np.ndarray) -> np.ndarray:
     a = np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
-    return np.array([
-        25.0 + 3.0 * a[0],          # AC setpoint [22, 28]
-        15.5 + 7.5 * a[1],          # washer start [8, 23]
-        16.0 + 7.0 * a[2],          # dishwasher start [9, 23]
-        (a[3] + 1.0) / 2.0,          # WH preheat flag [0, 1]
-        60.0 + 15.0 * a[4],          # WH temp [45, 75]
+    out = np.array([
+        25.0 + 3.0 * a[0],          # dim0: AC setpoint [22, 28]
+        15.5 + 7.5 * a[1],          # dim1: washer start [8, 23]
+        16.0 + 7.0 * a[2],          # dim2: dishwasher start [9, 23]
+        12.0 + 5.0 * a[3],          # dim3: WH preheat start [7, 17]
+        60.0 + 15.0 * a[4],         # dim4: WH temp [45, 75]
+        21.0 + 9.0 * a[5],          # dim5: EV charge start [12, 30]
+        7.0 + 7.0 * a[6],           # dim6: EV charge end [0, 14]
     ], dtype=np.float32)
+    return out
 
 
 def _fixed_debug_action(vpp_active: bool, sim_h: float) -> np.ndarray:
-    """Deterministic sensible policy for sanity testing.
+    """Deterministic sensible policy for sanity testing (7-dim).
 
-    AC: 25.5°C normal, 26.0°C in VPP window.
-    Washer: 19:00.  Dishwasher: 21:00.
-    WH: preheat 14:00-17:00 at 68°C.
+    AC: 25.5°C normal, 26.0°C in VPP.
+    Washer: 19:00. Dishwasher: 21:00.
+    WH: start=14h, end=17h, temp=68°C.
+    EV: start=22h, end=7h (overnight), mode=smart.
     """
-    hod = sim_h % 24.0
     sp = 26.0 if vpp_active else 25.5
-    wh_preheat = 1.0  # always preheat
-    wh_temp = 68.0
-    return np.array([sp, 19.0, 21.0, wh_preheat, wh_temp], dtype=np.float32)
+    return np.array([sp, 19.0, 21.0, 14.0, 68.0, 21.0, 7.0], dtype=np.float32)
 
 
 def build_observation(
@@ -151,6 +152,9 @@ def build_observation(
     values.extend([
         float(suite._refrigerator.present), float(suite._refrigerator.power_kw) / 2.0,
     ])
+    # EV target reached today (new dim 41)
+    ev_day_result = suite._ev.day_result(day_idx)
+    values.append(float(ev_day_result.get("target_reached", False)))
     obs = np.asarray(values, dtype=np.float32)
     if obs.shape != (OBS_DIM,):
         raise RuntimeError(f"Obs shape mismatch: {obs.shape} != {OBS_DIM}")
@@ -256,7 +260,7 @@ def _policy_summary(
                 f"Water heater raw flag={float(decoded[3]):.2f}, "
                 f"temp={float(np.clip(float(decoded[4]), 45.0, 75.0)):.1f}C, not emitted."
             )
-    unsupported = sorted(present.difference({"washer", "dishwasher", "water_heater"}))
+    unsupported = sorted(present.difference({"washer", "dishwasher", "water_heater", "ev"}))
     if unsupported:
         parts.append("No raw RL action dimension for " + ", ".join(unsupported) + ".")
     if vpp_active:
@@ -286,42 +290,47 @@ def action_to_control_result_decoded(
     # AC setpoint — always applied
     sp = round(float(np.clip(float(decoded[0]), 22.0, 28.0)), 1)
 
-    # Washer: schedule once per day
-    washer_ok = "washer" in present
-    if washer_ok and "washer" not in ds.get(day_idx, set()):
+    # Washer: PPO decides start time once per day; skip during VPP window
+    if "washer" in present and "washer" not in ds.get(day_idx, set()):
         proposed = float(np.clip(float(decoded[1]), 8.0, 23.0))
-        if not vpp_active:  # don't schedule INTO VPP window
+        if not vpp_active:
             actions["washer_start_h"] = round(proposed, 3)
             actions["washer_skip"] = False
             ds.setdefault(day_idx, set()).add("washer")
-            print(f"  [RL Pref-v2] day={day_idx} washer scheduled@{proposed:.1f}h")
+            print(f"  [RL Pref-v2] day={day_idx} washer@{proposed:.1f}h")
 
-    # Dishwasher: schedule once per day
+    # Dishwasher: PPO decides start time once per day; skip during VPP window
     if "dishwasher" in present and "dishwasher" not in ds.get(day_idx, set()):
         proposed = float(np.clip(float(decoded[2]), 9.0, 23.0))
         if not vpp_active:
             actions["dishwasher_start_h"] = round(proposed, 3)
             actions["dishwasher_skip"] = False
             ds.setdefault(day_idx, set()).add("dishwasher")
-            print(f"  [RL Pref-v2] day={day_idx} dishwasher scheduled@{proposed:.1f}h")
+            print(f"  [RL Pref-v2] day={day_idx} dishwasher@{proposed:.1f}h")
 
-    # Water heater: preheat once per day
+    # Water heater: always emit preheat; PPO controls start/temp (dim3/4); end=start+3h
     if "water_heater" in present and "water_heater" not in ds.get(day_idx, set()):
-        preheat_flag = float(decoded[3])
-        if preheat_flag >= 0.5 and not vpp_active:
-            wh_temp = float(np.clip(float(decoded[4]), 45.0, 75.0))
-            # End preheat 1h before VPP to avoid overlap
-            end_h = min(17.0, float(vpp_event["trigger_h"]) % 24.0 - 1.0 if vpp_event else 17.0)
-            end_h = max(10.0, end_h)
-            start_h = max(8.0, end_h - 3.0)
-            actions.update({
-                "water_heater_preheat": True,
-                "water_heater_preheat_start_h": round(float(start_h), 3),
-                "water_heater_preheat_end_h": round(float(end_h), 3),
-                "water_heater_preheat_temp_c": round(wh_temp, 1),
-            })
-            ds.setdefault(day_idx, set()).add("water_heater")
-            print(f"  [RL Pref-v2] day={day_idx} WH preheat {start_h:.1f}-{end_h:.1f}h @ {wh_temp:.0f}°C")
+        start_h = float(np.clip(float(decoded[3]), 7.0, 17.0))
+        end_h = min(20.0, start_h + 3.0)
+        wh_temp = float(np.clip(float(decoded[4]), 45.0, 75.0))
+        actions.update({
+            "water_heater_preheat": True,
+            "water_heater_preheat_start_h": round(start_h, 3),
+            "water_heater_preheat_end_h": round(end_h, 3),
+            "water_heater_preheat_temp_c": round(wh_temp, 1),
+        })
+        ds.setdefault(day_idx, set()).add("water_heater")
+        print(f"  [RL Pref-v2] day={day_idx} WH {start_h:.1f}-{end_h:.1f}h @ {wh_temp:.0f}C")
+
+    # EV: PPO controls charge window (dim5/6); mode fixed=smart
+    if "ev" in present and "ev" not in ds.get(day_idx, set()):
+        ev_start = float(np.clip(float(decoded[5]) if len(decoded) > 5 else 22.0, 0.0, 30.0))
+        ev_end = float(np.clip(float(decoded[6]) if len(decoded) > 6 else 7.0, 0.0, 14.0))
+        actions["ev_mode"] = "smart"
+        actions["ev_charge_start_h"] = round(ev_start, 3)
+        actions["ev_charge_end_h"] = round(ev_end, 3)
+        ds.setdefault(day_idx, set()).add("ev")
+        print(f"  [RL Pref-v2] day={day_idx} EV {ev_start:.1f}-{ev_end:.1f}h mode=smart")
 
     return {
         "setpoint": sp,
@@ -341,14 +350,17 @@ def action_to_control_result_decoded(
 
 
 def _present_controllable(appliance_config: dict[str, Any] | None) -> set[str]:
+    """Return present non-AC appliances (any dr_adjustable).
+
+    dr_adjustable=False means "do not shift this device for VPP benefit",
+    NOT "do not emit any command". The runner still requires routine-preserving
+    commands for these devices (see family_runner.py:898-901). Matches agent
+    and MPC behavior; the dr_adjustable routing is done downstream in
+    action_to_control_result_decoded.
+    """
     cfg = appliance_config or {}
     present: set[str] = set()
-    for name in ("washer", "dishwasher", "dryer"):
-        dev = cfg.get(name, {}) or {}
-        if bool(dev.get("present")) and bool(dev.get("shiftable", True)) and bool(dev.get("dr_adjustable", True)):
-            present.add(name)
-    for name in ("water_heater", "ev"):
-        dev = cfg.get(name, {}) or {}
-        if bool(dev.get("present")) and bool(dev.get("dr_adjustable", True)):
+    for name in ("washer", "dishwasher", "dryer", "water_heater", "ev"):
+        if (cfg.get(name) or {}).get("present"):
             present.add(name)
     return present

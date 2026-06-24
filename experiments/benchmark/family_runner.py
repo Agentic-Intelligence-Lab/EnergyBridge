@@ -770,7 +770,7 @@ def _method_policy_action_space_services(method: str) -> set[str]:
     if method == "rl_ppo_3day":
         return {"washer", "water_heater"}
     if method == "rl_ppo_pref_v2":
-        return {"washer", "dishwasher", "water_heater"}
+        return {"washer", "dishwasher", "water_heater", "ev"}
     if method in ("agent", "mpc_dynamic", "mpc_ep", "hema_agent", "rule_milp"):
         return {"washer", "dishwasher", "dryer", "water_heater", "ev"}
     return set()

@@ -67,27 +67,33 @@ OBSERVATION_NAMES_V2 = (
     "ev_present", "ev_soc", "ev_at_home",
     # Refrigerator (2)
     "refrigerator_present", "refrigerator_power_kw_scaled",
+    # EV target reached today (1) — new in v2.1
+    "ev_target_reached",
 )
-OBS_DIM_V2 = len(OBSERVATION_NAMES_V2)  # 41
+OBS_DIM_V2 = len(OBSERVATION_NAMES_V2)  # 42
 
 # ----- Action schema ---------------------------------------------------------
-# AC setpoint [22.0, 28.0]
-# Washer start hour [8.0, 23.0]
-# Dishwasher start hour [9.0, 23.0]
-# WH preheat flag [0, 1]
-# WH target temperature [45.0, 75.0]
-ACTION_DIM_V2 = 5
+# dim 0: AC setpoint [22.0, 28.0]
+# dim 1: Washer start hour [8.0, 23.0]
+# dim 2: Dishwasher start hour [9.0, 23.0]
+# dim 3: WH preheat start hour [7.0, 17.0]  (was: preheat flag — now time)
+# dim 4: WH target temperature [45.0, 75.0]
+# dim 5: EV charge start hour [12.0, 30.0] (center=21h, after arrival_h=18.5)
+# dim 6: EV charge end hour   [0.0, 14.0]  (center=7h, before departure_h=7.5)
+ACTION_DIM_V2 = 7
 
 
 def _decode_action_v2(action: np.ndarray) -> np.ndarray:
-    """Decode normalized [-1,1]^5 action to physical values."""
+    """Decode normalized [-1,1]^9 action to physical values."""
     a = np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
     return np.array([
-        25.0 + 3.0 * a[0],                     # AC setpoint [22, 28]
-        15.5 + 7.5 * a[1],                     # washer start [8, 23]
-        16.0 + 7.0 * a[2],                     # dishwasher start [9, 23]
-        (a[3] + 1.0) / 2.0,                    # WH preheat flag [0, 1]
-        60.0 + 15.0 * a[4],                    # WH temp [45, 75]
+        25.0 + 3.0 * a[0],                     # dim0: AC setpoint [22, 28]
+        15.5 + 7.5 * a[1],                     # dim1: washer start [8, 23]
+        16.0 + 7.0 * a[2],                     # dim2: dishwasher start [9, 23]
+        12.0 + 5.0 * a[3],                     # dim3: WH preheat start [7, 17]
+        60.0 + 15.0 * a[4],                    # dim4: WH temp [45, 75]
+        21.0 + 9.0 * a[5],                     # dim5: EV charge start [12, 30]
+        7.0 + 7.0 * a[6],                      # dim6: EV charge end [0, 14]
     ], dtype=np.float32)
 
 
@@ -150,6 +156,7 @@ REWARD_WEIGHTS_V2 = {
     "terminal_wh": 100.0,
     "terminal_vpp_avoid": 100.0,
     "terminal_vpp_energy": 80.0,
+    "terminal_ev": 150.0,   # EV target_soc reached
 }
 
 
@@ -293,10 +300,15 @@ def _terminal_reward_v2(loop: Any, vpp_event_energy: dict, price_profile: Any) -
     total_vpp_kwh = sum(float(v) for v in (vpp_event_energy or {}).values())
     vpp_bonus = max(0.0, w["terminal_vpp_energy"] - total_vpp_kwh * 3.0)
 
+    # EV target_reached bonus
+    ev_days = [d for d in results.get("ev", []) if d.get("present")]
+    ev_ok = sum(1 for d in ev_days if d.get("target_reached")) / max(1, len(ev_days)) if ev_days else 0.0
+
     bonus = (
         w["terminal_washer"] * washer_ok +
         w["terminal_dishwasher"] * dishwasher_ok +
         w["terminal_wh"] * wh_ok +
+        w["terminal_ev"] * ev_ok +
         avoidance_bonus +
         vpp_bonus
     )
@@ -543,16 +555,23 @@ class EnergyPlusFamilyEnvV2(gym.Env):
                 if "dishwasher" not in done_today and float(decoded[2]) >= 9.0:
                     loop.appliance_suite.shift_appliance("dishwasher", day_idx, sim_h)
                     done_today.add("dishwasher")
-                # Water heater preheat
-                if "water_heater" not in done_today and float(decoded[3]) >= 0.5 and not vpp_active:
-                    start_h = np.clip(float(decoded[4]) - 10.0, 8.0, 17.0)
+                # Water heater preheat — always emit; PPO controls start/temp (dim3/4); end=start+3h
+                if "water_heater" not in done_today:
+                    wh_start = float(np.clip(decoded[3], 7.0, 17.0))
+                    wh_end = min(20.0, wh_start + 3.0)
                     loop.appliance_suite.set_ewh_preheat_schedule(
-                        day_idx, start_h=float(start_h),
-                        end_h=min(18.0, float(start_h) + 3.0),
+                        day_idx, start_h=wh_start,
+                        end_h=wh_end,
                         temp_c=float(np.clip(decoded[4], 45.0, 75.0)),
                     )
                     done_today.add("water_heater")
-
+                # EV — emit once per day; PPO controls start/end (dim5/6); mode fixed=smart
+                if "ev" not in done_today:
+                    ev_start = float(np.clip(decoded[5], 0.0, 30.0))
+                    ev_end = float(np.clip(decoded[6], 0.0, 14.0))
+                    loop.appliance_suite.set_ev_mode(day_idx, "smart")
+                    loop.appliance_suite.set_ev_charge_window(day_idx, start_h=ev_start, end_h=ev_end)
+                    done_today.add("ev")
                 powers = loop.appliance_suite.step(sim_h, dt)
                 self._write_actuators(ex, s, loop, powers, sim_h)
                 last_sim_h = sim_h
@@ -634,6 +653,9 @@ class EnergyPlusFamilyEnvV2(gym.Env):
         values.extend([
             float(suite._refrigerator.present), float(suite._refrigerator.power_kw) / 2.0,
         ])
+        # EV target reached today (new dim 41)
+        ev_day_result = suite._ev.day_result(day_idx)
+        values.append(float(ev_day_result.get("target_reached", False)))
         obs = np.asarray(values, dtype=np.float32)
         if obs.shape != (OBS_DIM_V2,):
             raise RuntimeError(f"Obs shape mismatch: {obs.shape} != {OBS_DIM_V2}")

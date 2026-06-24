@@ -20,6 +20,7 @@ from pathlib import Path
 import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
+from stable_baselines3.common.vec_env import SubprocVecEnv
 
 from .environment_pref_v2 import EnergyPlusFamilyEnvV2
 
@@ -68,7 +69,7 @@ def evaluate(model: PPO, output: Path, persona_id: str,
                 "cooling_setpoint_c": sum(r["cooling_setpoint_c"] for r in er) / len(er),
                 "washer_started": any(r.get("washer_start_request", 0) >= 8.0 for r in er),
                 "dishwasher_started": any(r.get("dishwasher_start_request", 0) >= 9.0 for r in er),
-                "ewh_heating": any(r.get("water_heater_preheat_request", 0) >= 0.5 for r in er),
+                "ewh_heating": any(r.get("water_heater_preheat_request", 0) >= 7.0 for r in er),
             })
 
     summary = {
@@ -159,7 +160,7 @@ def main() -> None:
     parser.add_argument("--timesteps", type=int, default=100_000)
     parser.add_argument("--output", type=Path, default=Path("benchmark_results/rl_ppo_pref_v2_formal"))
     parser.add_argument("--device", default="auto")
-    parser.add_argument("--persona", default="basic_role_a_commuter_price_cooperative")
+    parser.add_argument("--persona", default="all_appliances_full")
     parser.add_argument("--city", default="Tianjin")
     parser.add_argument("--start-date", default="")
     parser.add_argument("--price-csv", default="")
@@ -168,12 +169,17 @@ def main() -> None:
                         help="Reward mode: default=legacy, mpc_aligned_v1=MPC-aligned shared cost")
     parser.add_argument("--checkpoint-every", type=int, default=50000,
                         help="Save checkpoint every N timesteps. 0 to disable.")
+    parser.add_argument("--n-envs", type=int, default=1,
+                        help="Number of parallel EnergyPlus envs via SubprocVecEnv. "
+                             "Each env runs on a separate CPU. Default 1 (original). "
+                             "8-16 recommended for multi-core servers.")
     args = parser.parse_args()
 
     args.output.mkdir(parents=True, exist_ok=True)
+    n_envs = max(1, args.n_envs)
     print(f"Training RL PPO Pref-v2: persona={args.persona} city={args.city} "
           f"start={args.start_date or 'default'} price={args.price_csv or 'N/A'} "
-          f"reward_mode={args.reward_mode}")
+          f"reward_mode={args.reward_mode} n_envs={n_envs}")
     print(f"  output={args.output}  device={args.device}  hours={args.hours}  timesteps={args.timesteps}")
 
     env_kwargs = dict(
@@ -181,7 +187,23 @@ def main() -> None:
         start_date=args.start_date, price_csv=args.price_csv,
         reward_mode=args.reward_mode,
     )
-    env = EnergyPlusFamilyEnvV2(args.output / "train_ep", **env_kwargs)
+
+    if n_envs > 1:
+        # SubprocVecEnv: N parallel EnergyPlus instances on separate CPUs.
+        # Each env writes to its own subdirectory to avoid file conflicts.
+        def _make_env(rank: int):
+            def _init():
+                return EnergyPlusFamilyEnvV2(args.output / f"train_ep_{rank}", **env_kwargs)
+            return _init
+        env = SubprocVecEnv([_make_env(i) for i in range(n_envs)], start_method="spawn")
+        print(f"  [SubprocVecEnv] {n_envs} parallel EnergyPlus envs launched")
+    else:
+        env = EnergyPlusFamilyEnvV2(args.output / "train_ep", **env_kwargs)
+
+    # PPO hyperparams scale with n_envs:
+    # - n_steps stays 432 per env (rollout buffer = n_envs × 432)
+    # - batch_size scales up proportionally for efficient GPU use
+    effective_batch = min(n_envs * 432, 2048)  # cap at 2048 to avoid OOM
 
     if args.resume:
         model = PPO.load(args.resume, env=env, device=args.device, print_system_info=False)
@@ -189,9 +211,10 @@ def main() -> None:
     else:
         model = PPO(
             "MlpPolicy", env, verbose=1, device=args.device,
-            n_steps=432, batch_size=144, learning_rate=3e-4, gamma=0.995,
+            n_steps=432, batch_size=effective_batch, learning_rate=3e-4, gamma=0.995,
             policy_kwargs={"net_arch": [256, 256]},
         )
+    print(f"  PPO batch_size={effective_batch} (n_envs={n_envs} × 432 steps)")
 
     # Custom checkpoint saver with named files
     class _NamedCheckpointCallback(BaseCallback):
@@ -211,9 +234,49 @@ def main() -> None:
                 print(f"  [Checkpoint] saved {path}")
             return True
 
+    class _RewardLogCallback(BaseCallback):
+        """Log per-episode reward to CSV for learning curve analysis."""
+        def __init__(self, log_path: Path):
+            super().__init__()
+            self.log_path = log_path
+            self._ep_reward = 0.0
+            self._ep_count = 0
+            self._handle = None
+
+        def _on_training_start(self) -> None:
+            self._handle = self.log_path.open("w", encoding="utf-8")
+            self._handle.write("episode,timesteps,episode_reward\n")
+            self._handle.flush()
+
+        def _on_step(self) -> bool:
+            rewards = self.locals["rewards"]
+            dones = self.locals["dones"]
+            # Handle both single env (scalar) and VecEnv (array)
+            if hasattr(rewards, "__len__"):
+                for r, d in zip(rewards, dones):
+                    self._ep_reward += float(r)
+                    if bool(d):
+                        self._ep_count += 1
+                        self._handle.write(f"{self._ep_count},{self.model.num_timesteps},{self._ep_reward:.4f}\n")
+                        self._handle.flush()
+                        self._ep_reward = 0.0
+            else:
+                self._ep_reward += float(rewards)
+                if bool(dones):
+                    self._ep_count += 1
+                    self._handle.write(f"{self._ep_count},{self.model.num_timesteps},{self._ep_reward:.4f}\n")
+                    self._handle.flush()
+                    self._ep_reward = 0.0
+            return True
+
+        def _on_training_end(self) -> None:
+            if self._handle:
+                self._handle.close()
+
     callbacks = [
         WallClockStopCallback(args.hours * 3600),
         CheckpointCallback(save_freq=4320, save_path=str(args.output / "checkpoints")),
+        _RewardLogCallback(args.output / "training_rewards.csv"),
     ]
     if args.checkpoint_every > 0:
         callbacks.append(_NamedCheckpointCallback(args.checkpoint_every, args.output))
@@ -227,6 +290,7 @@ def main() -> None:
     model.save(args.output / "ppo_energyplus_3day")
     env.close()
 
+    # Evaluate using a fresh single env (not the VecEnv used for training)
     summary = evaluate(model, args.output, args.persona, args.city, args.start_date, args.price_csv)
     summary.update({"training_elapsed_seconds": elapsed, "training_timesteps": model.num_timesteps})
     (args.output / "formal_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
