@@ -383,9 +383,12 @@ class EVCharger:
         return power
 
     def day_result(self, day_idx: int) -> dict:
+        target_reached = bool(self._day_target_reached.get(day_idx, False))
+        if self.present and self._soc >= self.target_soc - 1e-6:
+            target_reached = True
         return {
             "name": "ev", "day": day_idx, "present": self.present,
-            "target_reached": self._day_target_reached.get(day_idx, False),
+            "target_reached": target_reached,
             "ran_during_vpp": self._day_ran_during_vpp.get(day_idx, False),
             "mode": self._day_mode.get(day_idx, None if self.explicit_only else "smart"),
             "soc_end": round(self._soc, 3),

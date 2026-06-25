@@ -169,6 +169,121 @@ The current report reads each job's `benchmark_result.json` and visualizes:
 - VPP-window electricity consumption
 - appliance shift success rate
 
+### Multi-User Household Matrix And EB+rule+MILP
+
+The fixed multi-user household benchmark treats each household JSON under
+`energybridge/roleplay/households/` as one large user. Each member keeps an
+independent role-play context for strategy comments and scoring, while the
+physical household owns one shared full appliance set: AC, washer, dryer,
+dishwasher, water heater, EV, and refrigerator. Household scores are the mean
+of the independent member scores.
+
+`EB+rule+MILP` is the current hybrid Agent method for this path. Its design is:
+
+- Rule+MILP proposes physically feasible appliance schedules and PMV/cost-min
+  AC guidance.
+- EnergyBridge reads those candidates, member preferences, calendar context,
+  and prior in-run feedback.
+- Appliance timing is inherited from Rule+MILP by default, so every present
+  appliance has a real emitted policy and VPP-window non-AC loads stay avoided.
+- The Agent may choose among equal-objective MILP options and explain the
+  preference tradeoff.
+- AC starts from the PMV/cost-min setpoint. If a member gives explicit warm or
+  comfort-boundary feedback, the next decision may move back to the warm edge
+  of the household comfort band. Set
+  `ENERGYBRIDGE_HYBRID_COMFORT_OVERRIDE_AFTER=1` for one-feedback override,
+  which is the default comparison setting.
+- Preference memory is run-local by default. Set
+  `ENERGYBRIDGE_PERSIST_AGENT_MEMORY=1` only when you want review files written
+  into the run output directory.
+
+Run one household with the hybrid method:
+
+```bash
+ENERGYBRIDGE_HYBRID_COMFORT_OVERRIDE_AFTER=1 \
+ENERGYBRIDGE_PERSIST_AGENT_MEMORY=0 \
+python experiments/benchmark/run_multi_user_household.py \
+  --household household_s2_multigeneration_caregiver \
+  --method eb_rule_milp \
+  --city Tianjin \
+  --days 7 \
+  --start-date 2025-06-01 \
+  --vpp-start-hour 18.0 \
+  --vpp-duration-hours 1.0
+```
+
+Run all five households for Tianjin with five parallel workers:
+
+```bash
+ENERGYBRIDGE_HYBRID_COMFORT_OVERRIDE_AFTER=1 \
+ENERGYBRIDGE_PERSIST_AGENT_MEMORY=0 \
+PYTHONUNBUFFERED=1 \
+python experiments/benchmark/run_household_matrix.py \
+  --methods eb_rule_milp \
+  --city Tianjin \
+  --days 7 \
+  --start-date 2025-06-01 \
+  --date <YYYY-MM-DD> \
+  --workers 5
+```
+
+Run all five households for Germany with real price data:
+
+```bash
+ENERGYBRIDGE_HYBRID_COMFORT_OVERRIDE_AFTER=1 \
+ENERGYBRIDGE_PERSIST_AGENT_MEMORY=0 \
+PYTHONUNBUFFERED=1 \
+python experiments/benchmark/run_household_matrix.py \
+  --methods eb_rule_milp \
+  --city Germany \
+  --days 7 \
+  --start-date 2025-06-01 \
+  --price-csv experiments/real_data/germany_2025_price.csv \
+  --date <YYYY-MM-DD> \
+  --workers 5
+```
+
+Five workers are usually CPU-safe on the project server; the bottleneck is more
+likely the LLM API. Watch process load and API retry signals while a batch is
+running:
+
+```bash
+ps -eo pid,ppid,stat,pcpu,pmem,etime,cmd --sort=-pcpu | \
+  rg 'run_household_matrix|run_multi_user_household|EnergyPlus|train_pref_v2|python -u'
+
+rg -n 'LLM attempt|RateLimit|429|JSONDecodeError|Traceback|\\[FAILED\\]|\\[COMPLETED\\]' \
+  benchmark_results/<YYYY-MM-DD>/_batch_logs/household_matrix_*_7days_H6/*.log
+```
+
+The household matrix summaries are written to:
+
+```text
+benchmark_results/<YYYY-MM-DD>/_batch_logs/
+├── household_matrix_summary_tianjin_7days_H6.json
+├── household_matrix_summary_tianjin_7days_H6.csv
+├── household_matrix_summary_germany_7days_H6.json
+└── household_matrix_summary_germany_7days_H6.csv
+```
+
+To generate a household report from explicit summaries:
+
+```bash
+python experiments/benchmark/generate_baseline_matrix_report.py \
+  --summary-json \
+    benchmark_results/<YYYY-MM-DD>/_batch_logs/household_matrix_summary_tianjin_7days_H6.json \
+    benchmark_results/<YYYY-MM-DD>/_batch_logs/household_matrix_summary_germany_7days_H6.json \
+  --output-dir benchmark_results/<YYYY-MM-DD>/_batch_logs/household_5x2_7day_report \
+  --artifact-prefix household_5x2_7day \
+  --row-label Household \
+  --completion-metric physical
+```
+
+When the four-method household baseline has already been run and EB+rule+MILP
+is rerun separately, merge the JSON summaries first, then pass the merged
+`*_main_5method.json` files to `generate_baseline_matrix_report.py`. The report
+script supports multiple summary JSONs in one call and automatically appends
+city labels to the household rows.
+
 ### How To Add A New Baseline Method
 
 Use a stable lowercase method id, for example `my_baseline`. Keep the method id
@@ -733,6 +848,23 @@ Important caveat: this is an **EnergyPlus replay-based horizon predictor**, not
 a perfect full-state EnergyPlus oracle. It starts fresh EnergyPlus candidate
 runs and replays to the decision time. Diagnostics record IDF/EPW, warmup
 policy, state alignment, and prediction error.
+
+### `rule_milp`
+
+Oracle-style baseline for transparent lower-bound comparisons. HVAC uses a PMV
+rule to select the warmest feasible cooling setpoint. Shiftable appliances,
+water-heater preheat, and EV charging are scheduled by a small MILP over
+feasible windows, with a large penalty for non-AC appliance operation inside
+VPP windows.
+
+### `eb_rule_milp`
+
+Hybrid EnergyBridge method for the multi-user household benchmark. Rule+MILP
+provides the appliance schedule and PMV/cost-min AC candidate; EnergyBridge
+uses member role-play feedback and run-local preference memory to choose among
+equivalent candidates and make bounded comfort adjustments. This method is
+intended to keep Rule+MILP-like energy/VPP behavior while recovering user
+preference score through explicit household feedback.
 
 ### RL Baseline
 

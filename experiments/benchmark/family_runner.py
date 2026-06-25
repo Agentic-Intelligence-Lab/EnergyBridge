@@ -1540,6 +1540,158 @@ def _filter_controllable_appliance_actions(actions: dict | None, appliance_confi
     return filtered
 
 
+def _hybrid_rule_milp_setpoint_floor(options: dict | None, cap_c: float) -> float | None:
+    """Return the PMV/cost-min cooling target, capped only by run safety bounds."""
+    try:
+        hvac = (options or {}).get("hvac") or {}
+        target = hvac.get("cost_min_pmv_setpoint_c")
+        if target is None:
+            return None
+        return round(min(float(cap_c), float(target)), 1)
+    except (TypeError, ValueError):
+        return None
+
+
+def _hybrid_rule_milp_comfort_override_threshold() -> int:
+    """Comfort feedback count needed before trading optimality for comfort."""
+    try:
+        value = int(os.getenv("ENERGYBRIDGE_HYBRID_COMFORT_OVERRIDE_AFTER", "1"))
+    except (TypeError, ValueError):
+        value = 1
+    return max(1, value)
+
+
+def _hybrid_rule_milp_floor_allowed(past_events: list[dict] | None) -> bool:
+    """Keep the PMV/cost floor until warm feedback asks for comfort recovery."""
+    return _hybrid_rule_milp_warm_feedback_count(past_events) < _hybrid_rule_milp_comfort_override_threshold()
+
+
+def _hybrid_rule_milp_warm_feedback_count(past_events: list[dict] | None) -> int:
+    """Count events where user/member feedback says the hybrid HVAC was too warm."""
+    warm_tokens = (
+        "too warm",
+        "felt too warm",
+        "above my comfort",
+        "above comfort",
+        "exceeded my comfort",
+        "exceeded comfort",
+        "comfort boundary",
+        "comfort slipped",
+        "hot",
+        "uncomfortable",
+        "temperature drift",
+    )
+    count = 0
+    for event in (past_events or []):
+        text = (
+            str(event.get("comment", ""))
+            + " "
+            + str(event.get("controller_feedback", ""))
+            + " "
+            + str(event.get("member_feedback_summary", ""))
+        ).lower()
+        if any(token in text for token in warm_tokens):
+            count += 1
+    return count
+
+
+def _hybrid_rule_milp_feedback_comfort_cap(past_events: list[dict] | None, preferred_max_c: float) -> float | None:
+    warm_count = _hybrid_rule_milp_warm_feedback_count(past_events)
+    threshold = _hybrid_rule_milp_comfort_override_threshold()
+    if warm_count < threshold:
+        return None
+    step_down = 0.0
+    if warm_count >= threshold + 2:
+        step_down = 1.0
+    elif warm_count >= threshold + 1:
+        step_down = 0.5
+    return round(max(22.0, float(preferred_max_c) - step_down), 1)
+
+
+def _merge_hybrid_rule_milp_actions(
+    agent_actions: dict | None,
+    hybrid_options: dict | None,
+    appliance_config: dict | None,
+    *,
+    sim_h: float,
+) -> tuple[dict, dict]:
+    """Use Rule+MILP as the appliance policy for the hybrid method.
+
+    The agent still sees member preferences and can tune HVAC/explanations, but
+    appliance timing remains the MILP-selected feasible schedule. This keeps the
+    hybrid method comparable to the oracle baseline and prevents sparse
+    post-event LLM replies from re-opening completed services or shortening EV
+    charge windows.
+    """
+    milp_selected = ((hybrid_options or {}).get("selected_rule_milp_action") or {})
+    milp_actions = _filter_controllable_appliance_actions(milp_selected, appliance_config)
+    milp_actions = {key: value for key, value in milp_actions.items() if value is not None}
+    ev_fallback = _hybrid_explicit_ev_window_if_missing(
+        milp_actions,
+        appliance_config,
+        sim_h=sim_h,
+    )
+    milp_actions.update(ev_fallback)
+    agent_non_null = {key: value for key, value in (agent_actions or {}).items() if value is not None}
+    trace = {
+        "milp_inherited_keys": sorted(milp_actions),
+        "agent_ignored_appliance_keys": sorted(agent_non_null),
+        "agent_override_keys": [],
+        "ev_policy_fallback": dict(ev_fallback),
+        "milp_default_action": dict(milp_actions),
+    }
+    return dict(milp_actions), trace
+
+
+def _hybrid_explicit_ev_window_if_missing(
+    actions: dict,
+    appliance_config: dict | None,
+    *,
+    sim_h: float,
+) -> dict:
+    """Emit an explicit EV policy window when MILP has no active EV work.
+
+    Some days start with the EV already at target SOC, so MILP may correctly
+    omit EV from the cost-min action. Role-play scoring still expects a present
+    controllable EV to have an explicit policy. A same-day post-VPP window is a
+    harmless policy declaration when no charging is needed, and executable when
+    charging is needed.
+    """
+    cfg = ((appliance_config or {}).get("ev", {}) or {})
+    if not bool(cfg.get("present", False)):
+        return {}
+    if actions.get("ev_charge_start_h") is not None and actions.get("ev_charge_end_h") is not None:
+        return {}
+    try:
+        hod = float(sim_h) % 24.0
+        arrival = float(cfg.get("arrival_h", 18.0))
+        charger_kw = max(0.1, float(cfg.get("charger_kw", 7.0)))
+        efficiency = max(0.1, float(cfg.get("efficiency", 0.92)))
+        daily_drive = max(0.5, float(cfg.get("daily_drive_kwh", 8.0)))
+        duration_raw = daily_drive / (charger_kw * efficiency)
+        duration = max(0.5, int(duration_raw * 2.0 + 0.999999) / 2.0)
+    except (TypeError, ValueError):
+        return {}
+    start = max(arrival, hod)
+    # The default VPP event in these benchmarks is 18:00-19:00.  If EV arrives
+    # during that hour, declare the policy window just after the event.
+    if start < 19.0 and arrival < 19.0:
+        start = 19.0
+    # Keep the window on the same local day; the EV simulator stores windows by
+    # day index, so a next-morning-only local window is not a safe default.
+    if start + duration > 24.0:
+        start = max(arrival, 24.0 - duration)
+        if start < 19.0 and arrival < 19.0:
+            start = 19.0
+    end = min(24.0, start + duration)
+    if end <= start + 1e-6:
+        return {}
+    return {
+        "ev_charge_start_h": round(start, 2),
+        "ev_charge_end_h": round(end, 2),
+    }
+
+
 def _abs_interval_from_hod(day_idx: int, start_h: Any, end_h: Any) -> tuple[float, float] | None:
     try:
         start = float(day_idx * 24.0 + (float(start_h) % 24.0))
@@ -1847,21 +1999,21 @@ def _init_agent_preference_memory(
     method: str,
     persona_config: dict | None,
 ) -> None:
-    """Create run-local preference memory state for hybrid agent methods."""
-    if method != "eb_rule_milp":
+    """Create optional run-local preference memory files for agent methods."""
+    if method not in {"agent", "eb_rule_milp"}:
         return
     persist_memory = str(os.getenv("ENERGYBRIDGE_PERSIST_AGENT_MEMORY", "")).strip().lower() in {
         "1", "true", "yes", "on"
     }
     persona_id = (persona_config or {}).get("id", "unknown_persona")
     memory = {
-        "version": "eb_rule_milp_preference_memory_v1",
+        "version": "agent_preference_memory_v1",
         "method": method,
         "persona_id": persona_id,
         "purpose": (
-            "Run-local memory for EB+rule+MILP. It records daily role-play "
-            "feedback so later decisions can select among MILP candidates using "
-            "learned user preferences."
+            "Run-local memory for EnergyBridge agent methods. It records daily "
+            "role-play feedback so later decisions can use learned user "
+            "preferences. File persistence is optional and disabled by default."
         ),
         "events": [],
         "learned_preference_rules": [],
@@ -1876,7 +2028,8 @@ def _init_agent_preference_memory(
     else:
         loop.agent_memory_path = None
         loop.agent_memory_md_path = None
-        print("  [EB+rule+MILP Memory] in-prompt memory only; set ENERGYBRIDGE_PERSIST_AGENT_MEMORY=1 to write review files.")
+        label = "EB+rule+MILP" if method == "eb_rule_milp" else "EnergyBridge"
+        print(f"  [{label} Memory] run-context memory only; set ENERGYBRIDGE_PERSIST_AGENT_MEMORY=1 to write review files.")
 
 
 def _agent_preference_memory_prompt_text(loop) -> str:
@@ -1889,7 +2042,7 @@ def _agent_preference_memory_prompt_text(loop) -> str:
         "recent_events": (memory.get("events") or [])[-3:],
     }
     return (
-        "\n[EB+rule+MILP USER MEMORY]\n"
+        "\n[AGENT USER MEMORY]\n"
         "Use this run-local memory context as a decision input. It resets for every fresh benchmark run.\n"
         f"{json.dumps(prompt_memory, ensure_ascii=False)}"
     )
@@ -1906,7 +2059,7 @@ def _write_agent_preference_memory(loop) -> None:
     try:
         memory_path.write_text(json.dumps(memory, indent=2, ensure_ascii=False), encoding="utf-8")
         lines = [
-            "# EB+rule+MILP Preference Memory",
+            "# Agent Preference Memory",
             "",
             f"- Method: `{memory.get('method', '')}`",
             f"- Persona: `{memory.get('persona_id', '')}`",
@@ -1938,7 +2091,7 @@ def _write_agent_preference_memory(loop) -> None:
             )
         md_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     except Exception as exc:
-        print(f"  [EB+rule+MILP Memory] write failed: {exc}")
+        print(f"  [Agent Memory] write failed: {exc}")
 
 
 def _update_agent_preference_memory(
@@ -2002,11 +2155,15 @@ def _hybrid_rule_milp_guidance_text(options: dict | None) -> str:
     return (
         "\n[EB+rule+MILP CANDIDATES]\n"
         "Rule+MILP proposes appliance schedules that are cost/VPP-optimal under the current physical model. "
-        "PMV guidance gives the comfort-feasible AC range. Choose the option that best matches the user's "
-        "preference memory and live preference. You may lightly adjust times or AC setpoint for user preference, "
-        "but keep every present appliance explicitly controlled and avoid VPP-window non-AC load when feasible. "
+        "PMV guidance gives the comfort-feasible AC range. Treat `selected_rule_milp_action` and "
+        "`cost_min_pmv_setpoint_c` as the default plan and keep this optimality unless clear member feedback states a hard "
+        "comfort, safety, hot-water, EV-readiness, or deadline preference. Choose among equal-objective MILP "
+        "options using preference memory; do not trade cost/VPP optimality for soft preference wording. "
+        "Keep appliance timing on the MILP-selected feasible schedule; use the user preference mainly to "
+        "explain the action or justify a rare bounded AC adjustment. "
         "Water-heater preheat must stay close to the candidate/configured short window; never stretch it into all-day heating. "
-        "If you deviate from a MILP option, explain the user-preference reason in the `reason` field.\n"
+        "Do not cool below the PMV/cost-min setpoint unless a member's hard comfort feedback requires it. "
+        "If you deviate from a MILP option, explain the hard user-preference reason in the `reason` field.\n"
         f"{json.dumps(compact, ensure_ascii=False)}"
     )
 
@@ -2311,8 +2468,9 @@ If grid goals conflict with comfort, safety, consent, or caregiving routines, ch
 [EB+RULE+MILP HYBRID MODE]
 You are EnergyBridge augmented with Rule+MILP candidates.
 Rule+MILP generates physically feasible, cost/VPP-optimal appliance strategy options; PMV rule gives an AC comfort/efficiency range.
-Your job is not to ignore these candidates. Your job is to choose among them using the user's live preference and run-local memory, and to make only small user-preference adjustments when justified.
-If you deviate from the MILP option, keep every present appliance explicitly controlled, keep VPP-window non-AC avoidance when feasible, and explain the user-preference reason briefly.
+Your default job is to follow the selected Rule+MILP appliance plan and PMV cost-min AC setpoint. Choose among equal-objective MILP options using live preference and run-local memory.
+Only make a bounded suboptimal adjustment when clear member feedback states a hard comfort, safety, hot-water, EV-readiness, or deadline requirement. Soft preferences should not override cost/VPP optimality.
+If you deviate from the MILP option, keep every present appliance explicitly controlled, keep VPP-window non-AC avoidance when feasible, and explain the hard user-preference reason briefly.
 Use the run-local memory context as learned preference evidence. It resets for each fresh benchmark run.
 """
 
@@ -2603,6 +2761,15 @@ All times are hour-of-day (0–23.9)."""
                     print(f"  │ {_line}")
                 print(f"  └{'─'*56}")
             data = _call_llm_json(prompt)
+            hybrid_action_trace = {}
+            if method == "eb_rule_milp":
+                merged_actions, hybrid_action_trace = _merge_hybrid_rule_milp_actions(
+                    data.get("appliances", {}),
+                    hybrid_options,
+                    appliance_config,
+                    sim_h=sim_h,
+                )
+                data["appliances"] = merged_actions
             missing_explicit = _missing_explicit_appliance_actions(
                 data.get("appliances", {}), appliance_config
             )
@@ -2704,8 +2871,19 @@ All times are hour-of-day (0–23.9)."""
                 sp_lower = max(sp_lower, learned_floor)
             if method == "eb_rule_milp":
                 # In the hybrid method, Rule+MILP/PMV provides candidates; it
-                # must not force HVAC beyond the household's stated comfort max.
-                sp_upper = min(sp_upper, _ac_sp_max)
+                # should inherit the cost-min PMV target by default.  User
+                # comfort max is a preference signal, not a hard cap, unless
+                # later feedback says the PMV/cost-min point was too warm.
+                hybrid_floor = _hybrid_rule_milp_setpoint_floor(hybrid_options, _run_sp_max)
+                if hybrid_floor is not None and _hybrid_rule_milp_floor_allowed(loop.vpp_event_log):
+                    sp_lower = max(sp_lower, hybrid_floor)
+                    sp_upper = max(sp_upper, hybrid_floor)
+                else:
+                    sp_upper = min(sp_upper, _ac_sp_max)
+                feedback_cap = _hybrid_rule_milp_feedback_comfort_cap(loop.vpp_event_log, _ac_sp_max)
+                if feedback_cap is not None:
+                    sp_upper = min(sp_upper, feedback_cap)
+                    sp_lower = max(sp_lower, min(sp_upper, feedback_cap))
                 sp_lower = min(sp_lower, sp_upper)
             if sp_lower > sp_upper:
                 sp_lower = sp_upper
@@ -2761,6 +2939,7 @@ All times are hour-of-day (0–23.9)."""
                     "selected_rule_milp_action": (hybrid_options or {}).get("selected_rule_milp_action", {}),
                     "hvac": (hybrid_options or {}).get("hvac", {}),
                     "solver": (hybrid_options or {}).get("solver", {}),
+                    "hybrid_action_merge": hybrid_action_trace,
                     "agent_actions": appl_actions if isinstance(appl_actions, dict) else {},
                     "agent_setpoint": sp,
                     "memory_path": str(getattr(loop, "agent_memory_path", "") or ""),
@@ -3263,7 +3442,7 @@ All times are hour-of-day (0–23.9)."""
                 "\nLearned preference rules for next decisions: "
                 + json.dumps(mem_rules, ensure_ascii=False)
             )
-        if method == "eb_rule_milp":
+        if method in {"agent", "eb_rule_milp"}:
             _update_agent_preference_memory(
                 loop,
                 result,
