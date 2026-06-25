@@ -15,6 +15,7 @@ DEFAULT_REAL_DATA_DIR = PROJECT_ROOT / "experiments" / "real_data"
 DEFAULT_GERMANY_PRICE_CSV = DEFAULT_REAL_DATA_DIR / "germany_2025_price.csv"
 DEFAULT_GERMANY_WEATHER_CSV = DEFAULT_REAL_DATA_DIR / "germany_2025_weather.csv"
 DEFAULT_GERMANY_EPW = PROJECT_ROOT / "experiments" / "weather" / "epw" / "DEU_Germany_2025_real.epw"
+DEFAULT_TIANJIN_TOU_PRICE_CSV = DEFAULT_REAL_DATA_DIR / "tianjin_tou_price_normalized.csv"
 
 
 @dataclass(frozen=True)
@@ -26,8 +27,17 @@ class PricePoint:
 class DayAheadPriceProfile:
     """Hourly day-ahead price profile indexed by local time."""
 
-    def __init__(self, points: Iterable[PricePoint], *, source: str = "") -> None:
+    def __init__(
+        self,
+        points: Iterable[PricePoint],
+        *,
+        source: str = "",
+        recurring_hour_prices: dict[int, float] | None = None,
+        price_unit: str = "EUR/kWh",
+    ) -> None:
         self.source = source
+        self.price_unit = price_unit
+        self.recurring_hour_prices = dict(recurring_hour_prices or {})
         self.points = sorted(points, key=lambda item: item.local_time)
         self._by_hour = {
             point.local_time.replace(minute=0, second=0, microsecond=0): point
@@ -38,7 +48,11 @@ class DayAheadPriceProfile:
     def from_csv(cls, path: Path, *, standard_timezone_hours: float | None = None) -> "DayAheadPriceProfile":
         points: list[PricePoint] = []
         with Path(path).open("r", encoding="utf-8-sig", newline="") as handle:
-            for row in csv.DictReader(handle):
+            reader = csv.DictReader(handle)
+            fieldnames = set(reader.fieldnames or [])
+            if {"hour_start", "normalized_aggregator_tou_incentive"} <= fieldnames:
+                return cls.from_tou_csv(Path(path))
+            for row in reader:
                 raw_time = row.get("Datetime (Local)") or row.get("datetime") or row.get("time")
                 raw_utc_time = row.get("Datetime (UTC)")
                 raw_price = row.get("Price (EUR/MWhe)") or row.get("price_eur_mwh")
@@ -55,12 +69,60 @@ class DayAheadPriceProfile:
             raise ValueError(f"No day-ahead prices found in {path}")
         return cls(points, source=str(path))
 
+    @classmethod
+    def from_tou_csv(cls, path: Path) -> "DayAheadPriceProfile":
+        """Load a recurring hourly TOU profile.
+
+        The Tianjin benchmark currently uses a normalized 24-hour TOU signal
+        rather than a date-stamped market price series.  The values repeat by
+        local hour and are used as relative cost multipliers.
+        """
+        recurring: dict[int, float] = {}
+        with Path(path).open("r", encoding="utf-8-sig", newline="") as handle:
+            for row in csv.DictReader(handle):
+                raw_start = row.get("hour_start")
+                raw_end = row.get("hour_end")
+                raw_price = row.get("normalized_aggregator_tou_incentive")
+                if raw_start in (None, "") or raw_price in (None, ""):
+                    continue
+                start_h = _parse_hour_of_day(str(raw_start))
+                end_h = _parse_hour_of_day(str(raw_end or ""))
+                if start_h is None:
+                    continue
+                price = float(raw_price)
+                if end_h is None or end_h <= start_h:
+                    hours = [int(start_h) % 24]
+                else:
+                    hours = list(range(int(start_h), int(end_h)))
+                for hour in hours:
+                    recurring[hour % 24] = price
+        if not recurring:
+            raise ValueError(f"No TOU hourly prices found in {path}")
+        return cls(
+            [],
+            source=str(path),
+            recurring_hour_prices=recurring,
+            price_unit="normalized TOU cost/kWh",
+        )
+
+    @property
+    def is_recurring(self) -> bool:
+        return bool(self.recurring_hour_prices)
+
     def price_at(self, local_time: datetime) -> float | None:
         key = local_time.replace(minute=0, second=0, microsecond=0, tzinfo=None)
         point = self._by_hour.get(key)
-        return point.price_eur_per_kwh if point else None
+        if point:
+            return point.price_eur_per_kwh
+        return self.recurring_hour_prices.get(key.hour)
 
     def points_for_day(self, day: date) -> list[PricePoint]:
+        if self.recurring_hour_prices:
+            start = datetime.combine(day, datetime.min.time())
+            return [
+                PricePoint(local_time=start + timedelta(hours=hour), price_eur_per_kwh=price)
+                for hour, price in sorted(self.recurring_hour_prices.items())
+            ]
         start = datetime.combine(day, datetime.min.time())
         end = start + timedelta(days=1)
         return [point for point in self.points if start <= point.local_time < end]
@@ -84,7 +146,7 @@ class DayAheadPriceProfile:
         return (
             f"Day-ahead prices for {day.isoformat()} are known at this 00:00 planning step. "
             f"Use them as a secondary objective after comfort, service deadlines, and VPP constraints. "
-            f"Price unit=EUR/kWh. avg={sum(prices)/len(prices):.4f}, "
+            f"Price unit={self.price_unit}. avg={sum(prices)/len(prices):.4f}, "
             f"min={min(prices):.4f}, max={max(prices):.4f}. "
             f"Cheapest hours: {cheap_text}. Most expensive hours: {expensive_text}{negative_text}. "
             "Prefer flexible appliances and EV charging in low-price hours when this does not reduce user score."
@@ -102,6 +164,20 @@ def maybe_load_price_profile(
     if not path.exists():
         raise FileNotFoundError(f"Price CSV not found: {path}")
     return DayAheadPriceProfile.from_csv(path, standard_timezone_hours=standard_timezone_hours)
+
+
+def _parse_hour_of_day(value: str) -> float | None:
+    text = value.strip().replace("\ufeff", "")
+    if not text:
+        return None
+    parts = text.split(":")
+    try:
+        hour = float(parts[0])
+        minute = float(parts[1]) if len(parts) > 1 else 0.0
+        second = float(parts[2]) if len(parts) > 2 else 0.0
+    except (TypeError, ValueError):
+        return None
+    return hour + minute / 60.0 + second / 3600.0
 
 
 def generate_epw_from_openmeteo_csv(
@@ -261,8 +337,12 @@ def compute_price_metrics(
     start_date: date | None,
     sim_days: int,
 ) -> dict[str, Any]:
-    if price_profile is None or start_date is None:
+    if price_profile is None:
         return _nan_price_metrics(sim_days)
+    if start_date is None:
+        if not getattr(price_profile, "is_recurring", False):
+            return _nan_price_metrics(sim_days)
+        start_date = date(2000, 1, 1)
     steps = read_facility_meter_steps(out_dir)
     if not steps:
         return _nan_price_metrics(sim_days)
@@ -303,6 +383,8 @@ def compute_price_metrics(
     return {
         "available": priced_kwh > 0,
         "source": price_profile.source,
+        "price_unit": getattr(price_profile, "price_unit", "EUR/kWh"),
+        "recurring_price": bool(getattr(price_profile, "is_recurring", False)),
         "total_cost_eur": round(total_cost, 6),
         "priced_energy_kwh": round(priced_kwh, 6),
         "weighted_price_eur_per_kwh": round(total_cost / priced_kwh, 6) if priced_kwh > 0 else math.nan,
@@ -315,6 +397,8 @@ def _nan_price_metrics(sim_days: int) -> dict[str, Any]:
     return {
         "available": False,
         "source": "",
+        "price_unit": "",
+        "recurring_price": False,
         "total_cost_eur": math.nan,
         "priced_energy_kwh": math.nan,
         "weighted_price_eur_per_kwh": math.nan,

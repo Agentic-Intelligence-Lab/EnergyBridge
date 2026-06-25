@@ -68,7 +68,11 @@ def plan_rule_milp_action(
         "slack": {"total": 0.0},
         "weights": {"cost": 1.0},
         "proxy_status": {
-            "price": "direct" if price_profile is not None and run_start_date is not None else "flat_energy_proxy",
+            "price": (
+                "direct"
+                if price_profile is not None and (run_start_date is not None or getattr(price_profile, "is_recurring", False))
+                else "flat_energy_proxy"
+            ),
             "hvac": "pmv_rule",
             "appliance_schedule": solver_meta.get("solver", "unknown"),
         },
@@ -605,11 +609,15 @@ def _interval_cost(start_abs: float, duration_h: float, power_kw: float, price_p
 
 
 def _price_at_sim_hour(sim_h: float, price_profile: Any, run_start_date: Any) -> float:
-    if price_profile is None or run_start_date is None:
+    if price_profile is None:
         return 1.0
     try:
         if isinstance(run_start_date, datetime):
             start = run_start_date
+        elif run_start_date is None and getattr(price_profile, "is_recurring", False):
+            start = datetime(2000, 1, 1)
+        elif run_start_date is None:
+            return 1.0
         else:
             start = datetime.combine(run_start_date, datetime.min.time())
         price = price_profile.price_at(start + timedelta(hours=float(sim_h)))

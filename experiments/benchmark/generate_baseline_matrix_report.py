@@ -232,9 +232,10 @@ def _day_ahead_total_cost_eur(result: dict[str, Any], row: dict[str, Any]) -> fl
     metrics = result.get("day_ahead_price_metrics")
     if isinstance(metrics, dict):
         value = _as_float(metrics.get("total_cost_eur"))
-        if value is not None:
+        if value is not None and not pd.isna(value):
             return value
-    return _as_nonempty_float(row.get("day_ahead_total_cost_eur"))
+    value = _as_nonempty_float(row.get("day_ahead_total_cost_eur"))
+    return None if value is not None and pd.isna(value) else value
 
 
 def _report_energy_metric(
@@ -245,9 +246,7 @@ def _report_energy_metric(
     electricity_cost_eur: float | None,
     days: float | None = None,
 ) -> tuple[float | None, str]:
-    if city.strip().lower() == "germany" and electricity_cost_eur is not None:
-        if days and days > 0:
-            return electricity_cost_eur / days, "electricity_cost_eur_per_day"
+    if electricity_cost_eur is not None and not pd.isna(electricity_cost_eur):
         return electricity_cost_eur, "electricity_cost_eur"
     if energy_kwh_per_day is not None:
         return energy_kwh_per_day, "energy_kwh_per_day"
@@ -634,15 +633,15 @@ def _artifact_name(prefix: str, filename: str) -> str:
 def _report_energy_label(df: pd.DataFrame, row_label: str = "Persona") -> tuple[str, str, str, bool]:
     metric_names = {str(name) for name in df["report_energy_metric_name"].dropna().unique()}
     if metric_names == {"electricity_cost_eur"}:
-        return f"{row_label} x Method Electricity Cost", "Total electricity cost EUR (lower is better)", ".2f", True
+        return f"{row_label} x Method Electricity Cost", "Total electricity cost (lower is better)", ".2f", True
     if metric_names == {"electricity_cost_eur_per_day"}:
-        return f"{row_label} x Method Daily Electricity Cost", "Daily electricity cost EUR/day (lower is better)", ".2f", True
+        return f"{row_label} x Method Daily Electricity Cost", "Daily electricity cost/day (lower is better)", ".2f", True
     if metric_names == {"energy_kwh_per_day"}:
         return f"{row_label} x Method Daily Energy", "Daily energy kWh/day (lower is better)", ".2f", True
     if metric_names <= {"energy_kwh_per_day", "electricity_cost_eur_per_day"}:
         return (
             f"{row_label} x Method Daily Energy / Cost",
-            "Daily metric: Tianjin kWh/day, Germany EUR/day (lower is better)",
+            "Daily metric: kWh/day where no price is available, otherwise cost/day (lower is better)",
             ".2f",
             True,
         )

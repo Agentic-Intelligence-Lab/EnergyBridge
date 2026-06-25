@@ -38,6 +38,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from energybridge.roleplay.loader import list_personas  # noqa: E402
+from energybridge.data.day_ahead import DEFAULT_TIANJIN_TOU_PRICE_CSV  # noqa: E402
 
 
 ENERGYBRIDGE_METHOD_ID = "EnergyBridge"
@@ -166,6 +167,17 @@ def _first_metric(data: dict[str, Any], keys: tuple[str, ...], default: Any = ""
     return default
 
 
+def _price_metric(data: dict[str, Any], key: str, default: Any = "") -> Any:
+    metrics = data.get("day_ahead_price_metrics")
+    if isinstance(metrics, dict):
+        value = metrics.get(key)
+        if value is not None:
+            if isinstance(value, float):
+                return round(value, 6)
+            return value
+    return default
+
+
 def _make_jobs(args: argparse.Namespace) -> list[Job]:
     run_date = args.date
     date_dir = Path(args.results_root) / run_date
@@ -198,6 +210,14 @@ def _make_jobs(args: argparse.Namespace) -> list[Job]:
                 )
             )
     return jobs
+
+
+def _price_display(args: argparse.Namespace) -> str:
+    if args.price_csv:
+        return args.price_csv
+    if args.city.lower() == "tianjin" and DEFAULT_TIANJIN_TOU_PRICE_CSV.exists():
+        return f"{DEFAULT_TIANJIN_TOU_PRICE_CSV} (auto Tianjin TOU)"
+    return "N/A"
 
 
 def _command_for(job: Job) -> list[str]:
@@ -252,6 +272,11 @@ def _summarize_job(job: Job, status: str, return_code: int | None, elapsed_s: fl
         "log_file": str(job.log_file),
         "exit_code": _metric(data, "exit_code"),
         "energy_kwh": _first_metric(data, ("energy_kwh", "energy_kwh_total")),
+        "energy_kwh_per_day": _metric(data, "energy_kwh_per_day"),
+        "day_ahead_total_cost_eur": _price_metric(data, "total_cost_eur"),
+        "day_ahead_weighted_price_eur_per_kwh": _price_metric(data, "weighted_price_eur_per_kwh"),
+        "day_ahead_price_unit": _price_metric(data, "price_unit"),
+        "day_ahead_price_source": _price_metric(data, "source"),
         "vpp_window_energy_kwh": _metric(data, "vpp_window_energy_kwh"),
         "vpp_window_energy_avg_per_hour_kwh": _metric(data, "vpp_window_energy_avg_per_hour_kwh"),
         "vpp_actual_shed_kwh": _metric(data, "vpp_actual_shed_kwh"),
@@ -471,7 +496,7 @@ def main() -> None:
     print(f"  city     : {args.city}")
     print(f"  days     : {days}")
     print(f"  start    : {start_date or '(template IDF)'}")
-    print(f"  price    : {args.price_csv or 'N/A'}")
+    print(f"  price    : {_price_display(args)}")
     print(f"  vpp      : {args.vpp_events_json or f'daily {float(args.vpp_start_hour) % 24.0:.2f}h for {float(args.vpp_duration_hours):.2f}h'}")
     print(f"  horizon  : H={args.mpc_horizon}")
     print(f"  summary  : {summary_json}")

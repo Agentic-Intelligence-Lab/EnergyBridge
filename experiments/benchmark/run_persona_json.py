@@ -44,6 +44,7 @@ import family_runner as fr
 from energybridge.data.day_ahead import (
     DEFAULT_GERMANY_EPW,
     DEFAULT_GERMANY_WEATHER_CSV,
+    DEFAULT_TIANJIN_TOU_PRICE_CSV,
     generate_epw_from_openmeteo_csv,
     generate_runperiod_idf,
     maybe_load_price_profile,
@@ -306,9 +307,12 @@ def _prepare_run_assets(
         if not epw_path.exists() or args.regenerate_epw:
             print(f"[Germany] generating EPW from {weather_csv} -> {epw_path}")
             generate_epw_from_openmeteo_csv(weather_csv, epw_path)
-    if args.price_csv:
+    price_csv = Path(args.price_csv) if args.price_csv else None
+    if price_csv is None and city_key == "tianjin" and DEFAULT_TIANJIN_TOU_PRICE_CSV.exists():
+        price_csv = DEFAULT_TIANJIN_TOU_PRICE_CSV
+    if price_csv:
         price_profile = maybe_load_price_profile(
-            Path(args.price_csv),
+            price_csv,
             standard_timezone_hours=STANDARD_TIMEZONE_BY_CITY.get(city_key),
         )
 
