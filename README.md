@@ -104,7 +104,8 @@ Run one full matrix first. The matrix delegates every job to
 loading, capacity quantification, VPP schedule handling, role-play scoring,
 and output naming stay consistent.
 
-Fast Germany 3-day matrix with real weather and day-ahead price:
+Fast Germany 3-day matrix with real weather, the Berlin family IDF, and
+day-ahead price:
 
 ```bash
 python experiments/benchmark/run_baseline_matrix.py \
@@ -112,19 +113,39 @@ python experiments/benchmark/run_baseline_matrix.py \
   --price-csv experiments/real_data/germany_2025_price.csv
 ```
 
-Full Tianjin 7-day matrix without price:
+Full Tianjin 7-day personal-user matrix. Tianjin automatically loads
+`experiments/real_data/tianjin_tou_price_normalized.csv`, so the report uses
+total electricity cost instead of total energy when the price metrics are
+available.
 
 ```bash
+PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_baseline_matrix.py \
-  --city Tianjin --days 7 --mpc-horizon 6
+  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp \
+  --city Tianjin \
+  --days 7 \
+  --mpc-horizon 6 \
+  --date <YYYY-MM-DD> \
+  --workers 5 \
+  --resume
 ```
 
-Full Germany 7-day matrix with price:
+Full Germany 7-day personal-user matrix. Germany automatically uses
+`experiments/models/family_home/berlin_family_geg_final.idf`; pass the
+Germany price CSV to make the report use total electricity cost.
 
 ```bash
+PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_baseline_matrix.py \
-  --city Germany --days 7 --start-date 2025-06-01 --mpc-horizon 6 \
-  --price-csv experiments/real_data/germany_2025_price.csv
+  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp \
+  --city Germany \
+  --days 7 \
+  --start-date 2025-06-01 \
+  --mpc-horizon 6 \
+  --price-csv experiments/real_data/germany_2025_price.csv \
+  --date <YYYY-MM-DD> \
+  --workers 5 \
+  --resume
 ```
 
 Matrix summaries are written to:
@@ -135,22 +156,22 @@ benchmark_results/<YYYY-MM-DD>/_batch_logs/
 └── baseline_matrix_summary_<city>_<days>days_H<horizon>.csv
 ```
 
-Generate the report figure/table/markdown from that summary:
+Generate the personal-user report figure/table/markdown from a summary:
 
 ```bash
 python experiments/benchmark/generate_baseline_matrix_report.py \
-  --date <YYYY-MM-DD> --city Germany --days 3 --horizon 6 \
-  --artifact-prefix 3day_germany \
-  --output-dir benchmark_results/reports/3day_germany
+  --summary-json benchmark_results/<YYYY-MM-DD>/_batch_logs/baseline_matrix_summary_tianjin_7days_H6.json \
+  --artifact-prefix personal_tianjin_7day_5method \
+  --output-dir benchmark_results/<YYYY-MM-DD>/_batch_logs/personal_tianjin_7day_5method_report
 ```
 
-If you want to avoid date discovery, pass the summary explicitly:
+For the Germany personal-user report:
 
 ```bash
 python experiments/benchmark/generate_baseline_matrix_report.py \
-  --summary-json benchmark_results/<YYYY-MM-DD>/_batch_logs/baseline_matrix_summary_germany_3days_H6.json \
-  --artifact-prefix 3day_germany \
-  --output-dir benchmark_results/reports/3day_germany
+  --summary-json benchmark_results/<YYYY-MM-DD>/_batch_logs/baseline_matrix_summary_germany_7days_H6.json \
+  --artifact-prefix personal_germany_7day_5method \
+  --output-dir benchmark_results/<YYYY-MM-DD>/_batch_logs/personal_germany_7day_5method_report
 ```
 
 Report outputs:
@@ -165,7 +186,7 @@ benchmark_results/reports/<report_name>/
 The current report reads each job's `benchmark_result.json` and visualizes:
 
 - role-play/human user score
-- total EnergyPlus electricity consumption
+- total electricity cost when a price profile is available; otherwise EnergyPlus electricity consumption
 - VPP-window electricity consumption
 - appliance shift success rate
 
@@ -212,35 +233,39 @@ python experiments/benchmark/run_multi_user_household.py \
   --vpp-duration-hours 1.0
 ```
 
-Run all five households for Tianjin with five parallel workers:
+Run all five households for Tianjin with all five comparable methods and five
+parallel workers. Tianjin automatically uses the normalized TOU price profile.
 
 ```bash
 ENERGYBRIDGE_HYBRID_COMFORT_OVERRIDE_AFTER=1 \
 ENERGYBRIDGE_PERSIST_AGENT_MEMORY=0 \
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_household_matrix.py \
-  --methods eb_rule_milp \
+  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp \
   --city Tianjin \
   --days 7 \
   --start-date 2025-06-01 \
   --date <YYYY-MM-DD> \
-  --workers 5
+  --workers 5 \
+  --resume
 ```
 
-Run all five households for Germany with real price data:
+Run all five households for Germany with all five comparable methods. Germany
+uses the Berlin family IDF by default; pass Germany day-ahead prices explicitly.
 
 ```bash
 ENERGYBRIDGE_HYBRID_COMFORT_OVERRIDE_AFTER=1 \
 ENERGYBRIDGE_PERSIST_AGENT_MEMORY=0 \
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_household_matrix.py \
-  --methods eb_rule_milp \
+  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp \
   --city Germany \
   --days 7 \
   --start-date 2025-06-01 \
   --price-csv experiments/real_data/germany_2025_price.csv \
   --date <YYYY-MM-DD> \
-  --workers 5
+  --workers 5 \
+  --resume
 ```
 
 Five workers are usually CPU-safe on the project server; the bottleneck is more
@@ -272,10 +297,18 @@ python experiments/benchmark/generate_baseline_matrix_report.py \
   --summary-json \
     benchmark_results/<YYYY-MM-DD>/_batch_logs/household_matrix_summary_tianjin_7days_H6.json \
     benchmark_results/<YYYY-MM-DD>/_batch_logs/household_matrix_summary_germany_7days_H6.json \
-  --output-dir benchmark_results/<YYYY-MM-DD>/_batch_logs/household_5x2_7day_report \
-  --artifact-prefix household_5x2_7day \
+  --output-dir benchmark_results/<YYYY-MM-DD>/_batch_logs/household_5x2_7day_5method_report \
+  --artifact-prefix household_5x2_7day_5method \
   --row-label Household \
   --completion-metric physical
+```
+
+The three main 5-method report tables for a full refresh are:
+
+```text
+benchmark_results/<YYYY-MM-DD>/_batch_logs/personal_tianjin_7day_5method_report/
+benchmark_results/<YYYY-MM-DD>/_batch_logs/personal_germany_7day_5method_report/
+benchmark_results/<YYYY-MM-DD>/_batch_logs/household_5x2_7day_5method_report/
 ```
 
 When the four-method household baseline has already been run and EB+rule+MILP
@@ -397,7 +430,7 @@ weekday   : Sunday, Monday, Tuesday
 days      : 3
 VPP       : daily 18:00-19:00
 price CSV : experiments/real_data/germany_2025_price.csv
-IDF       : generated from experiments/models/family_home/family_simple_3day.idf
+IDF       : generated from experiments/models/family_home/berlin_family_geg_final.idf
 output    : benchmark_results/<YYYY-MM-DD>/<role>_<method>_germany_3days/
 ```
 
@@ -583,44 +616,39 @@ score the result. The Agent can still request additional future wake-ups with
 
 ### Run The 10-Persona Matrix
 
-This is the main comparable experiment:
+This is the current five-method personal-user comparison. Tianjin uses the
+normalized TOU price profile automatically.
 
 ```bash
+PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_baseline_matrix.py \
-  --city Tianjin --mpc-horizon 6
+  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp \
+  --city Tianjin --days 7 --mpc-horizon 6 \
+  --workers 5 --resume
 ```
 
-Germany 7-day matrix:
+Germany uses the Berlin family IDF automatically. Pass day-ahead prices so the
+right-top metric is total electricity cost:
 
 ```bash
+PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_baseline_matrix.py \
-  --city Germany --days 7 --start-date 2025-06-01 --mpc-horizon 6
-```
-
-Tianjin 7-day matrix:
-
-```bash
-python experiments/benchmark/run_baseline_matrix.py \
-  --city Tianjin --days 7 --mpc-horizon 6
-```
-
-Germany 7-day matrix with day-ahead price enabled:
-
-```bash
-python experiments/benchmark/run_baseline_matrix.py \
+  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp \
   --city Germany --days 7 --start-date 2025-06-01 --mpc-horizon 6 \
-  --price-csv experiments/real_data/germany_2025_price.csv
+  --price-csv experiments/real_data/germany_2025_price.csv \
+  --workers 5 --resume
 ```
 
-Default matrix:
+Current full personal-user matrix:
 
 ```text
-10 approved personas x 3 methods = 30 jobs
-methods: EnergyBridge, mpc_dynamic, mpc_ep
-duration: 3 days
+10 approved personas x 5 methods = 50 jobs per city
+methods: EnergyBridge, mpc_dynamic, mpc_ep, rule_milp, eb_rule_milp
+duration: 7 days for the comparable full run
 calendar: enabled
 capacity quantification: enabled
 role-play scoring: enabled
+cost metric: total electricity cost when price data is available
 ```
 
 Useful controls:
