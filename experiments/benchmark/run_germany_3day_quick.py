@@ -126,7 +126,7 @@ def main() -> None:
 
     print("[Germany 3-day quick] " + " ".join(_quote(part) for part in cmd), flush=True)
     print(
-        "[Germany 3-day quick] IDF is generated from experiments/models/family_home/family_simple_3day.idf",
+        "[Germany 3-day quick] IDF is generated from experiments/models/family_home/berlin_family_geg_final.idf",
         flush=True,
     )
     print("[Germany 3-day quick] RunPeriod: 2025-06-01 to 2025-06-03 (Sunday start)", flush=True)

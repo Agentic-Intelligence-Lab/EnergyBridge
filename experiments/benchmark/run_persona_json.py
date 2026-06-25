@@ -57,6 +57,7 @@ from energybridge.roleplay.calendar import attach_calendar, hourly_occupancy_fro
 
 PERSONA_DIR = _PROJECT_ROOT / "energybridge" / "roleplay" / "personas"
 FAMILY_MODEL_DIR = _PROJECT_ROOT / "experiments" / "models" / "family_home"
+DEFAULT_GERMANY_FAMILY_IDF = FAMILY_MODEL_DIR / "berlin_family_geg_final.idf"
 DEFAULT_FAMILY_IDF_BY_DAYS = {
     3: FAMILY_MODEL_DIR / "family_simple_3day.idf",
     7: FAMILY_MODEL_DIR / "family_simple_7day.idf",
@@ -311,10 +312,15 @@ def _prepare_run_assets(
             standard_timezone_hours=STANDARD_TIMEZONE_BY_CITY.get(city_key),
         )
 
-    template_idf = Path(args.idf) if args.idf else DEFAULT_FAMILY_IDF_BY_DAYS.get(
-        days,
-        DEFAULT_FAMILY_IDF_BY_DAYS[7] if days > 3 else DEFAULT_FAMILY_IDF_BY_DAYS[3],
-    )
+    if args.idf:
+        template_idf = Path(args.idf)
+    elif city_key == "germany":
+        template_idf = DEFAULT_GERMANY_FAMILY_IDF
+    else:
+        template_idf = DEFAULT_FAMILY_IDF_BY_DAYS.get(
+            days,
+            DEFAULT_FAMILY_IDF_BY_DAYS[7] if days > 3 else DEFAULT_FAMILY_IDF_BY_DAYS[3],
+        )
     idf_path = template_idf
     occupancy_profile = hourly_occupancy_from_persona(persona or {}, days)
     template_days = set(DEFAULT_FAMILY_IDF_BY_DAYS)
