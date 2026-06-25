@@ -275,6 +275,12 @@ def _observable_occupancy(ex, s, loop, persona_config: dict | None, sim_h: float
     return _occupied(hod), 3.0 if _occupied(hod) else 0.0, "fixed_hours_fallback"
 
 
+def _append_day_agent_decision(loop, sim_days: int, sim_h: float, decision: dict) -> None:
+    day_i = int(sim_h // 24)
+    if 0 <= day_i < sim_days and day_i < len(loop.day_agent_decisions):
+        loop.day_agent_decisions[day_i].append(decision)
+
+
 def _set_hvac_availability(ex, s, loop, available: bool) -> bool:
     """Set the EP HVAC availability schedule if this IDF exposes it."""
     value = 1.0 if available else 0.0
@@ -3521,8 +3527,7 @@ All times are hour-of-day (0–23.9)."""
                 if not hvac_avail_set:
                     loop.sp = AC_OFF_FALLBACK_COOLING_SETPOINT
                 if loop.prev_occupied is not False:
-                    _day_i = min(sim_days - 1, int(sim_h // 24))
-                    loop.day_agent_decisions[_day_i].append({
+                    _append_day_agent_decision(loop, sim_days, sim_h, {
                         "h": sim_h,
                         "sp": loop.planned_occupied_sp,
                         "effective_setpoint": loop.sp,
@@ -3542,8 +3547,7 @@ All times are hour-of-day (0–23.9)."""
                     f"  [AC Occupancy | Day{int(sim_h // 24) + 1} {_fmt_clock_h(hod)}] "
                     f"occupied ({occ_source}, count={occ_count:.2f}); setpoint→{loop.sp:.1f}°C from policy plan"
                 )
-                _day_i = min(sim_days - 1, int(sim_h // 24))
-                loop.day_agent_decisions[_day_i].append({
+                _append_day_agent_decision(loop, sim_days, sim_h, {
                     "h": sim_h,
                     "sp": loop.planned_occupied_sp,
                     "effective_setpoint": loop.sp,
@@ -3823,7 +3827,7 @@ All times are hour-of-day (0–23.9)."""
                     _decision_log["posthoc_objective_source"] = res.get("posthoc_objective_source")
                 if res.get("strategy_trace"):
                     _decision_log["strategy_trace"] = res.get("strategy_trace", {})
-                loop.day_agent_decisions[_day_i].append(_decision_log)
+                _append_day_agent_decision(loop, sim_days, sim_h, _decision_log)
                 if is_vpp and triggered_vpp is not None:
                     loop.vpp_trigger_actions[vid] = res.get("appliance_actions", {})
                     loop.vpp_trigger_reason_by_id[vid] = res.get("reason", "")

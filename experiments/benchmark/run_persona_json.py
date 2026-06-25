@@ -241,11 +241,27 @@ def _replace_people_occupancy_schedule(lines: list[str]) -> list[str]:
     for idx, line in enumerate(out):
         if line.strip().lower() != "people,":
             continue
-        end = min(len(out), idx + 16)
+        end = idx + 1
+        while end < len(out):
+            if ";" in out[end]:
+                end += 1
+                break
+            end += 1
+        end = min(end, len(out), idx + 40)
         for j in range(idx + 1, end):
             if "Number of People Schedule Name" in out[j]:
                 out[j] = "    PersonaOccupancy,        !- Number of People Schedule Name"
                 return out
+        field_lines = [
+            j
+            for j in range(idx + 1, end)
+            if out[j].strip() and not out[j].lstrip().startswith("!")
+        ]
+        if len(field_lines) >= 3:
+            schedule_idx = field_lines[2]
+            delimiter = ";" if out[schedule_idx].rstrip().endswith(";") else ","
+            out[schedule_idx] = f"    PersonaOccupancy{delimiter}        !- Number of People Schedule Name"
+            return out
     raise ValueError("Could not find People object Number of People Schedule Name in IDF")
 
 
@@ -265,7 +281,13 @@ def _enable_hvac_availability_control(lines: list[str]) -> list[str]:
     for idx, line in enumerate(out):
         if line.strip().lower() != "availabilitymanager:scheduled,":
             continue
-        end = min(len(out), idx + 8)
+        end = idx + 1
+        while end < len(out):
+            if ";" in out[end]:
+                end += 1
+                break
+            end += 1
+        end = min(end, len(out), idx + 12)
         is_system_availability = any("System availability" in out[j] for j in range(idx + 1, end))
         if not is_system_availability:
             continue
@@ -273,6 +295,16 @@ def _enable_hvac_availability_control(lines: list[str]) -> list[str]:
             if "Schedule Name" in out[j]:
                 out[j] = "    HVAC_Availability_Control;  !- Schedule Name"
                 return out
+        field_lines = [
+            j
+            for j in range(idx + 1, end)
+            if out[j].strip() and not out[j].lstrip().startswith("!")
+        ]
+        if len(field_lines) >= 2:
+            schedule_idx = field_lines[1]
+            delimiter = ";" if out[schedule_idx].rstrip().endswith(";") else ","
+            out[schedule_idx] = f"    HVAC_Availability_Control{delimiter}  !- Schedule Name"
+            return out
     raise ValueError("Could not connect System availability manager to HVAC_Availability_Control")
 
 
