@@ -281,6 +281,14 @@ def _append_day_agent_decision(loop, sim_days: int, sim_h: float, decision: dict
         loop.day_agent_decisions[day_i].append(decision)
 
 
+def _is_weather_run_period(ex, state) -> bool:
+    """Return True only during the actual RunPeriod, not sizing/design days."""
+    try:
+        return int(ex.kind_of_sim(state)) == 3
+    except Exception:
+        return True
+
+
 def _set_hvac_availability(ex, s, loop, available: bool) -> bool:
     """Set the EP HVAC availability schedule if this IDF exposes it."""
     value = 1.0 if available else 0.0
@@ -386,6 +394,8 @@ def run_family_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
 
     def cb(s):
         if not loop.init(ex, s): return
+        if not _is_weather_run_period(ex, s):
+            return
         day = ex.day_of_year(s)
         if loop.start_day is None: loop.start_day = day
         hod = ex.current_time(s); dt = ex.zone_time_step(s)
@@ -3457,6 +3467,8 @@ All times are hour-of-day (0–23.9)."""
 
     def cb(s):
         if not loop.init(ex, s): return
+        if not _is_weather_run_period(ex, s):
+            return
         if loop.h_out == -1:
             loop.h_out = ex.get_variable_handle(s, "Site Outdoor Air Drybulb Temperature", "Environment")
         day = ex.day_of_year(s)
