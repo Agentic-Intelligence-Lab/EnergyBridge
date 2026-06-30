@@ -285,6 +285,34 @@ def _summarize_job(job: Job, status: str, return_code: int | None, elapsed_s: fl
         "vpp_energy_reduction_avg_per_event_kwh": _metric(data, "vpp_energy_reduction_avg_per_event_kwh"),
         "vpp_energy_reduction_avg_per_hour_kwh": _metric(data, "vpp_energy_reduction_avg_per_hour_kwh"),
         "vpp_energy_reduction_basis": _metric(data, "vpp_energy_reduction_basis"),
+        "counterfactual_baseline_status": _metric(data, "counterfactual_baseline_status"),
+        "counterfactual_baseline_id": _metric(data, "counterfactual_baseline_id"),
+        "counterfactual_baseline_vpp_window_kwh": _metric(data, "counterfactual_baseline_vpp_window_kwh"),
+        "counterfactual_baseline_vpp_window_avg_per_hour_kwh": _metric(
+            data, "counterfactual_baseline_vpp_window_avg_per_hour_kwh"
+        ),
+        "counterfactual_capacity_upper_bound_total_kwh": _metric(
+            data, "counterfactual_capacity_upper_bound_total_kwh"
+        ),
+        "counterfactual_capacity_upper_bound_avg_per_hour_kwh": _metric(
+            data, "counterfactual_capacity_upper_bound_avg_per_hour_kwh"
+        ),
+        "counterfactual_actual_shed_total_kwh": _metric(data, "counterfactual_actual_shed_total_kwh"),
+        "counterfactual_actual_shed_avg_per_hour_kwh": _metric(
+            data, "counterfactual_actual_shed_avg_per_hour_kwh"
+        ),
+        "counterfactual_delivery_ratio_vs_target_avg": _metric(
+            data, "counterfactual_delivery_ratio_vs_target_avg"
+        ),
+        "counterfactual_delivery_ratio_vs_recommended_bid_avg": _metric(
+            data, "counterfactual_delivery_ratio_vs_recommended_bid_avg"
+        ),
+        "counterfactual_delivery_ratio_vs_baseline_upper_bound_avg": _metric(
+            data, "counterfactual_delivery_ratio_vs_baseline_upper_bound_avg"
+        ),
+        "counterfactual_delivery_ratio_vs_baseline_upper_bound_total": _metric(
+            data, "counterfactual_delivery_ratio_vs_baseline_upper_bound_total"
+        ),
         "vpp_demand_achievement_ratio": _metric(data, "vpp_demand_achievement_ratio"),
         "vpp_appliance_avoidance_success_rate": _metric(data, "vpp_appliance_avoidance_success_rate"),
         "user_pref_score": _metric(data, "user_pref_score"),
