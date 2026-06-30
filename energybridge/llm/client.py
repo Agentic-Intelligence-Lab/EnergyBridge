@@ -41,13 +41,21 @@ class LLMClient:
             )
 
         self._active_key = self.config.api_key
-        self._client = OpenAI(api_key=self.config.api_key, base_url=self.config.base_url)
+        self._client = OpenAI(
+            api_key=self.config.api_key,
+            base_url=self.config.base_url,
+            timeout=self.config.timeout_seconds,
+        )
 
     def _get_client_for_key(self, key: str) -> "OpenAI":
         """Return a client for the given key, reusing self._client if key unchanged."""
         if key != self._active_key:
             self._active_key = key
-            self._client = OpenAI(api_key=key, base_url=self.config.base_url)
+            self._client = OpenAI(
+                api_key=key,
+                base_url=self.config.base_url,
+                timeout=self.config.timeout_seconds,
+            )
         return self._client
 
     @classmethod

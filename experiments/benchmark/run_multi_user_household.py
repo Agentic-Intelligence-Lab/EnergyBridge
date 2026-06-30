@@ -178,7 +178,7 @@ def _controller_feedback_from_member_scores(event_index: int, member_scores: lis
         member_id = str(item.get("member_id", "member"))
         score = float(item.get("score", 3.0) or 3.0)
         comment = str(item.get("comment", "")).strip()
-        parts.append(f"{member_id}={score:.1f}/5: {comment[:180]}")
+        parts.append(f"{member_id}={score:.1f}/5: {comment[:240]}")
         if score <= 2.0:
             low_score_members.append(member_id)
         if "skip" in comment.lower() or "skipped" in comment.lower():
@@ -186,7 +186,11 @@ def _controller_feedback_from_member_scores(event_index: int, member_scores: lis
     guidance = (
         "Next event controller guidance: preserve each member's comfort and routine constraints; "
         "schedule every present shared appliance explicitly; do not use skip=true for required "
-        "washer/dryer/dishwasher tasks unless a member explicitly says the task is unnecessary today."
+        "washer/dryer/dishwasher tasks unless a member explicitly says the task is unnecessary today. "
+        "Use price/cost-aware schedules when they do not disrupt service, and explain the comfort, "
+        "appliance-service, VPP-window, and cost/price reasoning clearly. If you correct a named "
+        "member complaint next event, that member should reward the improvement; repeated unresolved "
+        "complaints should be penalized."
     )
     if low_score_members:
         guidance += " Low-scoring members need priority correction: " + ", ".join(low_score_members) + "."
@@ -345,6 +349,10 @@ class IndependentMemberRoleplay:
             "Assume the physical household owns AC, washer, dryer, dishwasher, water heater, EV, and refrigerator.",
             "There is one shared unit per appliance service, coordinated across all members.",
             "A required shared appliance task being skipped is a serious service failure unless you explicitly said it is unnecessary today.",
+            "When scoring, consider electricity price/cost as a real household factor after comfort and service feasibility. A no-disruption cheaper schedule deserves credit.",
+            "Give modest extra credit for a truthful explanation that connects comfort, appliance completion, EV/hot-water readiness, VPP-window avoidance, and cost/price benefit.",
+            "Do not invent explanation quality. If the controller explanation is empty, code-like, or only an objective/solver trace such as 'mpc_pdf_v15 total=...', do not praise clarity, reassurance, consent handling, or price explanation.",
+            "Write detailed feedback. If the controller fixes your specific previous complaint in the next event, score more favorably; if it repeats the issue, score more harshly.",
         ]
         if memory_lines:
             context.append("[Your own past-event memory]")
@@ -437,6 +445,8 @@ class IndependentMemberRoleplay:
             "There is one shared unit per appliance service; produce one coordinated schedule per service.",
             "Hard appliance rule: do not cancel required washer/dryer/dishwasher service; tell the controller to schedule it outside the VPP window with skip=false unless a member explicitly says the task is unnecessary today.",
             "Hard timing rule: all controller times must be future-feasible from the current replan time; never schedule a preheat, charge, washer, dryer, or dishwasher command into the past or into an elapsed/active VPP window.",
+            "Cost-awareness rule: when comfort and service constraints are preserved, tell the controller to prefer lower price/cost schedules and explain that benefit plainly.",
+            "Explanation rule: ask the controller to state why the plan preserves comfort, required appliance service, EV/hot-water readiness, VPP-window avoidance, and price/cost benefit.",
             "Do not discard minority concerns; preserve conflicts and hard constraints.",
         ]
         for entry in entries:
@@ -462,7 +472,8 @@ class IndependentMemberRoleplay:
                 "\"hard_constraints\": [\"...\"]}. Preserve every member's hard constraint. "
                 "Be explicit that required shared appliance tasks should be scheduled outside the VPP window, "
                 "not skipped, unless the task is explicitly unnecessary today. Also be explicit that replans must "
-                "use future feasible times only, never past times or elapsed/active VPP-window times."
+                "use future feasible times only, never past times or elapsed/active VPP-window times. Include "
+                "cost-aware scheduling and a clear explanation requirement when these do not conflict with service."
             )
             resp = LLMClient().chat_with_metrics(
                 sys_prompt,

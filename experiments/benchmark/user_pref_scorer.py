@@ -90,6 +90,45 @@ def _int_score(val, default=3) -> int:
         return default
 
 
+def _is_user_facing_controller_explanation(reason: str) -> bool:
+    """Return True only for a real household-facing controller rationale."""
+    text = str(reason or "").strip()
+    if not text:
+        return False
+    lower = text.lower()
+    objective_only_markers = (
+        "mpc_pdf",
+        "objective=",
+        "objective =",
+        "total=",
+        "pulp_cbc",
+        "solver",
+        "cost=",
+        "model=",
+        "raw_policy_only",
+    )
+    if any(marker in lower for marker in objective_only_markers):
+        user_words = (
+            "comfort",
+            "routine",
+            "ev",
+            "hot water",
+            "water",
+            "washer",
+            "dryer",
+            "dishwasher",
+            "vpp",
+            "price",
+            "cost",
+            "ready",
+            "readiness",
+        )
+        # Objective traces sometimes include a metric word such as cost; require
+        # multiple household-facing terms before treating them as explanations.
+        return sum(1 for word in user_words if word in lower) >= 3
+    return len(text) >= 24
+
+
 def normalize_persona(persona: dict) -> dict:
     """Accept both legacy scorer personas and current roleplay JSON personas."""
     normalized = dict(persona)
@@ -1278,6 +1317,7 @@ def score_user_preference(
             "zone_comfort_scores": None, "source": "human",
         }
 
+    explanation_is_user_facing = _is_user_facing_controller_explanation(agent_reason)
     home_state = {
         "indoor_temp": round(mean_temp_c, 1),
         "hvac_setpoint": agent_setpoint_c or round(mean_temp_c, 1),
@@ -1288,7 +1328,33 @@ def score_user_preference(
         "protective_user_mode": protective_user,
         "fixed_non_dr_adjustable_appliances": fixed_appliances,
         "event_preference_counts_as_confirmation": bool(user_preference_text),
+        "roleplay_scoring_contract": {
+            "price_sensitivity": (
+                "Treat price/cost-aware scheduling as a real satisfaction factor. "
+                "No-disruption cost savings can raise energy_score and may raise overall score "
+                "when comfort, consent, and required services are preserved."
+            ),
+            "explanation_credit": (
+                "A concrete, truthful controller explanation may increase satisfaction when it "
+                "connects comfort, appliance completion, EV/hot-water readiness, VPP-window "
+                "avoidance, and cost/price benefit. It must not excuse hard service or comfort failures. "
+                "Do not give explanation credit when the controller explanation is empty, a solver/objective "
+                "trace, or a code-like metric string."
+            ),
+            "learning_feedback": (
+                "Write detailed feedback. If a later event fixes the exact complaint, score more "
+                "favorably; if the same issue repeats, score more harshly."
+            ),
+        },
+        "controller_explanation_is_user_facing": bool(explanation_is_user_facing),
     }
+    if agent_reason:
+        home_state["controller_explanation_excerpt"] = str(agent_reason)[:600]
+    if agent_reason and not explanation_is_user_facing:
+        home_state["controller_explanation_note"] = (
+            "The provided controller explanation is not household-facing. It may be used as a technical trace, "
+            "but it must not earn explanation/communication credit."
+        )
     if vpp_result_context:
         home_state["vpp_result"] = vpp_result_context
     appliance_summary = appliance_summary or {}
@@ -1459,6 +1525,11 @@ def score_user_preference(
             rationale = (
                 f"{controller} set cooling setpoint to {agent_setpoint_c}°C during VPP DR event. "
                 f"Controller explanation: {agent_reason[:100]}"
+            )
+        if agent_reason and not explanation_is_user_facing:
+            rationale += (
+                " | The controller explanation is only a technical objective/solver trace, not a user-facing explanation; "
+                "do not praise clarity, reassurance, consent handling, or price explanation based on it."
             )
         if calendar_context.get("available"):
             rationale += f" | User calendar context: {calendar_brief[:240]}"
