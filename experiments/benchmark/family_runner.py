@@ -2328,6 +2328,8 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
         method = "agent"
     elif method == "mpc":
         method = "mpc_dynamic"
+    elif method == "hema_agent":
+        method = "hema_agent"
     mpc_horizon_steps = max(1, int(mpc_horizon_steps))
     sim_days = max(1, int(sim_days))
     planning_hour = float(planning_hour) % 24.0
@@ -2364,7 +2366,7 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
         "none": "no_dr",
         "baseline": "no_dr",
     }.get(str(method or "agent").lower(), method)
-    if method not in ("agent", "eb_rule_milp", "mpc_dynamic", "mpc_ep", "rl_ppo_3day", "rl_ppo_pref_v2", "rule_milp", "no_dr"):
+    if method not in ("agent", "eb_rule_milp", "mpc_dynamic", "mpc_ep", "rl_ppo_3day", "rl_ppo_pref_v2", "rule_milp", "no_dr", "hema_agent"):
         raise ValueError(f"Unsupported family control method: {method}")
     if output_dir is None:
         output_dir = BENCHMARK_DIR / "results" / f"family_{method}_{weather_label}"
@@ -3016,6 +3018,196 @@ All times are hour-of-day (0–23.9)."""
             "objective_terms": objective_terms,
             "objective_source": "mpc_candidate_scoring_pdf_v15",
         }
+
+    def _hema_trigger(temp, out_t, hod, sim_h, remaining_h, vpp_active=False, vpp_id="",
+                      user_pref_input="", appliance_config=None, vpp_event=None,
+                      persona_config=None, facility_w=None):
+        """Invoke HEMA Control Agent as a baseline controller."""
+
+        if not hasattr(loop, "_hema_controller"):
+            from experiments.benchmark.baselines.hema import get_hema_controller
+            HEMAControlBaseline = get_hema_controller()
+            loop._hema_controller = HEMAControlBaseline(
+                city=weather_label,
+                persona_id=(persona_config or {}).get("id", "unknown"),
+                persona_config=persona_config,
+            )
+
+        eplus_state = {
+            "zone_air_temp_c": float(temp) if temp is not None else 24.0,
+            "outdoor_temp_c": float(out_t) if out_t is not None else 30.0,
+            "current_setpoint_c": float(getattr(loop, "sp", SP_DEFAULT)),
+            "facility_power_w": float(facility_w) if facility_w is not None else 0.0,
+            "vpp_demand_kw": float(getattr(loop, "current_vpp_demand_kw", 0.0)),
+        }
+
+        price_tag_text = ""
+        if run_start_date is not None and day_ahead_price_profile is not None:
+            try:
+                current_day = run_start_date + _timedelta(days=int(sim_h // 24))
+                price_tag_text = day_ahead_price_profile.prompt_context_for_day(current_day)
+            except Exception:
+                price_tag_text = ""
+        price_ctx = {
+            "has_price": day_ahead_price_profile is not None,
+            "price_text": price_tag_text,
+        }
+
+        current_time = {"sim_h": sim_h, "hod": hod}
+        try:
+            control_intent = loop._hema_controller.decide(
+                current_time=current_time,
+                eplus_state=eplus_state,
+                vpp_event=vpp_event,
+                price_context=price_ctx,
+                appliance_config=appliance_config,
+                user_pref=user_pref_input,
+            )
+
+            if "llm_metrics" in control_intent:
+                m = control_intent.pop("llm_metrics")
+                loop.llm_calls += 1
+                loop.llm_latency_s += m.get("latency_seconds", 0.0)
+                loop.llm_tokens_prompt += m.get("prompt_tokens", 0)
+                loop.llm_tokens_comp += m.get("completion_tokens", 0)
+            else:
+                loop.llm_calls += 1
+
+            raw_sp = float(control_intent.get("setpoint", getattr(loop, "sp", SP_DEFAULT)))
+            sp_lower = _run_sp_min
+            sp_upper = _run_sp_max
+            if vpp_event and _low_dr_intrusion_sensitive_mode(persona_config):
+                sp_upper = min(sp_upper, _ac_sp_max)
+            if vpp_active:
+                demand_kw = float(getattr(loop, "current_vpp_demand_kw", 0.0) or 0.0)
+                low_target_unoccupied_warm = False
+                _tags = (persona_config.get("tags", {}) or {})
+                _sched = persona_config.get("schedule", {}) or {}
+                fragile_comfort = (
+                        _tags.get("comfort") == "temp_sensitive"
+                        or _tags.get("control") in {"low_auto_accept", "privacy_sensitive"}
+                        or bool(_sched.get("vulnerable_members"))
+                )
+                if _calendar_return_home_sensitive(persona_config, vpp_event):
+                    if _low_vpp_target_kw(demand_kw):
+                        # Tiny return-home events should avoid noticeable
+                        # discomfort.  Fragile users stay near the normal
+                        # setpoint; normal-comfort users may still use the
+                        # upper edge of their explicitly preferred range and
+                        # restore immediately after the event.
+                        if fragile_comfort:
+                            comfort_target = max(_ac_sp_min, min(_ac_sp_max, max(_ac_sp_default, _ac_sp_max - 0.5)))
+                        else:
+                            comfort_target = _ac_sp_max
+                        sp_upper = min(sp_upper, max(_run_sp_min, comfort_target))
+                        sp_lower = min(_energy_saving_sp_floor, sp_upper)
+                    else:
+                        sp_upper = min(sp_upper, _ac_sp_max)
+                elif _low_vpp_target_kw(demand_kw) and not _calendar_occupied_or_return_home_sensitive(persona_config,
+                                                                                                       vpp_event):
+                    low_target_unoccupied_warm = True
+                    if demand_kw <= 0.0:
+                        efficient_target = min(_run_sp_max, _ac_sp_vpp_min)
+                    else:
+                        efficient_target = min(_run_sp_max, _ac_sp_max)
+                    sp_lower = max(_energy_saving_sp_floor, efficient_target)
+                if _low_dr_intrusion_sensitive_mode(persona_config):
+                    if demand_kw > 0.0 and not fragile_comfort:
+                        sp_lower = max(
+                            locals().get("sp_lower", _energy_saving_sp_floor),
+                            min(_ac_sp_max, sp_upper),
+                        )
+                    if demand_kw <= 0.5:
+                        # Low-disruption users need consent/routine protection, not
+                        # necessarily colder-than-preferred HVAC.  Only truly
+                        # fragile comfort/privacy users stay pinned near the
+                        # normal setpoint; rigid/confirm-required users may use
+                        # the warm edge of their stated preferred range.
+                        small_target_cap = max(
+                            _energy_saving_sp_floor,
+                            _ac_sp_default if fragile_comfort else _ac_sp_max,
+                        )
+                        sp_upper = min(sp_upper, small_target_cap)
+                if _protective_mode:
+                    sp_upper = min(sp_upper, _ac_sp_max)
+                elif (persona_config.get("tags", {}) or {}).get("control") == "high_trust_auto":
+                    comfort_tag = (persona_config.get("tags", {}) or {}).get("comfort")
+                    high_trust_cap = _ac_sp_max
+                    if low_target_unoccupied_warm:
+                        high_trust_cap = max(_ac_sp_max, min(_run_sp_max, _ac_sp_vpp_min))
+                    elif comfort_tag == "normal_comfort" and not _auto_saving_mode:
+                        high_trust_cap = max(_ac_sp_min, _ac_sp_max - 0.5)
+                    sp_upper = min(sp_upper, high_trust_cap)
+            learned_floor = _learned_efficiency_floor_c(
+                loop.vpp_event_log,
+                persona_config,
+                default_sp_c=_ac_sp_default,
+                preferred_max_c=_ac_sp_max,
+                vpp_active=bool(vpp_active),
+            )
+            raw_sp = float(control_intent.get("setpoint", getattr(loop, "sp", SP_DEFAULT)))
+            sp_lower = locals().get("sp_lower", _energy_saving_sp_floor)
+            if learned_floor is not None:
+                sp_lower = max(sp_lower, learned_floor)
+            if sp_lower > sp_upper:
+                sp_lower = sp_upper
+            sp = round(max(sp_lower, min(sp_upper, raw_sp)), 1)
+
+            raw_appl = dict(control_intent.get("appliance_actions", {}) or {})
+            appl_actions = _filter_controllable_appliance_actions(raw_appl, appliance_config)
+
+            if vpp_event:
+                conflicts = _vpp_appliance_conflicts(
+                    appl_actions,
+                    appliance_config,
+                    vpp_event,
+                    current_hod=hod if vpp_active else None,
+                )
+                if conflicts:
+                    print(f"  [HEMA VPP Check] conflicts remain after guard: {'; '.join(conflicts)}")
+
+            missing_explicit = _missing_explicit_appliance_actions(appl_actions, appliance_config)
+            if missing_explicit:
+                print(
+                    "  [HEMA Service Rule] missing explicit appliance commands for: "
+                    f"{', '.join(missing_explicit)}"
+                )
+
+            res = {
+                "setpoint": sp,
+                "next_check_hour": control_intent.get("next_check_hour"),
+                "reason": "",
+                "appliance_actions": appl_actions,
+            }
+
+            try:
+                res["objective_terms_posthoc"] = _compute_posthoc_decision_objective(
+                    loop,
+                    action_result=res,
+                    sim_h=sim_h,
+                    hod=hod,
+                    temp=temp,
+                    out_t=out_t,
+                    facility_w=facility_w,
+                    vpp_event=vpp_event if vpp_active else None,
+                    vpp_target_kwh=loop.current_vpp_demand_kwh if vpp_active else None,
+                    appliance_config=appliance_config or {},
+                )
+                res["objective_source"] = "posthoc_agent_decision_time_pdf_v15"
+            except Exception as _oe:
+                print(f"  [HEMA Objective] posthoc error: {_oe}")
+
+            return res
+
+        except Exception as e:
+            print(f"  [HEMA Control] error at h={sim_h:.1f}: {e}")
+            loop.llm_failures += 1
+            return {
+                "setpoint": getattr(loop, "sp", SP_DEFAULT),
+                "next_check_hour": None,
+                "reason": f"HEMA fallback: {str(e)[:60]}",
+                "appliance_actions": {},
+            }
 
     def _rule_milp_trigger(temp, out_t, hod, sim_h, facility_w=None, vpp_event=None):
         from experiments.benchmark.baselines.rule_milp import plan_rule_milp_action
@@ -3757,6 +3949,16 @@ All times are hour-of-day (0–23.9)."""
                         temp, out_t, hod, sim_h,
                         facility_w=fac,
                         vpp_event=rl2_vpp_event)
+                elif method == "hema_agent":
+                    res = _hema_trigger(
+                        temp, out_t, hod, sim_h, total_sim_hours - sim_h,
+                        vpp_active=is_vpp, vpp_id=vid,
+                        user_pref_input=loop.vpp_user_input,
+                        appliance_config=appliance_config,
+                        vpp_event=triggered_vpp if is_vpp else None,
+                        persona_config=persona_config,
+                        facility_w=fac,
+                    )
                 else:
                     res = _llm_trigger(temp, out_t, hod, sim_h, total_sim_hours - sim_h,
                                        vpp_active=is_vpp, vpp_id=vid,

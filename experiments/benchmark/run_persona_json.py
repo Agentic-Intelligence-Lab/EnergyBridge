@@ -404,6 +404,7 @@ def _canonical_method(method: str) -> str:
         "no_dr": "no_dr",
         "none": "no_dr",
         "baseline": "no_dr",
+        "hema_agent": "hema_agent",
     }
     return aliases.get(key, key)
 
@@ -425,6 +426,7 @@ def _method_label(method: str) -> str:
         "rule_milp": "Rule+MILP oracle baseline",
         "eb_rule_milp": "EB+rule+MILP hybrid agent",
         "no_dr": "No-DR counterfactual",
+        "hema_agent": "HEMA Control Agent",
     }
     return labels.get(method, method or "unknown")
 
@@ -510,7 +512,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--method",
-        choices=[ENERGYBRIDGE_METHOD_ID, "agent", "mpc_dynamic", "mpc_ep", "mpc", "rl", "rl_ppo", "rl_ppo_3day", "rl_ppo_pref_v2", "rl_pref_v2", "rule_milp", "rule+milp", "pmv_milp", "eb_rule_milp", "EB+rule+MILP", "eb+rule+milp", "energybridge_rule_milp", "agent_milp", "agent+milp", "no_dr", "none", "baseline"],
+        choices=[ENERGYBRIDGE_METHOD_ID, "agent", "mpc_dynamic", "mpc_ep", "mpc", "rl", "rl_ppo", "rl_ppo_3day", "rl_ppo_pref_v2", "rl_pref_v2", "rule_milp", "rule+milp", "pmv_milp", "eb_rule_milp", "EB+rule+MILP", "eb+rule+milp", "energybridge_rule_milp", "agent_milp", "agent+milp", "no_dr", "none", "baseline", "hema_agent"],
         default=ENERGYBRIDGE_METHOD_ID,
         help="Controller method. Use EnergyBridge for our agent; 'agent' is kept as a deprecated alias.",
     )

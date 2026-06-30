@@ -39,11 +39,12 @@ LLM_API_KEY_POOL=sk-key1,sk-key2,sk-key3
 
 Required runtime:
 
-| Requirement | Current default |
-|-------------|-----------------|
-| Python | 3.10+ |
-| Conda env | `energybridge` |
-| EnergyPlus | 24.1.0 |
+
+| Requirement             | Current default                    |
+| ----------------------- | ---------------------------------- |
+| Python                  | 3.10+                              |
+| Conda env               | `energybridge`                     |
+| EnergyPlus              | 24.1.0                             |
 | Default EnergyPlus path | `/home/hku_user/EnergyPlus-24-1-0` |
 
 If EnergyPlus is installed elsewhere, set:
@@ -121,7 +122,7 @@ available.
 ```bash
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_baseline_matrix.py \
-  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp \
+  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp hema_agent \
   --city Tianjin \
   --days 7 \
   --mpc-horizon 6 \
@@ -137,7 +138,7 @@ Germany price CSV to make the report use total electricity cost.
 ```bash
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_baseline_matrix.py \
-  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp \
+  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp hema_agent \
   --city Germany \
   --days 7 \
   --start-date 2025-06-01 \
@@ -241,7 +242,7 @@ ENERGYBRIDGE_HYBRID_COMFORT_OVERRIDE_AFTER=1 \
 ENERGYBRIDGE_PERSIST_AGENT_MEMORY=0 \
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_household_matrix.py \
-  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp \
+  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp hema_agent \
   --city Tianjin \
   --days 7 \
   --start-date 2025-06-01 \
@@ -258,7 +259,7 @@ ENERGYBRIDGE_HYBRID_COMFORT_OVERRIDE_AFTER=1 \
 ENERGYBRIDGE_PERSIST_AGENT_MEMORY=0 \
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_household_matrix.py \
-  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp \
+  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp hema_agent \
   --city Germany \
   --days 7 \
   --start-date 2025-06-01 \
@@ -317,6 +318,97 @@ is rerun separately, merge the JSON summaries first, then pass the merged
 script supports multiple summary JSONs in one call and automatically appends
 city labels to the household rows.
 
+### Counterfactual No-DR Capacity Settlement
+
+For VPP capacity settlement, do not use the reference A3 diagnostic baseline as
+method-specific delivered energy. The reproducible settlement path is:
+
+```text
+reported_capacity_upper_bound_kW =
+  sum(no-DR counterfactual VPP-window kWh) / sum(VPP-window hours)
+
+actual_delivery_kWh =
+  no-DR counterfactual VPP-window kWh - method actual VPP-window kWh
+
+delivery_ratio =
+  sum(actual_delivery_kWh) / sum(no-DR counterfactual VPP-window kWh)
+```
+
+This lets the benchmark answer a different question from appliance-avoidance
+success: how much electricity the method actually reduced against the same
+household with no DR response. Negative delivery is preserved when a method
+uses more electricity than its no-DR counterfactual in the event window.
+
+Run the no-DR counterfactuals once per household and city. They are reusable as
+long as the household JSON, city/weather, start date, simulation length, and VPP
+event schedule stay the same.
+
+```bash
+PYTHONUNBUFFERED=1 \
+python experiments/benchmark/run_household_matrix.py \
+  --methods no_dr \
+  --city Germany \
+  --days 7 \
+  --start-date 2025-06-01 \
+  --price-csv experiments/real_data/germany_2025_price.csv \
+  --date 2026-06-30_counterfactual_baseline \
+  --workers 5 \
+  --resume
+
+PYTHONUNBUFFERED=1 \
+python experiments/benchmark/run_household_matrix.py \
+  --methods no_dr \
+  --city Tianjin \
+  --days 7 \
+  --start-date 2025-06-01 \
+  --price-csv experiments/real_data/tianjin_tou_price_normalized.csv \
+  --date 2026-06-30_counterfactual_baseline \
+  --workers 5 \
+  --resume
+```
+
+Build the reusable no-DR baseline library:
+
+```bash
+python experiments/benchmark/counterfactual_baseline_library.py build \
+  --summary-json \
+    benchmark_results/2026-06-30_counterfactual_baseline/_batch_logs/household_matrix_summary_germany_7days_H6.json \
+    benchmark_results/2026-06-30_counterfactual_baseline/_batch_logs/household_matrix_summary_tianjin_7days_H6.json \
+  --output benchmark_results/counterfactual_baselines/household_5x2_no_dr_2026-06-30.json
+```
+
+Apply the library to an existing method matrix. Use `--write-result-json` when
+you want each matched run's `benchmark_result.json` to carry the settlement
+fields too.
+
+```bash
+python experiments/benchmark/counterfactual_baseline_library.py apply \
+  --library benchmark_results/counterfactual_baselines/household_5x2_no_dr_2026-06-30.json \
+  --summary-json benchmark_results/<DATE>/_batch_logs/household_matrix_summary_5method_7days_H6.json \
+  --output-summary-json benchmark_results/<DATE>/_batch_logs/household_matrix_summary_5method_with_counterfactual_delivery_7days_H6.json \
+  --write-result-json
+```
+
+Important output fields:
+
+
+| Field                                                         | Meaning                                                             |
+| ------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `counterfactual_capacity_upper_bound_avg_per_hour_kwh`        | New reported capacity upper bound in average kW over VPP windows    |
+| `counterfactual_actual_shed_avg_per_hour_kwh`                 | Actual delivered average kW against no-DR                           |
+| `counterfactual_delivery_ratio_vs_baseline_upper_bound_total` | Settlement delivery ratio using no-DR as the denominator            |
+| `counterfactual_delivery_ratio_vs_target_avg`                 | Diagnostic ratio against the old target/capacity request            |
+| `vpp_energy_reduction_basis`                                  | Should be`no_dr_counterfactual_baseline` after applying the library |
+
+The current 5-household x 2-city settlement artifacts are kept under:
+
+```text
+benchmark_results/reports/counterfactual_baselines/
+```
+
+These files are small CSV/JSON review artifacts. Raw EnergyPlus output folders
+remain generated data and are not committed.
+
 ### How To Add A New Baseline Method
 
 Use a stable lowercase method id, for example `my_baseline`. Keep the method id
@@ -333,13 +425,14 @@ Recommended integration path:
 
 Files to update:
 
-| File | What to change |
-|------|----------------|
-| `experiments/benchmark/family_runner.py` | Accept the new `method` and call the baseline at each control decision |
-| `experiments/benchmark/run_persona_json.py` | Add the method to `--method` choices and `_method_label()` |
-| `experiments/benchmark/run_baseline_matrix.py` | Add the method to `DEFAULT_METHODS`; pass any method-specific CLI flags |
-| `experiments/benchmark/generate_baseline_matrix_report.py` | Add `METHOD_ORDER` and `METHOD_LABEL` entries |
-| `experiments/benchmark/web_dashboard.py` | Optional: add a button if the method should run from the browser |
+
+| File                                                       | What to change                                                         |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `experiments/benchmark/family_runner.py`                   | Accept the new`method` and call the baseline at each control decision  |
+| `experiments/benchmark/run_persona_json.py`                | Add the method to`--method` choices and `_method_label()`              |
+| `experiments/benchmark/run_baseline_matrix.py`             | Add the method to`DEFAULT_METHODS`; pass any method-specific CLI flags |
+| `experiments/benchmark/generate_baseline_matrix_report.py` | Add`METHOD_ORDER` and `METHOD_LABEL` entries                           |
+| `experiments/benchmark/web_dashboard.py`                   | Optional: add a button if the method should run from the browser       |
 
 The baseline should return the same control intent shape used by the existing
 runner. At minimum it should provide an AC setpoint and a reason; if it controls
@@ -372,17 +465,18 @@ eplusout.mtr
 
 Important fields in `benchmark_result.json`:
 
-| Field | Required for reports | Meaning |
-|-------|----------------------|---------|
-| `method` | yes | Method id, e.g. `EnergyBridge`, `mpc_dynamic`, `my_baseline`. The old `agent` id is accepted only as a deprecated alias. |
-| `weather` | yes | City/scenario label |
-| `exit_code` | yes | `0` means successful run |
-| `user_pref_score` | yes | Average user score |
-| `energy_kwh_total` | yes | Total EnergyPlus electricity |
-| `vpp_window_energy_kwh` | yes | Total VPP-window electricity |
-| `appliance_shift_success_rate` | yes | Shifted completed loads away from VPP |
-| `vpp_event_log` | recommended | Per-event details for dashboard and debugging |
-| `daily_energy_kwh` | recommended | Per-day energy shown in dashboard |
+
+| Field                          | Required for reports | Meaning                                                                                                                 |
+| ------------------------------ | -------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `method`                       | yes                  | Method id, e.g.`EnergyBridge`, `mpc_dynamic`, `my_baseline`. The old `agent` id is accepted only as a deprecated alias. |
+| `weather`                      | yes                  | City/scenario label                                                                                                     |
+| `exit_code`                    | yes                  | `0` means successful run                                                                                                |
+| `user_pref_score`              | yes                  | Average user score                                                                                                      |
+| `energy_kwh_total`             | yes                  | Total EnergyPlus electricity                                                                                            |
+| `vpp_window_energy_kwh`        | yes                  | Total VPP-window electricity                                                                                            |
+| `appliance_shift_success_rate` | yes                  | Shifted completed loads away from VPP                                                                                   |
+| `vpp_event_log`                | recommended          | Per-event details for dashboard and debugging                                                                           |
+| `daily_energy_kwh`             | recommended          | Per-day energy shown in dashboard                                                                                       |
 
 Quick smoke test for a new method:
 
@@ -622,7 +716,7 @@ normalized TOU price profile automatically.
 ```bash
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_baseline_matrix.py \
-  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp \
+  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp hema_agent \
   --city Tianjin --days 7 --mpc-horizon 6 \
   --workers 5 --resume
 ```
@@ -633,7 +727,7 @@ right-top metric is total electricity cost:
 ```bash
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_baseline_matrix.py \
-  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp \
+  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp hema_agent \
   --city Germany --days 7 --start-date 2025-06-01 --mpc-horizon 6 \
   --price-csv experiments/real_data/germany_2025_price.csv \
   --workers 5 --resume
@@ -765,26 +859,28 @@ Passing `--output /custom/path` bypasses the default naming scheme.
 
 Important result files:
 
-| File | Purpose |
-|------|---------|
-| `run_summary.txt` | Human-readable result, event strategies, VPP target, appliance schedules, scores |
-| `benchmark_result.json` | Raw metrics used by matrix/report scripts |
-| `eplusout.mtr` | EnergyPlus meter trace used for VPP energy and MPC-EP diagnostics |
-| `_batch_logs/baseline_matrix_summary_*.json` | Batch-level machine-readable summary |
-| `_batch_logs/baseline_matrix_report/*.png` | Compact visual report |
+
+| File                                         | Purpose                                                                          |
+| -------------------------------------------- | -------------------------------------------------------------------------------- |
+| `run_summary.txt`                            | Human-readable result, event strategies, VPP target, appliance schedules, scores |
+| `benchmark_result.json`                      | Raw metrics used by matrix/report scripts                                        |
+| `eplusout.mtr`                               | EnergyPlus meter trace used for VPP energy and MPC-EP diagnostics                |
+| `_batch_logs/baseline_matrix_summary_*.json` | Batch-level machine-readable summary                                             |
+| `_batch_logs/baseline_matrix_report/*.png`   | Compact visual report                                                            |
 
 Key metrics:
 
-| Metric | Meaning |
-|--------|---------|
-| `user_pref_score` | Role-play or human user satisfaction, averaged over VPP events |
-| `energy_kwh_total` | Total 3-day electricity consumption |
-| `vpp_window_energy_kwh` | Energy consumed during VPP windows |
-| `appliance_shift_success_rate` | Present shiftable tasks completed and shifted away from VPP |
-| `appliance_task_completion_rate` | Present shiftable tasks completed |
-| `ev_target_reached_rate` | EV service target success rate |
-| `ewh_preheat_used_rate` | Water-heater preheat usage/readiness metric |
-| `day_ahead_price_metrics` | Price-weighted EnergyPlus consumption; `NaN` when no price data is available |
+
+| Metric                           | Meaning                                                                     |
+| -------------------------------- | --------------------------------------------------------------------------- |
+| `user_pref_score`                | Role-play or human user satisfaction, averaged over VPP events              |
+| `energy_kwh_total`               | Total 3-day electricity consumption                                         |
+| `vpp_window_energy_kwh`          | Energy consumed during VPP windows                                          |
+| `appliance_shift_success_rate`   | Present shiftable tasks completed and shifted away from VPP                 |
+| `appliance_task_completion_rate` | Present shiftable tasks completed                                           |
+| `ev_target_reached_rate`         | EV service target success rate                                              |
+| `ewh_preheat_used_rate`          | Water-heater preheat usage/readiness metric                                 |
+| `day_ahead_price_metrics`        | Price-weighted EnergyPlus consumption;`NaN` when no price data is available |
 
 ---
 
@@ -903,6 +999,21 @@ baselines/rl_energyplus_3day/README.md
 baselines/rl_typical_human/
 ```
 
+### `HEMA`
+
+Native HEMA ReAct agent baseline.Useful for comparing a generalist agent against purpose-built EnergyBridge controllers on identical VPP avoidance, comfort, and task-completion metrics. This baseline requires the original HEMA repository as an external dependency.
+
+```text
+git clone https://github.com/humanbuildingsynergy/HEMA.git
+cd HEMA
+# Install dependencies
+pip install -r requirements.txt
+```
+
+```text
+experiments/benchmark/baselines/hema
+```
+
 ---
 
 ## Current Code Structure
@@ -941,16 +1052,17 @@ EnergyBridge/
 
 Most coding-agent work starts in one of these files:
 
-| Task | Start here |
-|------|------------|
-| Change Agent behavior/prompt | `experiments/benchmark/family_runner.py` |
-| Change role-play scoring | `experiments/benchmark/user_pref_scorer.py` |
-| Change matrix run list | `experiments/benchmark/run_baseline_matrix.py` |
-| Change report plots/tables | `experiments/benchmark/generate_baseline_matrix_report.py` |
-| Change MPC planner | `experiments/benchmark/baselines/mpc/planner.py` |
-| Change dynamic predictor | `experiments/benchmark/baselines/mpc/dynamic_model/` |
-| Change EP predictor | `experiments/benchmark/baselines/mpc/ep_predictor.py` |
-| Change web UI | `experiments/benchmark/web_dashboard.py` |
+
+| Task                         | Start here                                                 |
+| ---------------------------- | ---------------------------------------------------------- |
+| Change Agent behavior/prompt | `experiments/benchmark/family_runner.py`                   |
+| Change role-play scoring     | `experiments/benchmark/user_pref_scorer.py`                |
+| Change matrix run list       | `experiments/benchmark/run_baseline_matrix.py`             |
+| Change report plots/tables   | `experiments/benchmark/generate_baseline_matrix_report.py` |
+| Change MPC planner           | `experiments/benchmark/baselines/mpc/planner.py`           |
+| Change dynamic predictor     | `experiments/benchmark/baselines/mpc/dynamic_model/`       |
+| Change EP predictor          | `experiments/benchmark/baselines/mpc/ep_predictor.py`      |
+| Change web UI                | `experiments/benchmark/web_dashboard.py`                   |
 
 ---
 
