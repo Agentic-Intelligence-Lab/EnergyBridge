@@ -317,6 +317,96 @@ is rerun separately, merge the JSON summaries first, then pass the merged
 script supports multiple summary JSONs in one call and automatically appends
 city labels to the household rows.
 
+### Counterfactual No-DR Capacity Settlement
+
+For VPP capacity settlement, do not use the reference A3 diagnostic baseline as
+method-specific delivered energy. The reproducible settlement path is:
+
+```text
+reported_capacity_upper_bound_kW =
+  sum(no-DR counterfactual VPP-window kWh) / sum(VPP-window hours)
+
+actual_delivery_kWh =
+  no-DR counterfactual VPP-window kWh - method actual VPP-window kWh
+
+delivery_ratio =
+  sum(actual_delivery_kWh) / sum(no-DR counterfactual VPP-window kWh)
+```
+
+This lets the benchmark answer a different question from appliance-avoidance
+success: how much electricity the method actually reduced against the same
+household with no DR response. Negative delivery is preserved when a method
+uses more electricity than its no-DR counterfactual in the event window.
+
+Run the no-DR counterfactuals once per household and city. They are reusable as
+long as the household JSON, city/weather, start date, simulation length, and VPP
+event schedule stay the same.
+
+```bash
+PYTHONUNBUFFERED=1 \
+python experiments/benchmark/run_household_matrix.py \
+  --methods no_dr \
+  --city Germany \
+  --days 7 \
+  --start-date 2025-06-01 \
+  --price-csv experiments/real_data/germany_2025_price.csv \
+  --date 2026-06-30_counterfactual_baseline \
+  --workers 5 \
+  --resume
+
+PYTHONUNBUFFERED=1 \
+python experiments/benchmark/run_household_matrix.py \
+  --methods no_dr \
+  --city Tianjin \
+  --days 7 \
+  --start-date 2025-06-01 \
+  --price-csv experiments/real_data/tianjin_tou_price_normalized.csv \
+  --date 2026-06-30_counterfactual_baseline \
+  --workers 5 \
+  --resume
+```
+
+Build the reusable no-DR baseline library:
+
+```bash
+python experiments/benchmark/counterfactual_baseline_library.py build \
+  --summary-json \
+    benchmark_results/2026-06-30_counterfactual_baseline/_batch_logs/household_matrix_summary_germany_7days_H6.json \
+    benchmark_results/2026-06-30_counterfactual_baseline/_batch_logs/household_matrix_summary_tianjin_7days_H6.json \
+  --output benchmark_results/counterfactual_baselines/household_5x2_no_dr_2026-06-30.json
+```
+
+Apply the library to an existing method matrix. Use `--write-result-json` when
+you want each matched run's `benchmark_result.json` to carry the settlement
+fields too.
+
+```bash
+python experiments/benchmark/counterfactual_baseline_library.py apply \
+  --library benchmark_results/counterfactual_baselines/household_5x2_no_dr_2026-06-30.json \
+  --summary-json benchmark_results/<DATE>/_batch_logs/household_matrix_summary_5method_7days_H6.json \
+  --output-summary-json benchmark_results/<DATE>/_batch_logs/household_matrix_summary_5method_with_counterfactual_delivery_7days_H6.json \
+  --write-result-json
+```
+
+Important output fields:
+
+| Field | Meaning |
+|-------|---------|
+| `counterfactual_capacity_upper_bound_avg_per_hour_kwh` | New reported capacity upper bound in average kW over VPP windows |
+| `counterfactual_actual_shed_avg_per_hour_kwh` | Actual delivered average kW against no-DR |
+| `counterfactual_delivery_ratio_vs_baseline_upper_bound_total` | Settlement delivery ratio using no-DR as the denominator |
+| `counterfactual_delivery_ratio_vs_target_avg` | Diagnostic ratio against the old target/capacity request |
+| `vpp_energy_reduction_basis` | Should be `no_dr_counterfactual_baseline` after applying the library |
+
+The current 5-household x 2-city settlement artifacts are kept under:
+
+```text
+benchmark_results/reports/counterfactual_baselines/
+```
+
+These files are small CSV/JSON review artifacts. Raw EnergyPlus output folders
+remain generated data and are not committed.
+
 ### How To Add A New Baseline Method
 
 Use a stable lowercase method id, for example `my_baseline`. Keep the method id
