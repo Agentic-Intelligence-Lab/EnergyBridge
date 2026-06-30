@@ -929,7 +929,7 @@ def _method_policy_action_space_services(method: str) -> set[str]:
     if method == "rl_ppo_3day":
         return {"washer", "water_heater"}
     if method == "rl_ppo_pref_v2":
-        return {"washer", "dishwasher", "water_heater", "ev"}
+        return {"washer", "dishwasher", "dryer", "water_heater", "ev"}
     if method in ("agent", "eb_rule_milp", "mpc_dynamic", "mpc_ep", "hema_agent", "rule_milp"):
         return {"washer", "dishwasher", "dryer", "water_heater", "ev"}
     return set()
@@ -3123,7 +3123,22 @@ All times are hour-of-day (0–23.9)."""
         }
 
     def _rl_pref_v2_trigger(temp, out_t, hod, sim_h, facility_w=None, vpp_event=None):
-        """RL PPO Pref-v2: 5-dim action with price, preference, and cooldown."""
+        """RL PPO Pref-v2: 8-dim action with price, preference, and cooldown."""
+        # NOTE: EnergyPlus ctypes callbacks run in a context where sys.path /
+        # sys.modules changes made at process start are not visible. Force-load
+        # environment_pref_v2 via absolute file path before any normal import,
+        # so subsequent `from baselines... import ...` resolves via sys.modules.
+        import os as _os, sys as _sys, importlib.util as _ilu
+        _MOD_KEY = "baselines.rl_energyplus_3day.environment_pref_v2"
+        if _MOD_KEY not in _sys.modules:
+            _proj_root = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+            _ev_path = _os.path.join(_proj_root, "baselines", "rl_energyplus_3day", "environment_pref_v2.py")
+            if _proj_root not in _sys.path:
+                _sys.path.insert(0, _proj_root)
+            _spec = _ilu.spec_from_file_location(_MOD_KEY, _ev_path)
+            _mod = _ilu.module_from_spec(_spec)
+            _sys.modules[_MOD_KEY] = _mod
+            _spec.loader.exec_module(_mod)
         from experiments.benchmark.baselines.rl_ppo_pref_v2 import predict_control_result
         from baselines.rl_energyplus_3day.environment_pref_v2 import _build_user_preference_proxy
 
