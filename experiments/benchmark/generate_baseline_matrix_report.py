@@ -63,7 +63,7 @@ POLICY_APPLIANCE_CAPABILITIES = {
     "eb_rule_milp": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "hema_agent": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "rl_ppo_3day": {"washer", "water_heater"},
-    "rl_ppo_pref_v2": {"washer", "dishwasher", "water_heater", "ev"},
+    "rl_ppo_pref_v2": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "no_dr": set(),
 }
 
@@ -84,7 +84,7 @@ MANUAL_METHOD_CAPABILITIES = {
     "rule_milp": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "eb_rule_milp": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "hema_agent": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
-    "rl_ppo_pref_v2": {"washer", "dishwasher", "water_heater", "ev"},
+    "rl_ppo_pref_v2": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
 }
 
 
