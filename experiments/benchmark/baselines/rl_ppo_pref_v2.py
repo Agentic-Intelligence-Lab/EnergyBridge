@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from datetime import datetime, timedelta
 from typing import Any
 
 import numpy as np
@@ -40,6 +41,35 @@ DECISION_INTERVAL_H = 1.0 / 6.0
 OBS_DIM = 41  # must match environment_pref_v2.OBS_DIM_V2 (41; obs unchanged for 8-dim action)
 
 _MODEL_CACHE: dict[tuple[Path, str], Any] = {}
+
+
+class _BenchmarkPriceProfileAdapter:
+    """Expose benchmark DayAheadPriceProfile as the RL env's get_price(sim_h).
+
+    The checkpoint adapter must remain compatible with the 41-dim observation
+    schema used during PPO training, even if the training environment evolves.
+    Benchmark runs pass a DayAheadPriceProfile with price_at(datetime), while
+    the RL observation helper expects get_price(sim_h).
+    """
+
+    def __init__(self, profile: Any, base_date: str = "") -> None:
+        self.profile = profile
+        try:
+            self.base_time = datetime.fromisoformat(str(base_date or "2025-06-01"))
+        except ValueError:
+            self.base_time = datetime(2025, 6, 1)
+
+    def get_price(self, sim_h: float) -> float:
+        if self.profile is None:
+            return 0.0
+        local_time = self.base_time + timedelta(hours=float(sim_h))
+        try:
+            value = self.profile.price_at(local_time)
+        except Exception:
+            value = None
+        if value is None:
+            return 0.0
+        return float(value)
 
 
 def _debug_mode() -> str:
@@ -122,13 +152,12 @@ def build_observation(
     # Wrap raw DayAheadPriceProfile with adapter if needed (benchmark runner
     # passes the profile directly without get_price; training env wraps it).
     if price_profile is not None and not hasattr(price_profile, "get_price"):
-        from baselines.rl_energyplus.environment_pref_v2 import _PriceProfileAdapter
         _base_date = ""
         if hasattr(price_profile, "points") and price_profile.points:
             _base_date = price_profile.points[0].local_time.strftime("%Y-%m-%d")
         elif hasattr(price_profile, "recurring_hour_prices") and price_profile.recurring_hour_prices:
             _base_date = "2025-06-01"  # TOU profile: date doesn't matter, hour-of-day used
-        price_profile = _PriceProfileAdapter(price_profile, _base_date)
+        price_profile = _BenchmarkPriceProfileAdapter(price_profile, _base_date)
     pfeat = _price_features(price_profile, sim_h) if price_profile else {}
     pfeat = pfeat or {}
     pref = pref_proxy or {"comfort_weight": 0.35, "price_sensitivity": 0.5, "flexibility": 0.5, "vpp_cooperation": 0.7}
