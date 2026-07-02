@@ -817,6 +817,13 @@ def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
         try:
             hod = float(val)
             abs_h = day_idx * 24 + hod
+            app = getattr(suite, "_shiftable", {}).get(name)
+            if (
+                app is not None
+                and bool(getattr(app, "_overnight", False))
+                and hod < float(getattr(app, "earliest_h", 0.0))
+            ):
+                abs_h += 24.0
             ok = suite.shift_appliance(name, day_idx, abs_h)
             print(f"    [Appliance] shift {name} day={day_idx} hod={hod:.1f} -> {'ok' if ok else 'rejected'}")
         except (TypeError, ValueError) as e:
@@ -929,7 +936,7 @@ def _method_policy_action_space_services(method: str) -> set[str]:
     if method == "rl_ppo_3day":
         return {"washer", "water_heater"}
     if method == "rl_ppo_pref_v2":
-        return {"washer", "dishwasher", "water_heater", "ev"}
+        return {"washer", "dishwasher", "dryer", "water_heater", "ev"}
     if method in ("agent", "eb_rule_milp", "mpc_dynamic", "mpc_ep", "hema_agent", "rule_milp"):
         return {"washer", "dishwasher", "dryer", "water_heater", "ev"}
     return set()
@@ -1031,6 +1038,138 @@ def _present_agent_controlled_appliances(appliance_config: dict | None) -> List[
         if bool(dev_cfg.get("present", False)):
             names.append(name)
     return names
+
+
+def _ev_required_charge_hours(appliance_config: dict | None) -> float:
+    """Conservative same-evening EV charge hours needed after daily driving."""
+    ev_cfg = ((appliance_config or {}).get("ev", {}) or {})
+    try:
+        charger_kw = max(0.1, float(ev_cfg.get("charger_kw", 7.0)))
+        efficiency = max(0.1, float(ev_cfg.get("efficiency", 0.92)))
+        daily_drive = max(0.5, float(ev_cfg.get("daily_drive_kwh", 8.0)))
+    except (TypeError, ValueError):
+        return 3.0
+    # Add one control timestep plus a small safety margin so the explicit
+    # policy is robust after a prior missed EV target.
+    return min(6.0, max(0.5, daily_drive / (charger_kw * efficiency) + 0.35))
+
+
+def _ev_service_window_guidance_text(
+    appliance_config: dict | None,
+    *,
+    vpp_event: dict | None = None,
+) -> str:
+    ev_cfg = ((appliance_config or {}).get("ev", {}) or {})
+    if not bool(ev_cfg.get("present", False)):
+        return ""
+    try:
+        arrival = float(ev_cfg.get("arrival_h", 18.0)) % 24.0
+        departure = float(ev_cfg.get("departure_h", 7.5)) % 24.0
+        target_soc = float(ev_cfg.get("target_soc", 0.8)) * 100.0
+    except (TypeError, ValueError):
+        arrival, departure, target_soc = 18.0, 7.5, 80.0
+    min_hours = _ev_required_charge_hours(appliance_config)
+    safe_start = arrival
+    if vpp_event and _event_start_hod(vpp_event) <= arrival < _event_end_hod(vpp_event):
+        safe_start = _event_end_hod(vpp_event)
+    safe_start = min(23.4, max(0.0, safe_start))
+    safe_end = min(23.9, max(safe_start + 0.5, safe_start + min_hours))
+    if safe_end >= 23.9:
+        example = f"{safe_start:.1f}-23.9"
+    else:
+        example = f"{safe_start:.1f}-{safe_end:.1f}"
+    return (
+        "\nEV service hard rule: the EV target is a departure service target, not just a field-output target. "
+        f"The car arrives around {arrival:.1f}h and departs around {departure:.1f}h; schedule enough same-evening "
+        f"post-arrival charging to reach about {target_soc:.0f}% SOC. In this simulator, EV charge windows are "
+        "stored per simulation day, so a crossing-midnight command such as 23.0-7.5 or a pre-arrival command "
+        "such as 0.0-7.0 / 0.0-18.0 does NOT reliably recharge today's arrival. "
+        f"Use a same-day, post-arrival, non-VPP window of at least {min_hours:.1f}h; for this event a safe pattern is "
+        f"ev_charge_start_h={example.split('-')[0]}, ev_charge_end_h={example.split('-')[1]}. "
+        "If previous feedback mentioned EV SOC missed, use the longest available same-evening window ending near 23.9."
+    )
+
+
+def _ev_service_window_errors(
+    actions: dict | None,
+    appliance_config: dict | None,
+    *,
+    vpp_event: dict | None = None,
+) -> List[str]:
+    """Find EV windows that cannot serve today's post-arrival SOC target."""
+    ev_cfg = ((appliance_config or {}).get("ev", {}) or {})
+    if not bool(ev_cfg.get("present", False)):
+        return []
+    actions = actions or {}
+    if actions.get("ev_charge_start_h") is None or actions.get("ev_charge_end_h") is None:
+        return ["EV present but ev_charge_start_h/ev_charge_end_h is missing"]
+    try:
+        start_raw = float(actions.get("ev_charge_start_h"))
+        end_raw = float(actions.get("ev_charge_end_h"))
+        start = start_raw % 24.0
+        # 24.0 is a valid same-day stop time in the EV simulator; do not
+        # modulo it to 0.0 for service-feasibility checks.
+        end = 24.0 if 23.999 <= end_raw <= 24.001 else (end_raw % 24.0)
+        arrival = float(ev_cfg.get("arrival_h", 18.0)) % 24.0
+    except (TypeError, ValueError):
+        return ["EV charge window is not numeric"]
+    errors: List[str] = []
+    if end <= start:
+        errors.append(
+            f"EV window {start:.1f}-{end:.1f} crosses midnight; this simulator needs same-day post-arrival charging for today's target"
+        )
+    if end <= arrival:
+        errors.append(
+            f"EV window {start:.1f}-{end:.1f} ends before arrival {arrival:.1f}, so it cannot recharge after today's trip"
+        )
+    service_start = max(start, arrival)
+    if vpp_event and _event_start_hod(vpp_event) <= service_start < _event_end_hod(vpp_event):
+        service_start = _event_end_hod(vpp_event)
+    effective_hours = max(0.0, end - service_start) if end > service_start else 0.0
+    min_hours = _ev_required_charge_hours(appliance_config)
+    if effective_hours + 1e-6 < min_hours:
+        errors.append(
+            f"EV post-arrival usable charge time is {effective_hours:.1f}h, below required ~{min_hours:.1f}h"
+        )
+    return errors
+
+
+def _shiftable_service_window_errors(
+    actions: dict | None,
+    appliance_config: dict | None,
+) -> List[str]:
+    """Find washer/dishwasher/dryer starts that the simulator will reject."""
+    actions = actions or {}
+    cfg = appliance_config or {}
+    errors: List[str] = []
+    for name in ("washer", "dishwasher", "dryer"):
+        dev_cfg = (cfg.get(name, {}) or {})
+        if not bool(dev_cfg.get("present", False)) or actions.get(f"{name}_skip") is True:
+            continue
+        if actions.get(f"{name}_start_h") is None:
+            continue
+        try:
+            start = float(actions.get(f"{name}_start_h")) % 24.0
+            earliest = float(dev_cfg.get("earliest_h", 8.0)) % 24.0
+            latest = float(dev_cfg.get("latest_h", 22.0)) % 24.0
+            duration = max(0.0, float(dev_cfg.get("duration_h", 1.0)))
+        except (TypeError, ValueError):
+            errors.append(f"{name} start_h is not numeric")
+            continue
+        latest_start = (latest - duration) % 24.0
+        overnight = latest < earliest
+        if overnight:
+            valid = start >= earliest or start <= latest_start
+            window = f"{earliest:.1f}-(+1d){latest:.1f}"
+        else:
+            valid = earliest <= start <= latest_start
+            window = f"{earliest:.1f}-{latest:.1f}"
+        if not valid:
+            errors.append(
+                f"{name} start {start:.1f} is outside executable window {window}; "
+                f"duration {duration:.1f}h means latest start is {latest_start:.1f}"
+            )
+    return errors
 
 
 def _fixed_appliance_constraint_text(appliance_config: dict | None) -> str:
@@ -1449,9 +1588,13 @@ def _explicit_appliance_requirement_text(
         "by this policy and may be penalized in user scoring and task completion.\n"
         "This applies to every present non-AC appliance, including fixed or non-DR-adjustable routine appliances. "
         "For fixed/routine appliances, emit the user's normal preferred routine command instead of leaving it null.\n"
-        "For washer/dishwasher/dryer: emit start_h and skip=false, unless the task is truly unnecessary "
-        "and skip=true. For water_heater: emit preheat=true/false plus start/end/temp when controlling it. "
+        "For washer/dishwasher/dryer: emit start_h and skip=false, unless the task is truly unnecessary and skip=true. "
+        "Their latest_h is the latest FINISH time, so latest valid start is latest_h-duration_h. "
+        "For overnight windows, a next-morning hour is valid only if the appliance status shows (+1d) and the "
+        "cycle still finishes before latest_h. "
+        "For water_heater: emit preheat=true/false plus start/end/temp when controlling it. "
         "For EV: emit ev_charge_start_h and ev_charge_end_h; ev_mode is optional compatibility metadata."
+        f"{_ev_service_window_guidance_text(appliance_config, vpp_event=vpp_event)}"
         f"{vpp_note}"
     )
 
@@ -1568,6 +1711,11 @@ def _hybrid_rule_milp_setpoint_floor(options: dict | None, cap_c: float) -> floa
         return None
 
 
+def _hybrid_rule_milp_initial_comfort_cap(preferred_max_c: float) -> float:
+    """Conservative first-event comfort cap for the hybrid agent."""
+    return round(float(preferred_max_c), 1)
+
+
 def _hybrid_rule_milp_comfort_override_threshold() -> int:
     """Comfort feedback count needed before trading optimality for comfort."""
     try:
@@ -1642,6 +1790,14 @@ def _merge_hybrid_rule_milp_actions(
     milp_selected = ((hybrid_options or {}).get("selected_rule_milp_action") or {})
     milp_actions = _filter_controllable_appliance_actions(milp_selected, appliance_config)
     milp_actions = {key: value for key, value in milp_actions.items() if value is not None}
+    milp_actions.update(
+        _hybrid_same_day_ev_window(
+            milp_actions,
+            appliance_config,
+            sim_h=sim_h,
+            replace_existing=True,
+        )
+    )
     ev_fallback = _hybrid_explicit_ev_window_if_missing(
         milp_actions,
         appliance_config,
@@ -1659,6 +1815,57 @@ def _merge_hybrid_rule_milp_actions(
     return dict(milp_actions), trace
 
 
+def _hybrid_same_day_ev_window(
+    actions: dict,
+    appliance_config: dict | None,
+    *,
+    sim_h: float,
+    replace_existing: bool,
+) -> dict:
+    """Return a same-local-day EV window when the existing one crosses midnight."""
+    cfg = ((appliance_config or {}).get("ev", {}) or {})
+    if not bool(cfg.get("present", False)):
+        return {}
+    if not replace_existing and (
+        actions.get("ev_charge_start_h") is not None
+        and actions.get("ev_charge_end_h") is not None
+    ):
+        return {}
+    try:
+        existing_start = actions.get("ev_charge_start_h")
+        existing_end = actions.get("ev_charge_end_h")
+        hod = float(sim_h) % 24.0
+        arrival = float(cfg.get("arrival_h", 18.0))
+        duration_raw = _ev_required_charge_hours(appliance_config)
+        duration = max(0.5, int(duration_raw * 2.0 + 0.999999) / 2.0)
+        if replace_existing and existing_start is not None and existing_end is not None:
+            start_f = float(existing_start)
+            end_f = float(existing_end)
+            if end_f > start_f and end_f <= 24.0 and (end_f - start_f) + 1e-6 >= duration:
+                return {}
+    except (TypeError, ValueError):
+        return {}
+    start = max(arrival, hod)
+    if actions.get("ev_charge_start_h") is not None:
+        try:
+            start = max(start, float(actions["ev_charge_start_h"]))
+        except (TypeError, ValueError):
+            pass
+    if start < 19.0 and arrival < 19.0:
+        start = 19.0
+    if start + duration > 24.0:
+        start = max(arrival, 24.0 - duration)
+        if start < 19.0 and arrival < 19.0:
+            start = 19.0
+    end = min(24.0, start + duration)
+    if end <= start + 1e-6:
+        return {}
+    return {
+        "ev_charge_start_h": round(start, 2),
+        "ev_charge_end_h": round(end, 2),
+    }
+
+
 def _hybrid_explicit_ev_window_if_missing(
     actions: dict,
     appliance_config: dict | None,
@@ -1673,39 +1880,12 @@ def _hybrid_explicit_ev_window_if_missing(
     harmless policy declaration when no charging is needed, and executable when
     charging is needed.
     """
-    cfg = ((appliance_config or {}).get("ev", {}) or {})
-    if not bool(cfg.get("present", False)):
-        return {}
-    if actions.get("ev_charge_start_h") is not None and actions.get("ev_charge_end_h") is not None:
-        return {}
-    try:
-        hod = float(sim_h) % 24.0
-        arrival = float(cfg.get("arrival_h", 18.0))
-        charger_kw = max(0.1, float(cfg.get("charger_kw", 7.0)))
-        efficiency = max(0.1, float(cfg.get("efficiency", 0.92)))
-        daily_drive = max(0.5, float(cfg.get("daily_drive_kwh", 8.0)))
-        duration_raw = daily_drive / (charger_kw * efficiency)
-        duration = max(0.5, int(duration_raw * 2.0 + 0.999999) / 2.0)
-    except (TypeError, ValueError):
-        return {}
-    start = max(arrival, hod)
-    # The default VPP event in these benchmarks is 18:00-19:00.  If EV arrives
-    # during that hour, declare the policy window just after the event.
-    if start < 19.0 and arrival < 19.0:
-        start = 19.0
-    # Keep the window on the same local day; the EV simulator stores windows by
-    # day index, so a next-morning-only local window is not a safe default.
-    if start + duration > 24.0:
-        start = max(arrival, 24.0 - duration)
-        if start < 19.0 and arrival < 19.0:
-            start = 19.0
-    end = min(24.0, start + duration)
-    if end <= start + 1e-6:
-        return {}
-    return {
-        "ev_charge_start_h": round(start, 2),
-        "ev_charge_end_h": round(end, 2),
-    }
+    return _hybrid_same_day_ev_window(
+        actions,
+        appliance_config,
+        sim_h=sim_h,
+        replace_existing=False,
+    )
 
 
 def _abs_interval_from_hod(day_idx: int, start_h: Any, end_h: Any) -> tuple[float, float] | None:
@@ -2172,13 +2352,16 @@ def _hybrid_rule_milp_guidance_text(options: dict | None) -> str:
         "\n[EB+rule+MILP CANDIDATES]\n"
         "Rule+MILP proposes appliance schedules that are cost/VPP-optimal under the current physical model. "
         "PMV guidance gives the comfort-feasible AC range. Treat `selected_rule_milp_action` and "
-        "`cost_min_pmv_setpoint_c` as the default plan and keep this optimality unless clear member feedback states a hard "
-        "comfort, safety, hot-water, EV-readiness, or deadline preference. Choose among equal-objective MILP "
+        "`cost_min_pmv_setpoint_c` as the default plan only when it remains inside the strict household comfort ceiling. "
+        "For the first event, be conservative: do not exceed the strictest stated comfort cap just to save cost. "
+        "Keep this optimality unless clear member feedback states a hard comfort, safety, hot-water, EV-readiness, or deadline preference. Choose among equal-objective MILP "
         "options using preference memory; do not trade cost/VPP optimality for soft preference wording. "
         "Keep appliance timing on the MILP-selected feasible schedule; use the user preference mainly to "
         "explain the action or justify a rare bounded AC adjustment. "
         "Water-heater preheat must stay close to the candidate/configured short window; never stretch it into all-day heating. "
-        "Do not cool below the PMV/cost-min setpoint unless a member's hard comfort feedback requires it. "
+        "Do not cool below the PMV/cost-min setpoint unless a member's stated comfort cap or hard comfort feedback requires it. "
+        "In the `reason`, explicitly reassure the household that the MILP plan keeps required services feasible "
+        "(EV readiness, hot water, laundry/dishwasher/dryer) and moves non-AC loads outside the VPP window while preserving comfort. "
         "If you deviate from a MILP option, explain the hard user-preference reason in the `reason` field.\n"
         f"{json.dumps(compact, ensure_ascii=False)}"
     )
@@ -2486,9 +2669,12 @@ If grid goals conflict with comfort, safety, consent, or caregiving routines, ch
 [EB+RULE+MILP HYBRID MODE]
 You are EnergyBridge augmented with Rule+MILP candidates.
 Rule+MILP generates physically feasible, cost/VPP-optimal appliance strategy options; PMV rule gives an AC comfort/efficiency range.
-Your default job is to follow the selected Rule+MILP appliance plan and PMV cost-min AC setpoint. Choose among equal-objective MILP options using live preference and run-local memory.
+Your default job is to follow the selected Rule+MILP appliance plan and the warmest cost-saving AC setpoint that still stays inside the strict household comfort ceiling.
+On the first event, do not wait for negative feedback before respecting a strict comfort cap; never exceed a member's stated maximum just to save cost.
+Choose among equal-objective MILP options using live preference and run-local memory.
 Only make a bounded suboptimal adjustment when clear member feedback states a hard comfort, safety, hot-water, EV-readiness, or deadline requirement. Soft preferences should not override cost/VPP optimality.
 If you deviate from the MILP option, keep every present appliance explicitly controlled, keep VPP-window non-AC avoidance when feasible, and explain the hard user-preference reason briefly.
+Even when you do not deviate, use the `reason` field to explain why the plan protects each household priority: comfort, EV departure readiness, hot-water availability, laundry/dishwasher/dryer completion, and VPP-window avoidance.
 Use the run-local memory context as learned preference evidence. It resets for each fresh benchmark run.
 """
 
@@ -2531,6 +2717,9 @@ started by code. Record only the command this policy actually chooses.
 
 WASHER / DISHWASHER / DRYER (run once per day)
   Choose a start time inside the user window shown in appliance status.
+  The status window's latest_h is the latest FINISH time, not latest start. Therefore latest valid
+  start_h = latest_h - duration_h. If dryer duration is 1.5h and window ends 23:00, start at or before 21.5.
+  For overnight windows marked (+1d), next-morning start_h is valid only if the cycle finishes before latest_h.
   On VPP days: choose a start time so the full cycle [start_h, start_h+duration_h] does not overlap VPP_WINDOW.
   If the appliance status or constraints say fixed/non-DR-adjustable, emit its preferred routine start_h and skip=false; do not leave it null.
   If the current clock is already at/inside VPP_WINDOW, do not choose a past start_h as a workaround; schedule after VPP_WINDOW unless the appliance status already says the task is finished.
@@ -2559,6 +2748,11 @@ EV CHARGER (home charger, arrival/departure shown in status)
   On VPP days: set an explicit charge window that does not overlap VPP_WINDOW.
   For EV-constrained users, start charging as soon as VPP_WINDOW ends if needed for departure SOC.
   SOC and arrival time shown in status each step.
+  HARD SERVICE RULE: the EV must reach target SOC by the departure/check time. Plan for this at daily planning time.
+  The simulator stores explicit EV windows per same simulation day. Therefore a crossing-midnight window
+  like 23.0-7.5, or a morning/pre-arrival window like 0.0-7.0 or 0.0-18.0, does not reliably recharge
+  the car after today's evening arrival. Prefer a same-day post-arrival window long enough to cover the
+  daily drive energy, e.g. if arrival is about 18.5 and VPP is 18.0-19.0, use about 19.0-23.9.
   Parameters:
     ev_mode             : optional "smart"|"delay"|"normal" metadata only; it is not a substitute for a charging window.
     ev_charge_start_h   : float  — override: begin charging at this hour (e.g. 22.0).
@@ -2771,6 +2965,48 @@ All times are hour-of-day (0–23.9)."""
             loop.llm_tokens_comp += _tu.get("completion_tokens", 0)
             return _j.loads(_llm_r["text"])
 
+        def _prepare_policy_payload(raw_data: dict) -> tuple[dict, dict]:
+            data_out = dict(raw_data or {})
+            trace_out = {}
+            if method == "eb_rule_milp":
+                merged_actions, trace_out = _merge_hybrid_rule_milp_actions(
+                    data_out.get("appliances", {}),
+                    hybrid_options,
+                    appliance_config,
+                    sim_h=sim_h,
+                )
+                data_out["appliances"] = merged_actions
+            return data_out, trace_out
+
+        def _hard_policy_errors(actions: dict | None) -> list[str]:
+            errors: list[str] = []
+            missing = _missing_explicit_appliance_actions(actions or {}, appliance_config)
+            if missing:
+                errors.append("missing explicit appliance commands: " + ", ".join(missing))
+            errors.extend(
+                "shiftable service infeasible: " + item
+                for item in _shiftable_service_window_errors(actions or {}, appliance_config)
+            )
+            if vpp_event:
+                errors.extend(
+                    "VPP schedule conflict: " + item
+                    for item in _vpp_appliance_conflicts(
+                        actions or {},
+                        appliance_config,
+                        vpp_event,
+                        current_hod=hod if vpp_active else None,
+                    )
+                )
+            errors.extend(
+                "EV service infeasible: " + item
+                for item in _ev_service_window_errors(
+                    actions or {},
+                    appliance_config,
+                    vpp_event=vpp_event,
+                )
+            )
+            return errors
+
         try:
             from energybridge.llm.client import LLMClient
             if verbose:
@@ -2778,16 +3014,30 @@ All times are hour-of-day (0–23.9)."""
                 for _line in prompt.splitlines():
                     print(f"  │ {_line}")
                 print(f"  └{'─'*56}")
-            data = _call_llm_json(prompt)
-            hybrid_action_trace = {}
-            if method == "eb_rule_milp":
-                merged_actions, hybrid_action_trace = _merge_hybrid_rule_milp_actions(
-                    data.get("appliances", {}),
-                    hybrid_options,
-                    appliance_config,
-                    sim_h=sim_h,
+            data, hybrid_action_trace = _prepare_policy_payload(_call_llm_json(prompt))
+            hard_errors = _hard_policy_errors(data.get("appliances", {}))
+            if hard_errors and not vpp_active:
+                print("  [Agent Policy Retry] hard policy errors: " + "; ".join(hard_errors))
+                correction_prompt = (
+                    prompt
+                    + "\n\n[HARD POLICY ERROR IN YOUR PREVIOUS JSON]\n"
+                    + "\n".join(f"- {err}" for err in hard_errors)
+                    + "\nReturn a corrected JSON only. Do not apologize. "
+                    "Keep every present appliance explicit. For EV, use a same-day post-arrival window "
+                    "long enough to reach target SOC; avoid crossing-midnight or pre-arrival windows.\n"
+                    + "[PREVIOUS JSON]\n"
+                    + _j.dumps(data, ensure_ascii=False)
                 )
-                data["appliances"] = merged_actions
+                retry_data, retry_trace = _prepare_policy_payload(_call_llm_json(correction_prompt))
+                retry_errors = _hard_policy_errors(retry_data.get("appliances", {}))
+                if not retry_errors or len(retry_errors) <= len(hard_errors):
+                    data = retry_data
+                    hybrid_action_trace = retry_trace
+                    hard_errors = retry_errors
+                    if retry_errors:
+                        print("  [Agent Policy Retry] corrected response still has: " + "; ".join(retry_errors))
+                    else:
+                        print("  [Agent Policy Retry] corrected response passed hard appliance checks")
             missing_explicit = _missing_explicit_appliance_actions(
                 data.get("appliances", {}), appliance_config
             )
@@ -2889,18 +3139,22 @@ All times are hour-of-day (0–23.9)."""
                 sp_lower = max(sp_lower, learned_floor)
             if method == "eb_rule_milp":
                 # In the hybrid method, Rule+MILP/PMV provides candidates; it
-                # should inherit the cost-min PMV target by default.  User
-                # comfort max is a preference signal, not a hard cap, unless
-                # later feedback says the PMV/cost-min point was too warm.
+                # should keep the cost-min PMV target only when it is still
+                # inside the user's comfort ceiling.  This avoids the first
+                # event learning by failing at a too-warm PMV/cost floor.
                 hybrid_floor = _hybrid_rule_milp_setpoint_floor(hybrid_options, _run_sp_max)
-                if hybrid_floor is not None and _hybrid_rule_milp_floor_allowed(loop.vpp_event_log):
-                    sp_lower = max(sp_lower, hybrid_floor)
-                    sp_upper = max(sp_upper, hybrid_floor)
-                else:
-                    sp_upper = min(sp_upper, _ac_sp_max)
+                initial_cap = _hybrid_rule_milp_initial_comfort_cap(_ac_sp_max)
+                sp_upper = min(sp_upper, initial_cap)
                 feedback_cap = _hybrid_rule_milp_feedback_comfort_cap(loop.vpp_event_log, _ac_sp_max)
                 if feedback_cap is not None:
                     sp_upper = min(sp_upper, feedback_cap)
+                if (
+                    hybrid_floor is not None
+                    and _hybrid_rule_milp_floor_allowed(loop.vpp_event_log)
+                    and hybrid_floor <= sp_upper + 1e-6
+                ):
+                    sp_lower = max(sp_lower, hybrid_floor)
+                elif feedback_cap is not None:
                     sp_lower = max(sp_lower, min(sp_upper, feedback_cap))
                 sp_lower = min(sp_lower, sp_upper)
             if sp_lower > sp_upper:
@@ -3315,7 +3569,22 @@ All times are hour-of-day (0–23.9)."""
         }
 
     def _rl_pref_v2_trigger(temp, out_t, hod, sim_h, facility_w=None, vpp_event=None):
-        """RL PPO Pref-v2: 5-dim action with price, preference, and cooldown."""
+        """RL PPO Pref-v2: 8-dim action with price, preference, and cooldown."""
+        # NOTE: EnergyPlus ctypes callbacks run in a context where sys.path /
+        # sys.modules changes made at process start are not visible. Force-load
+        # environment_pref_v2 via absolute file path before any normal import,
+        # so subsequent `from baselines... import ...` resolves via sys.modules.
+        import os as _os, sys as _sys, importlib.util as _ilu
+        _MOD_KEY = "baselines.rl_energyplus_3day.environment_pref_v2"
+        if _MOD_KEY not in _sys.modules:
+            _proj_root = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+            _ev_path = _os.path.join(_proj_root, "baselines", "rl_energyplus_3day", "environment_pref_v2.py")
+            if _proj_root not in _sys.path:
+                _sys.path.insert(0, _proj_root)
+            _spec = _ilu.spec_from_file_location(_MOD_KEY, _ev_path)
+            _mod = _ilu.module_from_spec(_spec)
+            _sys.modules[_MOD_KEY] = _mod
+            _spec.loader.exec_module(_mod)
         from experiments.benchmark.baselines.rl_ppo_pref_v2 import predict_control_result
         from baselines.rl_energyplus_3day.environment_pref_v2 import _build_user_preference_proxy
 

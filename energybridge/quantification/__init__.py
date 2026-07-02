@@ -14,6 +14,12 @@ from .event_baseline import (
     estimate_event_baseline_and_shed,
     estimate_vpp_event_baselines,
 )
+from .counterfactual_baseline import (
+    apply_counterfactual_baseline,
+    build_counterfactual_library,
+    extract_counterfactual_baseline,
+    find_matching_baseline,
+)
 from .suite_adapter import assess_suite_vpp_request, suite_capacity_inputs
 from .total_quantification import quantify_agent_vpp_events
 
@@ -29,6 +35,10 @@ __all__ = [
     "EventBaselineConfig",
     "estimate_event_baseline_and_shed",
     "estimate_vpp_event_baselines",
+    "apply_counterfactual_baseline",
+    "build_counterfactual_library",
+    "extract_counterfactual_baseline",
+    "find_matching_baseline",
     "assess_suite_vpp_request",
     "suite_capacity_inputs",
     "quantify_agent_vpp_events",

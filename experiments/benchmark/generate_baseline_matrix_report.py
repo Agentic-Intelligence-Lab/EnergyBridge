@@ -63,7 +63,7 @@ POLICY_APPLIANCE_CAPABILITIES = {
     "eb_rule_milp": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "hema_agent": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "rl_ppo_3day": {"washer", "water_heater"},
-    "rl_ppo_pref_v2": {"washer", "dishwasher", "water_heater", "ev"},
+    "rl_ppo_pref_v2": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "no_dr": set(),
 }
 
@@ -84,7 +84,7 @@ MANUAL_METHOD_CAPABILITIES = {
     "rule_milp": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "eb_rule_milp": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "hema_agent": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
-    "rl_ppo_pref_v2": {"washer", "dishwasher", "water_heater", "ev"},
+    "rl_ppo_pref_v2": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
 }
 
 
@@ -833,6 +833,8 @@ def _plot_report(
         vmax: float | None = None,
         lower_is_better: bool = False,
         suffix: str = "",
+        mean_fmt: str | None = None,
+        mean_label_fn: Any | None = None,
     ) -> None:
         data = pivot.to_numpy(dtype=float)
         cmap_name = f"{cmap}_r" if lower_is_better else cmap
@@ -841,11 +843,14 @@ def _plot_report(
         ax.set_xticks(np.arange(len(pivot.columns)))
         xtick_labels = []
         for col in pivot.columns:
+            if mean_label_fn is not None:
+                xtick_labels.append(mean_label_fn(str(col), pivot[col]))
+                continue
             mean_value = pivot[col].mean(skipna=True)
             if pd.isna(mean_value):
                 xtick_labels.append(str(col))
             else:
-                xtick_labels.append(f"{col}\nμ={mean_value:{fmt}}{suffix}")
+                xtick_labels.append(f"{col}\nμ={mean_value:{mean_fmt or fmt}}{suffix}")
         ax.set_xticklabels(xtick_labels, rotation=0, fontsize=9)
         ax.set_yticks(np.arange(len(pivot.index)))
         ax.set_yticklabels(list(pivot.index), fontsize=9)
@@ -892,6 +897,35 @@ def _plot_report(
         coverage_cbar = "Present appliances with emitted policy action"
     energy_title, energy_cbar_label, energy_fmt, energy_lower_is_better = _report_energy_label(df, row_label)
 
+    def _city_short(city: str) -> str:
+        lookup = {
+            "Germany": "DE",
+            "Tianjin": "TJ",
+            "Beijing": "BJ",
+            "Shanghai": "SH",
+        }
+        return lookup.get(str(city), str(city)[:3])
+
+    energy_mean_label_fn = None
+    city_values = [str(city) for city in df["city"].dropna().astype(str).unique()]
+    if len(city_values) > 1:
+        preferred_city_order = ["Germany", "Tianjin", "Beijing", "Shanghai"]
+        city_order = [city for city in preferred_city_order if city in city_values]
+        city_order.extend(sorted(city for city in city_values if city not in city_order))
+
+        def _energy_mean_label(col: str, _series: pd.Series) -> str:
+            parts: list[str] = []
+            for city in city_order:
+                city_mean = df.loc[
+                    (df["method_label"].astype(str) == col) & (df["city"].astype(str) == city),
+                    "report_energy_metric",
+                ].mean(skipna=True)
+                if not pd.isna(city_mean):
+                    parts.append(f"{_city_short(city)} μ={city_mean:{energy_fmt}}")
+            return f"{col}\n" + "\n".join(parts) if parts else col
+
+        energy_mean_label_fn = _energy_mean_label
+
     _draw_metric_table(
         axes["score"],
         score_matrix,
@@ -911,6 +945,7 @@ def _plot_report(
         cbar_label=energy_cbar_label,
         lower_is_better=energy_lower_is_better,
         suffix="",
+        mean_label_fn=energy_mean_label_fn,
     )
     _draw_metric_table(
         axes["vpp_energy"],
@@ -927,6 +962,7 @@ def _plot_report(
         title=coverage_title,
         cmap="PuBuGn",
         fmt=".0%",
+        mean_fmt=".1%",
         cbar_label=coverage_cbar,
         vmin=0,
         vmax=1,

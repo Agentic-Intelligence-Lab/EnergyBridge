@@ -1,7 +1,7 @@
 """PPO v2 policy adapter for the EnergyBridge benchmark interface.
 
 Key differences from rl_ppo_3day:
-- Action: 5 dims (AC, washer, dishwasher, WH flag, WH temp) vs 3
+- Action: 8 dims (AC, washer, dishwasher, WH start, WH temp, EV start, EV end, dryer)
 - Observation: 41 dims with price + preference proxy
 - Decision cooldown: once-per-day appliance scheduling
 - Model: ENERGYBRIDGE_RL_PREF_V2_MODEL env var
@@ -11,12 +11,20 @@ Key differences from rl_ppo_3day:
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+# Ensure baselines.rl_energyplus_3day is importable when adapter is loaded
+# from the benchmark runner (which sets sys.path[0] to experiments/benchmark
+# only, not the project root). Without this, build_observation's delayed
+# import fails inside the EnergyPlus ctypes callback and the exception is
+# silently swallowed — leading to "no emitted policy actions" benchmarks.
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 METHOD_ID = "rl_ppo_pref_v2"
 OBJECTIVE_SOURCE = "rl_ppo_pref_v2_policy"
 MODEL_ENV_VAR = "ENERGYBRIDGE_RL_PREF_V2_MODEL"
@@ -29,7 +37,7 @@ DEFAULT_MODEL_CANDIDATES = (
     PROJECT_ROOT / "benchmark_results" / "rl_ppo_pref_v2_4h" / "ppo_energyplus_3day.zip",
 )
 DECISION_INTERVAL_H = 1.0 / 6.0
-OBS_DIM = 42  # must match environment_pref_v2.OBS_DIM_V2 (42 after v2.1)
+OBS_DIM = 41  # must match environment_pref_v2.OBS_DIM_V2 (41; obs unchanged for 8-dim action)
 
 _MODEL_CACHE: dict[tuple[Path, str], Any] = {}
 
@@ -71,26 +79,27 @@ def decode_action(action: np.ndarray) -> np.ndarray:
     a = np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
     out = np.array([
         25.0 + 3.0 * a[0],          # dim0: AC setpoint [22, 28]
-        15.5 + 7.5 * a[1],          # dim1: washer start [8, 23]
-        16.0 + 7.0 * a[2],          # dim2: dishwasher start [9, 23]
+        13.5 + 5.5 * a[1],          # dim1: washer start [8, 19]
+        20.25 + 1.25 * a[2],        # dim2: dishwasher start [19, 21.5]
         12.0 + 5.0 * a[3],          # dim3: WH preheat start [7, 17]
         60.0 + 15.0 * a[4],         # dim4: WH temp [45, 75]
-        21.0 + 9.0 * a[5],          # dim5: EV charge start [12, 30]
-        7.0 + 7.0 * a[6],           # dim6: EV charge end [0, 14]
+        19.25 + 0.75 * a[5],        # dim5: EV charge start [18.5, 20.0]
+        5.75 + 1.75 * a[6],         # dim6: EV charge end [4.0, 7.5]
+        13.75 + 5.75 * a[7],        # dim7: dryer start [8, 19.5]
     ], dtype=np.float32)
     return out
 
 
 def _fixed_debug_action(vpp_active: bool, sim_h: float) -> np.ndarray:
-    """Deterministic sensible policy for sanity testing (7-dim).
+    """Deterministic sensible policy for sanity testing (8-dim).
 
     AC: 25.5°C normal, 26.0°C in VPP.
-    Washer: 19:00. Dishwasher: 21:00.
+    Washer: 19:00. Dishwasher: 21:00. Dryer: 19:00.
     WH: start=14h, end=17h, temp=68°C.
-    EV: start=22h, end=7h (overnight), mode=smart.
+    EV: start=20h, end=7h (overnight), mode=smart.
     """
     sp = 26.0 if vpp_active else 25.5
-    return np.array([sp, 19.0, 21.0, 14.0, 68.0, 21.0, 7.0], dtype=np.float32)
+    return np.array([sp, 19.0, 21.0, 14.0, 68.0, 20.0, 7.0, 19.0], dtype=np.float32)
 
 
 def build_observation(
@@ -104,16 +113,29 @@ def build_observation(
     )
 
     hour = float(sim_h) % 24.0
-    day_idx = min(2, int(float(sim_h) // 24))
     suite = loop.appliance_suite
+    # Read sim_days from ApplianceSuite so adapter matches env's time_to_vpp /
+    # day_idx scope. Fallback 7 only when suite is missing (defensive).
+    sim_days = int(getattr(suite, "_sim_days", 7))
+    day_idx = min(sim_days - 1, int(float(sim_h) // 24))
     assessment = assessment or {}
+    # Wrap raw DayAheadPriceProfile with adapter if needed (benchmark runner
+    # passes the profile directly without get_price; training env wraps it).
+    if price_profile is not None and not hasattr(price_profile, "get_price"):
+        from baselines.rl_energyplus_3day.environment_pref_v2 import _PriceProfileAdapter
+        _base_date = ""
+        if hasattr(price_profile, "points") and price_profile.points:
+            _base_date = price_profile.points[0].local_time.strftime("%Y-%m-%d")
+        elif hasattr(price_profile, "recurring_hour_prices") and price_profile.recurring_hour_prices:
+            _base_date = "2025-06-01"  # TOU profile: date doesn't matter, hour-of-day used
+        price_profile = _PriceProfileAdapter(price_profile, _base_date)
     pfeat = _price_features(price_profile, sim_h) if price_profile else {}
     pfeat = pfeat or {}
     pref = pref_proxy or {"comfort_weight": 0.35, "price_sensitivity": 0.5, "flexibility": 0.5, "vpp_cooperation": 0.7}
 
     vpp_target_kwh = max(0.1, 2.0 - float(assessment.get("recommended_bid_kw", 0.0))) if vpp_active else 0.0
     next_vpp = None
-    for d in range(3):
+    for d in range(sim_days):  # match env's range(self._sim_days)
         start = d * 24.0 + 18.0
         if sim_h < start:
             next_vpp = start
@@ -128,7 +150,7 @@ def build_observation(
 
     values = [
         np.sin(2 * np.pi * hour / 24.0), np.cos(2 * np.pi * hour / 24.0),
-        float(day_idx) / 3.0, time_to_vpp,
+        float(day_idx) / 7.0, time_to_vpp,  # normalize to max 7-day Germany range
         float(temp_c) / 40.0, float(outdoor_temp_c) / 45.0,
         float(getattr(loop, "sp", 25.0)) / 30.0,
         float(8.0 <= hour < 22.0),
@@ -152,9 +174,6 @@ def build_observation(
     values.extend([
         float(suite._refrigerator.present), float(suite._refrigerator.power_kw) / 2.0,
     ])
-    # EV target reached today (new dim 41)
-    ev_day_result = suite._ev.day_result(day_idx)
-    values.append(float(ev_day_result.get("target_reached", False)))
     obs = np.asarray(values, dtype=np.float32)
     if obs.shape != (OBS_DIM,):
         raise RuntimeError(f"Obs shape mismatch: {obs.shape} != {OBS_DIM}")
@@ -236,7 +255,7 @@ def _policy_summary(
             parts.append(f"Washer emitted start_h={float(actions['washer_start_h']):.1f}.")
         else:
             parts.append(
-                f"Washer raw candidate={float(np.clip(float(decoded[1]), 8.0, 23.0)):.1f}h, "
+                f"Washer raw candidate={float(np.clip(float(decoded[1]), 8.0, 19.0)):.1f}h, "
                 "not emitted."
             )
     if "dishwasher" in present:
@@ -244,7 +263,16 @@ def _policy_summary(
             parts.append(f"Dishwasher emitted start_h={float(actions['dishwasher_start_h']):.1f}.")
         else:
             parts.append(
-                f"Dishwasher raw candidate={float(np.clip(float(decoded[2]), 9.0, 23.0)):.1f}h, "
+                f"Dishwasher raw candidate={float(np.clip(float(decoded[2]), 19.0, 21.5)):.1f}h, "
+                "not emitted."
+            )
+    if "dryer" in present:
+        if "dryer_start_h" in actions:
+            parts.append(f"Dryer emitted start_h={float(actions['dryer_start_h']):.1f}.")
+        else:
+            _d7 = float(decoded[7]) if len(decoded) > 7 else 15.5
+            parts.append(
+                f"Dryer raw candidate={float(np.clip(_d7, 8.0, 19.5)):.1f}h, "
                 "not emitted."
             )
     if "water_heater" in present:
@@ -260,7 +288,7 @@ def _policy_summary(
                 f"Water heater raw flag={float(decoded[3]):.2f}, "
                 f"temp={float(np.clip(float(decoded[4]), 45.0, 75.0)):.1f}C, not emitted."
             )
-    unsupported = sorted(present.difference({"washer", "dishwasher", "water_heater", "ev"}))
+    unsupported = sorted(present.difference({"washer", "dishwasher", "dryer", "water_heater", "ev"}))
     if unsupported:
         parts.append("No raw RL action dimension for " + ", ".join(unsupported) + ".")
     if vpp_active:
@@ -282,7 +310,7 @@ def action_to_control_result_decoded(
     # legacy call sites.
     actions: dict[str, Any] = {}
     hod = float(sim_h) % 24.0
-    day_idx = min(2, int(float(sim_h) // 24))
+    day_idx = min(6, int(float(sim_h) // 24))  # up to 7-day Germany benchmark
     vpp_active = bool(vpp_event and float(vpp_event.get("trigger_h", 0)) <= sim_h < float(vpp_event.get("end_h", 0)))
     present = _present_controllable(appliance_config)
     ds = daily_scheduled if daily_scheduled is not None else {}
@@ -290,28 +318,40 @@ def action_to_control_result_decoded(
     # AC setpoint — always applied
     sp = round(float(np.clip(float(decoded[0]), 22.0, 28.0)), 1)
 
-    # Washer: PPO decides start time once per day; skip during VPP window
     if "washer" in present and "washer" not in ds.get(day_idx, set()):
-        proposed = float(np.clip(float(decoded[1]), 8.0, 23.0))
+        cfg_w = (appliance_config or {}).get("washer", {}) or {}
+        dr_adj_w = bool(cfg_w.get("dr_adjustable", True))
+        proposed = float(np.clip(float(decoded[1]), 8.0, 19.0)) if dr_adj_w else float(cfg_w.get("preferred_h", 14.0))
         if not vpp_active:
             actions["washer_start_h"] = round(proposed, 3)
             actions["washer_skip"] = False
             ds.setdefault(day_idx, set()).add("washer")
-            print(f"  [RL Pref-v2] day={day_idx} washer@{proposed:.1f}h")
+            print(f"  [RL Pref-v2] day={day_idx} washer@{proposed:.1f}h (dr_adj={dr_adj_w})")
 
-    # Dishwasher: PPO decides start time once per day; skip during VPP window
     if "dishwasher" in present and "dishwasher" not in ds.get(day_idx, set()):
-        proposed = float(np.clip(float(decoded[2]), 9.0, 23.0))
+        cfg_d = (appliance_config or {}).get("dishwasher", {}) or {}
+        dr_adj_d = bool(cfg_d.get("dr_adjustable", True))
+        proposed = float(np.clip(float(decoded[2]), 19.0, 21.5)) if dr_adj_d else float(cfg_d.get("preferred_h", 14.0))
         if not vpp_active:
             actions["dishwasher_start_h"] = round(proposed, 3)
             actions["dishwasher_skip"] = False
             ds.setdefault(day_idx, set()).add("dishwasher")
-            print(f"  [RL Pref-v2] day={day_idx} dishwasher@{proposed:.1f}h")
+            print(f"  [RL Pref-v2] day={day_idx} dishwasher@{proposed:.1f}h (dr_adj={dr_adj_d})")
+
+    if "dryer" in present and "dryer" not in ds.get(day_idx, set()):
+        cfg_dr = (appliance_config or {}).get("dryer", {}) or {}
+        dr_adj_dr = bool(cfg_dr.get("dr_adjustable", True))
+        proposed = float(np.clip(float(decoded[7]) if len(decoded) > 7 else 15.5, 8.0, 19.5)) if dr_adj_dr else float(cfg_dr.get("preferred_h", 15.0))
+        if not vpp_active:
+            actions["dryer_start_h"] = round(proposed, 3)
+            actions["dryer_skip"] = False
+            ds.setdefault(day_idx, set()).add("dryer")
+            print(f"  [RL Pref-v2] day={day_idx} dryer@{proposed:.1f}h (dr_adj={dr_adj_dr})")
 
     # Water heater: always emit preheat; PPO controls start/temp (dim3/4); end=start+3h
     if "water_heater" in present and "water_heater" not in ds.get(day_idx, set()):
         start_h = float(np.clip(float(decoded[3]), 7.0, 17.0))
-        end_h = min(20.0, start_h + 3.0)
+        end_h = min(18.0, start_h + 3.0)
         wh_temp = float(np.clip(float(decoded[4]), 45.0, 75.0))
         actions.update({
             "water_heater_preheat": True,
@@ -324,8 +364,13 @@ def action_to_control_result_decoded(
 
     # EV: PPO controls charge window (dim5/6); mode fixed=smart
     if "ev" in present and "ev" not in ds.get(day_idx, set()):
-        ev_start = float(np.clip(float(decoded[5]) if len(decoded) > 5 else 22.0, 0.0, 30.0))
-        ev_end = float(np.clip(float(decoded[6]) if len(decoded) > 6 else 7.0, 0.0, 14.0))
+        ev_cfg = (appliance_config or {}).get("ev", {}) or {}
+        ev_arrival = float(ev_cfg.get("arrival_h", 18.5))
+        ev_depart = float(ev_cfg.get("departure_h", 7.5))
+        ev_start_raw = float(decoded[5]) if len(decoded) > 5 else 21.0
+        ev_end_raw = float(decoded[6]) if len(decoded) > 6 else 7.0
+        ev_start = float(np.clip(ev_start_raw, ev_arrival, 20.0))
+        ev_end = float(np.clip(ev_end_raw, 4.0, 7.5))
         actions["ev_mode"] = "smart"
         actions["ev_charge_start_h"] = round(ev_start, 3)
         actions["ev_charge_end_h"] = round(ev_end, 3)

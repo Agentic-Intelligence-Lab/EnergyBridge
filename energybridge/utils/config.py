@@ -23,6 +23,7 @@ class LLMConfig:
     model: str
     temperature: float
     max_tokens: int
+    timeout_seconds: float
     api_key_pool: list  # ordered list of keys to rotate on retry; defaults to [api_key]
 
 
@@ -92,6 +93,13 @@ def load_llm_config(
                 get_key("MAX_TOKENS"),
                 "1024",
                 get_fallback_key("MAX_TOKENS"),
+            )
+        ),
+        timeout_seconds=float(
+            _env_with_fallback(
+                get_key("TIMEOUT_SECONDS"),
+                "60",
+                get_fallback_key("TIMEOUT_SECONDS"),
             )
         ),
         api_key_pool=api_key_pool,

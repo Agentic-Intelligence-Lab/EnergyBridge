@@ -391,6 +391,7 @@ python experiments/benchmark/counterfactual_baseline_library.py apply \
 
 Important output fields:
 
+<<<<<<< HEAD
 
 | Field                                                         | Meaning                                                             |
 | ------------------------------------------------------------- | ------------------------------------------------------------------- |
@@ -399,6 +400,15 @@ Important output fields:
 | `counterfactual_delivery_ratio_vs_baseline_upper_bound_total` | Settlement delivery ratio using no-DR as the denominator            |
 | `counterfactual_delivery_ratio_vs_target_avg`                 | Diagnostic ratio against the old target/capacity request            |
 | `vpp_energy_reduction_basis`                                  | Should be`no_dr_counterfactual_baseline` after applying the library |
+=======
+| Field | Meaning |
+|-------|---------|
+| `counterfactual_capacity_upper_bound_avg_per_hour_kwh` | New reported capacity upper bound in average kW over VPP windows |
+| `counterfactual_actual_shed_avg_per_hour_kwh` | Actual delivered average kW against no-DR |
+| `counterfactual_delivery_ratio_vs_baseline_upper_bound_total` | Settlement delivery ratio using no-DR as the denominator |
+| `counterfactual_delivery_ratio_vs_target_avg` | Diagnostic ratio against the old target/capacity request |
+| `vpp_energy_reduction_basis` | Should be `no_dr_counterfactual_baseline` after applying the library |
+>>>>>>> origin/main
 
 The current 5-household x 2-city settlement artifacts are kept under:
 
