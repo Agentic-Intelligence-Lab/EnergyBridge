@@ -485,11 +485,16 @@ benchmark_results/<DATE>/_batch_logs/
 └── eb_rule_milp_daily_dr_memory.json
 ```
 
-The committed daily-memory review bundle for the current experiments is kept at:
+The committed reusable June historical-memory toolkit is kept outside benchmark
+output folders:
 
 ```text
-benchmark_results/reports/dr_capacity_memory_daily_2026-07-01/
+dr_capacity_memory_toolkit/june_2025_daily_eb_rule_milp/
 ```
+
+Use this toolkit for future capacity reporting. Per-evaluation capacity reports
+should be regenerated for each target benchmark and are not committed as part
+of the toolkit.
 
 Apply the historical memory to a future target summary with the deterministic
 calibrator:
