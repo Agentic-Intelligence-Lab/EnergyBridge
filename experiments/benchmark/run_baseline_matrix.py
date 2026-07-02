@@ -42,7 +42,7 @@ from energybridge.data.day_ahead import DEFAULT_TIANJIN_TOU_PRICE_CSV  # noqa: E
 
 
 ENERGYBRIDGE_METHOD_ID = "EnergyBridge"
-DEFAULT_METHODS = (ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "mpc_ep")
+DEFAULT_METHODS = (ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "mpc_ep", "hema_agent")
 METHOD_CHOICES = (
     ENERGYBRIDGE_METHOD_ID,
     "agent",
@@ -66,6 +66,7 @@ METHOD_CHOICES = (
     "no_dr",
     "none",
     "baseline",
+    "hema_agent"
 )
 
 
