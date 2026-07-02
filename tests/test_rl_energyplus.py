@@ -1,6 +1,6 @@
 import numpy as np
 
-from baselines.rl_energyplus_3day.environment import EnergyPlusFamilyEnv
+from baselines.rl_energyplus.environment import EnergyPlusFamilyEnv
 from energybridge.simulation.appliance_sim import ApplianceSuite
 from experiments.benchmark.family_runner import VPP_EVENTS, _FamilyLoop
 

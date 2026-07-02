@@ -1124,12 +1124,21 @@ preference score through explicit household feedback.
 
 ### RL Baseline
 
-The PPO/RL baseline is separate from the main 10-persona matrix path. See:
+Preference-aware PPO baseline (RL PPO Pref-v2, 8-dim action space) trained
+against the same EnergyPlus 24.1 family model, weather, and VPP schedule as
+the agent benchmark. The 8-dim action covers AC setpoint, washer /
+dishwasher / dryer start hours, water-heater preheat, and EV charge window.
 
-```text
-baselines/rl_energyplus_3day/README.md
-baselines/rl_typical_human/
-```
+Key locations:
+
+- Trained checkpoints: `models/rl_ppo_pref_v2_{tianjin,germany}.zip`
+- Inference adapter: `experiments/benchmark/baselines/rl_ppo_pref_v2.py`
+- Training code + persona: `baselines/rl_energyplus/`
+
+Full training instructions, hyperparameters, decode ranges, reward weights,
+and inference workflow: [`baselines/rl_energyplus/README.md`](baselines/rl_energyplus/README.md)
+
+Other RL directories: `baselines/rl_typical_human/` (fast lightweight simulator for reward experiments).
 
 ### Agent-Method Baselines
 
@@ -1184,7 +1193,7 @@ EnergyBridge/
 │   └── weather/epw/                   # weather files
 ├── experiments/real_data/             # Germany 2025 weather and price CSVs
 ├── baselines/
-│   ├── rl_energyplus_3day/            # PPO baseline against EnergyPlus
+│   ├── rl_energyplus/            # PPO baseline against EnergyPlus
 │   └── rl_typical_human/              # lightweight RL environment
 ├── benchmark_results/                 # generated outputs, ignored by default
 ├── requirements.txt
@@ -1285,7 +1294,7 @@ notes are in:
 
 ```text
 REFERENCE_CAPACITY_RL_INTEGRATION.md
-baselines/rl_energyplus_3day/README.md
+baselines/rl_energyplus/README.md
 ```
 
 EnergyBridge is an independent implementation; code in `energybridge/` is
