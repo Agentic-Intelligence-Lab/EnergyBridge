@@ -238,6 +238,15 @@ def _day_ahead_total_cost_eur(result: dict[str, Any], row: dict[str, Any]) -> fl
     return None if value is not None and pd.isna(value) else value
 
 
+def _day_ahead_price_unit(result: dict[str, Any], row: dict[str, Any]) -> str:
+    metrics = result.get("day_ahead_price_metrics")
+    if isinstance(metrics, dict):
+        unit = str(metrics.get("price_unit") or "").strip()
+        if unit:
+            return unit
+    return str(row.get("day_ahead_price_unit") or "").strip()
+
+
 def _report_energy_metric(
     *,
     city: str,
@@ -247,6 +256,8 @@ def _report_energy_metric(
     days: float | None = None,
 ) -> tuple[float | None, str]:
     if electricity_cost_eur is not None and not pd.isna(electricity_cost_eur):
+        if days and days > 0:
+            return electricity_cost_eur / days, "electricity_cost_eur_per_day"
         return electricity_cost_eur, "electricity_cost_eur"
     if energy_kwh_per_day is not None:
         return energy_kwh_per_day, "energy_kwh_per_day"
@@ -326,6 +337,7 @@ def _build_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
         if energy_kwh_per_day is None and energy_kwh_total is not None and days:
             energy_kwh_per_day = energy_kwh_total / days
         electricity_cost_eur = _day_ahead_total_cost_eur(result, row)
+        price_unit = _day_ahead_price_unit(result, row)
         report_metric, report_metric_name = _report_energy_metric(
             city=city,
             energy_kwh_total=energy_kwh_total,
@@ -425,6 +437,7 @@ def _build_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
                     if electricity_cost_eur is not None and days and days > 0
                     else None
                 ),
+                "electricity_price_unit": price_unit,
                 "report_energy_metric": report_metric,
                 "report_energy_metric_name": report_metric_name,
                 "vpp_window_energy_kwh": _as_float(
@@ -635,7 +648,19 @@ def _report_energy_label(df: pd.DataFrame, row_label: str = "Persona") -> tuple[
     if metric_names == {"electricity_cost_eur"}:
         return f"{row_label} x Method Electricity Cost", "Total electricity cost (lower is better)", ".2f", True
     if metric_names == {"electricity_cost_eur_per_day"}:
-        return f"{row_label} x Method Daily Electricity Cost", "Daily electricity cost/day (lower is better)", ".2f", True
+        units = sorted({str(unit) for unit in df.get("electricity_price_unit", pd.Series(dtype=str)).dropna().unique() if str(unit)})
+        if len(units) == 1:
+            unit_text = units[0]
+        elif units:
+            unit_text = "mixed price units by city"
+        else:
+            unit_text = "price-weighted cost"
+        return (
+            f"{row_label} x Method Daily Electricity Cost",
+            f"Daily electricity cost ({unit_text}; lower is better)",
+            ".2f",
+            True,
+        )
     if metric_names == {"energy_kwh_per_day"}:
         return f"{row_label} x Method Daily Energy", "Daily energy kWh/day (lower is better)", ".2f", True
     if metric_names <= {"energy_kwh_per_day", "electricity_cost_eur_per_day"}:
