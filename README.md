@@ -524,6 +524,9 @@ Important output fields:
 | `agent_capacity_report_total_kwh` | LLM-assisted top-k historical-memory reported capacity |
 | `agent_capacity_report_avg_kw` | LLM-assisted average reported kW across future VPP windows |
 | `agent_capacity_report` | Per-event top-k distribution evidence, band choice, and reported capacity |
+| `agent_capacity_report_primary_distribution_position` | Main reported band position, usually `p25`, `p50`, or `p75` |
+| `agent_capacity_report_distribution_position_counts` | Per-run band counts, for example `p25=0,p50=7,p75=0` |
+| `agent_capacity_report_primary_choice` | Main agent choice label, usually `conservative`, `calibrated`, or `assertive` |
 
 ### How To Add A New Baseline Method
 

@@ -65,6 +65,7 @@ def apply_agent_capacity_reporting(
         round(total_capacity_kwh / total_duration_h, 6) if total_duration_h > 1e-9 else None
     )
     out["agent_capacity_report_basis"] = "topk_historical_memory_distribution_agent_band_choice"
+    out.update(_summarize_report_choices(reports))
     return out
 
 
@@ -279,6 +280,39 @@ def _guard_decision(
         "duration_h": round(duration_h, 6),
         "guardrail": "capacity_from_precomputed_topk_distribution_band_not_freeform_llm_number",
     }
+
+
+def _summarize_report_choices(reports: list[Mapping[str, Any]]) -> dict[str, Any]:
+    positions: list[str] = []
+    choices: list[str] = []
+    for report in reports:
+        position = str(report.get("distribution_position") or "").strip().lower()
+        choice = str(report.get("choice") or "").strip().lower()
+        if position:
+            positions.append(position)
+        if choice:
+            choices.append(choice)
+    position_counts = {position: positions.count(position) for position in ("p25", "p50", "p75")}
+    choice_counts = {choice: choices.count(choice) for choice in ("conservative", "calibrated", "assertive")}
+    return {
+        "agent_capacity_report_distribution_positions": ",".join(positions),
+        "agent_capacity_report_primary_distribution_position": _mode_label(positions),
+        "agent_capacity_report_distribution_position_counts": ",".join(
+            f"{key}={position_counts[key]}" for key in ("p25", "p50", "p75")
+        ),
+        "agent_capacity_report_choices": ",".join(choices),
+        "agent_capacity_report_primary_choice": _mode_label(choices),
+        "agent_capacity_report_choice_counts": ",".join(
+            f"{key}={choice_counts[key]}" for key in ("conservative", "calibrated", "assertive")
+        ),
+    }
+
+
+def _mode_label(values: list[str]) -> str:
+    if not values:
+        return ""
+    counts = {value: values.count(value) for value in sorted(set(values))}
+    return max(counts.items(), key=lambda item: (item[1], item[0]))[0]
 
 
 def _float_or_none(value: Any) -> float | None:
