@@ -485,6 +485,12 @@ benchmark_results/<DATE>/_batch_logs/
 └── eb_rule_milp_daily_dr_memory.json
 ```
 
+The committed daily-memory review bundle for the current experiments is kept at:
+
+```text
+benchmark_results/reports/dr_capacity_memory_daily_2026-07-01/
+```
+
 Apply the historical memory to a future target summary with the deterministic
 calibrator:
 
