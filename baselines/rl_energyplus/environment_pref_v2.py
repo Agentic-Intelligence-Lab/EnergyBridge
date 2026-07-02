@@ -1,7 +1,7 @@
 """v2 RL environment: expanded action, price-aware, preference-aware, metric-aligned reward.
 
 Key improvements over environment.py:
-- Action: 5 dims (AC, washer, dishwasher, WH flag, WH temp) vs 3
+- Action: 8 dims (AC, washer, dishwasher, WH start, WH temp, EV start, EV end, dryer) vs 3
 - Observation: +price features (current + next 6h mean/max/min/peak)
 - Observation: +user preference proxy (comfort_weight, price_sensitivity, flexibility, vpp_cooperation)
 - Reward: aligned with benchmark metrics (appliance_shift_success, VPP avoidance, user_pref)
@@ -33,10 +33,31 @@ for path in (PROJECT_ROOT, EPLUS_ROOT):
 
 from energybridge.quantification import assess_suite_vpp_request
 from energybridge.simulation.appliance_sim import ApplianceSuite
-from energybridge.data.day_ahead import maybe_load_price_profile
+from energybridge.data.day_ahead import maybe_load_price_profile, generate_runperiod_idf
 from experiments.benchmark.family_runner import (
-    _FamilyLoop, _compute_pmv, _make_vpp_events,
+    _FamilyLoop, _compute_pmv, _make_vpp_events, _is_weather_run_period,
 )
+
+
+class _PriceProfileAdapter:
+    """Wrap DayAheadPriceProfile to expose get_price(sim_h: float).
+
+    DayAheadPriceProfile.price_at() requires a datetime object, but
+    _price_features() passes sim_h (float hours from episode start).
+    This adapter converts sim_h using the episode base date.
+    """
+
+    def __init__(self, profile, base_date):
+        from datetime import datetime
+        self._profile = profile
+        self._base = datetime.fromisoformat(base_date) if base_date else datetime(2025, 6, 1)
+
+    def get_price(self, sim_h):
+        from datetime import timedelta
+        dt = self._base + timedelta(hours=float(sim_h))
+        result = self._profile.price_at(dt)
+        return float(result) if result is not None else 0.0
+
 
 # ----- Observation schema ----------------------------------------------------
 OBSERVATION_NAMES_V2 = (
@@ -67,33 +88,34 @@ OBSERVATION_NAMES_V2 = (
     "ev_present", "ev_soc", "ev_at_home",
     # Refrigerator (2)
     "refrigerator_present", "refrigerator_power_kw_scaled",
-    # EV target reached today (1) — new in v2.1
-    "ev_target_reached",
 )
-OBS_DIM_V2 = len(OBSERVATION_NAMES_V2)  # 42
+OBS_DIM_V2 = len(OBSERVATION_NAMES_V2)  # 41
 
 # ----- Action schema ---------------------------------------------------------
+# Decode ranges aligned to training persona all_appliances_full valid windows.
 # dim 0: AC setpoint [22.0, 28.0]
-# dim 1: Washer start hour [8.0, 23.0]
-# dim 2: Dishwasher start hour [9.0, 23.0]
-# dim 3: WH preheat start hour [7.0, 17.0]  (was: preheat flag — now time)
+# dim 1: Washer start hour [8.0, 19.0]         (aligned with washer.latest_h=21 - duration=2)
+# dim 2: Dishwasher start hour [19.0, 21.5]    (overnight-first window; matches household schedules)
+# dim 3: WH preheat start hour [7.0, 17.0]
 # dim 4: WH target temperature [45.0, 75.0]
-# dim 5: EV charge start hour [12.0, 30.0] (center=21h, after arrival_h=18.5)
-# dim 6: EV charge end hour   [0.0, 14.0]  (center=7h, before departure_h=7.5)
-ACTION_DIM_V2 = 7
+# dim 5: EV charge start hour [18.5, 20.0]     (bounded so last-day sim finishes charging before cutoff)
+# dim 6: EV charge end hour   [4.0, 7.5]       (before EV departure_h=7.5; lower bound avoids too-short window)
+# dim 7: Dryer start hour [8.0, 19.5]          (aligned with dryer.latest_h=21 - duration=1.5)
+ACTION_DIM_V2 = 8
 
 
 def _decode_action_v2(action: np.ndarray) -> np.ndarray:
-    """Decode normalized [-1,1]^9 action to physical values."""
+    """Decode normalized [-1,1]^8 action to physical values."""
     a = np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
     return np.array([
         25.0 + 3.0 * a[0],                     # dim0: AC setpoint [22, 28]
-        15.5 + 7.5 * a[1],                     # dim1: washer start [8, 23]
-        16.0 + 7.0 * a[2],                     # dim2: dishwasher start [9, 23]
+        13.5 + 5.5 * a[1],                     # dim1: washer start [8, 19]
+        20.25 + 1.25 * a[2],                   # dim2: dishwasher start [19, 21.5]
         12.0 + 5.0 * a[3],                     # dim3: WH preheat start [7, 17]
         60.0 + 15.0 * a[4],                    # dim4: WH temp [45, 75]
-        21.0 + 9.0 * a[5],                     # dim5: EV charge start [12, 30]
-        7.0 + 7.0 * a[6],                      # dim6: EV charge end [0, 14]
+        19.25 + 0.75 * a[5],                   # dim5: EV charge start [18.5, 20.0]
+        5.75 + 1.75 * a[6],                    # dim6: EV charge end [4.0, 7.5]
+        13.75 + 5.75 * a[7],                   # dim7: dryer start [8, 19.5]
     ], dtype=np.float32)
 
 
@@ -147,7 +169,7 @@ def _price_features(price_profile: Any, sim_h: float) -> dict[str, float]:
 
 # ----- Reward ----------------------------------------------------------------
 REWARD_WEIGHTS_V2 = {
-    "energy_base": 0.03,
+    "energy_base": 0.3,
     "price_mult": 0.2,
     "vpp_mult": 2.0,
     "comfort_mult": 8.0,
@@ -156,7 +178,8 @@ REWARD_WEIGHTS_V2 = {
     "terminal_wh": 100.0,
     "terminal_vpp_avoid": 100.0,
     "terminal_vpp_energy": 80.0,
-    "terminal_ev": 150.0,   # EV target_soc reached
+    "terminal_ev": 300.0,   # EV target_soc reached
+    "terminal_dryer": 200.0,  # dryer scheduled within latest_h - duration_h
 }
 
 
@@ -250,8 +273,11 @@ def _compute_reward_v2(
     comfort_violation = max(0.0, comfort_min - temp_c, temp_c - comfort_max)
     comfort_penalty = w["comfort_mult"] * comfort_violation if occupied else 0.0
 
-    # Energy: moderate base penalty + optional price sensitivity boost
-    price_factor = 1.0 + w["price_mult"] * price_sensitivity * max(0.0, price_current / 0.15)
+    # Energy: base penalty + price uplift. Structure identical to original Xudong design.
+    # Tianjin: price_profile=None -> _price_features returns 0.0 -> max(0,0)=0 -> factor=1.0.
+    # Germany: _PriceProfileAdapter feeds real price -> factor rises with price.
+    # Negative price: max(0,...) keeps factor=1.0, no incentive to increase consumption.
+    price_factor = 1.0 + w["price_mult"] * price_sensitivity * max(0.0, float(price_current) / 0.15)
     energy_penalty = w["energy_base"] * energy_kwh * price_factor
 
     # VPP: extra penalty during VPP window (reward cooperation)
@@ -274,20 +300,50 @@ def _terminal_reward_v2(loop: Any, vpp_event_energy: dict, price_profile: Any) -
     # Appliance completion bonuses
     washer_days = [d for d in results.get("washer", []) if d.get("present")]
     dishwasher_days = [d for d in results.get("dishwasher", []) if d.get("present")]
+    dryer_days = [d for d in results.get("dryer", []) if d.get("present")]
     wh_days = [d for d in results.get("water_heater", []) if d.get("present")]
 
-    washer_ok = sum(1 for d in washer_days if d.get("completed")) / max(1, len(washer_days))
-    dishwasher_ok = sum(1 for d in dishwasher_days if d.get("completed")) / max(1, len(dishwasher_days))
-    wh_ok = sum(1 for d in wh_days if d.get("preheat_used") and float(d.get("energy_kwh", 0)) > 0) / max(1, len(wh_days))
+    washer_app = suite._shiftable.get("washer")
+    dishwasher_app = suite._shiftable.get("dishwasher")
+    dryer_app = suite._shiftable.get("dryer")
+    w_max = (washer_app.latest_h - washer_app.duration_h) if washer_app else 20.0
+    d_max = (dishwasher_app.latest_h - dishwasher_app.duration_h) if dishwasher_app else 21.5
+    dr_max = (dryer_app.latest_h - dryer_app.duration_h) if dryer_app else 20.5
+    washer_ok = sum(
+        1 for d in washer_days
+        if d.get("scheduled_abs_h") is not None
+        and np.isfinite(d["scheduled_abs_h"])
+        and (d["scheduled_abs_h"] % 24) <= w_max + 1e-6
+    ) / max(1, len(washer_days))
+    dishwasher_ok = sum(
+        1 for d in dishwasher_days
+        if d.get("scheduled_abs_h") is not None
+        and np.isfinite(d["scheduled_abs_h"])
+        and (d["scheduled_abs_h"] % 24) <= d_max + 1e-6
+    ) / max(1, len(dishwasher_days))
+    dryer_ok = sum(
+        1 for d in dryer_days
+        if d.get("scheduled_abs_h") is not None
+        and np.isfinite(d["scheduled_abs_h"])
+        and (d["scheduled_abs_h"] % 24) <= dr_max + 1e-6
+    ) / max(1, len(dryer_days)) if dryer_days else 0.0
+    wh_ok = sum(1 for d in wh_days if d.get("ready_at_bath")) / max(1, len(wh_days))
 
     # VPP avoidance bonus: completed AND not running during VPP
     avoid_count = 0
     total_present = 0
-    for name in ("washer", "dishwasher"):
+    for name in ("washer", "dishwasher", "dryer"):
+        app = suite._shiftable.get(name)
+        max_s = (app.latest_h - app.duration_h) if app else 21.5
         for d in results.get(name, []):
             if d.get("present"):
                 total_present += 1
-                if d.get("completed") and not d.get("ran_during_vpp"):
+                sched = d.get("scheduled_abs_h")
+                in_window = (
+                    sched is not None and np.isfinite(sched)
+                    and (sched % 24) <= max_s + 1e-6
+                )
+                if in_window and not d.get("ran_during_vpp"):
                     avoid_count += 1
     for d in wh_days:
         if d.get("present"):
@@ -307,6 +363,7 @@ def _terminal_reward_v2(loop: Any, vpp_event_energy: dict, price_profile: Any) -
     bonus = (
         w["terminal_washer"] * washer_ok +
         w["terminal_dishwasher"] * dishwasher_ok +
+        w["terminal_dryer"] * dryer_ok +
         w["terminal_wh"] * wh_ok +
         w["terminal_ev"] * ev_ok +
         avoidance_bonus +
@@ -343,16 +400,20 @@ class EnergyPlusFamilyEnvV2(gym.Env):
         self.start_date = start_date
         self.price_csv = price_csv
 
-        # Load price profile
+        # Load price profile and wrap with adapter so get_price(sim_h) works
         if price_profile is not None:
-            self.price_profile = price_profile
+            raw_profile = price_profile
         elif price_csv:
             try:
-                self.price_profile = maybe_load_price_profile(Path(price_csv))
+                raw_profile = maybe_load_price_profile(Path(price_csv))
             except Exception:
-                self.price_profile = None
+                raw_profile = None
         else:
-            self.price_profile = None
+            raw_profile = None
+        self.price_profile = (
+            _PriceProfileAdapter(raw_profile, start_date)
+            if raw_profile is not None else None
+        )
 
         # Resolve EPW from city
         EPW_DIR = PROJECT_ROOT / "experiments" / "weather" / "epw"
@@ -364,8 +425,17 @@ class EnergyPlusFamilyEnvV2(gym.Env):
         }
         self._epw_path = epw_map.get(city.lower(), epw_map["tianjin"])
 
-        # IDF — use 3-day
-        self._idf_path = PROJECT_ROOT / "experiments" / "models" / "family_home" / "family_simple_3day.idf"
+        self._sim_days = 7 if city.lower() == "germany" else 3
+        if city.lower() == "germany":
+            from datetime import date as _date
+            _template_idf = PROJECT_ROOT / "experiments" / "models" / "family_home" / "berlin_family_geg_final.idf"
+            _runperiod_start = _date.fromisoformat(start_date) if start_date else _date(2025, 6, 1)
+            self._idf_path = generate_runperiod_idf(
+                _template_idf, self.output_root,
+                start_date=_runperiod_start, days=self._sim_days,
+            )
+        else:
+            self._idf_path = PROJECT_ROOT / "experiments" / "models" / "family_home" / f"family_simple_{self._sim_days}day.idf"
 
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(ACTION_DIM_V2,), dtype=np.float32)
         self.observation_space = spaces.Box(
@@ -379,6 +449,7 @@ class EnergyPlusFamilyEnvV2(gym.Env):
         self.rows: list[dict[str, Any]] = []
         self.final_appliance_results: dict[str, Any] = {}
         self.vpp_event_energy: dict[str, float] = {}
+        self.terminal_bonus: float = 0.0
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         super().reset(seed=seed)
@@ -418,7 +489,7 @@ class EnergyPlusFamilyEnvV2(gym.Env):
     def _run_energyplus(self) -> None:
         try:
             from pyenergyplus.api import EnergyPlusAPI
-            VPP_EVENTS = _make_vpp_events(3, start_h=18.0, duration_h=1.0)
+            VPP_EVENTS = _make_vpp_events(self._sim_days, start_h=18.0, duration_h=1.0)
 
             api = EnergyPlusAPI()
             state = api.state_manager.new_state()
@@ -426,33 +497,28 @@ class EnergyPlusFamilyEnvV2(gym.Env):
             ex = api.exchange
             loop = _FamilyLoop()
             loop.appliance_suite = ApplianceSuite(
-                self.persona.get("appliances", {}), sim_days=3, vpp_events=VPP_EVENTS
+                self.persona.get("appliances", {}), sim_days=self._sim_days,
+                vpp_events=VPP_EVENTS, explicit_only=True
             )
-            # Disable ApplianceSuite default scheduling; RL controls explicitly
-            for name in ("washer", "dishwasher"):
-                dev = loop.appliance_suite._shiftable.get(name)
-                if dev:
-                    for record in dev._days.values():
-                        record.scheduled_abs_h = float("inf")
-            water_heater = loop.appliance_suite._water_heater
-            for day_state in water_heater._days.values():
-                day_state.update({
-                    "preheat_requested": True, "preheat_start_h": 0.0,
-                    "preheat_end_h": 0.0, "ready_at_bath": False,
-                })
+            # explicit_only=True also makes WaterHeater.ready_at_bath require energy_kwh > 0.
 
             ex.request_variable(state, "Zone Mean Air Temperature", "living_unit1")
             ex.request_variable(state, "Facility Total Electricity Demand Rate", "Whole Building")
             ex.request_variable(state, "Site Outdoor Air Drybulb Temperature", "Environment")
             last_sim_h: float | None = None
-            last_action = np.array([25.0, 14.0, 21.0, 0.0, 65.0], dtype=np.float32)
+            last_action = np.array([25.0, 15.5, 16.0, 12.0, 60.0, 21.0, 7.0, 15.5], dtype=np.float32)
             # Decision memory: prevent repeated daily appliance scheduling
-            daily_appliance_set: dict[int, set] = {0: set(), 1: set(), 2: set()}
+            daily_appliance_set: dict[int, set] = {d: set() for d in range(self._sim_days)}
             first_packet_sent = False
 
             def callback(s) -> None:
                 nonlocal last_sim_h, last_action, first_packet_sent
                 if self._stop.is_set() or not loop.init(ex, s):
+                    return
+                # Ignore EnergyPlus sizing / design-day environments (kind_of_sim != 3).
+                # Berlin IDF has design days that would otherwise corrupt loop.start_day
+                # and produce negative sim_h. Matches family_runner's a30055f fix.
+                if not _is_weather_run_period(ex, s):
                     return
                 if loop.h_out == -1:
                     loop.h_out = ex.get_variable_handle(s, "Site Outdoor Air Drybulb Temperature", "Environment")
@@ -462,7 +528,7 @@ class EnergyPlusFamilyEnvV2(gym.Env):
                 if loop.start_day is None:
                     loop.start_day = day
                 sim_h = (day - loop.start_day) * 24.0 + ex.current_time(s)
-                if sim_h >= 72.0:
+                if sim_h >= self._sim_days * 24.0:
                     return
                 dt = float(ex.zone_time_step(s))
                 temp = float(ex.get_variable_value(s, loop.h_temp))
@@ -489,7 +555,7 @@ class EnergyPlusFamilyEnvV2(gym.Env):
                             price_current=pfeat["current"], dt_h=dt,
                             appliance_config=self.persona.get("appliances", {}),
                             appliance_actions=None,  # updated below after decode
-                            day_idx=min(2, int(sim_h // 24)),
+                            day_idx=min(self._sim_days - 1, int(sim_h // 24)),
                             vpp_target_kw=2.0 / 1.0 if vpp_active else None,
                         )
                     else:
@@ -522,6 +588,7 @@ class EnergyPlusFamilyEnvV2(gym.Env):
                     "washer_start_request": float(last_action[1]),
                     "dishwasher_start_request": float(last_action[2]),
                     "water_heater_preheat_request": float(last_action[3]),
+                    "dryer_start_request": float(last_action[7]),
                     "reward": reward,
                 }
                 if last_sim_h is not None:
@@ -539,7 +606,7 @@ class EnergyPlusFamilyEnvV2(gym.Env):
                 decoded = _decode_action_v2(raw_action)
                 last_action = decoded
                 loop.sp = float(np.clip(decoded[0], 22.0, 28.0))
-                day_idx = min(2, int(sim_h // 24))
+                day_idx = min(self._sim_days - 1, int(sim_h // 24))
                 hod = sim_h % 24.0
 
                 # Apply appliance actions with cooldown (once per day per device)
@@ -547,28 +614,37 @@ class EnergyPlusFamilyEnvV2(gym.Env):
                     daily_appliance_set[day_idx] = set()
                 done_today = daily_appliance_set[day_idx]
 
-                # Washer
-                if "washer" not in done_today and float(decoded[1]) >= 8.0:
-                    loop.appliance_suite.shift_appliance("washer", day_idx, sim_h)
+                # Washer — skip during VPP window to match adapter behavior
+                if "washer" not in done_today and float(decoded[1]) >= 8.0 and not vpp_active:
+                    target_abs_h = day_idx * 24.0 + float(decoded[1])
+                    loop.appliance_suite.shift_appliance("washer", day_idx, target_abs_h)
                     done_today.add("washer")
-                # Dishwasher
-                if "dishwasher" not in done_today and float(decoded[2]) >= 9.0:
-                    loop.appliance_suite.shift_appliance("dishwasher", day_idx, sim_h)
+                # Dishwasher — skip during VPP window to match adapter behavior
+                if "dishwasher" not in done_today and float(decoded[2]) >= 9.0 and not vpp_active:
+                    target_abs_h = day_idx * 24.0 + float(decoded[2])
+                    loop.appliance_suite.shift_appliance("dishwasher", day_idx, target_abs_h)
                     done_today.add("dishwasher")
-                # Water heater preheat — always emit; PPO controls start/temp (dim3/4); end=start+3h
+                # Dryer — skip during VPP window to match adapter behavior
+                if "dryer" not in done_today and float(decoded[7]) >= 8.0 and not vpp_active:
+                    target_abs_h = day_idx * 24.0 + float(decoded[7])
+                    loop.appliance_suite.shift_appliance("dryer", day_idx, target_abs_h)
+                    done_today.add("dryer")
+                # Water heater preheat
                 if "water_heater" not in done_today:
                     wh_start = float(np.clip(decoded[3], 7.0, 17.0))
-                    wh_end = min(20.0, wh_start + 3.0)
+                    wh_end = min(18.0, wh_start + 3.0)
                     loop.appliance_suite.set_ewh_preheat_schedule(
                         day_idx, start_h=wh_start,
                         end_h=wh_end,
                         temp_c=float(np.clip(decoded[4], 45.0, 75.0)),
                     )
                     done_today.add("water_heater")
-                # EV — emit once per day; PPO controls start/end (dim5/6); mode fixed=smart
                 if "ev" not in done_today:
-                    ev_start = float(np.clip(decoded[5], 0.0, 30.0))
-                    ev_end = float(np.clip(decoded[6], 0.0, 14.0))
+                    ev_dev = loop.appliance_suite._ev
+                    ev_arrival = float(ev_dev.arrival_h) if ev_dev else 18.5
+                    ev_depart = float(ev_dev.departure_h) if ev_dev else 7.5
+                    ev_start = float(np.clip(decoded[5], ev_arrival, 20.0))
+                    ev_end = float(np.clip(decoded[6], 4.0, 7.5))
                     loop.appliance_suite.set_ev_mode(day_idx, "smart")
                     loop.appliance_suite.set_ev_charge_window(day_idx, start_h=ev_start, end_h=ev_end)
                     done_today.add("ev")
@@ -593,6 +669,7 @@ class EnergyPlusFamilyEnvV2(gym.Env):
                     )
                 else:
                     terminal_bonus = _terminal_reward_v2(loop, self.vpp_event_energy, self.price_profile)
+                self.terminal_bonus = float(terminal_bonus)
                 self._packet_queue.put({
                     "observation": final_obs, "reward": terminal_bonus,
                     "terminated": True, "info": {"energyplus_family": {"exit_code": exit_code}},
@@ -604,14 +681,14 @@ class EnergyPlusFamilyEnvV2(gym.Env):
                      vpp_active: bool, assessment: dict, loop: Any,
                      pfeat: dict | None = None) -> np.ndarray:
         hour = sim_h % 24.0
-        day_idx = min(2, int(sim_h // 24))
+        day_idx = min(self._sim_days - 1, int(sim_h // 24))
         suite = loop.appliance_suite
         pfeat = pfeat or {}
         vpp_target_kwh = max(0.1, 2.0 - float(assessment.get("recommended_bid_kw", 0.0))) if vpp_active else 0.0
 
         # Time to next VPP start
         next_vpp = None
-        for d in range(3):
+        for d in range(self._sim_days):
             start = d * 24.0 + 18.0
             if sim_h < start:
                 next_vpp = start
@@ -626,7 +703,7 @@ class EnergyPlusFamilyEnvV2(gym.Env):
 
         values = [
             np.sin(2 * np.pi * hour / 24.0), np.cos(2 * np.pi * hour / 24.0),
-            float(day_idx) / 3.0, time_to_vpp,
+            float(day_idx) / 7.0, time_to_vpp,  # normalize over max 7-day range; consistent with adapter
             temp / 40.0, outdoor / 45.0,
             float(getattr(loop, "sp", 25.0)) / 30.0,
             float(8.0 <= hour < 22.0),
@@ -653,9 +730,6 @@ class EnergyPlusFamilyEnvV2(gym.Env):
         values.extend([
             float(suite._refrigerator.present), float(suite._refrigerator.power_kw) / 2.0,
         ])
-        # EV target reached today (new dim 41)
-        ev_day_result = suite._ev.day_result(day_idx)
-        values.append(float(ev_day_result.get("target_reached", False)))
         obs = np.asarray(values, dtype=np.float32)
         if obs.shape != (OBS_DIM_V2,):
             raise RuntimeError(f"Obs shape mismatch: {obs.shape} != {OBS_DIM_V2}")
@@ -668,12 +742,7 @@ class EnergyPlusFamilyEnvV2(gym.Env):
         state = 0.0 if (not appliance.present or skipped) else (
             3.0 if (record is not None and record.completed) else (
                 2.0 if (record is not None and record.run_start_abs_h is not None) else 1.0))
-        scheduled_raw = getattr(record, "scheduled_abs_h", None) if record is not None else None
-        try:
-            scheduled_float = float(scheduled_raw)
-        except (TypeError, ValueError):
-            scheduled_float = float("nan")
-        scheduled_h = scheduled_float % 24.0 if np.isfinite(scheduled_float) else -24.0
+        scheduled_h = (record.scheduled_abs_h % 24.0 if record is not None and record.scheduled_abs_h is not None and np.isfinite(record.scheduled_abs_h) else -24.0)
         return [
             float(appliance.present), state / 3.0, scheduled_h / 24.0,
             float(appliance.earliest_h) / 24.0, float(appliance.latest_h) / 24.0,

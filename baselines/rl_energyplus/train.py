@@ -179,7 +179,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--hours", type=float, default=4.0)
     parser.add_argument("--timesteps", type=int, default=10_000_000)
-    parser.add_argument("--output", type=Path, default=Path("benchmark_results/rl_energyplus_3day_formal"))
+    parser.add_argument("--output", type=Path, default=Path("benchmark_results/rl_energyplus_formal"))
     parser.add_argument("--device", default="auto")
     parser.add_argument("--persona", default="atom_comfort_sensitive")
     parser.add_argument("--resume", type=Path, default=None,

@@ -1,7 +1,7 @@
 """Train PPO v2 with expanded action, price, and preference-aware observation.
 
 Usage:
-  python -m baselines.rl_energyplus_3day.train_pref_v2 \
+  python -m baselines.rl_energyplus.train_pref_v2 \
     --hours 0.1 --timesteps 2000 \
     --persona basic_role_a_commuter_price_cooperative \
     --city Germany --start-date 2025-06-01 \
@@ -59,8 +59,9 @@ def evaluate(model: PPO, output: Path, persona_id: str,
     occupied_rows = occupied if occupied else rows
     vpp_rows = vpp if vpp else rows
 
+    sim_days_eval = 7 if city.lower() == "germany" else 3
     vpp_actions = []
-    for ei in range(3):
+    for ei in range(sim_days_eval):
         start, end = 18.0 + ei * 24.0, 19.0 + ei * 24.0
         er = [r for r in rows if start <= r["sim_hour"] < end]
         if er:
@@ -69,6 +70,7 @@ def evaluate(model: PPO, output: Path, persona_id: str,
                 "cooling_setpoint_c": sum(r["cooling_setpoint_c"] for r in er) / len(er),
                 "washer_started": any(r.get("washer_start_request", 0) >= 8.0 for r in er),
                 "dishwasher_started": any(r.get("dishwasher_start_request", 0) >= 9.0 for r in er),
+                "dryer_started": any(r.get("dryer_start_request", 0) >= 8.0 for r in er),
                 "ewh_heating": any(r.get("water_heater_preheat_request", 0) >= 7.0 for r in er),
             })
 
@@ -85,16 +87,17 @@ def evaluate(model: PPO, output: Path, persona_id: str,
             "cooling_setpoint_c": sum(r["cooling_setpoint_c"] for r in vpp_rows) / len(vpp_rows),
         } if vpp_rows else {},
         "vpp_actions": vpp_actions,
-        "total_reward": sum(r["reward"] for r in rows),
+        "total_reward": sum(r["reward"] for r in rows) + float(getattr(env, "terminal_bonus", 0.0)),
+        "terminal_bonus": float(getattr(env, "terminal_bonus", 0.0)),
         "mean_reward_per_step": sum(r["reward"] for r in rows) / max(1, len(rows)),
     }
-    summary.update(_score_roleplay(rows, summary, persona_id))
+    summary.update(_score_roleplay(rows, summary, persona_id, city=city))
     (output / "evaluation_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     _write_summary(output, summary)
     return summary
 
 
-def _score_roleplay(rows: list[dict], summary: dict, persona_id: str) -> dict:
+def _score_roleplay(rows: list[dict], summary: dict, persona_id: str, city: str = "Tianjin") -> dict:
     import sys
     bench_dir = Path(__file__).resolve().parents[2] / "experiments" / "benchmark"
     if str(bench_dir) not in sys.path:
@@ -103,8 +106,9 @@ def _score_roleplay(rows: list[dict], summary: dict, persona_id: str) -> dict:
 
     persona_path = Path(__file__).resolve().parents[2] / "energybridge" / "roleplay" / "personas" / f"{persona_id}.json"
     persona = json.loads(persona_path.read_text(encoding="utf-8"))
+    sim_days_score = 7 if city.lower() == "germany" else 3
     scores = []
-    for ei in range(3):
+    for ei in range(sim_days_score):
         start, end = 18.0 + ei * 24.0, 19.0 + ei * 24.0
         er = [r for r in rows if start <= r["sim_hour"] < end]
         if not er:
@@ -115,7 +119,7 @@ def _score_roleplay(rows: list[dict], summary: dict, persona_id: str) -> dict:
             building="family", method="rl",
             mean_temp_c=mean("indoor_temperature_c"),
             pmv_ok_fraction=sum(abs(r.get("pmv", 0)) <= 0.5 for r in er) / len(er),
-            energy_kwh_per_day=summary["total_energy_kwh"] / 3.0,
+            energy_kwh_per_day=summary["total_energy_kwh"] / float(sim_days_score),
             agent_setpoint_c=mean("cooling_setpoint_c"),
             event_index=ei + 1,
             user_preference_text=persona["llm_prompts"]["system_prompt"],
@@ -129,6 +133,7 @@ def _score_roleplay(rows: list[dict], summary: dict, persona_id: str) -> dict:
 
 
 def _write_summary(output: Path, summary: dict) -> None:
+    summary_days = 7 if str(summary.get("city", "")).lower() == "germany" else 3
     lines = [
         "─" * 62,
         "  RL PPO Pref-v2 Key Metrics Summary",
@@ -138,7 +143,7 @@ def _write_summary(output: Path, summary: dict) -> None:
         f"  Price CSV         : {summary.get('price_csv', 'N/A') or 'N/A'}",
         f"  Persona           : {summary.get('persona', '?')}",
         f"  VPP-window energy : {summary['vpp_window_energy_kwh']:.3f} kWh",
-        f"  Total energy      : {summary['total_energy_kwh']:.2f} kWh (3 days)",
+        f"  Total energy      : {summary['total_energy_kwh']:.2f} kWh ({summary_days} days)",
         f"  Mean satisfaction : {summary.get('user_satisfaction', 0):.1f}/5",
         "  Per-event scores  : " + "  ".join(
             f"VPP{i+1}:{s:.0f}" for i, s in enumerate(summary.get("user_pref_scores", []))

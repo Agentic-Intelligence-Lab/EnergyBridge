@@ -67,10 +67,10 @@ python -m baselines.rl_typical_human.run_experiment \
 Formal PPO training:
 
 ```bash
-python -m baselines.rl_energyplus_3day.train \
+python -m baselines.rl_energyplus.train \
   --hours 4 --device cuda \
-  --output benchmark_results/rl_energyplus_3day_formal
+  --output benchmark_results/rl_energyplus_formal
 ```
 
-See `baselines/rl_energyplus_3day/README.md` for the environment contract,
+See `baselines/rl_energyplus/README.md` for the environment contract,
 resume workflow, generated metrics, known issues, and tuning priorities.

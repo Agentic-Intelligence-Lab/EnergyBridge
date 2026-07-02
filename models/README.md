@@ -48,7 +48,7 @@ python experiments/benchmark/generate_baseline_matrix_report.py \
 ### Tianjin (no price data)
 
 ```bash
-python -m baselines.rl_energyplus_3day.train_pref_v2 \
+python -m baselines.rl_energyplus.train_pref_v2 \
   --persona all_appliances_full \
   --city Tianjin \
   --n-envs 96 \
@@ -60,7 +60,7 @@ python -m baselines.rl_energyplus_3day.train_pref_v2 \
 ### Germany (with real day-ahead price)
 
 ```bash
-python -m baselines.rl_energyplus_3day.train_pref_v2 \
+python -m baselines.rl_energyplus.train_pref_v2 \
   --persona all_appliances_full \
   --city Germany \
   --start-date 2025-06-01 \

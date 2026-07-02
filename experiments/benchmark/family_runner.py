@@ -3575,10 +3575,10 @@ All times are hour-of-day (0–23.9)."""
         # environment_pref_v2 via absolute file path before any normal import,
         # so subsequent `from baselines... import ...` resolves via sys.modules.
         import os as _os, sys as _sys, importlib.util as _ilu
-        _MOD_KEY = "baselines.rl_energyplus_3day.environment_pref_v2"
+        _MOD_KEY = "baselines.rl_energyplus.environment_pref_v2"
         if _MOD_KEY not in _sys.modules:
             _proj_root = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
-            _ev_path = _os.path.join(_proj_root, "baselines", "rl_energyplus_3day", "environment_pref_v2.py")
+            _ev_path = _os.path.join(_proj_root, "baselines", "rl_energyplus", "environment_pref_v2.py")
             if _proj_root not in _sys.path:
                 _sys.path.insert(0, _proj_root)
             _spec = _ilu.spec_from_file_location(_MOD_KEY, _ev_path)
@@ -3586,7 +3586,7 @@ All times are hour-of-day (0–23.9)."""
             _sys.modules[_MOD_KEY] = _mod
             _spec.loader.exec_module(_mod)
         from experiments.benchmark.baselines.rl_ppo_pref_v2 import predict_control_result
-        from baselines.rl_energyplus_3day.environment_pref_v2 import _build_user_preference_proxy
+        from baselines.rl_energyplus.environment_pref_v2 import _build_user_preference_proxy
 
         vpp_active_now = bool(
             vpp_event and float(vpp_event["trigger_h"]) <= float(sim_h) < float(vpp_event["end_h"])

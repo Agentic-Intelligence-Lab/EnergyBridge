@@ -85,7 +85,7 @@ def resolve_model_path() -> Path:
     checked = "\n  ".join(str(path) for path in DEFAULT_MODEL_CANDIDATES)
     raise FileNotFoundError(
         f"No RL PPO model found. Set {MODEL_ENV_VAR} or create one with the "
-        "rl_energyplus_3day smoke trainer. Checked:\n  " + checked
+        "rl_energyplus smoke trainer. Checked:\n  " + checked
     )
 
 

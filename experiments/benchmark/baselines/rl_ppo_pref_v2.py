@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-# Ensure baselines.rl_energyplus_3day is importable when adapter is loaded
+# Ensure baselines.rl_energyplus is importable when adapter is loaded
 # from the benchmark runner (which sets sys.path[0] to experiments/benchmark
 # only, not the project root). Without this, build_observation's delayed
 # import fails inside the EnergyPlus ctypes callback and the exception is
@@ -108,7 +108,7 @@ def build_observation(
     price_profile: Any = None,
     pref_proxy: dict[str, float] | None = None,
 ) -> np.ndarray:
-    from baselines.rl_energyplus_3day.environment_pref_v2 import (
+    from baselines.rl_energyplus.environment_pref_v2 import (
         _price_features, _shiftable_obs, _wh_obs,
     )
 
@@ -122,7 +122,7 @@ def build_observation(
     # Wrap raw DayAheadPriceProfile with adapter if needed (benchmark runner
     # passes the profile directly without get_price; training env wraps it).
     if price_profile is not None and not hasattr(price_profile, "get_price"):
-        from baselines.rl_energyplus_3day.environment_pref_v2 import _PriceProfileAdapter
+        from baselines.rl_energyplus.environment_pref_v2 import _PriceProfileAdapter
         _base_date = ""
         if hasattr(price_profile, "points") and price_profile.points:
             _base_date = price_profile.points[0].local_time.strftime("%Y-%m-%d")

@@ -1,17 +1,153 @@
-# RL EnergyPlus Three-Day Baseline
+# RL EnergyPlus Baseline
 
-This is the main RL baseline for comparison with the EnergyBridge agent. It
-trains PPO directly against the same EnergyPlus 24.1 three-day family model,
-Tianjin weather, appliance configuration, and daily 18:00-19:00 VPP windows
-used by the agent benchmark.
+This directory contains RL baselines for the EnergyBridge family benchmark:
 
-Use the other RL directories only for their narrower purposes:
+- **`train_pref_v2.py` + `environment_pref_v2.py`** — **Production v2 baseline (8-dim, preference-aware)**. Used by the family benchmark inference path via `experiments/benchmark/baselines/rl_ppo_pref_v2.py`. Trained checkpoints exposed as `models/rl_ppo_pref_v2_{tianjin,germany}.zip`.
+- **`train.py` + `environment.py`** — Legacy v1 baseline (3-dim, retained for reference). See "Legacy v1" section at the end.
 
-- `baselines/rl_energyplus_3day`: comparable three-day EnergyPlus baseline.
-- `baselines/rl_sinergym_reference`: faithful reference Sinergym + EnergyPlus
-  25.1 reproduction path.
-- `baselines/rl_typical_human`: fast seven-day lightweight simulator for
-  pipeline and reward experiments; it is not directly comparable to the agent.
+## v2 (8-dim, production)
+
+Preference-aware PPO baseline with expanded action space covering all
+controllable appliances. The trained checkpoints are the ones used by
+`family_runner` when running `rl_ppo_pref_v2` benchmarks.
+
+### Requirements
+
+- Conda env `energybridge` with `stable-baselines3`, `torch`, `gymnasium`, `pyenergyplus`
+- EnergyPlus 24.1: `EPLUS_ROOT=/path/to/EnergyPlus-24-1-0`
+- LLM credentials in `.env` for the final role-play scoring
+- Multi-core server for parallel training (script uses `SubprocVecEnv`)
+
+Run from the repo root.
+
+### Training
+
+Both cities use the same PPO hyperparameters (10M timesteps, `--n-envs 96`, `--hours 8` wall-clock cap). Sim length and IDF are auto-selected from `--city`. Wall-clock: ~4h per city on 96 parallel envs.
+
+**Tianjin** (3-day sim, `family_simple_3day.idf`):
+
+```bash
+python -m baselines.rl_energyplus.train_pref_v2 \
+    --city Tianjin --persona all_appliances_full \
+    --price-csv experiments/real_data/tianjin_tou_price_normalized.csv \
+    --hours 8 --timesteps 10000000 --n-envs 96 --device cuda:0 \
+    --output benchmark_results/rl_v2_8dim_tianjin
+```
+
+**Germany** (7-day sim, `berlin_family_geg_final.idf`):
+
+```bash
+python -m baselines.rl_energyplus.train_pref_v2 \
+    --city Germany --persona all_appliances_full \
+    --start-date 2025-06-01 \
+    --price-csv experiments/real_data/germany_2025_price.csv \
+    --hours 8 --timesteps 10000000 --n-envs 96 --device cuda:1 \
+    --output benchmark_results/rl_v2_8dim_germany
+```
+
+The trainer writes periodic checkpoints under `<output>/` and a final
+`ppo_energyplus_3day.zip`. Copy the finals to `models/`:
+
+```bash
+cp benchmark_results/rl_v2_8dim_tianjin/ppo_energyplus_3day.zip models/rl_ppo_pref_v2_tianjin.zip
+cp benchmark_results/rl_v2_8dim_germany/ppo_energyplus_3day.zip models/rl_ppo_pref_v2_germany.zip
+```
+
+### Key hyperparameters
+
+| Param | Value | Notes |
+|---|---|---|
+| `n_steps` | 432 | Matches 3-day episode (72h × 6 steps/h) |
+| `batch_size` | `min(n_envs × 432, 2048)` | Scales with parallelism |
+| `learning_rate` | 3e-4 | Standard PPO |
+| `gamma` | 0.995 | Long-horizon appliance scheduling |
+| `policy_kwargs.net_arch` | `[256, 256]` | MLP |
+| `--timesteps` | 10M | Convergence based on terminal_bonus plateau |
+| `--n-envs` | 96 | Parallel EnergyPlus instances via `SubprocVecEnv` |
+
+### Action space (8 dims, `_decode_action_v2`)
+
+| Dim | Physical | Decode range |
+|---|---|---|
+| 0 | AC cooling setpoint | [22, 28]°C |
+| 1 | Washer start | [8.0, 19.0]h |
+| 2 | Dishwasher start | [19.0, 21.5]h (overnight-first) |
+| 3 | WH preheat start | [7.0, 17.0]h |
+| 4 | WH target temp | [45, 75]°C |
+| 5 | EV charge start | [18.5, 20.0]h (avoid last-day sim cutoff) |
+| 6 | EV charge end | [4.0, 7.5]h |
+| 7 | Dryer start | [8.0, 19.5]h |
+
+Ranges are tuned to match the training persona `all_appliances_full` valid
+schedule windows, so PPO output is always physically valid without extra clip.
+
+### Observation space (41 dims, `OBSERVATION_NAMES_V2`)
+
+Time features (4) + thermal + VPP context + shiftable-appliance states (washer,
+dishwasher) + WH state + EV state + price features + preference proxy.
+Deliberately excludes user-preference text and historical feedback (Agent-only
+signals). See `environment_pref_v2.py:63-92` for the exact schema.
+
+### Reward weights (`REWARD_WEIGHTS_V2`)
+
+| Component | Weight | Purpose |
+|---|---|---|
+| `energy_base` | 0.3 | Per-step kWh penalty |
+| `price_mult` | 0.2 | TOU price uplift on energy penalty |
+| `vpp_mult` | 2.0 | Extra multiplier during VPP window |
+| `comfort_mult` | 8.0 | Occupied comfort violation |
+| `terminal_washer/dishwasher/dryer` | 200 each | Successful schedule within allowed window |
+| `terminal_wh` | 100 | Ready at bath time |
+| `terminal_ev` | 300 | Target SOC reached |
+| `terminal_vpp_avoid` | 100 | Completed but not run during VPP |
+| `terminal_vpp_energy` | 80 | Low VPP-window energy |
+
+### Training persona
+
+Located at `energybridge/roleplay/personas/all_appliances_full.json`. All
+appliances `present=true`, `dr_adjustable=true`. Windows tightened to cover
+strictest household scenarios so PPO's learned policy generalizes to all 15
+benchmark scenarios (10 single-user personas + 5 multi-user households).
+
+### Inference / benchmark
+
+The trained checkpoints are consumed by
+`experiments/benchmark/baselines/rl_ppo_pref_v2.py` (the adapter). To run
+benchmarks:
+
+```bash
+export ENERGYBRIDGE_RL_PREF_V2_MODEL=/path/to/models/rl_ppo_pref_v2_tianjin.zip
+
+python experiments/benchmark/run_baseline_matrix.py \
+    --personas atom_comfort_sensitive [...other personas...] \
+    --methods rl_ppo_pref_v2 --city Tianjin --days 3 \
+    --price-csv experiments/real_data/tianjin_tou_price_normalized.csv \
+    --date my_rl_run --workers 4
+```
+
+For multi-user households:
+
+```bash
+python experiments/benchmark/run_household_matrix.py \
+    --methods rl_ppo_pref_v2 --city Tianjin --days 3 \
+    --price-csv experiments/real_data/tianjin_tou_price_normalized.csv \
+    --date my_rl_run_hh
+```
+
+### Verification
+
+30/30 PASS across (Tianjin, Germany) × (10 personas, 5 households):
+- `physical_appliance_task_completion_rate = 1.0` all scenarios
+- `ev_target_reached_rate = 1.0`
+- `output_uncovered_appliance_services = []`
+
+---
+
+## Legacy v1 (3-dim)
+
+The original 3-dim PPO baseline (`train.py`, `environment.py`) is retained
+for reference. It is **not** used by the current benchmark. See the sections
+below for its documentation.
 
 ## Requirements
 
@@ -36,7 +172,7 @@ about 465 transitions per three-day episode. PPO's configured `n_steps=432` is
 a rollout-buffer size, not the exact episode length.
 
 ```bash
-python -m baselines.rl_energyplus_3day.train \
+python -m baselines.rl_energyplus.train \
   --hours 0.03 \
   --timesteps 432 \
   --persona atom_comfort_sensitive \
@@ -51,7 +187,7 @@ policy.
 Start a four-hour GPU-enabled run:
 
 ```bash
-python -m baselines.rl_energyplus_3day.train \
+python -m baselines.rl_energyplus.train \
   --hours 4 \
   --device cuda \
   --persona atom_comfort_sensitive \
@@ -64,7 +200,7 @@ model as `ppo_energyplus_3day.zip`.
 Continue training from either the final model or a checkpoint:
 
 ```bash
-python -m baselines.rl_energyplus_3day.train \
+python -m baselines.rl_energyplus.train \
   --resume benchmark_results/atom_comfort_sensitive_rl_energyplus_4h/ppo_energyplus_3day.zip \
   --hours 4 \
   --device cuda \
