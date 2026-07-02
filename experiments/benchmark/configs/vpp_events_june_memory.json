@@ -1,0 +1,247 @@
+{
+  "description": "Generated historical DR events for capacity-reporting memory. Use this schedule for both no_dr and EB+rule+MILP runs.",
+  "seed": 20260630,
+  "days": 30,
+  "events": [
+    {
+      "id": "hist_d01_1",
+      "day": 1,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 1",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d02_1",
+      "day": 2,
+      "start_h": 19.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 2",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d03_1",
+      "day": 3,
+      "start_h": 16.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 3",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d04_1",
+      "day": 4,
+      "start_h": 16.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 4",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d05_1",
+      "day": 5,
+      "start_h": 16.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 5",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d06_1",
+      "day": 6,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 6",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d07_1",
+      "day": 7,
+      "start_h": 17.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 7",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d08_1",
+      "day": 8,
+      "start_h": 17.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 8",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d09_1",
+      "day": 9,
+      "start_h": 19.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 9",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d10_1",
+      "day": 10,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 10",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d11_1",
+      "day": 11,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 11",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d12_1",
+      "day": 12,
+      "start_h": 20.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 12",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d13_1",
+      "day": 13,
+      "start_h": 17.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 13",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d14_1",
+      "day": 14,
+      "start_h": 16.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 14",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d15_1",
+      "day": 15,
+      "start_h": 20.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 15",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d16_1",
+      "day": 16,
+      "start_h": 17.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 16",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d17_1",
+      "day": 17,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 17",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d18_1",
+      "day": 18,
+      "start_h": 17.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 18",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d19_1",
+      "day": 19,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 19",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d20_1",
+      "day": 20,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 20",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d21_1",
+      "day": 21,
+      "start_h": 17.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 21",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d22_1",
+      "day": 22,
+      "start_h": 17.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 22",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d23_1",
+      "day": 23,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 23",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d24_1",
+      "day": 24,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 24",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d25_1",
+      "day": 25,
+      "start_h": 20.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 25",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d26_1",
+      "day": 26,
+      "start_h": 16.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 26",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d27_1",
+      "day": 27,
+      "start_h": 16.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 27",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d28_1",
+      "day": 28,
+      "start_h": 16.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 28",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d29_1",
+      "day": 29,
+      "start_h": 20.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 29",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d30_1",
+      "day": 30,
+      "start_h": 20.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 30",
+      "source": "generated_historical_dr_memory"
+    }
+  ]
+}

@@ -408,6 +408,123 @@ benchmark_results/reports/counterfactual_baselines/
 These files are small CSV/JSON review artifacts. Raw EnergyPlus output folders
 remain generated data and are not committed.
 
+### Historical DR Event Memory For Reported Capacity
+
+The no-DR counterfactual workflow above is for benchmark settlement after the
+run. For capacity reporting before a future event, use a separate historical
+DR event memory. The current internal default is to build this only from the
+agentic `eb_rule_milp` method, because it is the deployable EnergyBridge hybrid
+controller and plain EnergyBridge can later reuse the same reporting layer.
+
+The idea is:
+
+```text
+historical correction factor =
+  realized delivery against no-DR / controller model bid
+
+future reported capacity =
+  current controller model bid * correction factor from similar historical events
+```
+
+This keeps two quantities separate:
+
+| Quantity | Purpose |
+|----------|---------|
+| no-DR counterfactual baseline | Used after the event to settle actual delivered kWh |
+| historical DR event memory | Used before the event to estimate/report credible capacity |
+
+Generate a reusable historical event schedule. For the June-memory demo, run
+the same schedule for both `no_dr` and `eb_rule_milp` so realized delivery can
+be computed with the no-DR counterfactual library.
+
+```bash
+python experiments/benchmark/dr_event_memory_library.py generate-events \
+  --days 30 \
+  --events-per-day 1 \
+  --hours 16 17 18 19 20 \
+  --durations 1 \
+  --seed 20260630 \
+  --output experiments/benchmark/configs/vpp_events_june_memory.json
+```
+
+Run only the data needed by the agent reporting method. Historical memory data
+must be generated as independent daily samples: one historical event/day is one
+standalone `--days 1` simulation with its own role-play context and EnergyPlus
+state. Do not feed all 30 days to the controller in one sequence, because that
+mixes daily feedback and state carry-over into the historical event library.
+
+```bash
+PYTHONUNBUFFERED=1 \
+python experiments/benchmark/run_daily_dr_memory_matrix.py \
+  --methods no_dr eb_rule_milp \
+  --cities Germany Tianjin \
+  --days 30 \
+  --start-date 2025-06-01 \
+  --vpp-events-json experiments/benchmark/configs/vpp_events_june_memory.json \
+  --date <YYYY-MM-DD>_agent_dr_memory_daily \
+  --workers 5 \
+  --resume
+```
+
+This expands to:
+
+```text
+30 historical days x 5 households x 2 cities x 2 methods = 600 one-day runs
+```
+
+The daily runner writes the raw summary, applies the no-DR counterfactual to
+each `eb_rule_milp` one-day result, and builds the historical memory:
+
+```text
+benchmark_results/<DATE>/_batch_logs/
+├── daily_dr_memory_summary_raw.json
+├── daily_dr_memory_summary_raw.csv
+├── daily_dr_memory_summary_with_counterfactual.json
+├── daily_dr_memory_summary_with_counterfactual.csv
+├── daily_dr_memory_no_dr_counterfactual_library.json
+└── eb_rule_milp_daily_dr_memory.json
+```
+
+Apply the historical memory to a future target summary with the deterministic
+calibrator:
+
+```bash
+python experiments/benchmark/dr_event_memory_library.py estimate \
+  --memory benchmark_results/<DATE>/_batch_logs/eb_rule_milp_daily_dr_memory.json \
+  --summary-json benchmark_results/<DATE>/_batch_logs/household_matrix_summary_5method_with_counterfactual_delivery_7days_H6.json \
+  --output-summary-json benchmark_results/<DATE>/_batch_logs/household_matrix_summary_5method_with_dr_memory_capacity_7days_H6.json \
+  --methods eb_rule_milp \
+  --top-k 5 \
+  --write-result-json
+```
+
+For the LLM-assisted reporting version, pass a compact top-k delivery
+distribution to the agent. The default is `--top-k 5`: the prompt receives
+distribution statistics plus compact retrieved-event evidence, and the agent
+chooses among precomputed P25/P50/P75 capacity bands. This is more stable than
+top-1 while keeping API latency and token usage bounded.
+
+```bash
+python experiments/benchmark/dr_event_memory_library.py agent-report \
+  --memory benchmark_results/<DATE>/_batch_logs/eb_rule_milp_daily_dr_memory.json \
+  --summary-json benchmark_results/<DATE>/_batch_logs/household_matrix_summary_5method_with_counterfactual_delivery_7days_H6.json \
+  --output-summary-json benchmark_results/<DATE>/_batch_logs/household_matrix_summary_eb_rule_milp_agent_capacity_report_7days_H6.json \
+  --methods eb_rule_milp \
+  --top-k 5 \
+  --write-result-json
+```
+
+Important output fields:
+
+| Field | Meaning |
+|-------|---------|
+| `historical_dr_memory_reported_capacity_total_kwh` | Capacity reported from historical-memory correction |
+| `historical_dr_memory_reported_capacity_avg_kw` | Average reported kW across future VPP windows |
+| `historical_dr_memory_capacity_estimate` | Per-event retrieved examples, correction factor, confidence, and reported capacity |
+| `agent_capacity_report_total_kwh` | LLM-assisted top-k historical-memory reported capacity |
+| `agent_capacity_report_avg_kw` | LLM-assisted average reported kW across future VPP windows |
+| `agent_capacity_report` | Per-event top-k distribution evidence, band choice, and reported capacity |
+
 ### How To Add A New Baseline Method
 
 Use a stable lowercase method id, for example `my_baseline`. Keep the method id
