@@ -391,16 +391,6 @@ python experiments/benchmark/counterfactual_baseline_library.py apply \
 
 Important output fields:
 
-<<<<<<< HEAD
-
-| Field                                                         | Meaning                                                             |
-| ------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `counterfactual_capacity_upper_bound_avg_per_hour_kwh`        | New reported capacity upper bound in average kW over VPP windows    |
-| `counterfactual_actual_shed_avg_per_hour_kwh`                 | Actual delivered average kW against no-DR                           |
-| `counterfactual_delivery_ratio_vs_baseline_upper_bound_total` | Settlement delivery ratio using no-DR as the denominator            |
-| `counterfactual_delivery_ratio_vs_target_avg`                 | Diagnostic ratio against the old target/capacity request            |
-| `vpp_energy_reduction_basis`                                  | Should be`no_dr_counterfactual_baseline` after applying the library |
-=======
 | Field | Meaning |
 |-------|---------|
 | `counterfactual_capacity_upper_bound_avg_per_hour_kwh` | New reported capacity upper bound in average kW over VPP windows |
@@ -408,7 +398,6 @@ Important output fields:
 | `counterfactual_delivery_ratio_vs_baseline_upper_bound_total` | Settlement delivery ratio using no-DR as the denominator |
 | `counterfactual_delivery_ratio_vs_target_avg` | Diagnostic ratio against the old target/capacity request |
 | `vpp_energy_reduction_basis` | Should be `no_dr_counterfactual_baseline` after applying the library |
->>>>>>> origin/main
 
 The current 5-household x 2-city settlement artifacts are kept under:
 
@@ -1009,9 +998,18 @@ baselines/rl_energyplus_3day/README.md
 baselines/rl_typical_human/
 ```
 
+### Agent-Method Baselines
+
+Agent-method baselines incorporate third-party intelligent agents into the
+EnergyBridge benchmark. These baselines wrap an external agent so it returns
+the same control-intent shape expected by the benchmark runner, making it
+possible to compare generalist agents against purpose-built EnergyBridge
+controllers on identical VPP avoidance, comfort, and task-completion metrics.
+
 ### `HEMA`
 
-Native HEMA ReAct agent baseline.Useful for comparing a generalist agent against purpose-built EnergyBridge controllers on identical VPP avoidance, comfort, and task-completion metrics. This baseline requires the original HEMA repository as an external dependency.
+Native HEMA ReAct agent baseline. This baseline requires the original HEMA
+repository as an external dependency.
 
 ```text
 git clone https://github.com/humanbuildingsynergy/HEMA.git
