@@ -514,6 +514,8 @@ distribution to the agent. The default is `--top-k 5`: the prompt receives
 distribution statistics plus compact retrieved-event evidence, and the agent
 chooses among precomputed P25/P50/P75 capacity bands. This is more stable than
 top-1 while keeping API latency and token usage bounded.
+Historical retrieval is role/household scoped: a target entity only queries
+historical events from the same `household_id`/`persona_id`.
 
 ```bash
 python experiments/benchmark/dr_event_memory_library.py agent-report \

@@ -85,7 +85,7 @@ python experiments/benchmark/dr_event_memory_library.py agent-report \
 The reporter retrieves similar historical DR events from
 `eb_rule_milp_daily_dr_memory.json` using:
 
-- household/persona id,
+- household/persona id as a hard filter,
 - city,
 - method,
 - VPP hour,
@@ -93,8 +93,20 @@ The reporter retrieves similar historical DR events from
 - target no-DR baseline similarity,
 - source day as a weak tie-breaker.
 
+The household/persona id requirement is strict: a target role/household only
+queries historical events from the same role/household. If the target entity
+cannot be identified, the reporter returns `missing_entity_id` instead of
+falling back to another user.
+
 When enough same-hour examples exist, retrieval is restricted to the same VPP
 hour so that a 16:00 event does not contaminate an 18:00 report.
+
+The current similarity calculation does not directly compare an EnergyPlus
+thermal/weather feature vector such as outdoor temperature, humidity, zone
+temperature, or PMV. Instead, it uses the no-DR counterfactual VPP-window load
+as a compact proxy for weather, occupancy, building state, and thermal demand.
+Those raw EP features can be added later if the benchmark needs a more explicit
+physics-aware retrieval metric.
 
 For each retrieved event, historical delivery is mildly adjusted by:
 

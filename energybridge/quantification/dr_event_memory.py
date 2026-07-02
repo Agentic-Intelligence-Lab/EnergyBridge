@@ -216,10 +216,23 @@ def estimate_event_capacity_from_memory(
     target_day = _event_day(event, trigger_h)
     target_baseline_kwh = _event_baseline_kwh(event)
     entity_id = _entity_id(metadata, result)
+    if not entity_id:
+        return {
+            "status": "missing_entity_id",
+            "reported_capacity_kwh": 0.0,
+            "reported_capacity_kw": 0.0,
+            "duration_h": round(duration_h, 6),
+            "basis": "entity_id_required_for_role_scoped_memory_lookup",
+            "retrieval_count": 0,
+            "retrieved_events": [],
+            "delivery_distribution": {"count": 0},
+        }
     city = _city(metadata, result)
     method = _method(metadata, result)
     scored = []
     for record in memory.get("events") or []:
+        if str(record.get("entity_id") or "") != entity_id:
+            continue
         score = _similarity(
             record,
             entity_id=entity_id,
