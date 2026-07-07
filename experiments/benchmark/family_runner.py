@@ -2789,6 +2789,8 @@ Use English only for every text value in EnergyBridge output, including `reason`
 The explanation must say why the VPP request occurs, concrete device actions with amount/time/duration,
 protected constraints (comfort, EV SOC, caregiving/routine boundaries, control limits), user opt-out/restore authority,
 expected load/compensation benefit without inventing money, and 2-3 alternatives.
+Write `natural_language` as 2-3 short user-facing paragraphs, not as a checklist or field concatenation.
+Mention the saved preference profile, recent feedback/memory, or routine evidence that explains why this plan fits this user.
 For non-VPP calls, set `strategy_explanation` to null.
 Do not put the long explanation in `reason`; `reason` remains a compact <=100 char rationale.
 
@@ -2816,7 +2818,7 @@ Final control JSON ONLY (no markdown, no explanation):
    "ev_charge_end_h": null_or_float
  }},
  "strategy_explanation": null_or_{{
-   "natural_language": "English explanation for the household",
+   "natural_language": "English 2-3 paragraph explanation for the household",
    "why_request": "why this VPP request happens",
    "recommended_actions": [{{"device": "ac|washer|dishwasher|dryer|water_heater|ev", "action": "...", "amount": "...", "duration": "...", "rationale": "..."}}],
    "protected_constraints": ["comfort/control/service constraints protected"],

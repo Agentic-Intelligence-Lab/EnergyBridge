@@ -191,13 +191,13 @@ def _device_actions(
         if skip is True:
             summary = f"Do not run the {label} today; use skip only when the task is genuinely unnecessary."
             command = {"skip": True}
-        elif start is not None:
-            summary = f"Start the {label} at {_fmt_hour(start)} for about {dev_duration}, avoiding {window}."
-            command = {"start_h": _float_or_none(start), "duration_h": _float_or_none(dev.get("duration_h"))}
         elif dev.get("dr_adjustable", dev.get("shiftable", True)) is False:
             pref = dev.get("preferred_h")
             summary = f"The {label} is fixed or non-DR-adjustable, so keep the user's routine time at {_fmt_hour(pref)}."
             command = {"routine_start_h": _float_or_none(pref), "dr_adjustable": False}
+        elif start is not None:
+            summary = f"Start the {label} at {_fmt_hour(start)} for about {dev_duration}, avoiding {window}."
+            command = {"start_h": _float_or_none(start), "duration_h": _float_or_none(dev.get("duration_h"))}
         else:
             summary = f"Do not start the {label} inside {window}; if it must run today, schedule it outside the window."
             command = {"avoid_window": window}
@@ -412,13 +412,11 @@ def _alternatives(persona_config: dict | None, appliance_config: dict | None, ev
         }
     ev = _present_device_config(appliance_config, "ev")
     if ev:
-        alternatives.append(
-            {
-                "name": "EV-priority option",
-                "summary": f"Treat reaching target SOC before {_fmt_hour(ev.get('departure_h'))} as a hard constraint; if needed, start charging immediately after {window}.",
-                "tradeoff": "Protects mobility, but may reduce available shedding time.",
-            }
-        )
+        alternatives[2] = {
+            "name": "EV-priority option",
+            "summary": f"Treat reaching target SOC before {_fmt_hour(ev.get('departure_h'))} as a hard constraint; if needed, start charging immediately after {window}.",
+            "tradeoff": "Protects mobility, but may reduce available shedding time.",
+        }
     return alternatives[:3]
 
 
@@ -515,6 +513,241 @@ def _structured_constraints(
     }
 
 
+def _human_join(items: list[str]) -> str:
+    clean = [item.strip() for item in items if item and item.strip()]
+    if not clean:
+        return ""
+    if len(clean) == 1:
+        return clean[0]
+    if len(clean) == 2:
+        return f"{clean[0]} and {clean[1]}"
+    return ", ".join(clean[:-1]) + f", and {clean[-1]}"
+
+
+def _target_phrase(benefit: dict) -> str:
+    target_kw = _float_or_none((benefit or {}).get("target_shed_kw"))
+    if target_kw is not None and target_kw > 0:
+        return f"about {target_kw:.2f} kW of flexible load"
+    estimate_kw = _float_or_none((benefit or {}).get("load_shift_kw_estimate"))
+    if estimate_kw is not None and estimate_kw > 0:
+        return f"some flexible load, with roughly {estimate_kw:.1f} kW available to move"
+    return "a small amount of flexible load"
+
+
+def _strategy_phrase(alternatives: list[dict]) -> str:
+    names = [str(item.get("name", "")) for item in alternatives if isinstance(item, dict)]
+    if "Advisory-only option" in names:
+        return "a comfort-first, low-automation plan"
+    if "EV-priority option" in names:
+        return "an EV-safe balanced plan"
+    return "a balanced plan"
+
+
+def _device_plan_sentences(actions: list[dict], event: dict | None) -> list[str]:
+    window = _fmt_window(event)
+    by_device = {
+        str(item.get("device", "")): item
+        for item in actions
+        if isinstance(item, dict) and item.get("device")
+    }
+    sentences: list[str] = []
+    ac = by_device.get("ac")
+    if ac:
+        amount = _float_or_none(ac.get("amount"))
+        if amount is not None:
+            sentences.append(
+                f"I will keep the AC at {amount:.1f}°C during the event and restore normal comfort control afterward."
+            )
+        else:
+            sentences.append("I will keep the AC inside the authorized comfort range and restore normal control afterward.")
+
+    shift_items: list[str] = []
+    for device, label in (
+        ("washer", "washer"),
+        ("dishwasher", "dishwasher"),
+        ("dryer", "dryer"),
+    ):
+        item = by_device.get(device)
+        if not item:
+            continue
+        amount = item.get("amount") if isinstance(item.get("amount"), dict) else {}
+        if amount.get("skip") is True:
+            shift_items.append(f"skip the {label} only if it is not needed today")
+        elif amount.get("start_h") is not None:
+            shift_items.append(f"start the {label} at {_fmt_hour(amount.get('start_h'))}")
+        elif amount.get("routine_start_h") is not None:
+            shift_items.append(f"leave the {label} at its usual {_fmt_hour(amount.get('routine_start_h'))} routine")
+        else:
+            shift_items.append(f"keep the {label} out of {window}")
+    if shift_items:
+        sentences.append(f"For household tasks, I will {_human_join(shift_items)}.")
+
+    water = by_device.get("water_heater")
+    if water:
+        amount = water.get("amount") if isinstance(water.get("amount"), dict) else {}
+        start = amount.get("preheat_start_h", amount.get("routine_preheat_start_h"))
+        end = amount.get("preheat_end_h", amount.get("routine_preheat_end_h"))
+        temp = amount.get("preheat_temp_c")
+        if start is not None and end is not None:
+            temp_text = f" at {float(temp):.0f}°C" if temp is not None else ""
+            sentences.append(
+                f"The water heater is prepared from {_fmt_hour(start)} to {_fmt_hour(end)}{temp_text}, so hot water is ready without running during {window}."
+            )
+        else:
+            sentences.append(f"The water heater is kept ready for bath time without using it as a risky shedding resource.")
+
+    ev = by_device.get("ev")
+    if ev:
+        amount = ev.get("amount") if isinstance(ev.get("amount"), dict) else {}
+        start = amount.get("charge_start_h")
+        end = amount.get("charge_end_h")
+        if start is not None and end is not None:
+            sentences.append(
+                f"EV charging waits until {_fmt_hour(start)}-{_fmt_hour(end)}, keeping the event window clear while protecting the departure SOC target."
+            )
+        else:
+            dep = amount.get("departure_h")
+            dep_text = f" before {_fmt_hour(dep)}" if dep is not None else ""
+            sentences.append(f"EV charging stays out of {window} while still protecting the next-trip SOC{dep_text}.")
+    return sentences
+
+
+def _recent_decision_basis(day_decisions: list[dict] | None) -> list[str]:
+    decisions = [item for item in day_decisions or [] if isinstance(item, dict)]
+    if not decisions:
+        return []
+    notes: list[str] = []
+    setpoints = [
+        _float_or_none(item.get("sp", item.get("effective_setpoint")))
+        for item in decisions[-6:]
+    ]
+    setpoints = [item for item in setpoints if item is not None and item < 35.0]
+    if setpoints:
+        avg_sp = sum(setpoints) / len(setpoints)
+        notes.append(f"Recent control history in this run has stayed near {avg_sp:.1f}°C, so I avoid a larger thermostat jump.")
+    services: set[str] = set()
+    for item in decisions[-8:]:
+        for source in (item.get("actions"), item.get("raw_appliance_actions")):
+            if not isinstance(source, dict):
+                continue
+            for key, value in source.items():
+                if value is None:
+                    continue
+                device = str(key).split("_")[0]
+                if device in {"washer", "dishwasher", "dryer", "water", "ev"}:
+                    services.add("water heater" if device == "water" else device)
+    if services:
+        notes.append(f"Recent device decisions already identify {_human_join(sorted(services))} as the practical flexibility to manage first.")
+    return notes[:2]
+
+
+def _preference_basis(
+    persona_config: dict | None,
+    appliance_config: dict | None,
+    day_decisions: list[dict] | None,
+) -> list[str]:
+    tags = (persona_config or {}).get("tags") or {}
+    schedule = (persona_config or {}).get("schedule") or {}
+    weights = ((persona_config or {}).get("preferences") or {}).get("scoring_weights") or {}
+    ac_min, ac_max = _comfort_bounds(appliance_config)
+    notes: list[str] = []
+
+    comfort_w = _float_or_none(weights.get("comfort")) or 0.0
+    energy_w = _float_or_none(weights.get("energy")) or 0.0
+    vpp_w = _float_or_none(weights.get("vpp")) or 0.0
+    if comfort_w >= max(energy_w, vpp_w):
+        notes.append("Your saved preference profile puts comfort and service continuity ahead of aggressive grid response.")
+    elif energy_w >= vpp_w:
+        notes.append("Your saved preference profile is cost-aware, so I look for flexible loads that can move without affecting comfort.")
+    else:
+        notes.append("Your saved preference profile allows stronger VPP support as long as the agreed boundaries are respected.")
+
+    schedule_tag = tags.get("schedule")
+    ev = _present_device_config(appliance_config, "ev")
+    if ev:
+        target = _float_or_none(ev.get("target_soc"))
+        target_text = f"{target:.0%} SOC" if target is not None else "the target SOC"
+        notes.append(f"Your EV routine requires {target_text} before {_fmt_hour(ev.get('departure_h'))}, so mobility takes priority over extra shedding.")
+
+    if schedule_tag == "regular_commuter":
+        returns = schedule.get("returns_home_h")
+        notes.append(f"Your routine usually brings you home around {_fmt_hour(returns)}, so the plan protects arrival comfort.")
+    elif schedule_tag == "stay_at_home":
+        notes.append("Because you are usually home during the event, I keep any comfort change small, visible, and reversible.")
+    elif schedule_tag == "irregular":
+        notes.append("Because your schedule is irregular, I do not over-trust yesterday's pattern; today's confirmation remains important.")
+    elif schedule_tag == "caregiver":
+        members = schedule.get("vulnerable_members") or ["caregiving routine"]
+        notes.append(f"Caregiving stability for {_human_join([str(item) for item in members])} is treated as a hard boundary, not as flexible load.")
+
+    control = tags.get("control")
+    if control in {"confirm_required", "suggestion_first", "low_auto_accept", "privacy_sensitive"}:
+        notes.append("Your control preference requires clear consent and an easy opt-out before stronger actions.")
+    elif control == "high_trust_auto":
+        notes.append("You allow automatic scheduling inside preset limits, so I use automation only where those limits are explicit.")
+
+    if ac_min is not None and ac_max is not None:
+        notes.append(f"Your comfort range is {ac_min:.1f}-{ac_max:.1f}°C, so the thermostat part of the plan stays inside that band.")
+
+    notes.extend(_recent_decision_basis(day_decisions))
+    return notes[:5]
+
+
+def _alternative_text(alternatives: list[dict]) -> str:
+    names = {
+        str(item.get("name", ""))
+        for item in alternatives
+        if isinstance(item, dict)
+    }
+    if "Advisory-only option" in names:
+        return (
+            "If you prefer, I can make this advisory only: no automatic AC or routine changes, "
+            "just a reminder not to start nonessential devices during the event."
+        )
+    if "EV-priority option" in names:
+        return (
+            "If your travel plan changes, I can switch to an EV-priority version and charge sooner, "
+            "even if that leaves less flexibility for the grid event."
+        )
+    return (
+        "If you want to be more cautious, I can keep the AC unchanged and only move flexible chores; "
+        "if you explicitly confirm a stronger response, I can use the upper end of your comfort band for a short time."
+    )
+
+
+def _service_boundary_sentence(actions: list[dict]) -> str:
+    devices = {
+        str(item.get("device", ""))
+        for item in actions
+        if isinstance(item, dict) and item.get("device")
+    }
+    protected = ["comfort"]
+    if "water_heater" in devices:
+        protected.append("hot water")
+    if "ev" in devices:
+        protected.append("next-trip EV charge")
+    if len(protected) == 1:
+        return "I will keep comfort inside your saved limits."
+    return f"I will keep {_human_join(protected)} inside the limits you have already set."
+
+
+def _benefit_user_sentence(benefit: dict) -> str:
+    target_kw = _float_or_none((benefit or {}).get("target_shed_kw"))
+    estimate_kw = _float_or_none((benefit or {}).get("load_shift_kw_estimate"))
+    if target_kw is not None and 0.0 < target_kw <= 0.75:
+        return (
+            f"Because this request is only about {target_kw:.2f} kW, a low-disruption response should be enough."
+        )
+    if target_kw is not None and estimate_kw is not None and target_kw > 0 and estimate_kw > 0:
+        return (
+            f"This moves roughly {estimate_kw:.1f} kW of controllable load away from the event window "
+            f"against a {target_kw:.2f} kW request."
+        )
+    if estimate_kw is not None and estimate_kw > 0:
+        return f"This moves roughly {estimate_kw:.1f} kW of controllable load away from the event window."
+    return "The main benefit is avoiding new nonessential load during the event window."
+
+
 def _build_natural_language(
     *,
     why: str,
@@ -523,25 +756,34 @@ def _build_natural_language(
     user_control: list[str],
     benefit: dict,
     alternatives: list[dict],
+    event: dict | None,
+    preference_basis: list[str],
 ) -> str:
-    action_parts = [
-        str(item.get("rationale", "")).strip().rstrip(".; ")
-        for item in actions[:4]
-        if item.get("rationale")
+    plan_sentences = _device_plan_sentences(actions, event)
+    basis_sentences = [item.rstrip(".") + "." for item in preference_basis[:3]]
+    opening = (
+        f"{why} For this event, I would use {_strategy_phrase(alternatives)} rather than a disruptive cut, "
+        f"because the request is for {_target_phrase(benefit)} and the home still has comfort and service boundaries."
+    )
+    if basis_sentences:
+        opening += " " + " ".join(basis_sentences[:3])
+
+    plan_text = " ".join(plan_sentences)
+    if not plan_text:
+        plan_text = "The plan is to avoid starting optional controllable load inside the event window while keeping normal comfort and service available."
+
+    control_text = "You can cancel, pause, or restore your normal settings at any point."
+    if any("confirmation" in str(item).lower() for item in user_control):
+        control_text += " Anything beyond these saved limits needs a fresh confirmation from you."
+    closing_parts = [
+        _service_boundary_sentence(actions),
+        control_text,
+        _benefit_user_sentence(benefit),
     ]
-    action_text = "; ".join(action_parts)
-    alt_text = " / ".join(str(item.get("name", "")) for item in alternatives[:3] if item.get("name"))
-    strategy_name = "Advisory-only option" if any(
-        isinstance(item, dict) and item.get("name") == "Advisory-only option"
-        for item in alternatives
-    ) else "Balanced option"
-    protect_text = protected[0] if protected else "Comfort and service constraints come first."
-    control_text = user_control[0] if user_control else "The user can cancel at any time."
-    return (
-        f"{why} Recommended strategy: {strategy_name}. {action_text}. "
-        f"Protected boundary: {protect_text} {control_text} "
-        f"Expected benefit: {benefit.get('message', '')} Options include: {alt_text}."
-    ).strip()
+    alt_text = _alternative_text(alternatives)
+    if alt_text:
+        closing_parts.append(alt_text)
+    return "\n\n".join([opening, plan_text, " ".join(closing_parts)]).strip()
 
 
 def _review_dimensions(explanation: dict) -> dict:
@@ -591,6 +833,7 @@ def build_vpp_strategy_explanation(
     )
     alternatives = _alternatives(persona_config, appliance_config, event)
     why = _why_request(event, demand_context, capacity_context)
+    preference_basis = _preference_basis(persona_config, appliance_config, day_decisions)
     structured = _structured_constraints(
         event=event,
         appliance_config=appliance_config,
@@ -626,6 +869,8 @@ def build_vpp_strategy_explanation(
         user_control=user_control,
         benefit=benefit,
         alternatives=alternatives,
+        event=event,
+        preference_basis=preference_basis,
     )
     explanation["review_dimensions"] = _review_dimensions(explanation)
     return explanation
@@ -689,7 +934,13 @@ def normalize_vpp_strategy_explanation(
         value = _coerce_str(raw.get(key))
         if value and not contains_cjk_text(value):
             merged[key] = value
-    for key in ("recommended_actions", "protected_constraints", "user_control", "alternatives", "personalization_notes"):
+    for key in (
+        "recommended_actions",
+        "protected_constraints",
+        "user_control",
+        "alternatives",
+        "personalization_notes",
+    ):
         value = _coerce_list(raw.get(key))
         if value and not contains_cjk_text(value):
             merged[key] = value

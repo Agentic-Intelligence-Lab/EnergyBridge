@@ -55,6 +55,11 @@ def test_vpp_strategy_explanation_contains_review_required_fields_for_ev_user() 
     assert len(explanation["alternatives"]) >= 2
     assert any(item["device"] == "ev" for item in explanation["recommended_actions"])
     assert any("SOC" in item for item in explanation["protected_constraints"])
+    assert "\n\n" in explanation["natural_language"]
+    assert "I would use" in explanation["natural_language"]
+    assert "saved preference profile" in explanation["natural_language"]
+    assert "EV routine requires" in explanation["natural_language"]
+    assert "Recommended strategy" not in explanation["natural_language"]
     assert explanation["structured_control_constraints"]["hvac"]["setpoint_c"] == 26.0
     assert all(explanation["review_dimensions"].values())
     assert CJK_RE.search(json.dumps(explanation, ensure_ascii=False)) is None
@@ -104,7 +109,10 @@ def test_collect_and_write_strategy_explanation_artifacts(tmp_path: Path) -> Non
     assert len(records) == 1
     assert Path(paths["jsonl"]).read_text(encoding="utf-8").count("\n") == 1
     assert "basic_role_a_commuter_price_cooperative" in Path(paths["csv"]).read_text(encoding="utf-8")
-    assert "VPP Strategy Explanation Review Data" in Path(paths["markdown"]).read_text(encoding="utf-8")
+    markdown = Path(paths["markdown"]).read_text(encoding="utf-8")
+    assert "VPP Strategy Explanation Review Data" in markdown
+    assert "Preference basis:" not in markdown
+    assert "saved preference profile" in markdown
     for path in paths.values():
         assert CJK_RE.search(Path(path).read_text(encoding="utf-8")) is None
 
@@ -129,7 +137,8 @@ def test_normalize_strategy_explanation_drops_cjk_llm_fields() -> None:
         city="Germany",
     )
 
-    assert "Recommended strategy" in explanation["natural_language"]
+    assert "I would use" in explanation["natural_language"]
+    assert "Recommended strategy" not in explanation["natural_language"]
     assert explanation["llm_raw_explanation"] == {"omitted": "non_english_text_detected"}
     assert explanation["agent_reason"] == ""
     assert CJK_RE.search(json.dumps(explanation, ensure_ascii=False)) is None

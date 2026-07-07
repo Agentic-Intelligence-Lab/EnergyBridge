@@ -1,6 +1,6 @@
 # VPP Strategy Explanation Review Data
 
-Generated: 2026-07-07 14:48:37
+Generated: 2026-07-07 18:00:02
 Records: 18
 
 ## basic_role_a_commuter_price_cooperative / review_vpp1
@@ -10,7 +10,11 @@ Records: 18
 - Score: N/A
 - Why: 18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 0.50 kW of adjustable load during this peak period.
 
-18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 0.50 kW of adjustable load during this peak period. Recommended strategy: Balanced option. Temporarily adjust only within 24.0-26.0°C, then restore comfort after the VPP window; Start the washer at 19:00 for about 2 h, avoiding 18:00-19:00; Start the dishwasher at 21:00 for about 1.5 h, avoiding 18:00-19:00; Preheat the water heater from 15:00 to 17:00 at 55°C; store heat before bath time and avoid 18:00-19:00. Protected boundary: Indoor-temperature control must stay within the user's preferred comfort range 24.0-26.0°C and auto-restore after 18:00-19:00. The user can cancel, pause, or switch to the conservative option before or during the event. Expected benefit: The reference target is about 0.50 kW, so low-disruption actions are enough; focus on moving controllable non-AC load out of the window. Options include: Conservative option / Balanced option / Enhanced response option.
+18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 0.50 kW of adjustable load during this peak period. For this event, I would use a balanced plan rather than a disruptive cut, because the request is for about 0.50 kW of flexible load and the home still has comfort and service boundaries. Your saved preference profile is cost-aware, so I look for flexible loads that can move without affecting comfort. Your routine usually brings you home around 18:30, so the plan protects arrival comfort. Your control preference requires clear consent and an easy opt-out before stronger actions.
+
+I will keep the AC at 26.0°C during the event and restore normal comfort control afterward. For household tasks, I will start the washer at 19:00 and start the dishwasher at 21:00. The water heater is prepared from 15:00 to 17:00 at 55°C, so hot water is ready without running during 18:00-19:00.
+
+I will keep comfort and hot water inside the limits you have already set. You can cancel, pause, or restore your normal settings at any point. Anything beyond these saved limits needs a fresh confirmation from you. Because this request is only about 0.50 kW, a low-disruption response should be enough. If you want to be more cautious, I can keep the AC unchanged and only move flexible chores; if you explicitly confirm a stronger response, I can use the upper end of your comfort band for a short time.
 
 Review dimensions:
 - why_request: True
@@ -72,7 +76,11 @@ Structured constraints:
 - Score: N/A
 - Why: 18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.00 kW of adjustable load during this peak period.
 
-18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.00 kW of adjustable load during this peak period. Recommended strategy: Balanced option. Temporarily adjust only within 24.0-26.0°C, then restore comfort after the VPP window; Start the washer at 19:00 for about 2 h, avoiding 18:00-19:00; Start the dishwasher at 21:00 for about 1.5 h, avoiding 18:00-19:00; Preheat the water heater from 15:00 to 17:00 at 55°C; store heat before bath time and avoid 18:00-19:00. Protected boundary: Indoor-temperature control must stay within the user's preferred comfort range 24.0-26.0°C and auto-restore after 18:00-19:00. The user can cancel, pause, or switch to the conservative option before or during the event. Expected benefit: The reference shedding target is about 1.00 kW; the plan prioritizes shifting roughly 4.7 kW of controllable device load. Options include: Conservative option / Balanced option / Enhanced response option.
+18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.00 kW of adjustable load during this peak period. For this event, I would use a balanced plan rather than a disruptive cut, because the request is for about 1.00 kW of flexible load and the home still has comfort and service boundaries. Your saved preference profile is cost-aware, so I look for flexible loads that can move without affecting comfort. Your routine usually brings you home around 18:30, so the plan protects arrival comfort. Your control preference requires clear consent and an easy opt-out before stronger actions.
+
+I will keep the AC at 26.0°C during the event and restore normal comfort control afterward. For household tasks, I will start the washer at 19:00 and start the dishwasher at 21:00. The water heater is prepared from 15:00 to 17:00 at 55°C, so hot water is ready without running during 18:00-19:00.
+
+I will keep comfort and hot water inside the limits you have already set. You can cancel, pause, or restore your normal settings at any point. Anything beyond these saved limits needs a fresh confirmation from you. This moves roughly 4.7 kW of controllable load away from the event window against a 1.00 kW request. If you want to be more cautious, I can keep the AC unchanged and only move flexible chores; if you explicitly confirm a stronger response, I can use the upper end of your comfort band for a short time.
 
 Review dimensions:
 - why_request: True
@@ -134,7 +142,11 @@ Structured constraints:
 - Score: N/A
 - Why: 18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.50 kW of adjustable load during this peak period.
 
-18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.50 kW of adjustable load during this peak period. Recommended strategy: Balanced option. Temporarily adjust only within 24.0-26.0°C, then restore comfort after the VPP window; Start the washer at 19:00 for about 2 h, avoiding 18:00-19:00; Start the dishwasher at 21:00 for about 1.5 h, avoiding 18:00-19:00; Preheat the water heater from 15:00 to 17:00 at 55°C; store heat before bath time and avoid 18:00-19:00. Protected boundary: Indoor-temperature control must stay within the user's preferred comfort range 24.0-26.0°C and auto-restore after 18:00-19:00. The user can cancel, pause, or switch to the conservative option before or during the event. Expected benefit: The reference shedding target is about 1.50 kW; the plan prioritizes shifting roughly 4.7 kW of controllable device load. Options include: Conservative option / Balanced option / Enhanced response option.
+18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.50 kW of adjustable load during this peak period. For this event, I would use a balanced plan rather than a disruptive cut, because the request is for about 1.50 kW of flexible load and the home still has comfort and service boundaries. Your saved preference profile is cost-aware, so I look for flexible loads that can move without affecting comfort. Your routine usually brings you home around 18:30, so the plan protects arrival comfort. Your control preference requires clear consent and an easy opt-out before stronger actions.
+
+I will keep the AC at 26.0°C during the event and restore normal comfort control afterward. For household tasks, I will start the washer at 19:00 and start the dishwasher at 21:00. The water heater is prepared from 15:00 to 17:00 at 55°C, so hot water is ready without running during 18:00-19:00.
+
+I will keep comfort and hot water inside the limits you have already set. You can cancel, pause, or restore your normal settings at any point. Anything beyond these saved limits needs a fresh confirmation from you. This moves roughly 4.7 kW of controllable load away from the event window against a 1.50 kW request. If you want to be more cautious, I can keep the AC unchanged and only move flexible chores; if you explicitly confirm a stronger response, I can use the upper end of your comfort band for a short time.
 
 Review dimensions:
 - why_request: True
@@ -196,7 +208,11 @@ Structured constraints:
 - Score: N/A
 - Why: 18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 0.50 kW of adjustable load during this peak period.
 
-18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 0.50 kW of adjustable load during this peak period. Recommended strategy: Balanced option. Temporarily adjust only within 24.5-25.5°C, then restore comfort after the VPP window; Start the washer at 10:00 for about 2 h, avoiding 18:00-19:00; Keep the fixed water-heater preheat window 18:00-20:00 at 50°C; protect bath-time hot water and do not use this routine as a shedding resource. Protected boundary: Indoor-temperature control must stay within the user's preferred comfort range 24.5-25.5°C and auto-restore after 18:00-19:00. The user can cancel, pause, or switch to the conservative option before or during the event. Expected benefit: No controllable device load can be safely shifted now; the benefit is mainly avoiding new noncritical load during the window. Options include: Conservative option / Balanced option / Enhanced response option.
+18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 0.50 kW of adjustable load during this peak period. For this event, I would use a balanced plan rather than a disruptive cut, because the request is for about 0.50 kW of flexible load and the home still has comfort and service boundaries. Your saved preference profile puts comfort and service continuity ahead of aggressive grid response. Because you are usually home during the event, I keep any comfort change small, visible, and reversible. Your control preference requires clear consent and an easy opt-out before stronger actions.
+
+I will keep the AC at 25.5°C during the event and restore normal comfort control afterward. For household tasks, I will leave the washer at its usual 10:00 routine. The water heater is prepared from 18:00 to 20:00 at 50°C, so hot water is ready without running during 18:00-19:00.
+
+I will keep comfort and hot water inside the limits you have already set. You can cancel, pause, or restore your normal settings at any point. Anything beyond these saved limits needs a fresh confirmation from you. Because this request is only about 0.50 kW, a low-disruption response should be enough. If you want to be more cautious, I can keep the AC unchanged and only move flexible chores; if you explicitly confirm a stronger response, I can use the upper end of your comfort band for a short time.
 
 Review dimensions:
 - why_request: True
@@ -253,7 +269,11 @@ Structured constraints:
 - Score: N/A
 - Why: 18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.00 kW of adjustable load during this peak period.
 
-18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.00 kW of adjustable load during this peak period. Recommended strategy: Balanced option. Temporarily adjust only within 24.5-25.5°C, then restore comfort after the VPP window; Start the washer at 10:00 for about 2 h, avoiding 18:00-19:00; Keep the fixed water-heater preheat window 18:00-20:00 at 50°C; protect bath-time hot water and do not use this routine as a shedding resource. Protected boundary: Indoor-temperature control must stay within the user's preferred comfort range 24.5-25.5°C and auto-restore after 18:00-19:00. The user can cancel, pause, or switch to the conservative option before or during the event. Expected benefit: No controllable device load can be safely shifted now; the benefit is mainly avoiding new noncritical load during the window. Options include: Conservative option / Balanced option / Enhanced response option.
+18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.00 kW of adjustable load during this peak period. For this event, I would use a balanced plan rather than a disruptive cut, because the request is for about 1.00 kW of flexible load and the home still has comfort and service boundaries. Your saved preference profile puts comfort and service continuity ahead of aggressive grid response. Because you are usually home during the event, I keep any comfort change small, visible, and reversible. Your control preference requires clear consent and an easy opt-out before stronger actions.
+
+I will keep the AC at 25.5°C during the event and restore normal comfort control afterward. For household tasks, I will leave the washer at its usual 10:00 routine. The water heater is prepared from 18:00 to 20:00 at 50°C, so hot water is ready without running during 18:00-19:00.
+
+I will keep comfort and hot water inside the limits you have already set. You can cancel, pause, or restore your normal settings at any point. Anything beyond these saved limits needs a fresh confirmation from you. The main benefit is avoiding new nonessential load during the event window. If you want to be more cautious, I can keep the AC unchanged and only move flexible chores; if you explicitly confirm a stronger response, I can use the upper end of your comfort band for a short time.
 
 Review dimensions:
 - why_request: True
@@ -310,7 +330,11 @@ Structured constraints:
 - Score: N/A
 - Why: 18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.50 kW of adjustable load during this peak period.
 
-18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.50 kW of adjustable load during this peak period. Recommended strategy: Balanced option. Temporarily adjust only within 24.5-25.5°C, then restore comfort after the VPP window; Start the washer at 10:00 for about 2 h, avoiding 18:00-19:00; Keep the fixed water-heater preheat window 18:00-20:00 at 50°C; protect bath-time hot water and do not use this routine as a shedding resource. Protected boundary: Indoor-temperature control must stay within the user's preferred comfort range 24.5-25.5°C and auto-restore after 18:00-19:00. The user can cancel, pause, or switch to the conservative option before or during the event. Expected benefit: No controllable device load can be safely shifted now; the benefit is mainly avoiding new noncritical load during the window. Options include: Conservative option / Balanced option / Enhanced response option.
+18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.50 kW of adjustable load during this peak period. For this event, I would use a balanced plan rather than a disruptive cut, because the request is for about 1.50 kW of flexible load and the home still has comfort and service boundaries. Your saved preference profile puts comfort and service continuity ahead of aggressive grid response. Because you are usually home during the event, I keep any comfort change small, visible, and reversible. Your control preference requires clear consent and an easy opt-out before stronger actions.
+
+I will keep the AC at 25.5°C during the event and restore normal comfort control afterward. For household tasks, I will leave the washer at its usual 10:00 routine. The water heater is prepared from 18:00 to 20:00 at 50°C, so hot water is ready without running during 18:00-19:00.
+
+I will keep comfort and hot water inside the limits you have already set. You can cancel, pause, or restore your normal settings at any point. Anything beyond these saved limits needs a fresh confirmation from you. The main benefit is avoiding new nonessential load during the event window. If you want to be more cautious, I can keep the AC unchanged and only move flexible chores; if you explicitly confirm a stronger response, I can use the upper end of your comfort band for a short time.
 
 Review dimensions:
 - why_request: True
@@ -367,7 +391,11 @@ Structured constraints:
 - Score: N/A
 - Why: 18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 0.50 kW of adjustable load during this peak period.
 
-18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 0.50 kW of adjustable load during this peak period. Recommended strategy: Balanced option. Temporarily adjust only within 24.0-26.0°C, then restore comfort after the VPP window; Start the washer at 19:00 for about 2 h, avoiding 18:00-19:00; Keep the fixed water-heater preheat window 18:00-20:00 at 50°C; protect bath-time hot water and do not use this routine as a shedding resource. Protected boundary: Indoor-temperature control must stay within the user's preferred comfort range 24.0-26.0°C and auto-restore after 18:00-19:00. The user can cancel, pause, or switch to the conservative option before or during the event. Expected benefit: No controllable device load can be safely shifted now; the benefit is mainly avoiding new noncritical load during the window. Options include: Conservative option / Balanced option / Enhanced response option.
+18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 0.50 kW of adjustable load during this peak period. For this event, I would use a balanced plan rather than a disruptive cut, because the request is for about 0.50 kW of flexible load and the home still has comfort and service boundaries. Your saved preference profile puts comfort and service continuity ahead of aggressive grid response. Because your schedule is irregular, I do not over-trust yesterday's pattern; today's confirmation remains important. Your control preference requires clear consent and an easy opt-out before stronger actions.
+
+I will keep the AC at 26.0°C during the event and restore normal comfort control afterward. For household tasks, I will leave the washer at its usual 19:00 routine. The water heater is prepared from 18:00 to 20:00 at 50°C, so hot water is ready without running during 18:00-19:00.
+
+I will keep comfort and hot water inside the limits you have already set. You can cancel, pause, or restore your normal settings at any point. Anything beyond these saved limits needs a fresh confirmation from you. Because this request is only about 0.50 kW, a low-disruption response should be enough. If you want to be more cautious, I can keep the AC unchanged and only move flexible chores; if you explicitly confirm a stronger response, I can use the upper end of your comfort band for a short time.
 
 Review dimensions:
 - why_request: True
@@ -424,7 +452,11 @@ Structured constraints:
 - Score: N/A
 - Why: 18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.00 kW of adjustable load during this peak period.
 
-18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.00 kW of adjustable load during this peak period. Recommended strategy: Balanced option. Temporarily adjust only within 24.0-26.0°C, then restore comfort after the VPP window; Start the washer at 19:00 for about 2 h, avoiding 18:00-19:00; Keep the fixed water-heater preheat window 18:00-20:00 at 50°C; protect bath-time hot water and do not use this routine as a shedding resource. Protected boundary: Indoor-temperature control must stay within the user's preferred comfort range 24.0-26.0°C and auto-restore after 18:00-19:00. The user can cancel, pause, or switch to the conservative option before or during the event. Expected benefit: No controllable device load can be safely shifted now; the benefit is mainly avoiding new noncritical load during the window. Options include: Conservative option / Balanced option / Enhanced response option.
+18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.00 kW of adjustable load during this peak period. For this event, I would use a balanced plan rather than a disruptive cut, because the request is for about 1.00 kW of flexible load and the home still has comfort and service boundaries. Your saved preference profile puts comfort and service continuity ahead of aggressive grid response. Because your schedule is irregular, I do not over-trust yesterday's pattern; today's confirmation remains important. Your control preference requires clear consent and an easy opt-out before stronger actions.
+
+I will keep the AC at 26.0°C during the event and restore normal comfort control afterward. For household tasks, I will leave the washer at its usual 19:00 routine. The water heater is prepared from 18:00 to 20:00 at 50°C, so hot water is ready without running during 18:00-19:00.
+
+I will keep comfort and hot water inside the limits you have already set. You can cancel, pause, or restore your normal settings at any point. Anything beyond these saved limits needs a fresh confirmation from you. The main benefit is avoiding new nonessential load during the event window. If you want to be more cautious, I can keep the AC unchanged and only move flexible chores; if you explicitly confirm a stronger response, I can use the upper end of your comfort band for a short time.
 
 Review dimensions:
 - why_request: True
@@ -481,7 +513,11 @@ Structured constraints:
 - Score: N/A
 - Why: 18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.50 kW of adjustable load during this peak period.
 
-18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.50 kW of adjustable load during this peak period. Recommended strategy: Balanced option. Temporarily adjust only within 24.0-26.0°C, then restore comfort after the VPP window; Start the washer at 19:00 for about 2 h, avoiding 18:00-19:00; Keep the fixed water-heater preheat window 18:00-20:00 at 50°C; protect bath-time hot water and do not use this routine as a shedding resource. Protected boundary: Indoor-temperature control must stay within the user's preferred comfort range 24.0-26.0°C and auto-restore after 18:00-19:00. The user can cancel, pause, or switch to the conservative option before or during the event. Expected benefit: No controllable device load can be safely shifted now; the benefit is mainly avoiding new noncritical load during the window. Options include: Conservative option / Balanced option / Enhanced response option.
+18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.50 kW of adjustable load during this peak period. For this event, I would use a balanced plan rather than a disruptive cut, because the request is for about 1.50 kW of flexible load and the home still has comfort and service boundaries. Your saved preference profile puts comfort and service continuity ahead of aggressive grid response. Because your schedule is irregular, I do not over-trust yesterday's pattern; today's confirmation remains important. Your control preference requires clear consent and an easy opt-out before stronger actions.
+
+I will keep the AC at 26.0°C during the event and restore normal comfort control afterward. For household tasks, I will leave the washer at its usual 19:00 routine. The water heater is prepared from 18:00 to 20:00 at 50°C, so hot water is ready without running during 18:00-19:00.
+
+I will keep comfort and hot water inside the limits you have already set. You can cancel, pause, or restore your normal settings at any point. Anything beyond these saved limits needs a fresh confirmation from you. The main benefit is avoiding new nonessential load during the event window. If you want to be more cautious, I can keep the AC unchanged and only move flexible chores; if you explicitly confirm a stronger response, I can use the upper end of your comfort band for a short time.
 
 Review dimensions:
 - why_request: True
@@ -538,7 +574,11 @@ Structured constraints:
 - Score: N/A
 - Why: 18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 0.50 kW of adjustable load during this peak period.
 
-18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 0.50 kW of adjustable load during this peak period. Recommended strategy: Balanced option. Temporarily adjust only within 23.0-27.0°C, then restore comfort after the VPP window; Start the washer at 13:00 for about 2 h, avoiding 18:00-19:00; Start the dishwasher at 16:00 for about 1.5 h, avoiding 18:00-19:00; Preheat the water heater from 15:00 to 17:00 at 55°C; store heat before bath time and avoid 18:00-19:00. Protected boundary: Indoor-temperature control must stay within the user's preferred comfort range 23.0-27.0°C and auto-restore after 18:00-19:00. The user can cancel, pause, or switch to the conservative option before or during the event. Expected benefit: The reference target is about 0.50 kW, so low-disruption actions are enough; focus on moving controllable non-AC load out of the window. Options include: Conservative option / Balanced option / Enhanced response option.
+18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 0.50 kW of adjustable load during this peak period. For this event, I would use a balanced plan rather than a disruptive cut, because the request is for about 0.50 kW of flexible load and the home still has comfort and service boundaries. Your saved preference profile is cost-aware, so I look for flexible loads that can move without affecting comfort. Your routine usually brings you home around 18:00, so the plan protects arrival comfort. You allow automatic scheduling inside preset limits, so I use automation only where those limits are explicit.
+
+I will keep the AC at 27.0°C during the event and restore normal comfort control afterward. For household tasks, I will start the washer at 13:00 and start the dishwasher at 16:00. The water heater is prepared from 15:00 to 17:00 at 55°C, so hot water is ready without running during 18:00-19:00.
+
+I will keep comfort and hot water inside the limits you have already set. You can cancel, pause, or restore your normal settings at any point. Anything beyond these saved limits needs a fresh confirmation from you. Because this request is only about 0.50 kW, a low-disruption response should be enough. If you want to be more cautious, I can keep the AC unchanged and only move flexible chores; if you explicitly confirm a stronger response, I can use the upper end of your comfort band for a short time.
 
 Review dimensions:
 - why_request: True
@@ -600,7 +640,11 @@ Structured constraints:
 - Score: N/A
 - Why: 18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.00 kW of adjustable load during this peak period.
 
-18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.00 kW of adjustable load during this peak period. Recommended strategy: Balanced option. Temporarily adjust only within 23.0-27.0°C, then restore comfort after the VPP window; Start the washer at 13:00 for about 2 h, avoiding 18:00-19:00; Start the dishwasher at 16:00 for about 1.5 h, avoiding 18:00-19:00; Preheat the water heater from 15:00 to 17:00 at 55°C; store heat before bath time and avoid 18:00-19:00. Protected boundary: Indoor-temperature control must stay within the user's preferred comfort range 23.0-27.0°C and auto-restore after 18:00-19:00. The user can cancel, pause, or switch to the conservative option before or during the event. Expected benefit: The reference shedding target is about 1.00 kW; the plan prioritizes shifting roughly 4.7 kW of controllable device load. Options include: Conservative option / Balanced option / Enhanced response option.
+18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.00 kW of adjustable load during this peak period. For this event, I would use a balanced plan rather than a disruptive cut, because the request is for about 1.00 kW of flexible load and the home still has comfort and service boundaries. Your saved preference profile is cost-aware, so I look for flexible loads that can move without affecting comfort. Your routine usually brings you home around 18:00, so the plan protects arrival comfort. You allow automatic scheduling inside preset limits, so I use automation only where those limits are explicit.
+
+I will keep the AC at 27.0°C during the event and restore normal comfort control afterward. For household tasks, I will start the washer at 13:00 and start the dishwasher at 16:00. The water heater is prepared from 15:00 to 17:00 at 55°C, so hot water is ready without running during 18:00-19:00.
+
+I will keep comfort and hot water inside the limits you have already set. You can cancel, pause, or restore your normal settings at any point. Anything beyond these saved limits needs a fresh confirmation from you. This moves roughly 4.7 kW of controllable load away from the event window against a 1.00 kW request. If you want to be more cautious, I can keep the AC unchanged and only move flexible chores; if you explicitly confirm a stronger response, I can use the upper end of your comfort band for a short time.
 
 Review dimensions:
 - why_request: True
@@ -662,7 +706,11 @@ Structured constraints:
 - Score: N/A
 - Why: 18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.50 kW of adjustable load during this peak period.
 
-18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.50 kW of adjustable load during this peak period. Recommended strategy: Balanced option. Temporarily adjust only within 23.0-27.0°C, then restore comfort after the VPP window; Start the washer at 13:00 for about 2 h, avoiding 18:00-19:00; Start the dishwasher at 16:00 for about 1.5 h, avoiding 18:00-19:00; Preheat the water heater from 15:00 to 17:00 at 55°C; store heat before bath time and avoid 18:00-19:00. Protected boundary: Indoor-temperature control must stay within the user's preferred comfort range 23.0-27.0°C and auto-restore after 18:00-19:00. The user can cancel, pause, or switch to the conservative option before or during the event. Expected benefit: The reference shedding target is about 1.50 kW; the plan prioritizes shifting roughly 4.7 kW of controllable device load. Options include: Conservative option / Balanced option / Enhanced response option.
+18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.50 kW of adjustable load during this peak period. For this event, I would use a balanced plan rather than a disruptive cut, because the request is for about 1.50 kW of flexible load and the home still has comfort and service boundaries. Your saved preference profile is cost-aware, so I look for flexible loads that can move without affecting comfort. Your routine usually brings you home around 18:00, so the plan protects arrival comfort. You allow automatic scheduling inside preset limits, so I use automation only where those limits are explicit.
+
+I will keep the AC at 27.0°C during the event and restore normal comfort control afterward. For household tasks, I will start the washer at 13:00 and start the dishwasher at 16:00. The water heater is prepared from 15:00 to 17:00 at 55°C, so hot water is ready without running during 18:00-19:00.
+
+I will keep comfort and hot water inside the limits you have already set. You can cancel, pause, or restore your normal settings at any point. Anything beyond these saved limits needs a fresh confirmation from you. This moves roughly 4.7 kW of controllable load away from the event window against a 1.50 kW request. If you want to be more cautious, I can keep the AC unchanged and only move flexible chores; if you explicitly confirm a stronger response, I can use the upper end of your comfort band for a short time.
 
 Review dimensions:
 - why_request: True
@@ -724,7 +772,11 @@ Structured constraints:
 - Score: N/A
 - Why: 18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 0.50 kW of adjustable load during this peak period.
 
-18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 0.50 kW of adjustable load during this peak period. Recommended strategy: Advisory-only option. Keep the AC setpoint at 25.0°C within 22.0-25.0°C; do not cross caregiving or comfort boundaries for the VPP event; Start the washer at 10:00 for about 2 h, avoiding 18:00-19:00; Keep the fixed water-heater preheat window 17:00-19:00 at 50°C; protect bath-time hot water and do not use this routine as a shedding resource. Protected boundary: Indoor-temperature control must stay within the user's preferred comfort range 22.0-25.0°C and auto-restore after 18:00-19:00. The user can cancel, pause, or switch to the conservative option before or during the event. Expected benefit: No controllable device load can be safely shifted now; the benefit is mainly avoiding new noncritical load during the window. Options include: Conservative option / Balanced option / Advisory-only option.
+18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 0.50 kW of adjustable load during this peak period. For this event, I would use a comfort-first, low-automation plan rather than a disruptive cut, because the request is for about 0.50 kW of flexible load and the home still has comfort and service boundaries. Your saved preference profile puts comfort and service continuity ahead of aggressive grid response. Caregiving stability for elderly is treated as a hard boundary, not as flexible load. Your control preference requires clear consent and an easy opt-out before stronger actions.
+
+I will keep the AC at 25.0°C during the event and restore normal comfort control afterward. For household tasks, I will leave the washer at its usual 10:00 routine. The water heater is prepared from 17:00 to 19:00 at 50°C, so hot water is ready without running during 18:00-19:00.
+
+I will keep comfort and hot water inside the limits you have already set. You can cancel, pause, or restore your normal settings at any point. Anything beyond these saved limits needs a fresh confirmation from you. Because this request is only about 0.50 kW, a low-disruption response should be enough. If you prefer, I can make this advisory only: no automatic AC or routine changes, just a reminder not to start nonessential devices during the event.
 
 Review dimensions:
 - why_request: True
@@ -781,7 +833,11 @@ Structured constraints:
 - Score: N/A
 - Why: 18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.00 kW of adjustable load during this peak period.
 
-18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.00 kW of adjustable load during this peak period. Recommended strategy: Advisory-only option. Keep the AC setpoint at 25.0°C within 22.0-25.0°C; do not cross caregiving or comfort boundaries for the VPP event; Start the washer at 10:00 for about 2 h, avoiding 18:00-19:00; Keep the fixed water-heater preheat window 17:00-19:00 at 50°C; protect bath-time hot water and do not use this routine as a shedding resource. Protected boundary: Indoor-temperature control must stay within the user's preferred comfort range 22.0-25.0°C and auto-restore after 18:00-19:00. The user can cancel, pause, or switch to the conservative option before or during the event. Expected benefit: No controllable device load can be safely shifted now; the benefit is mainly avoiding new noncritical load during the window. Options include: Conservative option / Balanced option / Advisory-only option.
+18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.00 kW of adjustable load during this peak period. For this event, I would use a comfort-first, low-automation plan rather than a disruptive cut, because the request is for about 1.00 kW of flexible load and the home still has comfort and service boundaries. Your saved preference profile puts comfort and service continuity ahead of aggressive grid response. Caregiving stability for elderly is treated as a hard boundary, not as flexible load. Your control preference requires clear consent and an easy opt-out before stronger actions.
+
+I will keep the AC at 25.0°C during the event and restore normal comfort control afterward. For household tasks, I will leave the washer at its usual 10:00 routine. The water heater is prepared from 17:00 to 19:00 at 50°C, so hot water is ready without running during 18:00-19:00.
+
+I will keep comfort and hot water inside the limits you have already set. You can cancel, pause, or restore your normal settings at any point. Anything beyond these saved limits needs a fresh confirmation from you. The main benefit is avoiding new nonessential load during the event window. If you prefer, I can make this advisory only: no automatic AC or routine changes, just a reminder not to start nonessential devices during the event.
 
 Review dimensions:
 - why_request: True
@@ -838,7 +894,11 @@ Structured constraints:
 - Score: N/A
 - Why: 18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.50 kW of adjustable load during this peak period.
 
-18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.50 kW of adjustable load during this peak period. Recommended strategy: Advisory-only option. Keep the AC setpoint at 25.0°C within 22.0-25.0°C; do not cross caregiving or comfort boundaries for the VPP event; Start the washer at 10:00 for about 2 h, avoiding 18:00-19:00; Keep the fixed water-heater preheat window 17:00-19:00 at 50°C; protect bath-time hot water and do not use this routine as a shedding resource. Protected boundary: Indoor-temperature control must stay within the user's preferred comfort range 22.0-25.0°C and auto-restore after 18:00-19:00. The user can cancel, pause, or switch to the conservative option before or during the event. Expected benefit: No controllable device load can be safely shifted now; the benefit is mainly avoiding new noncritical load during the window. Options include: Conservative option / Balanced option / Advisory-only option.
+18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.50 kW of adjustable load during this peak period. For this event, I would use a comfort-first, low-automation plan rather than a disruptive cut, because the request is for about 1.50 kW of flexible load and the home still has comfort and service boundaries. Your saved preference profile puts comfort and service continuity ahead of aggressive grid response. Caregiving stability for elderly is treated as a hard boundary, not as flexible load. Your control preference requires clear consent and an easy opt-out before stronger actions.
+
+I will keep the AC at 25.0°C during the event and restore normal comfort control afterward. For household tasks, I will leave the washer at its usual 10:00 routine. The water heater is prepared from 17:00 to 19:00 at 50°C, so hot water is ready without running during 18:00-19:00.
+
+I will keep comfort and hot water inside the limits you have already set. You can cancel, pause, or restore your normal settings at any point. Anything beyond these saved limits needs a fresh confirmation from you. The main benefit is avoiding new nonessential load during the event window. If you prefer, I can make this advisory only: no automatic AC or routine changes, just a reminder not to start nonessential devices during the event.
 
 Review dimensions:
 - why_request: True
@@ -895,7 +955,11 @@ Structured constraints:
 - Score: N/A
 - Why: 18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 0.50 kW of adjustable load during this peak period.
 
-18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 0.50 kW of adjustable load during this peak period. Recommended strategy: Balanced option. Temporarily adjust only within 24.0-26.0°C, then restore comfort after the VPP window; Start the washer at 20:00 for about 2 h, avoiding 18:00-19:00; Preheat the water heater from 15:00 to 17:00 at 55°C; store heat before bath time and avoid 18:00-19:00; Set the EV charging window to 19:00-23:54, avoid 18:00-19:00, and reach 80% SOC before 07:30. Protected boundary: Indoor-temperature control must stay within the user's preferred comfort range 24.0-26.0°C and auto-restore after 18:00-19:00. The user can cancel, pause, or switch to the conservative option before or during the event. Expected benefit: The reference target is about 0.50 kW, so low-disruption actions are enough; focus on moving controllable non-AC load out of the window. Options include: Conservative option / Balanced option / Enhanced response option.
+18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 0.50 kW of adjustable load during this peak period. For this event, I would use an EV-safe balanced plan rather than a disruptive cut, because the request is for about 0.50 kW of flexible load and the home still has comfort and service boundaries. Your saved preference profile is cost-aware, so I look for flexible loads that can move without affecting comfort. Your EV routine requires 80% SOC before 07:30, so mobility takes priority over extra shedding. Your routine usually brings you home around 18:30, so the plan protects arrival comfort.
+
+I will keep the AC at 26.0°C during the event and restore normal comfort control afterward. For household tasks, I will start the washer at 20:00. The water heater is prepared from 15:00 to 17:00 at 55°C, so hot water is ready without running during 18:00-19:00. EV charging waits until 19:00-23:54, keeping the event window clear while protecting the departure SOC target.
+
+I will keep comfort, hot water, and next-trip EV charge inside the limits you have already set. You can cancel, pause, or restore your normal settings at any point. Anything beyond these saved limits needs a fresh confirmation from you. Because this request is only about 0.50 kW, a low-disruption response should be enough. If your travel plan changes, I can switch to an EV-priority version and charge sooner, even if that leaves less flexibility for the grid event.
 
 Review dimensions:
 - why_request: True
@@ -958,7 +1022,11 @@ Structured constraints:
 - Score: N/A
 - Why: 18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.00 kW of adjustable load during this peak period.
 
-18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.00 kW of adjustable load during this peak period. Recommended strategy: Balanced option. Temporarily adjust only within 24.0-26.0°C, then restore comfort after the VPP window; Start the washer at 20:00 for about 2 h, avoiding 18:00-19:00; Preheat the water heater from 15:00 to 17:00 at 55°C; store heat before bath time and avoid 18:00-19:00; Set the EV charging window to 19:00-23:54, avoid 18:00-19:00, and reach 80% SOC before 07:30. Protected boundary: Indoor-temperature control must stay within the user's preferred comfort range 24.0-26.0°C and auto-restore after 18:00-19:00. The user can cancel, pause, or switch to the conservative option before or during the event. Expected benefit: The reference shedding target is about 1.00 kW; the plan prioritizes shifting roughly 10.9 kW of controllable device load. Options include: Conservative option / Balanced option / Enhanced response option.
+18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.00 kW of adjustable load during this peak period. For this event, I would use an EV-safe balanced plan rather than a disruptive cut, because the request is for about 1.00 kW of flexible load and the home still has comfort and service boundaries. Your saved preference profile is cost-aware, so I look for flexible loads that can move without affecting comfort. Your EV routine requires 80% SOC before 07:30, so mobility takes priority over extra shedding. Your routine usually brings you home around 18:30, so the plan protects arrival comfort.
+
+I will keep the AC at 26.0°C during the event and restore normal comfort control afterward. For household tasks, I will start the washer at 20:00. The water heater is prepared from 15:00 to 17:00 at 55°C, so hot water is ready without running during 18:00-19:00. EV charging waits until 19:00-23:54, keeping the event window clear while protecting the departure SOC target.
+
+I will keep comfort, hot water, and next-trip EV charge inside the limits you have already set. You can cancel, pause, or restore your normal settings at any point. Anything beyond these saved limits needs a fresh confirmation from you. This moves roughly 10.9 kW of controllable load away from the event window against a 1.00 kW request. If your travel plan changes, I can switch to an EV-priority version and charge sooner, even if that leaves less flexibility for the grid event.
 
 Review dimensions:
 - why_request: True
@@ -1021,7 +1089,11 @@ Structured constraints:
 - Score: N/A
 - Why: 18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.50 kW of adjustable load during this peak period.
 
-18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.50 kW of adjustable load during this peak period. Recommended strategy: Balanced option. Temporarily adjust only within 24.0-26.0°C, then restore comfort after the VPP window; Start the washer at 20:00 for about 2 h, avoiding 18:00-19:00; Preheat the water heater from 15:00 to 17:00 at 55°C; store heat before bath time and avoid 18:00-19:00; Set the EV charging window to 19:00-23:54, avoid 18:00-19:00, and reach 80% SOC before 07:30. Protected boundary: Indoor-temperature control must stay within the user's preferred comfort range 24.0-26.0°C and auto-restore after 18:00-19:00. The user can cancel, pause, or switch to the conservative option before or during the event. Expected benefit: The reference shedding target is about 1.50 kW; the plan prioritizes shifting roughly 10.9 kW of controllable device load. Options include: Conservative option / Balanced option / Enhanced response option.
+18:00-19:00 is a VPP demand-response window; the grid is asking the household to reduce about 1.50 kW of adjustable load during this peak period. For this event, I would use an EV-safe balanced plan rather than a disruptive cut, because the request is for about 1.50 kW of flexible load and the home still has comfort and service boundaries. Your saved preference profile is cost-aware, so I look for flexible loads that can move without affecting comfort. Your EV routine requires 80% SOC before 07:30, so mobility takes priority over extra shedding. Your routine usually brings you home around 18:30, so the plan protects arrival comfort.
+
+I will keep the AC at 26.0°C during the event and restore normal comfort control afterward. For household tasks, I will start the washer at 20:00. The water heater is prepared from 15:00 to 17:00 at 55°C, so hot water is ready without running during 18:00-19:00. EV charging waits until 19:00-23:54, keeping the event window clear while protecting the departure SOC target.
+
+I will keep comfort, hot water, and next-trip EV charge inside the limits you have already set. You can cancel, pause, or restore your normal settings at any point. Anything beyond these saved limits needs a fresh confirmation from you. This moves roughly 10.9 kW of controllable load away from the event window against a 1.50 kW request. If your travel plan changes, I can switch to an EV-priority version and charge sooner, even if that leaves less flexibility for the grid event.
 
 Review dimensions:
 - why_request: True
