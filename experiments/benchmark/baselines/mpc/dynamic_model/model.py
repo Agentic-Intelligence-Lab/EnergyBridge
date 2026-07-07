@@ -27,6 +27,8 @@ THERMAL_PARAMS = ASSET_DIR / "thermal_improvement_experiments" / "04_5r3c_hvac_s
 THERMAL_SUMMARY = ASSET_DIR / "thermal_improvement_experiments" / "summary.json"
 APPLIANCE_CONFIG = ASSET_DIR / "configs" / "tianjin_family_appliances.yaml"
 HVAC_AUDIT = ASSET_DIR / "complete_sinergym_long" / "metrics" / "complete_sinergym_long_metrics.json"
+REGIONAL_5R3C_DIR = ASSET_DIR / "regional_5r3c"
+DEFAULT_DYNAMIC_MODEL_REGION = "tianjin"
 TASKS = ("dishwasher", "clothes_washer", "clothes_dryer")
 TASK_TO_BENCH = {
     "dishwasher": "dishwasher",
@@ -108,6 +110,59 @@ def _float_or_none(value: Any) -> float | None:
         return value
     except (TypeError, ValueError):
         return None
+
+
+def _canonical_region_key(value: Any) -> str | None:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    if text in {"germany", "de", "deu", "berlin"} or "germany" in text or "berlin" in text:
+        return "berlin"
+    if text in {"tianjin", "tj", "beijing", "shanghai", "china", "cn", "chn"} or "tianjin" in text:
+        return "tianjin"
+    return None
+
+
+def dynamic_model_region_for_state(state: Mapping[str, Any] | None) -> str:
+    """Map benchmark state metadata to a calibrated dynamics model region."""
+    state = state or {}
+    for key in (
+        "dynamic_model_region",
+        "dynamics_region",
+        "city",
+        "weather",
+        "weather_label",
+        "location",
+        "scenario",
+    ):
+        region = _canonical_region_key(state.get(key))
+        if region:
+            return region
+    return DEFAULT_DYNAMIC_MODEL_REGION
+
+
+def _region_asset_paths(region_key: str) -> dict[str, Path]:
+    region = _canonical_region_key(region_key) or DEFAULT_DYNAMIC_MODEL_REGION
+    if region == "berlin":
+        regional_dir = REGIONAL_5R3C_DIR / "berlin"
+        return {
+            "parameters": regional_dir / "parameters_5r3c_hvac_solar.json",
+            "metrics": regional_dir / "metrics_5r3c_hvac_solar.json",
+            "power_parameters": regional_dir / "power_model_parameters.json",
+            "power_metrics": regional_dir / "power_model_metrics.json",
+        }
+    return {
+        "parameters": THERMAL_PARAMS,
+        "metrics": THERMAL_SUMMARY,
+        "power_parameters": Path(),
+        "power_metrics": Path(),
+    }
+
+
+def _read_json_if_exists(path: Path) -> dict[str, Any]:
+    if path and path.is_file():
+        return json.loads(path.read_text(encoding="utf-8"))
+    return {}
 
 
 def _discretize(value: float, cuts: list[float], labels: list[str]) -> str:
@@ -211,15 +266,39 @@ class BehaviorMDPExpected:
 
 
 class DeterministicExpectedMPCDynamicModel:
-    def __init__(self) -> None:
+    def __init__(self, region_key: str = DEFAULT_DYNAMIC_MODEL_REGION) -> None:
+        self.region_key = _canonical_region_key(region_key) or DEFAULT_DYNAMIC_MODEL_REGION
+        self.asset_paths = _region_asset_paths(self.region_key)
         self.behavior = BehaviorMDPExpected()
-        self.thermal_params = json.loads(THERMAL_PARAMS.read_text(encoding="utf-8"))
-        self.thermal_summary = json.loads(THERMAL_SUMMARY.read_text(encoding="utf-8"))
+        self.thermal_params = json.loads(self.asset_paths["parameters"].read_text(encoding="utf-8"))
+        self.thermal_summary = _read_json_if_exists(self.asset_paths["metrics"])
         self.appliance_cfg = yaml.safe_load(APPLIANCE_CONFIG.read_text(encoding="utf-8"))
         self.devices_cfg = self.appliance_cfg["devices"]
         self.dt_hours = float(self.appliance_cfg["simulation"].get("time_step_minutes", 10)) / 60.0
-        self.hvac = json.loads(HVAC_AUDIT.read_text(encoding="utf-8"))["energyplus_hvac_audit"]
+        self.hvac = self._load_hvac_audit()
         self.envelope = self.thermal_summary["envelope_audit"]
+        self.power_model_parameters = _read_json_if_exists(self.asset_paths["power_parameters"])
+
+    def _load_hvac_audit(self) -> dict[str, float]:
+        regional_audit = self.thermal_summary.get("hvac_audit")
+        if isinstance(regional_audit, dict) and "cooling_capacity_kw" in regional_audit:
+            return {
+                "cooling_capacity_kw": float(regional_audit.get("cooling_capacity_kw", 10.0)),
+                "cooling_cop": float(regional_audit.get("cooling_cop", 4.0)),
+                "heating_capacity_kw": float(regional_audit.get("heating_capacity_kw", 6.0)),
+                "heating_cop": float(regional_audit.get("heating_cop", 3.5)),
+                "supplemental_heating_kw": float(regional_audit.get("supplemental_heating_kw", 0.0)),
+                "supply_fan_kw": float(regional_audit.get("supply_fan_kw", 0.25)),
+            }
+        legacy = json.loads(HVAC_AUDIT.read_text(encoding="utf-8"))["energyplus_hvac_audit"]
+        return {
+            "cooling_capacity_kw": float(legacy.get("cooling_capacity_kw", 10.0)),
+            "cooling_cop": float(legacy.get("cooling_cop", 4.0)),
+            "heating_capacity_kw": float(legacy.get("heating_capacity_kw", 6.0)),
+            "heating_cop": float(legacy.get("heating_cop", 3.5)),
+            "supplemental_heating_kw": float(legacy.get("supplemental_heating_kw", 0.0)),
+            "supply_fan_kw": float(legacy.get("supply_fan_kw", 0.25)),
+        }
 
     def q_solar_kw(self, forecast: ForecastInput) -> float:
         irradiance_kw_m2 = _clip((forecast.direct_solar_w_m2 + forecast.diffuse_solar_w_m2) / 1000.0, 0.0, 1.2)
@@ -447,8 +526,8 @@ class DeterministicExpectedMPCDynamicModel:
 class DynamicModelScorer:
     """Adapter from benchmark state/action to predicted objective state."""
 
-    def __init__(self, horizon_steps: int = 18) -> None:
-        self.model = DeterministicExpectedMPCDynamicModel()
+    def __init__(self, horizon_steps: int = 18, region_key: str = DEFAULT_DYNAMIC_MODEL_REGION) -> None:
+        self.model = DeterministicExpectedMPCDynamicModel(region_key=region_key)
         self.horizon_steps = max(1, int(horizon_steps))
 
     def predict_objective_state(self, state: dict, action: dict) -> tuple[dict, dict]:
@@ -478,7 +557,10 @@ class DynamicModelScorer:
             )
         final = rows[-1]
         diagnostics = {
-            "model": "deterministic_expected_mpc_dynamic_model_v1",
+            "model": "regional_5r3c_hvac_solar_dynamic_model_v2",
+            "region": self.model.region_key,
+            "thermal_parameters_path": str(self.model.asset_paths["parameters"]),
+            "regional_power_model_available": bool(self.model.power_model_parameters),
             "horizon_steps": self.horizon_steps,
             "horizon_minutes": round(self.horizon_steps * self.model.dt_hours * 60.0, 3),
             "predicted_temp_c": float(final["next_state"]["thermal"]["t_air"]),
@@ -488,6 +570,7 @@ class DynamicModelScorer:
             "predicted_ewh_power_kw": float(final["outputs"]["ewh_power_kw"]),
             "predicted_ev_power_kw": float(final["outputs"]["ev_power_kw"]),
             "comfort_violation_c": float(final["outputs"]["comfort_violation_c"]),
+            "stage_hvac_power_kw": [round(float(row["outputs"]["hvac_power_kw"]), 6) for row in rows],
             "stage_total_power_kw": [round(float(row["outputs"]["total_power_kw"]), 6) for row in rows],
         }
         for predicted in predicted_states:

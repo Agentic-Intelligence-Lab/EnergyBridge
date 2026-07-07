@@ -20,6 +20,13 @@ class _OvernightOnlyCheapProfile:
         return 0.01 if local_time.hour in {0, 1, 2, 3} else 0.50
 
 
+class _VppOnlyCheapProfile:
+    source = "fake_vpp_only"
+
+    def price_at(self, local_time: datetime) -> float:
+        return 0.01 if local_time.hour == 18 else 0.50
+
+
 def _state() -> dict:
     return {
         "sim_h": 0.1,
@@ -77,11 +84,52 @@ def test_rule_milp_uses_low_price_window_and_avoids_vpp() -> None:
     assert appliances["water_heater_preheat"] is True
     assert appliances["water_heater_preheat_start_h"] != 18.0
     assert 22.0 <= action["setpoint"] <= 28.0
-    assert action["objective_terms"]["version"] == "rule_milp_cost_min_v1"
+    assert action["objective_terms"]["version"] == "rule_milp_dynamic_cost_min_v2"
+    assert action["objective_terms"]["diagnostics"]["hvac_setpoint"]["status"] == "regional_dynamic_model"
     assert action["objective_terms"]["diagnostics"]["solver"]["solver"] in {
         "pulp_cbc_milp",
         "exact_enumeration_fallback",
     }
+
+
+def test_rule_milp_uses_berlin_dynamic_model_for_germany() -> None:
+    state = _state()
+    state["city"] = "Germany"
+    state["outdoor_temp_c"] = 22.0
+
+    action = plan_rule_milp_action(state=state)
+
+    hvac = action["objective_terms"]["diagnostics"]["hvac_setpoint"]
+    assert hvac["region"] == "berlin"
+    assert hvac["cost_min_dynamic_setpoint_c"] == action["setpoint"]
+
+
+def test_rule_milp_strictly_filters_vpp_candidates_even_when_vpp_is_cheapest() -> None:
+    state = _state()
+    state["appliance_config"]["ev"] = {
+        "present": True,
+        "charger_kw": 7.0,
+        "efficiency": 0.92,
+        "capacity_kwh": 60.0,
+        "target_soc": 0.8,
+        "daily_drive_kwh": 8.0,
+        "arrival_h": 18.0,
+        "departure_h": 23.0,
+        "dr_adjustable": True,
+    }
+
+    action = plan_rule_milp_action(
+        state=state,
+        price_profile=_VppOnlyCheapProfile(),
+        run_start_date=datetime(2025, 6, 1).date(),
+    )
+
+    appliances = action["appliances"]
+    washer_start = appliances["washer_start_h"]
+    assert max(washer_start, 18.0) >= min(washer_start + 1.0, 19.0)
+    assert appliances["ev_charge_start_h"] >= 19.0
+    for group in action["objective_terms"]["diagnostics"]["candidate_groups"].values():
+        assert all(candidate["vpp_penalty"] == 0.0 for candidate in group)
 
 
 def test_rule_milp_outputs_all_known_action_keys() -> None:

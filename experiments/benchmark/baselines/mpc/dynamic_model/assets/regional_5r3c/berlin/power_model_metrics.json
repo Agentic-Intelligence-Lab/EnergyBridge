@@ -1,0 +1,238 @@
+{
+  "experiment_name": "berlin_regional_power_model_actual_plus_typical_2025",
+  "model_type": "original EnergyBridge-style standardized Ridge power layer",
+  "features": [
+    "pre_living_air_temperature",
+    "outdoor_temperature",
+    "direct_solar_radiation",
+    "diffuse_solar_radiation",
+    "heating_setpoint_action",
+    "cooling_setpoint_action",
+    "cooling_gap_c",
+    "heating_gap_c",
+    "hour_sin",
+    "hour_cos"
+  ],
+  "targets": {
+    "hvac": "hvac_electricity_demand_kw",
+    "facility": "facility_purchased_electricity_kw",
+    "household_building_only": "facility_purchased_electricity_kw; external HEMS devices are added separately in EnergyBridge"
+  },
+  "split": {
+    "method": "per-scenario temporal 80/20 split",
+    "train_rows": 26034,
+    "test_rows": 6510
+  },
+  "models": {
+    "hvac": {
+      "type": "standardized ridge regression",
+      "alpha": 0.1,
+      "features": [
+        "pre_living_air_temperature",
+        "outdoor_temperature",
+        "direct_solar_radiation",
+        "diffuse_solar_radiation",
+        "heating_setpoint_action",
+        "cooling_setpoint_action",
+        "cooling_gap_c",
+        "heating_gap_c",
+        "hour_sin",
+        "hour_cos"
+      ],
+      "mean": [
+        25.137468000268584,
+        17.33874395021896,
+        188.16261427364213,
+        95.16886891500859,
+        19.409771836828764,
+        26.955750172850887,
+        0.058308278778726574,
+        0.0011588450517936925,
+        0.0021873600672045316,
+        0.00027467418157341064
+      ],
+      "scale": [
+        1.7154629910428683,
+        5.614276908864024,
+        239.81342997237738,
+        101.53547197166242,
+        1.4774502052651197,
+        2.0076773613955554,
+        0.3523245403203498,
+        0.02434725164942297,
+        0.7068737092410751,
+        0.7073363409254386
+      ],
+      "intercept": 0.5132903657185223,
+      "coef_standardized": [
+        -0.1915465126883868,
+        0.2184607772146282,
+        0.13564526979443298,
+        0.003845643670137085,
+        -0.0004296187360589926,
+        -0.10256240945504332,
+        0.1460847313070819,
+        0.0246319120625517,
+        -0.04897065134616761,
+        0.022353313378701466
+      ]
+    },
+    "facility": {
+      "type": "standardized ridge regression",
+      "alpha": 0.1,
+      "features": [
+        "pre_living_air_temperature",
+        "outdoor_temperature",
+        "direct_solar_radiation",
+        "diffuse_solar_radiation",
+        "heating_setpoint_action",
+        "cooling_setpoint_action",
+        "cooling_gap_c",
+        "heating_gap_c",
+        "hour_sin",
+        "hour_cos"
+      ],
+      "mean": [
+        25.137468000268584,
+        17.33874395021896,
+        188.16261427364213,
+        95.16886891500859,
+        19.409771836828764,
+        26.955750172850887,
+        0.058308278778726574,
+        0.0011588450517936925,
+        0.0021873600672045316,
+        0.00027467418157341064
+      ],
+      "scale": [
+        1.7154629910428683,
+        5.614276908864024,
+        239.81342997237738,
+        101.53547197166242,
+        1.4774502052651197,
+        2.0076773613955554,
+        0.3523245403203498,
+        0.02434725164942297,
+        0.7068737092410751,
+        0.7073363409254386
+      ],
+      "intercept": 0.6556019733008682,
+      "coef_standardized": [
+        -0.18239162913312337,
+        0.21038398276620315,
+        0.10497621896987146,
+        -0.07496727429767952,
+        -0.00045083225909701985,
+        -0.10451685110248864,
+        0.1477154032963537,
+        0.024240352553265704,
+        -0.11180418417407899,
+        -0.02494556456668729
+      ]
+    }
+  },
+  "metrics": {
+    "train_one_step": {
+      "hvac": {
+        "n": 26034,
+        "mae_kw": 0.4473795329253111,
+        "rmse_kw": 0.7201367420482413,
+        "bias_kw": 0.00019739011134137512,
+        "p95_abs_error_kw": 1.9560229662352375,
+        "near_off_accuracy": 0.5340708304524852
+      },
+      "facility": {
+        "n": 26034,
+        "mae_kw": 0.4601943827542019,
+        "rmse_kw": 0.7349770761917304,
+        "bias_kw": -3.851024814310138e-15,
+        "p95_abs_error_kw": 1.979261513429552
+      },
+      "household_building_only": {
+        "n": 26034,
+        "mae_kw": 0.4601943827542019,
+        "rmse_kw": 0.7349770761917304,
+        "bias_kw": -3.851024814310138e-15,
+        "p95_abs_error_kw": 1.979261513429552
+      }
+    },
+    "test_one_step": {
+      "hvac": {
+        "n": 6510,
+        "mae_kw": 0.4764309450999861,
+        "rmse_kw": 0.7173584441858025,
+        "bias_kw": 0.06346765654981915,
+        "p95_abs_error_kw": 1.8371812972172852,
+        "near_off_accuracy": 0.4698924731182796
+      },
+      "facility": {
+        "n": 6510,
+        "mae_kw": 0.4980300649860334,
+        "rmse_kw": 0.7340721629943665,
+        "bias_kw": 0.08100790831840177,
+        "p95_abs_error_kw": 1.8597789838826158
+      },
+      "household_building_only": {
+        "n": 6510,
+        "mae_kw": 0.4980300649860334,
+        "rmse_kw": 0.7340721629943665,
+        "bias_kw": 0.08100790831840177,
+        "p95_abs_error_kw": 1.8597789838826158
+      }
+    },
+    "all_one_step": {
+      "hvac": {
+        "n": 32544,
+        "mae_kw": 0.4531909540314651,
+        "rmse_kw": 0.7195818678490784,
+        "bias_kw": 0.012853855703048185,
+        "p95_abs_error_kw": 1.9257284999999993,
+        "near_off_accuracy": 0.5212327925270404
+      },
+      "facility": {
+        "n": 32544,
+        "mae_kw": 0.46776283517699113,
+        "rmse_kw": 0.7347961075758481,
+        "bias_kw": 0.01620448180924287,
+        "p95_abs_error_kw": 1.9492890999999999
+      },
+      "household_building_only": {
+        "n": 32544,
+        "mae_kw": 0.46776283517699113,
+        "rmse_kw": 0.7347961075758481,
+        "bias_kw": 0.01620448180924287,
+        "p95_abs_error_kw": 1.9492890999999999
+      }
+    },
+    "all_rollout_3h": {
+      "hvac": {
+        "n": 32544,
+        "mae_kw": 0.49976989890609635,
+        "rmse_kw": 0.7315452245460177,
+        "bias_kw": 0.08938290363815142,
+        "p95_abs_error_kw": 1.8667174999999994,
+        "near_off_accuracy": 0.5196349557522124
+      },
+      "facility": {
+        "n": 32544,
+        "mae_kw": 0.5112081761000492,
+        "rmse_kw": 0.7459852660574523,
+        "bias_kw": 0.09114033975540807,
+        "p95_abs_error_kw": 1.8852993499999995
+      },
+      "household_building_only": {
+        "n": 32544,
+        "mae_kw": 0.5112081761000492,
+        "rmse_kw": 0.7459852660574523,
+        "bias_kw": 0.09114033975540807,
+        "p95_abs_error_kw": 1.8852993499999995
+      }
+    }
+  },
+  "outputs": {
+    "parameters_json": "/workspace/examples/New_Dynamic_Model/outputs/berlin/power_model_parameters.json",
+    "metrics_json": "/workspace/examples/New_Dynamic_Model/outputs/berlin/power_model_metrics.json",
+    "one_step_csv": "/workspace/examples/New_Dynamic_Model/outputs/berlin/power_one_step_predictions.csv",
+    "rollout_3h_csv": "/workspace/examples/New_Dynamic_Model/outputs/berlin/power_rollout_3h_predictions.csv"
+  }
+}

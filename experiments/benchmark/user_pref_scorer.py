@@ -1491,7 +1491,6 @@ def score_user_preference(
             "rl_ppo_pref_v2",
             "mpc",
             "mpc_dynamic",
-            "mpc_ep",
             "rule_milp",
         )
         or str(method).startswith("rl_")
@@ -1501,7 +1500,7 @@ def score_user_preference(
             controller = "RL baseline"
         elif method == "hema_agent":
             controller = "HEMA Agent baseline"
-        elif method in ("mpc", "mpc_dynamic", "mpc_ep"):
+        elif method in ("mpc", "mpc_dynamic"):
             controller = "MPC baseline"
         elif method == "rule_milp":
             controller = "Rule+MILP baseline"

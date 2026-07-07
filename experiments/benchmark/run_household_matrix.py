@@ -43,7 +43,7 @@ from experiments.benchmark.run_baseline_matrix import (  # noqa: E402
 )
 
 
-DEFAULT_METHODS = (ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "mpc_ep", "rule_milp", "hema_agent")
+DEFAULT_METHODS = (ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "rule_milp", "eb_rule_milp", "hema_agent")
 
 
 @dataclass(frozen=True)
@@ -64,7 +64,7 @@ class HouseholdJob:
 
 def _method_token(method: str, horizon: int) -> str:
     method = _canonical_method(method)
-    if method in ("mpc_dynamic", "mpc_ep"):
+    if method == "mpc_dynamic":
         return f"{method}_H{int(horizon)}"
     return method
 
@@ -150,7 +150,7 @@ def _command_for(job: HouseholdJob) -> list[str]:
         cmd += ["--price-csv", job.price_csv]
     if job.vpp_events_json:
         cmd += ["--vpp-events-json", job.vpp_events_json]
-    if job.method in ("mpc_dynamic", "mpc_ep"):
+    if job.method == "mpc_dynamic":
         cmd += ["--mpc-horizon", str(job.mpc_horizon)]
     return cmd
 
@@ -168,7 +168,7 @@ def _summarize_job(job: HouseholdJob, status: str, return_code: int | None, elap
         "vpp_start_hour": round(job.vpp_start_hour, 6),
         "vpp_duration_hours": round(job.vpp_duration_hours, 6),
         "vpp_events_json": job.vpp_events_json,
-        "mpc_horizon": job.mpc_horizon if job.method in ("mpc_dynamic", "mpc_ep") else "",
+        "mpc_horizon": job.mpc_horizon if job.method == "mpc_dynamic" else "",
         "status": status,
         "return_code": return_code,
         "elapsed_s": round(elapsed_s, 1),

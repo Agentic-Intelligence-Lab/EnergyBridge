@@ -936,7 +936,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function methodRunToken(method) {
       if (method === 'agent' || String(method || '').toLowerCase() === 'energybridge') return 'EnergyBridge';
-      return method === 'mpc_dynamic' || method === 'mpc_ep' ? `${method}_H6` : (method || 'EnergyBridge');
+      return method === 'mpc_dynamic' ? `${method}_H6` : (method || 'EnergyBridge');
     }
 
     function todayIso() {
@@ -1189,7 +1189,7 @@ INDEX_HTML = r"""<!doctype html>
       normalizeScenarioSelection();
       const base = `conda run --no-capture-output -n energybridge python experiments/benchmark/run_persona_json.py ${persona || state.selectedPersona}`;
       const controllerMethod = method || 'EnergyBridge';
-      const horizon = controllerMethod === 'mpc_dynamic' || controllerMethod === 'mpc_ep' ? ' --mpc-horizon 6' : '';
+      const horizon = controllerMethod === 'mpc_dynamic' ? ' --mpc-horizon 6' : '';
       const human = userMode === 'human'
         ? ` --user-mode human --human-name ${shellQuote(humanName || 'human')}`
         : ' --user-mode roleplay';
@@ -1206,7 +1206,6 @@ INDEX_HTML = r"""<!doctype html>
         EnergyBridge: 'EnergyBridge',
         agent: 'EnergyBridge',
         mpc_dynamic: 'MPC Dynamic',
-        mpc_ep: 'MPC EP',
         rule_milp: 'Rule+MILP',
         no_dr: 'No-DR',
         rl_ppo_3day: 'RL PPO',
@@ -1471,7 +1470,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function renderOps(events) {
       normalizeScenarioSelection();
-      const methods = ['EnergyBridge', 'mpc_dynamic', 'mpc_ep', 'rule_milp', 'rl_ppo_3day', 'rl_ppo_pref_v2'];
+      const methods = ['EnergyBridge', 'mpc_dynamic', 'rule_milp', 'rl_ppo_3day', 'rl_ppo_pref_v2'];
       const personaOptions = state.personas.map(p => `
         <option value="${p.id}" ${state.selectedPersona === p.id ? 'selected' : ''}>
           ${p.label} · ${p.name}
@@ -2049,8 +2048,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
         lower_name = name.lower()
         if "_mpc_dynamic" in lower_name:
             return "mpc_dynamic"
-        if "_mpc_ep" in lower_name:
-            return "mpc_ep"
         if "_rule_milp" in lower_name or "_pmv_milp" in lower_name:
             return "rule_milp"
         if "_rl_ppo_pref_v2" in lower_name:

@@ -59,7 +59,7 @@ def _slug(value: str) -> str:
 
 def _default_output_dir(household_id: str, method: str, city: str, days: int, horizon: int) -> Path:
     method = _canonical_method(method)
-    token = f"{method}_H{int(horizon)}" if method in ("mpc_dynamic", "mpc_ep") else method
+    token = f"{method}_H{int(horizon)}" if method == "mpc_dynamic" else method
     return DEFAULT_BENCHMARK_RESULTS_DIR / date.today().isoformat() / (
         f"{_slug(household_id)}_{token}_{city.lower()}_{int(days)}days"
     )
@@ -596,7 +596,6 @@ def _method_label(method: str) -> str:
     labels = {
         ENERGYBRIDGE_METHOD_ID: "EnergyBridge",
         "mpc_dynamic": "MPC Dynamic",
-        "mpc_ep": "MPC EP",
         "rule_milp": "Rule+MILP",
         "eb_rule_milp": "EB+rule+MILP",
     }

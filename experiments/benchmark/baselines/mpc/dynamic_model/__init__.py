@@ -7,6 +7,7 @@ from .model import (
     ForecastInput,
     MPCState,
     ThermalState,
+    dynamic_model_region_for_state,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "ForecastInput",
     "MPCState",
     "ThermalState",
+    "dynamic_model_region_for_state",
 ]

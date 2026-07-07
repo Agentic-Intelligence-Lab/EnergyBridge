@@ -2,7 +2,7 @@
 """Run the 10-persona baseline matrix for EnergyBridge.
 
 Default matrix:
-  approved personas x {EnergyBridge, mpc_dynamic, mpc_ep}
+  approved personas x {EnergyBridge, mpc_dynamic, rule_milp, eb_rule_milp, hema_agent}
 
 Each job delegates to run_persona_json.py so that calendar loading, output
 directory naming, run_summary generation, and MPC horizon handling stay aligned
@@ -42,12 +42,11 @@ from energybridge.data.day_ahead import DEFAULT_TIANJIN_TOU_PRICE_CSV  # noqa: E
 
 
 ENERGYBRIDGE_METHOD_ID = "EnergyBridge"
-DEFAULT_METHODS = (ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "mpc_ep", "hema_agent")
+DEFAULT_METHODS = (ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "rule_milp", "eb_rule_milp", "hema_agent")
 METHOD_CHOICES = (
     ENERGYBRIDGE_METHOD_ID,
     "agent",
     "mpc_dynamic",
-    "mpc_ep",
     "mpc",
     "rl",
     "rl_ppo",
@@ -126,7 +125,7 @@ def _persona_run_label(persona_id: str) -> str:
 
 def _method_token(method: str, horizon: int) -> str:
     method = _canonical_method(method)
-    if method in ("mpc_dynamic", "mpc_ep"):
+    if method == "mpc_dynamic":
         return f"{method}_H{int(horizon)}"
     return method
 
@@ -248,7 +247,7 @@ def _command_for(job: Job) -> list[str]:
     ]
     if job.vpp_events_json:
         cmd += ["--vpp-events-json", job.vpp_events_json]
-    if job.method in ("mpc_dynamic", "mpc_ep"):
+    if job.method == "mpc_dynamic":
         cmd += ["--mpc-horizon", str(job.mpc_horizon)]
     return cmd
 
@@ -265,7 +264,7 @@ def _summarize_job(job: Job, status: str, return_code: int | None, elapsed_s: fl
         "vpp_start_hour": round(job.vpp_start_hour, 6),
         "vpp_duration_hours": round(job.vpp_duration_hours, 6),
         "vpp_events_json": job.vpp_events_json,
-        "mpc_horizon": job.mpc_horizon if job.method in ("mpc_dynamic", "mpc_ep") else "",
+        "mpc_horizon": job.mpc_horizon if job.method == "mpc_dynamic" else "",
         "status": status,
         "return_code": return_code,
         "elapsed_s": round(elapsed_s, 1),
@@ -407,7 +406,7 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         choices=list(METHOD_CHOICES),
         default=None,
-        help="Methods to run. Defaults to EnergyBridge mpc_dynamic mpc_ep. 'agent' is a deprecated alias.",
+        help="Methods to run. Defaults to EnergyBridge mpc_dynamic rule_milp eb_rule_milp hema_agent. 'agent' is a deprecated alias.",
     )
     parser.add_argument(
         "--city",
@@ -452,7 +451,7 @@ def parse_args() -> argparse.Namespace:
         "--mpc-horizon",
         type=int,
         default=6,
-        help="MPC horizon in 10-minute steps for mpc_dynamic/mpc_ep. Default: 6.",
+        help="MPC horizon in 10-minute steps for mpc_dynamic. Default: 6.",
     )
     parser.add_argument(
         "--results-root",

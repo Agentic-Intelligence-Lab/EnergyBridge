@@ -25,9 +25,7 @@ APPLIANCE_ACTION_KEYS = (
 SHIFTABLE_NAMES = ("washer", "dishwasher", "dryer")
 MPC_HORIZON_STEPS = 6
 _DYNAMIC_SCORERS = {}
-_ENERGYPLUS_SCORERS = {}
 _DYNAMIC_SCORER_FAILED = False
-_ENERGYPLUS_SCORER_FAILED = False
 
 
 def plan_mpc_action(
@@ -244,52 +242,41 @@ def _score_action(candidate: dict, state: dict, weights: dict) -> tuple[float, d
 
 
 def _scorer_for_state(state: dict):
-    predictor = str(state.get("mpc_predictor") or "dynamic").lower()
     horizon_steps = _mpc_horizon_steps(state)
-    if predictor == "energyplus":
-        return _energyplus_scorer(horizon_steps)
-    return _dynamic_scorer(horizon_steps)
+    return _dynamic_scorer(horizon_steps, state)
 
 
 def _predictor_model_name(state: dict) -> str:
-    predictor = str(state.get("mpc_predictor") or "dynamic").lower()
-    if predictor == "energyplus":
-        return "energyplus_horizon_predictor_v1"
-    return "deterministic_expected_mpc_dynamic_model_v1"
+    return "regional_5r3c_hvac_solar_dynamic_model_v2"
 
 
 def _mpc_horizon_steps(state: dict) -> int:
     return max(1, int(_float(state.get("mpc_horizon_steps"), MPC_HORIZON_STEPS)))
 
 
-def _dynamic_scorer(horizon_steps: int):
+def _dynamic_scorer(horizon_steps: int, state: dict):
     global _DYNAMIC_SCORER_FAILED
     if _DYNAMIC_SCORER_FAILED:
         return None
-    if horizon_steps not in _DYNAMIC_SCORERS:
+    try:
+        from .dynamic_model import DynamicModelScorer, dynamic_model_region_for_state
+
+        region_key = dynamic_model_region_for_state(state)
+    except Exception:
+        region_key = "tianjin"
+    cache_key = (horizon_steps, region_key)
+    if cache_key not in _DYNAMIC_SCORERS:
         try:
             from .dynamic_model import DynamicModelScorer
 
-            _DYNAMIC_SCORERS[horizon_steps] = DynamicModelScorer(horizon_steps=horizon_steps)
+            _DYNAMIC_SCORERS[cache_key] = DynamicModelScorer(
+                horizon_steps=horizon_steps,
+                region_key=region_key,
+            )
         except Exception:
             _DYNAMIC_SCORER_FAILED = True
             return None
-    return _DYNAMIC_SCORERS[horizon_steps]
-
-
-def _energyplus_scorer(horizon_steps: int):
-    global _ENERGYPLUS_SCORER_FAILED
-    if _ENERGYPLUS_SCORER_FAILED:
-        return None
-    if horizon_steps not in _ENERGYPLUS_SCORERS:
-        try:
-            from .ep_predictor import EnergyPlusHorizonScorer
-
-            _ENERGYPLUS_SCORERS[horizon_steps] = EnergyPlusHorizonScorer(horizon_steps=horizon_steps)
-        except Exception:
-            _ENERGYPLUS_SCORER_FAILED = True
-            return None
-    return _ENERGYPLUS_SCORERS[horizon_steps]
+    return _DYNAMIC_SCORERS[cache_key]
 
 
 def _accumulate_step_terms(step_terms: list[dict]) -> dict:

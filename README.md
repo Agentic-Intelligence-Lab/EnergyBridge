@@ -83,7 +83,7 @@ Dashboard workflow:
 
 1. Select user category: `Role-play LLM` or `Human`.
 2. Select user type/name.
-3. Select method: `EnergyBridge`, `mpc_dynamic`, or `mpc_ep`.
+3. Select method: `EnergyBridge`, `mpc_dynamic`, `rule_milp`, `eb_rule_milp`, or `hema_agent`.
 4. Start the run and watch live logs, progressive event cards, appliance
    schedules, user scores, and the final `run_summary.txt`.
 5. Open historical results from the collapsible sidebar.
@@ -122,7 +122,7 @@ available.
 ```bash
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_baseline_matrix.py \
-  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp hema_agent \
+  --methods EnergyBridge mpc_dynamic rule_milp eb_rule_milp hema_agent \
   --city Tianjin \
   --days 7 \
   --mpc-horizon 6 \
@@ -138,7 +138,7 @@ Germany price CSV to make the report use total electricity cost.
 ```bash
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_baseline_matrix.py \
-  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp hema_agent \
+  --methods EnergyBridge mpc_dynamic rule_milp eb_rule_milp hema_agent \
   --city Germany \
   --days 7 \
   --start-date 2025-06-01 \
@@ -203,7 +203,8 @@ of the independent member scores.
 `EB+rule+MILP` is the current hybrid Agent method for this path. Its design is:
 
 - Rule+MILP proposes physically feasible appliance schedules and PMV/cost-min
-  AC guidance.
+  AC guidance, filtering out VPP-overlap appliance candidates before solving
+  whenever a no-VPP schedule is feasible.
 - EnergyBridge reads those candidates, member preferences, calendar context,
   and prior in-run feedback.
 - Appliance timing is inherited from Rule+MILP by default, so every present
@@ -242,7 +243,7 @@ ENERGYBRIDGE_HYBRID_COMFORT_OVERRIDE_AFTER=1 \
 ENERGYBRIDGE_PERSIST_AGENT_MEMORY=0 \
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_household_matrix.py \
-  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp hema_agent \
+  --methods EnergyBridge mpc_dynamic rule_milp eb_rule_milp hema_agent \
   --city Tianjin \
   --days 7 \
   --start-date 2025-06-01 \
@@ -259,7 +260,7 @@ ENERGYBRIDGE_HYBRID_COMFORT_OVERRIDE_AFTER=1 \
 ENERGYBRIDGE_PERSIST_AGENT_MEMORY=0 \
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_household_matrix.py \
-  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp hema_agent \
+  --methods EnergyBridge mpc_dynamic rule_milp eb_rule_milp hema_agent \
   --city Germany \
   --days 7 \
   --start-date 2025-06-01 \
@@ -674,7 +675,6 @@ python experiments/benchmark/run_germany_3day_quick.py basic_role_f_commuter_ev_
 
 # Quick Germany MPC checks
 python experiments/benchmark/run_germany_3day_quick.py basic_role_a_commuter_price_cooperative --method mpc_dynamic
-python experiments/benchmark/run_germany_3day_quick.py basic_role_a_commuter_price_cooperative --method mpc_ep
 
 # Disable price input while keeping Germany weather/date
 python experiments/benchmark/run_germany_3day_quick.py basic_role_a_commuter_price_cooperative --no-price
@@ -707,18 +707,11 @@ python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_coo
   --city Tianjin --method EnergyBridge
 ```
 
-MPC with collaborator dynamic model:
+MPC with regional dynamics:
 
 ```bash
 python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
   --city Tianjin --method mpc_dynamic --mpc-horizon 6
-```
-
-MPC with EnergyPlus replay predictor:
-
-```bash
-python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Tianjin --method mpc_ep --mpc-horizon 6
 ```
 
 Human-in-the-loop user instead of role-play LLM:
@@ -782,14 +775,11 @@ python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_coo
   --city Germany --method EnergyBridge --regenerate-epw
 ```
 
-Run Germany MPC baselines:
+Run Germany MPC dynamics:
 
 ```bash
 python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
   --city Germany --method mpc_dynamic --mpc-horizon 6
-
-python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Germany --method mpc_ep --mpc-horizon 6
 ```
 
 Override the default date range if needed:
@@ -848,7 +838,7 @@ normalized TOU price profile automatically.
 ```bash
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_baseline_matrix.py \
-  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp hema_agent \
+  --methods EnergyBridge mpc_dynamic rule_milp eb_rule_milp hema_agent \
   --city Tianjin --days 7 --mpc-horizon 6 \
   --workers 5 --resume
 ```
@@ -859,7 +849,7 @@ right-top metric is total electricity cost:
 ```bash
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_baseline_matrix.py \
-  --methods EnergyBridge mpc_dynamic mpc_ep rule_milp eb_rule_milp hema_agent \
+  --methods EnergyBridge mpc_dynamic rule_milp eb_rule_milp hema_agent \
   --city Germany --days 7 --start-date 2025-06-01 --mpc-horizon 6 \
   --price-csv experiments/real_data/germany_2025_price.csv \
   --workers 5 --resume
@@ -869,7 +859,7 @@ Current full personal-user matrix:
 
 ```text
 10 approved personas x 5 methods = 50 jobs per city
-methods: EnergyBridge, mpc_dynamic, mpc_ep, rule_milp, eb_rule_milp
+methods: EnergyBridge, mpc_dynamic, rule_milp, eb_rule_milp, hema_agent
 duration: 7 days for the comparable full run
 calendar: enabled
 capacity quantification: enabled
@@ -936,22 +926,6 @@ The current report figure shows four persona-by-method matrices:
 3. VPP-window energy.
 4. Appliance shift success rate.
 
-### Diagnose MPC-EP Predictor Error
-
-Use this when checking whether the EnergyPlus replay predictor matches the
-realized main EnergyPlus trajectory:
-
-```bash
-python experiments/benchmark/diagnose_mpc_ep_predictor.py \
-  benchmark_results/2026-06-14/*_mpc_ep_H6_tianjin_3days \
-  --output-dir benchmark_results/2026-06-14/_batch_logs/mpc_ep_diagnostics
-```
-
-This produces CSV/JSON comparisons between predicted H-step facility power and
-the realized `eplusout.mtr` meter trace.
-
----
-
 ## Results And Naming
 
 All current benchmark outputs go under:
@@ -974,7 +948,6 @@ Examples:
 ```text
 benchmark_results/2026-06-14/role_a_EnergyBridge_tianjin_3days/
 benchmark_results/2026-06-14/role_a_mpc_dynamic_H6_tianjin_3days/
-benchmark_results/2026-06-14/role_a_mpc_ep_H6_tianjin_3days/
 benchmark_results/2026-06-14/role_a_EnergyBridge_germany_7days/
 ```
 
@@ -996,7 +969,7 @@ Important result files:
 | -------------------------------------------- | -------------------------------------------------------------------------------- |
 | `run_summary.txt`                            | Human-readable result, event strategies, VPP target, appliance schedules, scores |
 | `benchmark_result.json`                      | Raw metrics used by matrix/report scripts                                        |
-| `eplusout.mtr`                               | EnergyPlus meter trace used for VPP energy and MPC-EP diagnostics                |
+| `eplusout.mtr`                               | EnergyPlus meter trace used for VPP energy diagnostics                           |
 | `_batch_logs/baseline_matrix_summary_*.json` | Batch-level machine-readable summary                                             |
 | `_batch_logs/baseline_matrix_report/*.png`   | Compact visual report                                                            |
 
@@ -1090,28 +1063,16 @@ experiments/benchmark/baselines/mpc/dynamic_model/
 ```
 
 This is the collaborator-derived control-oriented dynamic predictor adapted
-into the benchmark package.
-
-### `mpc_ep`
-
-Finite-horizon cumulative-cost MPC using EnergyPlus replay rollouts in:
-
-```text
-experiments/benchmark/baselines/mpc/ep_predictor.py
-```
-
-Important caveat: this is an **EnergyPlus replay-based horizon predictor**, not
-a perfect full-state EnergyPlus oracle. It starts fresh EnergyPlus candidate
-runs and replays to the decision time. Diagnostics record IDF/EPW, warmup
-policy, state alignment, and prediction error.
+into the benchmark package. Tianjin uses the legacy Tianjin dynamics assets;
+Germany uses the Berlin-trained regional dynamics assets.
 
 ### `rule_milp`
 
-Oracle-style baseline for transparent lower-bound comparisons. HVAC uses a PMV
-rule to select the warmest feasible cooling setpoint. Shiftable appliances,
-water-heater preheat, and EV charging are scheduled by a small MILP over
-feasible windows, with a large penalty for non-AC appliance operation inside
-VPP windows.
+Oracle-style baseline for transparent lower-bound comparisons. HVAC setpoints
+are selected with the same regional dynamics rollout used by MPC. Shiftable
+appliances, water-heater preheat, and EV charging are scheduled by a small MILP
+over feasible windows, with a large penalty for non-AC appliance operation
+inside VPP windows.
 
 ### `eb_rule_milp`
 
@@ -1184,11 +1145,10 @@ EnergyBridge/
 │   ├── run_persona_json.py            # single-persona CLI
 │   ├── run_baseline_matrix.py         # 10-persona x methods batch runner
 │   ├── generate_baseline_matrix_report.py
-│   ├── diagnose_mpc_ep_predictor.py
 │   ├── web_dashboard.py               # browser UI
 │   ├── user_pref_scorer.py            # role-play/human event scoring
 │   ├── configs/                       # VPP event schedule JSON examples
-│   ├── baselines/mpc/                 # MPC planner, dynamic model, EP predictor
+│   ├── baselines/mpc/                 # MPC planner and regional dynamic model
 │   ├── models/family_home/            # family IDF models
 │   └── weather/epw/                   # weather files
 ├── experiments/real_data/             # Germany 2025 weather and price CSVs
@@ -1211,7 +1171,6 @@ Most coding-agent work starts in one of these files:
 | Change report plots/tables   | `experiments/benchmark/generate_baseline_matrix_report.py` |
 | Change MPC planner           | `experiments/benchmark/baselines/mpc/planner.py`           |
 | Change dynamic predictor     | `experiments/benchmark/baselines/mpc/dynamic_model/`       |
-| Change EP predictor          | `experiments/benchmark/baselines/mpc/ep_predictor.py`      |
 | Change web UI                | `experiments/benchmark/web_dashboard.py`                   |
 
 ---

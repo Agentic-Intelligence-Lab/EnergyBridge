@@ -30,7 +30,6 @@ ENERGYBRIDGE_METHOD_ID = "EnergyBridge"
 METHOD_ORDER = [
     ENERGYBRIDGE_METHOD_ID,
     "mpc_dynamic",
-    "mpc_ep",
     "rule_milp",
     "eb_rule_milp",
     "rl",
@@ -44,7 +43,6 @@ METHOD_LABEL = {
     ENERGYBRIDGE_METHOD_ID: "EnergyBridge",
     "agent": "EnergyBridge",
     "mpc_dynamic": "MPC Dynamic",
-    "mpc_ep": "MPC EP",
     "rule_milp": "Rule+MILP",
     "eb_rule_milp": "EB+rule+MILP",
     "rl": "RL",
@@ -58,7 +56,6 @@ POLICY_APPLIANCE_CAPABILITIES = {
     ENERGYBRIDGE_METHOD_ID: {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "agent": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "mpc_dynamic": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
-    "mpc_ep": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "rule_milp": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "eb_rule_milp": {"washer", "dishwasher", "dryer", "water_heater", "ev"},
     "hema_agent": {"washer", "dishwasher", "dryer", "water_heater", "ev"},

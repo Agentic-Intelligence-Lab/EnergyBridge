@@ -1,0 +1,108 @@
+{
+  "experiment_name": "berlin_regional_5r3c_hvac_solar_actual_plus_typical_2025",
+  "region": {
+    "key": "berlin",
+    "label": "Berlin GEG family building",
+    "latitude": 52.4675,
+    "longitude": 13.4022,
+    "timezone": 1.0,
+    "elevation_m": 49.0,
+    "model_path": "/workspace/examples/Berlin_Family_Env/models/berlin_family_geg_final.epJSON",
+    "typical_weather_path": "/workspace/examples/Berlin_Family_Env/weather/DEU_BE_Berlin-Tempelhof.AP.103840_TMYx.2011-2025.epw",
+    "seed": 20250702
+  },
+  "data_design": {
+    "actual_weather": {
+      "source": "NASA POWER hourly actual-year data",
+      "year": 2025,
+      "period": {
+        "start": "2025-04-25",
+        "end": "2025-09-30"
+      }
+    },
+    "typical_weather": {
+      "source": "/workspace/examples/Berlin_Family_Env/weather/DEU_BE_Berlin-Tempelhof.AP.103840_TMYx.2011-2025.epw",
+      "period": {
+        "start": "2025-04-25",
+        "end": "2025-06-30"
+      }
+    },
+    "combined_trajectory_csv": "/workspace/examples/New_Dynamic_Model/data/berlin/berlin_combined_trajectory.csv"
+  },
+  "rows": {
+    "combined": 32544,
+    "actual": 22896,
+    "typical": 9648
+  },
+  "envelope_audit": {
+    "living_volume_m3": 572.2414,
+    "living_floor_area_m2": 110.4089,
+    "opaque_outdoor_area_m2": 317.0958,
+    "ground_area_m2": 110.4089,
+    "window_area_m2": 33.0146,
+    "adiabatic_area_m2": 110.4089,
+    "opaque_ua_kw_per_k": 0.392234,
+    "ground_ua_kw_per_k": 0.030121,
+    "window_ua_kw_per_k": 0.042919,
+    "infiltration_ua_kw_per_k": 0.067162,
+    "total_ua_kw_per_k": 0.532436,
+    "air_heat_capacity_kwh_per_k": 0.191892,
+    "envelope_heat_capacity_kwh_per_k": 28.543665,
+    "effective_mass_heat_capacity_kwh_per_k": 14.271832,
+    "window_shgc_area_m2": 16.507292,
+    "assumed_ach": 0.35
+  },
+  "hvac_audit": {
+    "cooling_capacity_kw": 7.0,
+    "cooling_cop": 4.06853019625951,
+    "heating_capacity_kw": 11.994399459183978,
+    "heating_cop": 3.69308080013886,
+    "supplemental_heating_kw": 6.077808,
+    "supplemental_cop": 1.0,
+    "supply_fan_kw": 0.4664855604019289
+  },
+  "fit": {
+    "success": true,
+    "cost": 179.1206124802212,
+    "nfev": 32
+  },
+  "model_parameters": {
+    "g_oa": 0.05227049050736851,
+    "g_am": 0.4273416628479614,
+    "g_ae": 0.008447100000008373,
+    "g_me": 0.2368478624753153,
+    "g_eo": 0.04475693329668846,
+    "c_air": 0.4076326371218617,
+    "c_mass": 2.8543664000000457,
+    "c_env": 4.043845613342583,
+    "eta_cooling": 0.9419408904133931,
+    "eta_heating": 0.646658655118121,
+    "eta_fan": 4.999999999999999,
+    "eta_lag": -0.2333675550486375,
+    "r_solar_air": 0.06320370315802412,
+    "r_solar_mass": 0.13532698071973998,
+    "r_solar_env": 7.796993627713896e-15
+  },
+  "metrics": {
+    "one_step": {
+      "n": 32544,
+      "mae_c": 0.07027020103810827,
+      "rmse_c": 0.11930852296372725,
+      "bias_c": -0.00010142997707785125,
+      "p95_abs_error_c": 0.2551193917065026
+    },
+    "rollout_3h": {
+      "n": 32544,
+      "mae_c": 0.6424555123966038,
+      "rmse_c": 0.8980921726171855,
+      "bias_c": -0.36008397865103076,
+      "p95_abs_error_c": 1.9744182180635477
+    }
+  },
+  "outputs": {
+    "parameters_json": "/workspace/examples/New_Dynamic_Model/outputs/berlin/parameters_5r3c_hvac_solar.json",
+    "metrics_json": "/workspace/examples/New_Dynamic_Model/outputs/berlin/metrics_5r3c_hvac_solar.json",
+    "one_step_csv": "/workspace/examples/New_Dynamic_Model/outputs/berlin/one_step_predictions.csv",
+    "rollout_3h_csv": "/workspace/examples/New_Dynamic_Model/outputs/berlin/rollout_3h_predictions.csv"
+  }
+}

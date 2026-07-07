@@ -3,7 +3,7 @@
 
 Usage
 -----
-  python3 run_persona_json.py <persona_id_or_json_path> [--output <dir>] [--city <Tianjin|Beijing|Shanghai>] [--method <EnergyBridge|mpc_dynamic|mpc_ep>]
+  python3 run_persona_json.py <persona_id_or_json_path> [--output <dir>] [--city <Tianjin|Beijing|Shanghai>] [--method <EnergyBridge|mpc_dynamic|rule_milp>]
 
 Examples
 --------
@@ -11,7 +11,6 @@ Examples
   python3 run_persona_json.py ../../energybridge/roleplay/personas/atom_comfort_sensitive.json
   python3 run_persona_json.py basic_role_f_commuter_ev_optimizer --city Shanghai --output /tmp/out
   python3 run_persona_json.py atom_comfort_sensitive --city Tianjin --method mpc_dynamic
-  python3 run_persona_json.py atom_comfort_sensitive --city Tianjin --method mpc_ep
 
 Output
 ------
@@ -114,7 +113,7 @@ def _run_prefix(persona_id: str, human_name: str = "") -> str:
 
 def _method_run_token(method: str, mpc_horizon: int = 6) -> str:
     method = _canonical_method(method)
-    if method in ("mpc_dynamic", "mpc_ep"):
+    if method == "mpc_dynamic":
         return f"{method}_H{int(mpc_horizon)}"
     return method
 
@@ -420,7 +419,6 @@ def _method_label(method: str) -> str:
         ENERGYBRIDGE_METHOD_ID: "EnergyBridge",
         "human": "Human-in-loop Agent",
         "mpc_dynamic": "MPC-Dynamic baseline",
-        "mpc_ep": "MPC-EnergyPlus baseline",
         "rl_ppo_3day": "RL PPO 3-day baseline",
         "rl_ppo_pref_v2": "RL PPO Pref-v2",
         "rule_milp": "Rule+MILP oracle baseline",
@@ -512,13 +510,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--method",
-        choices=[ENERGYBRIDGE_METHOD_ID, "agent", "mpc_dynamic", "mpc_ep", "mpc", "rl", "rl_ppo", "rl_ppo_3day", "rl_ppo_pref_v2", "rl_pref_v2", "rule_milp", "rule+milp", "pmv_milp", "eb_rule_milp", "EB+rule+MILP", "eb+rule+milp", "energybridge_rule_milp", "agent_milp", "agent+milp", "no_dr", "none", "baseline", "hema_agent"],
+        choices=[ENERGYBRIDGE_METHOD_ID, "agent", "mpc_dynamic", "mpc", "rl", "rl_ppo", "rl_ppo_3day", "rl_ppo_pref_v2", "rl_pref_v2", "rule_milp", "rule+milp", "pmv_milp", "eb_rule_milp", "EB+rule+MILP", "eb+rule+milp", "energybridge_rule_milp", "agent_milp", "agent+milp", "no_dr", "none", "baseline", "hema_agent"],
         default=ENERGYBRIDGE_METHOD_ID,
         help="Controller method. Use EnergyBridge for our agent; 'agent' is kept as a deprecated alias.",
     )
     parser.add_argument(
         "--mpc-horizon", type=int, default=6,
-        help="MPC prediction horizon in 10-minute steps; used by mpc_dynamic/mpc_ep (default: 6).",
+        help="MPC prediction horizon in 10-minute steps; used by mpc_dynamic (default: 6).",
     )
     args = parser.parse_args()
 

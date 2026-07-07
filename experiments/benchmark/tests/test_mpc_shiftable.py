@@ -184,6 +184,20 @@ def test_plan_mpc_action_returns_llm_compatible_schema_and_terms() -> None:
     assert action["reason"].startswith("mpc_pdf_v15 total=")
 
 
+def test_plan_mpc_action_uses_berlin_dynamic_model_for_germany() -> None:
+    state = _sample_state()
+    state["city"] = "Germany"
+    state["weather_label"] = "Germany"
+    state["outdoor_temp_c"] = 22.0
+
+    action = plan_mpc_action(state=state)
+
+    diagnostics = action["objective_terms"]["diagnostics"]["dynamic_model_prediction"]
+    assert diagnostics["model"] == "regional_5r3c_hvac_solar_dynamic_model_v2"
+    assert diagnostics["region"] == "berlin"
+    assert "regional_5r3c/berlin" in diagnostics["thermal_parameters_path"]
+
+
 def test_plan_mpc_action_is_pdf_v15_only_api() -> None:
     assert "objective_version" not in inspect.signature(plan_mpc_action).parameters
 

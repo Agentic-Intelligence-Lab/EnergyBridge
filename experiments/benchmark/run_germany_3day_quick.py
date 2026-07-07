@@ -48,7 +48,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--method",
-        choices=[ENERGYBRIDGE_METHOD_ID, "agent", "mpc_dynamic", "mpc_ep", "mpc", "rule_milp", "rule+milp", "pmv_milp"],
+        choices=[ENERGYBRIDGE_METHOD_ID, "agent", "mpc_dynamic", "mpc", "rule_milp", "rule+milp", "pmv_milp"],
         default=ENERGYBRIDGE_METHOD_ID,
         help="Controller method. Default: EnergyBridge; 'agent' is a deprecated alias.",
     )
@@ -56,7 +56,7 @@ def main() -> None:
         "--mpc-horizon",
         type=int,
         default=6,
-        help="MPC horizon in 10-minute steps for mpc_dynamic/mpc_ep. Default: 6.",
+        help="MPC horizon in 10-minute steps for mpc_dynamic. Default: 6.",
     )
     parser.add_argument(
         "--price-csv",

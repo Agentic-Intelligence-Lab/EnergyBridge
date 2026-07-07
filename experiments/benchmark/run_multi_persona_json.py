@@ -128,7 +128,7 @@ def _default_multi_output_dir(
     mpc_horizon: int = 6,
 ) -> Path:
     method = _canonical_method(method)
-    token = f"{method}_H{int(mpc_horizon)}" if method in ("mpc_dynamic", "mpc_ep") else method
+    token = f"{method}_H{int(mpc_horizon)}" if method == "mpc_dynamic" else method
     run_name = f"{_household_run_label(household_id)}_{token}_{city.lower()}_{int(days)}days"
     from datetime import date
 
@@ -539,7 +539,7 @@ def main() -> None:
                         help="Override output directory; defaults to benchmark_results/multi__<ids>.")
     parser.add_argument(
         "--method",
-        choices=[ENERGYBRIDGE_METHOD_ID, "agent", "mpc_dynamic", "mpc_ep", "mpc", "rule_milp", "rule+milp", "pmv_milp", "no_dr", "none", "baseline"],
+        choices=[ENERGYBRIDGE_METHOD_ID, "agent", "mpc_dynamic", "mpc", "rule_milp", "rule+milp", "pmv_milp", "no_dr", "none", "baseline"],
         default=ENERGYBRIDGE_METHOD_ID,
         help="Controller method. Default: EnergyBridge.",
     )

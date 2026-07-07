@@ -937,7 +937,7 @@ def _method_policy_action_space_services(method: str) -> set[str]:
         return {"washer", "water_heater"}
     if method == "rl_ppo_pref_v2":
         return {"washer", "dishwasher", "dryer", "water_heater", "ev"}
-    if method in ("agent", "eb_rule_milp", "mpc_dynamic", "mpc_ep", "hema_agent", "rule_milp"):
+    if method in ("agent", "eb_rule_milp", "mpc_dynamic", "hema_agent", "rule_milp"):
         return {"washer", "dishwasher", "dryer", "water_heater", "ev"}
     return set()
 
@@ -1700,10 +1700,10 @@ def _filter_controllable_appliance_actions(actions: dict | None, appliance_confi
 
 
 def _hybrid_rule_milp_setpoint_floor(options: dict | None, cap_c: float) -> float | None:
-    """Return the PMV/cost-min cooling target, capped only by run safety bounds."""
+    """Return the dynamics/cost-min cooling target, capped only by run safety bounds."""
     try:
         hvac = (options or {}).get("hvac") or {}
-        target = hvac.get("cost_min_pmv_setpoint_c")
+        target = hvac.get("cost_min_dynamic_setpoint_c", hvac.get("cost_min_pmv_setpoint_c"))
         if target is None:
             return None
         return round(min(float(cap_c), float(target)), 1)
@@ -1726,7 +1726,7 @@ def _hybrid_rule_milp_comfort_override_threshold() -> int:
 
 
 def _hybrid_rule_milp_floor_allowed(past_events: list[dict] | None) -> bool:
-    """Keep the PMV/cost floor until warm feedback asks for comfort recovery."""
+    """Keep the dynamics/cost floor until warm feedback asks for comfort recovery."""
     return _hybrid_rule_milp_warm_feedback_count(past_events) < _hybrid_rule_milp_comfort_override_threshold()
 
 
@@ -1764,12 +1764,15 @@ def _hybrid_rule_milp_feedback_comfort_cap(past_events: list[dict] | None, prefe
     threshold = _hybrid_rule_milp_comfort_override_threshold()
     if warm_count < threshold:
         return None
-    step_down = 0.0
-    if warm_count >= threshold + 2:
-        step_down = 1.0
-    elif warm_count >= threshold + 1:
-        step_down = 0.5
-    return round(max(22.0, float(preferred_max_c) - step_down), 1)
+    # The hybrid method may make only a small HVAC comfort concession; appliance
+    # timing remains on the Rule+MILP plan.  Keep the concession bounded so the
+    # method does not drift back into a pure comfort-first agent.
+    return round(max(22.0, float(preferred_max_c) - 0.5), 1)
+
+
+def _hybrid_rule_milp_ac_concession_c(past_events: list[dict] | None) -> float:
+    """Bounded AC-only concession relative to the Rule+MILP dynamics target."""
+    return 0.5 if _hybrid_rule_milp_warm_feedback_count(past_events) >= _hybrid_rule_milp_comfort_override_threshold() else 0.0
 
 
 def _merge_hybrid_rule_milp_actions(
@@ -1785,7 +1788,8 @@ def _merge_hybrid_rule_milp_actions(
     appliance timing remains the MILP-selected feasible schedule. This keeps the
     hybrid method comparable to the oracle baseline and prevents sparse
     post-event LLM replies from re-opening completed services or shortening EV
-    charge windows.
+    charge windows. Strong appliance complaints are surfaced in feedback for
+    future method review, but are not converted into ad hoc LLM schedule edits.
     """
     milp_selected = ((hybrid_options or {}).get("selected_rule_milp_action") or {})
     milp_actions = _filter_controllable_appliance_actions(milp_selected, appliance_config)
@@ -2133,6 +2137,9 @@ def _build_decision_time_state(
         )
     state.update(
         {
+            "city": str(getattr(loop, "weather_label", "") or ""),
+            "weather": str(getattr(loop, "weather_label", "") or ""),
+            "weather_label": str(getattr(loop, "weather_label", "") or ""),
             "occupied": bool(getattr(loop, "current_occupied", True)),
             "occupancy_count": float(getattr(loop, "current_occupancy_count", 0.0) or 0.0),
             "occupancy_source": getattr(loop, "current_occupancy_source", "unknown"),
@@ -2351,18 +2358,16 @@ def _hybrid_rule_milp_guidance_text(options: dict | None) -> str:
     return (
         "\n[EB+rule+MILP CANDIDATES]\n"
         "Rule+MILP proposes appliance schedules that are cost/VPP-optimal under the current physical model. "
-        "PMV guidance gives the comfort-feasible AC range. Treat `selected_rule_milp_action` and "
-        "`cost_min_pmv_setpoint_c` as the default plan only when it remains inside the strict household comfort ceiling. "
-        "For the first event, be conservative: do not exceed the strictest stated comfort cap just to save cost. "
-        "Keep this optimality unless clear member feedback states a hard comfort, safety, hot-water, EV-readiness, or deadline preference. Choose among equal-objective MILP "
-        "options using preference memory; do not trade cost/VPP optimality for soft preference wording. "
-        "Keep appliance timing on the MILP-selected feasible schedule; use the user preference mainly to "
-        "explain the action or justify a rare bounded AC adjustment. "
+        "Regional dynamics guidance gives the cost-min AC target. Treat `selected_rule_milp_action` and "
+        "`cost_min_dynamic_setpoint_c` as the default plan. "
+        "The Agent may only adjust AC downward for explicit warm/comfort feedback, and the controller will cap that adjustment at 0.5°C. "
+        "Keep appliance timing on the MILP-selected feasible schedule; do not change washer/dishwasher/dryer/water-heater/EV timing unless there is a truly hard safety or service impossibility. "
+        "Use the user preference mainly to choose among equal-objective MILP options and to explain why the plan protects services. "
         "Water-heater preheat must stay close to the candidate/configured short window; never stretch it into all-day heating. "
-        "Do not cool below the PMV/cost-min setpoint unless a member's stated comfort cap or hard comfort feedback requires it. "
+        "Do not cool more than 0.5°C below the dynamics/cost-min setpoint. "
         "In the `reason`, explicitly reassure the household that the MILP plan keeps required services feasible "
         "(EV readiness, hot water, laundry/dishwasher/dryer) and moves non-AC loads outside the VPP window while preserving comfort. "
-        "If you deviate from a MILP option, explain the hard user-preference reason in the `reason` field.\n"
+        "If AC is adjusted, explain it as a small bounded comfort concession while keeping the MILP appliance plan unchanged.\n"
         f"{json.dumps(compact, ensure_ascii=False)}"
     )
 
@@ -2549,7 +2554,7 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
         "none": "no_dr",
         "baseline": "no_dr",
     }.get(str(method or "agent").lower(), method)
-    if method not in ("agent", "eb_rule_milp", "mpc_dynamic", "mpc_ep", "rl_ppo_3day", "rl_ppo_pref_v2", "rule_milp", "no_dr", "hema_agent"):
+    if method not in ("agent", "eb_rule_milp", "mpc_dynamic", "rl_ppo_3day", "rl_ppo_pref_v2", "rule_milp", "no_dr", "hema_agent"):
         raise ValueError(f"Unsupported family control method: {method}")
     if output_dir is None:
         output_dir = BENCHMARK_DIR / "results" / f"family_{method}_{weather_label}"
@@ -2561,6 +2566,7 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     from pyenergyplus.api import EnergyPlusAPI
     loop = _FamilyLoop(); api = EnergyPlusAPI(); state = api.state_manager.new_state()
     loop.sim_days = sim_days
+    loop.weather_label = weather_label
     loop.daily_e_wh = [0.0 for _ in range(sim_days)]
     loop.vpp_events = vpp_events
     loop._rl_v2_daily_scheduled: dict[int, set] = {}  # v2 decision cooldown
@@ -2668,12 +2674,12 @@ If grid goals conflict with comfort, safety, consent, or caregiving routines, ch
         _hybrid_policy = """
 [EB+RULE+MILP HYBRID MODE]
 You are EnergyBridge augmented with Rule+MILP candidates.
-Rule+MILP generates physically feasible, cost/VPP-optimal appliance strategy options; PMV rule gives an AC comfort/efficiency range.
-Your default job is to follow the selected Rule+MILP appliance plan and the warmest cost-saving AC setpoint that still stays inside the strict household comfort ceiling.
-On the first event, do not wait for negative feedback before respecting a strict comfort cap; never exceed a member's stated maximum just to save cost.
+Rule+MILP generates physically feasible, cost/VPP-optimal appliance strategy options; regional dynamics gives the AC cost-min target.
+Your default job is to follow the selected Rule+MILP appliance plan and AC target.
+You may only modify AC, and only after explicit warm/comfort feedback; the controller will cap that downward AC adjustment at 0.5°C.
 Choose among equal-objective MILP options using live preference and run-local memory.
-Only make a bounded suboptimal adjustment when clear member feedback states a hard comfort, safety, hot-water, EV-readiness, or deadline requirement. Soft preferences should not override cost/VPP optimality.
-If you deviate from the MILP option, keep every present appliance explicitly controlled, keep VPP-window non-AC avoidance when feasible, and explain the hard user-preference reason briefly.
+Do not voluntarily change appliance timing. Unless there is a truly hard safety/service impossibility, keep washer/dishwasher/dryer/water-heater/EV exactly on the Rule+MILP schedule.
+Use the `reason` field to make the plan acceptable: explain that appliance services remain feasible, non-AC loads avoid VPP, and any AC change is capped at 0.5°C.
 Even when you do not deviate, use the `reason` field to explain why the plan protects each household priority: comfort, EV departure readiness, hot-water availability, laundry/dishwasher/dryer completion, and VPP-window avoidance.
 Use the run-local memory context as learned preference evidence. It resets for each fresh benchmark run.
 """
@@ -3138,25 +3144,23 @@ All times are hour-of-day (0–23.9)."""
             if learned_floor is not None:
                 sp_lower = max(sp_lower, learned_floor)
             if method == "eb_rule_milp":
-                # In the hybrid method, Rule+MILP/PMV provides candidates; it
-                # should keep the cost-min PMV target only when it is still
-                # inside the user's comfort ceiling.  This avoids the first
-                # event learning by failing at a too-warm PMV/cost floor.
+                # Keep Rule+MILP as the AC baseline. The Agent may only make a
+                # bounded comfort concession by cooling at most 0.5C below that
+                # dynamics/cost-min target after explicit warm feedback.
                 hybrid_floor = _hybrid_rule_milp_setpoint_floor(hybrid_options, _run_sp_max)
-                initial_cap = _hybrid_rule_milp_initial_comfort_cap(_ac_sp_max)
-                sp_upper = min(sp_upper, initial_cap)
-                feedback_cap = _hybrid_rule_milp_feedback_comfort_cap(loop.vpp_event_log, _ac_sp_max)
-                if feedback_cap is not None:
-                    sp_upper = min(sp_upper, feedback_cap)
-                if (
-                    hybrid_floor is not None
-                    and _hybrid_rule_milp_floor_allowed(loop.vpp_event_log)
-                    and hybrid_floor <= sp_upper + 1e-6
-                ):
-                    sp_lower = max(sp_lower, hybrid_floor)
-                elif feedback_cap is not None:
-                    sp_lower = max(sp_lower, min(sp_upper, feedback_cap))
-                sp_lower = min(sp_lower, sp_upper)
+                if hybrid_floor is not None:
+                    ac_concession = _hybrid_rule_milp_ac_concession_c(loop.vpp_event_log)
+                    target_low = round(max(_run_sp_min, hybrid_floor - ac_concession), 1)
+                    target_high = round(max(target_low, min(_run_sp_max, hybrid_floor)), 1)
+                    sp_lower = target_low
+                    sp_upper = target_high
+                else:
+                    initial_cap = _hybrid_rule_milp_initial_comfort_cap(_ac_sp_max)
+                    sp_upper = min(sp_upper, initial_cap)
+                    feedback_cap = _hybrid_rule_milp_feedback_comfort_cap(loop.vpp_event_log, _ac_sp_max)
+                    if feedback_cap is not None:
+                        sp_upper = min(sp_upper, feedback_cap)
+                    sp_lower = min(sp_lower, sp_upper)
             if sp_lower > sp_upper:
                 sp_lower = sp_upper
             sp = round(max(sp_lower, min(sp_upper, raw_sp)), 1)
@@ -3226,7 +3230,6 @@ All times are hour-of-day (0–23.9)."""
     def _mpc_trigger(temp, out_t, hod, sim_h, facility_w=None, vpp_event=None):
         from experiments.benchmark.baselines.mpc import plan_mpc_action
 
-        predictor = "energyplus" if method == "mpc_ep" else "dynamic"
         state_dict = _build_decision_time_state(
             loop,
             sim_h=sim_h,
@@ -3240,11 +3243,10 @@ All times are hour-of-day (0–23.9)."""
             vpp_target_kwh=None,
             appliance_config=appliance_config or {},
         )
-        state_dict["mpc_predictor"] = predictor
+        state_dict["mpc_predictor"] = "dynamic"
         state_dict["mpc_horizon_steps"] = mpc_horizon_steps
         state_dict["idf_path"] = str(idf_path)
         state_dict["epw_path"] = str(epw_path)
-        state_dict["mpc_ep_output_dir"] = str(output_dir / "_mpc_ep_predictor")
         state_dict["mpc_decision_history"] = [
             item
             for day_items in loop.day_agent_decisions
@@ -3951,17 +3953,36 @@ All times are hour-of-day (0–23.9)."""
         hvac_avail_set = _set_hvac_availability(ex, s, loop, hvac_control_occupied)
         if method == "rule_milp" and occ:
             try:
-                from experiments.benchmark.baselines.rule_milp import _choose_pmv_cost_min_setpoint
+                from experiments.benchmark.baselines.rule_milp import _choose_dynamic_cost_min_setpoint
 
-                rule_sp = _choose_pmv_cost_min_setpoint({
-                    "appliance_config": appliance_config or {},
-                    "current_setpoint_c": loop.sp,
-                    "temp_c": temp,
-                })
+                cache_key = (
+                    round(float(sim_h) * 2.0) / 2.0,
+                    round(float(temp), 1),
+                    round(float(out_t), 1),
+                    str(weather_label or ""),
+                )
+                cached = getattr(loop, "_rule_milp_hvac_cache", None)
+                if isinstance(cached, dict) and cached.get("key") == cache_key:
+                    rule_sp = cached.get("setpoint", loop.sp)
+                else:
+                    state_dict = _build_decision_time_state(
+                        loop,
+                        sim_h=sim_h,
+                        hod=hod,
+                        temp=temp,
+                        out_t=out_t,
+                        facility_w=fac,
+                        vpp_event=_find_active_or_upcoming_vpp_event(sim_h, vpp_events=vpp_events),
+                        vpp_target_kwh=None,
+                        appliance_config=appliance_config or {},
+                    )
+                    state_dict["mpc_horizon_steps"] = mpc_horizon_steps
+                    rule_sp, _diag = _choose_dynamic_cost_min_setpoint(state_dict)
+                    loop._rule_milp_hvac_cache = {"key": cache_key, "setpoint": rule_sp}
                 loop.sp = round(max(_run_sp_min, min(_run_sp_max, float(rule_sp))), 1)
                 loop.planned_occupied_sp = loop.sp
             except Exception as _rme:
-                print(f"  [Rule+MILP HVAC] PMV rule failed: {_rme}")
+                print(f"  [Rule+MILP HVAC] dynamics rule failed: {_rme}")
 
         # Determine current VPP status
         active_vpp = None
@@ -4192,7 +4213,7 @@ All times are hour-of-day (0–23.9)."""
                         "appliance_actions": {},
                         "objective_source": "no_dr_random_routine_counterfactual",
                     }
-                elif method in ("mpc_dynamic", "mpc_ep"):
+                elif method == "mpc_dynamic":
                     res = _mpc_trigger(
                         temp, out_t, hod, sim_h,
                         facility_w=fac,

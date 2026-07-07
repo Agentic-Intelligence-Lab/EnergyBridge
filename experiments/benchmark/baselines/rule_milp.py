@@ -1,11 +1,10 @@
 """Rule + MILP oracle-style baseline for the family benchmark.
 
-HVAC uses a transparent PMV comfort rule: pick the warmest allowed cooling
-setpoint whose steady-state PMV is still acceptable, because that is the
-lowest-cost cooling policy inside the user's comfort envelope.  Independent
-appliances are scheduled with a small mixed-integer program over feasible
-service windows.  If PuLP is unavailable, the same independent binary choice
-problem is solved by exact enumeration.
+HVAC uses the same regional dynamics rollout as the MPC baseline to pick a
+cost-minimizing cooling setpoint inside the user's comfort envelope, with a PMV
+rule only as a fallback.  Independent appliances are scheduled with a small
+mixed-integer program over feasible service windows.  If PuLP is unavailable,
+the same independent binary choice problem is solved by exact enumeration.
 """
 
 from __future__ import annotations
@@ -34,6 +33,8 @@ APPLIANCE_ACTION_KEYS = (
 SHIFTABLE_NAMES = ("washer", "dishwasher", "dryer")
 BIG_VPP_PENALTY = 10_000.0
 GRID_H = 0.5
+DYNAMIC_HVAC_HORIZON_STEPS = 6
+_DYNAMIC_HVAC_SCORERS: dict[tuple[int, str], Any] = {}
 
 
 def plan_rule_milp_action(
@@ -43,8 +44,9 @@ def plan_rule_milp_action(
     run_start_date: Any = None,
 ) -> dict:
     """Return an LLM-compatible action for the rule+MILP baseline."""
+    setpoint, hvac_diagnostics = _choose_dynamic_cost_min_setpoint(state)
     action = {
-        "setpoint": _choose_pmv_cost_min_setpoint(state),
+        "setpoint": setpoint,
         "next_check_hour": None,
         "reason": "rule_milp",
         "appliances": {key: None for key in APPLIANCE_ACTION_KEYS},
@@ -55,14 +57,22 @@ def plan_rule_milp_action(
         run_start_date=run_start_date,
     )
     selected, solver_meta = _solve_binary_choice_milp(groups)
-    total_cost = 0.0
+    appliance_cost = 0.0
     for candidate in selected:
-        total_cost += float(candidate.get("objective", 0.0))
+        appliance_cost += float(candidate.get("objective", 0.0))
         action["appliances"].update(candidate.get("appliances") or {})
+    hvac_objective = float((hvac_diagnostics.get("selected") or {}).get("objective", 0.0) or 0.0)
+    total_cost = appliance_cost + hvac_objective
     action["objective_terms"] = {
-        "version": "rule_milp_cost_min_v1",
+        "version": "rule_milp_dynamic_cost_min_v2",
         "total": total_cost,
-        "cost": {"total": total_cost, "raw": {"candidate_cost": total_cost}},
+        "cost": {
+            "total": total_cost,
+            "raw": {
+                "candidate_cost": appliance_cost,
+                "hvac_dynamic_objective": hvac_objective,
+            },
+        },
         "user": {"total": 0.0},
         "grid": {"total": 0.0},
         "slack": {"total": 0.0},
@@ -73,13 +83,14 @@ def plan_rule_milp_action(
                 if price_profile is not None and (run_start_date is not None or getattr(price_profile, "is_recurring", False))
                 else "flat_energy_proxy"
             ),
-            "hvac": "pmv_rule",
+            "hvac": hvac_diagnostics.get("status", "regional_dynamic_model"),
             "appliance_schedule": solver_meta.get("solver", "unknown"),
         },
-        "active_terms": ["cost.shiftable", "user.service", "user.pmv"],
+        "active_terms": ["cost.shiftable", "cost.hvac_dynamic", "user.service", "user.pmv"],
         "inactive_or_missing_terms": [],
         "diagnostics": {
-            "formula": "min sum(price_t * appliance_power_t) with service and no-VPP-overlap penalties",
+            "formula": "min dynamic HVAC rollout cost + sum(price_t * appliance_power_t) after strict no-VPP candidate filtering when feasible",
+            "hvac_setpoint": hvac_diagnostics,
             "solver": solver_meta,
             "candidate_groups": {
                 group: [
@@ -109,7 +120,7 @@ def plan_rule_milp_options(
     run_start_date: Any = None,
     max_options: int = 5,
 ) -> dict:
-    """Return PMV setpoint guidance plus equal-objective MILP appliance options.
+    """Return dynamics setpoint guidance plus equal-objective MILP appliance options.
 
     This is intended for hybrid agent methods: Rule+MILP proposes physically
     valid cost/VPP-optimal appliance schedules, then an agent can choose among
@@ -132,7 +143,7 @@ def plan_rule_milp_options(
         selected_action.update(candidate.get("appliances") or {})
     return {
         "version": "rule_milp_candidate_options_v1",
-        "hvac": _pmv_setpoint_options(state),
+        "hvac": _dynamic_setpoint_options(state),
         "solver": solver_meta,
         "selected_rule_milp_action": selected_action,
         "appliance_candidate_groups": {
@@ -149,16 +160,8 @@ def plan_rule_milp_options(
 
 
 def _pmv_setpoint_options(state: dict) -> dict:
-    cfg = ((state.get("appliance_config") or {}).get("ac", {}) or {})
-    pref_min = _float(cfg.get("setpoint_preferred_min_c"), 24.0)
-    pref_max = _float(cfg.get("setpoint_preferred_max_c"), 26.0)
-    tol = _float(cfg.get("temp_tolerance_c"), 1.0)
-    allowed_min = max(22.0, pref_min - tol)
-    allowed_max = min(28.0, pref_max + tol)
-    candidates = [
-        round(allowed_min + idx * 0.5, 1)
-        for idx in range(int(round((allowed_max - allowed_min) / 0.5)) + 1)
-    ]
+    pref_min, pref_max, allowed_min, allowed_max = _ac_setpoint_bounds(state)
+    candidates = _ac_setpoint_candidates(state)
     rows = [
         {
             "setpoint_c": sp,
@@ -170,6 +173,8 @@ def _pmv_setpoint_options(state: dict) -> dict:
     feasible = [row["setpoint_c"] for row in rows if row["pmv_ok"]]
     recommended = max(feasible) if feasible else _choose_pmv_cost_min_setpoint(state)
     return {
+        "source": "pmv_rule",
+        "status": "pmv_rule",
         "preferred_range_c": [round(pref_min, 1), round(pref_max, 1)],
         "allowed_range_c": [round(allowed_min, 1), round(allowed_max, 1)],
         "pmv_feasible_setpoints_c": feasible,
@@ -269,17 +274,157 @@ def _candidate_public_view(candidate: dict) -> dict:
     }
 
 
-def _choose_pmv_cost_min_setpoint(state: dict) -> float:
+def _choose_dynamic_cost_min_setpoint(state: dict) -> tuple[float, dict]:
+    options = _dynamic_setpoint_options(state)
+    selected = options.get("selected") or {}
+    setpoint = _float(selected.get("setpoint_c"), _float(options.get("cost_min_dynamic_setpoint_c"), 26.0))
+    return round(float(setpoint), 1), options
+
+
+def _dynamic_setpoint_options(state: dict) -> dict:
+    pref_min, pref_max, allowed_min, allowed_max = _ac_setpoint_bounds(state)
+    fallback = _pmv_setpoint_options(state)
+    scorer, scorer_meta = _dynamic_hvac_scorer_for_state(state)
+    if scorer is None:
+        fallback.update(
+            {
+                "source": "pmv_rule_fallback",
+                "status": "pmv_rule_fallback",
+                "fallback_reason": scorer_meta.get("error", "dynamic_model_unavailable"),
+                "cost_min_dynamic_setpoint_c": fallback["cost_min_pmv_setpoint_c"],
+                "selected": {
+                    "setpoint_c": fallback["cost_min_pmv_setpoint_c"],
+                    "objective": 0.0,
+                    "source": "pmv_rule_fallback",
+                },
+            }
+        )
+        return fallback
+
+    rows = []
+    price = _float(state.get("price"), _float(state.get("tou_price"), 1.0))
+    for sp in _ac_setpoint_candidates(state):
+        action = {"setpoint": sp, "appliances": {key: None for key in APPLIANCE_ACTION_KEYS}}
+        try:
+            trajectory, dyn_diag = scorer.predict_objective_trajectory(state, action)
+        except Exception as exc:
+            fallback.update(
+                {
+                    "source": "pmv_rule_fallback",
+                    "status": "pmv_rule_fallback",
+                    "fallback_reason": str(exc)[:160],
+                    "cost_min_dynamic_setpoint_c": fallback["cost_min_pmv_setpoint_c"],
+                    "selected": {
+                        "setpoint_c": fallback["cost_min_pmv_setpoint_c"],
+                        "objective": 0.0,
+                        "source": "pmv_rule_fallback",
+                    },
+                }
+            )
+            return fallback
+        temps = [
+            _float(row.get("temp_c"), _float(state.get("temp_c"), sp))
+            for row in trajectory
+            if isinstance(row, dict)
+        ] or [_float(state.get("temp_c"), sp)]
+        stage_hvac_kw = list(dyn_diag.get("stage_hvac_power_kw") or [])
+        if not stage_hvac_kw:
+            stage_hvac_kw = [float(dyn_diag.get("predicted_hvac_power_kw", 0.0) or 0.0)]
+        horizon_minutes = float(dyn_diag.get("horizon_minutes", DYNAMIC_HVAC_HORIZON_STEPS * 10.0) or 0.0)
+        dt_h = max(1e-9, horizon_minutes / 60.0 / max(1, len(stage_hvac_kw)))
+        hvac_energy_kwh = sum(max(0.0, float(value or 0.0)) * dt_h for value in stage_hvac_kw)
+        hvac_cost = hvac_energy_kwh * price
+        warm_violation_c = max(0.0, max(temps) - allowed_max)
+        cold_violation_c = max(0.0, allowed_min - min(temps))
+        comfort_violation_c = warm_violation_c + cold_violation_c
+        pmv_value = _pmv(sp)
+        pmv_violation = max(0.0, abs(pmv_value) - 0.5)
+        objective = hvac_cost + 100.0 * comfort_violation_c**2 + 10.0 * pmv_violation**2
+        rows.append(
+            {
+                "setpoint_c": round(float(sp), 1),
+                "objective": round(float(objective), 6),
+                "hvac_energy_kwh": round(float(hvac_energy_kwh), 6),
+                "hvac_cost": round(float(hvac_cost), 6),
+                "predicted_final_temp_c": round(float(temps[-1]), 3),
+                "predicted_max_temp_c": round(float(max(temps)), 3),
+                "predicted_min_temp_c": round(float(min(temps)), 3),
+                "comfort_violation_c": round(float(comfort_violation_c), 6),
+                "pmv": round(float(pmv_value), 3),
+                "pmv_ok": pmv_violation <= 1e-9,
+                "dynamic_feasible": comfort_violation_c <= 0.05 and pmv_violation <= 0.05,
+            }
+        )
+    feasible = [row for row in rows if row["dynamic_feasible"]]
+    selected = min(
+        feasible or rows,
+        key=lambda row: (
+            float(row["objective"]),
+            float(row["hvac_cost"]),
+            -float(row["setpoint_c"]),
+        ),
+    )
+    return {
+        "source": "regional_dynamic_model",
+        "status": "regional_dynamic_model",
+        "model": scorer_meta.get("model", "regional_5r3c_hvac_solar_dynamic_model_v2"),
+        "region": scorer_meta.get("region", "tianjin"),
+        "preferred_range_c": [round(pref_min, 1), round(pref_max, 1)],
+        "allowed_range_c": [round(allowed_min, 1), round(allowed_max, 1)],
+        "pmv_feasible_setpoints_c": [row["setpoint_c"] for row in rows if row["pmv_ok"]],
+        "cost_min_pmv_setpoint_c": selected["setpoint_c"],
+        "cost_min_dynamic_setpoint_c": selected["setpoint_c"],
+        "candidate_setpoints": rows,
+        "selected": selected,
+        "rule": "choose the lowest dynamic HVAC rollout objective inside comfort/PMV feasibility",
+    }
+
+
+def _dynamic_hvac_scorer_for_state(state: dict):
+    try:
+        from experiments.benchmark.baselines.mpc.dynamic_model import (
+            DynamicModelScorer,
+            dynamic_model_region_for_state,
+        )
+
+        horizon = max(1, int(_float(state.get("mpc_horizon_steps"), DYNAMIC_HVAC_HORIZON_STEPS)))
+        region = dynamic_model_region_for_state(state)
+        cache_key = (horizon, region)
+        if cache_key not in _DYNAMIC_HVAC_SCORERS:
+            _DYNAMIC_HVAC_SCORERS[cache_key] = DynamicModelScorer(
+                horizon_steps=horizon,
+                region_key=region,
+            )
+        return _DYNAMIC_HVAC_SCORERS[cache_key], {
+            "model": "regional_5r3c_hvac_solar_dynamic_model_v2",
+            "region": region,
+        }
+    except Exception as exc:
+        return None, {"error": str(exc)[:160]}
+
+
+def _ac_setpoint_bounds(state: dict) -> tuple[float, float, float, float]:
     cfg = ((state.get("appliance_config") or {}).get("ac", {}) or {})
     pref_min = _float(cfg.get("setpoint_preferred_min_c"), 24.0)
     pref_max = _float(cfg.get("setpoint_preferred_max_c"), 26.0)
     tol = _float(cfg.get("temp_tolerance_c"), 1.0)
     allowed_min = max(22.0, pref_min - tol)
     allowed_max = min(28.0, pref_max + tol)
-    candidates = [
+    return pref_min, pref_max, allowed_min, allowed_max
+
+
+def _ac_setpoint_candidates(state: dict) -> list[float]:
+    _, _, allowed_min, allowed_max = _ac_setpoint_bounds(state)
+    steps = int(round((allowed_max - allowed_min) / 0.5))
+    return [
         round(allowed_min + idx * 0.5, 1)
-        for idx in range(int(round((allowed_max - allowed_min) / 0.5)) + 1)
+        for idx in range(max(0, steps) + 1)
     ]
+
+
+def _choose_pmv_cost_min_setpoint(state: dict) -> float:
+    pref_min, pref_max, allowed_min, allowed_max = _ac_setpoint_bounds(state)
+    candidates = _ac_setpoint_candidates(state)
     ok = [sp for sp in candidates if abs(_pmv(sp)) <= 0.5]
     if ok:
         return max(ok)
@@ -306,6 +451,27 @@ def _build_candidate_groups(state: dict, *, price_profile: Any, run_start_date: 
     if bool(ev_cfg.get("present", False)) and not _service_locked_for_today("ev", state):
         groups["ev"] = _ev_candidates(ev_cfg, state, price_profile, run_start_date)
     return {name: candidates for name, candidates in groups.items() if candidates}
+
+
+def _filter_vpp_safe_candidates(candidates: list[dict], state: dict) -> list[dict]:
+    """Prefer strictly no-VPP candidates whenever the service still has one.
+
+    The VPP term remains in the objective as diagnostics and as a last-resort
+    fallback for infeasible windows, but normal planning should not ask the
+    solver to choose between a VPP-overlap candidate and a safe candidate.
+    """
+    if not candidates or not _has_vpp_context(state):
+        return candidates
+    safe = []
+    for candidate in candidates:
+        try:
+            start_abs = float(candidate.get("start_abs"))
+            end_abs = start_abs + float(candidate.get("duration_h"))
+        except (TypeError, ValueError):
+            continue
+        if not _overlaps_any_vpp(start_abs, end_abs, state):
+            safe.append(candidate)
+    return safe or candidates
 
 
 def _shiftable_candidates(
@@ -366,7 +532,7 @@ def _shiftable_candidates(
                 run_start_date=run_start_date,
             )
         )
-    return candidates
+    return _filter_vpp_safe_candidates(candidates, state)
 
 
 def _water_heater_candidates(
@@ -413,7 +579,7 @@ def _water_heater_candidates(
                 run_start_date=run_start_date,
             )
         )
-    return candidates
+    return _filter_vpp_safe_candidates(candidates, state)
 
 
 def _ev_candidates(
@@ -466,6 +632,7 @@ def _ev_candidates(
                 run_start_date=run_start_date,
             )
         )
+    candidates = _filter_vpp_safe_candidates(candidates, state)
     if not candidates:
         candidates.append(
             {
@@ -627,13 +794,7 @@ def _price_at_sim_hour(sim_h: float, price_profile: Any, run_start_date: Any) ->
 
 
 def _overlaps_any_vpp(start_abs: float, end_abs: float, state: dict) -> bool:
-    events = []
-    event = state.get("vpp_event")
-    if isinstance(event, dict):
-        events.append(event)
-    history_event = (state.get("history") or {}).get("vpp_event")
-    if isinstance(history_event, dict):
-        events.append(history_event)
+    events = _vpp_events_for_state(state)
     for ev in events:
         try:
             if max(start_abs, float(ev["trigger_h"])) < min(end_abs, float(ev["end_h"])):
@@ -641,6 +802,21 @@ def _overlaps_any_vpp(start_abs: float, end_abs: float, state: dict) -> bool:
         except (KeyError, TypeError, ValueError):
             continue
     return False
+
+
+def _has_vpp_context(state: dict) -> bool:
+    return bool(_vpp_events_for_state(state))
+
+
+def _vpp_events_for_state(state: dict) -> list[dict]:
+    events = []
+    event = state.get("vpp_event")
+    if isinstance(event, dict):
+        events.append(event)
+    history_event = (state.get("history") or {}).get("vpp_event")
+    if isinstance(history_event, dict):
+        events.append(history_event)
+    return events
 
 
 def _ev_needed_kwh(cfg: dict, state: dict) -> float:
