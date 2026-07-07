@@ -10,6 +10,23 @@ from typing import Any
 
 
 SCHEMA_VERSION = "vpp_strategy_explanation_v1"
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+
+
+def contains_cjk_text(value: Any) -> bool:
+    """Return true when a value contains CJK text that should not enter EnergyBridge output."""
+    if isinstance(value, str):
+        return bool(_CJK_RE.search(value))
+    if isinstance(value, dict):
+        return any(contains_cjk_text(key) or contains_cjk_text(item) for key, item in value.items())
+    if isinstance(value, (list, tuple, set)):
+        return any(contains_cjk_text(item) for item in value)
+    return False
+
+
+def english_only_text(value: Any, default: str = "") -> str:
+    text = str(value).strip() if value is not None else ""
+    return default if contains_cjk_text(text) else text
 
 
 def _fmt_hour(hour: Any) -> str:
@@ -40,8 +57,8 @@ def _duration_h(event: dict | None) -> float:
 
 def _duration_text(hours: float) -> str:
     if abs(hours - round(hours)) < 1e-6:
-        return f"{int(round(hours))}小时"
-    return f"{hours:.1f}小时"
+        return f"{int(round(hours))} h"
+    return f"{hours:.1f} h"
 
 
 def _float_or_none(value: Any) -> float | None:
@@ -140,27 +157,30 @@ def _device_actions(
 
     if setpoint_c is not None:
         range_text = (
-            f"{ac_min:.1f}-{ac_max:.1f}°C" if ac_min is not None and ac_max is not None else "授权舒适范围"
+            f"{ac_min:.1f}-{ac_max:.1f}°C" if ac_min is not None and ac_max is not None else "the authorized comfort range"
         )
         if tags.get("schedule") == "caregiver" or tags.get("control") == "low_auto_accept":
-            ac_rationale = f"空调保持在{float(setpoint_c):.1f}°C（{range_text}内），不为VPP越过护理/舒适边界。"
+            ac_rationale = (
+                f"Keep the AC setpoint at {float(setpoint_c):.1f}°C within {range_text}; "
+                "do not cross caregiving or comfort boundaries for the VPP event."
+            )
         else:
-            ac_rationale = f"只在{range_text}内临时调整，窗口结束后恢复舒适设定。"
+            ac_rationale = f"Temporarily adjust only within {range_text}, then restore comfort after the VPP window."
         actions.append(
             {
                 "device": "ac",
                 "action": "setpoint",
                 "amount": round(float(setpoint_c), 1),
                 "unit": "C",
-                "duration": f"{window}（约{duration}）",
+                "duration": f"{window} (about {duration})",
                 "rationale": ac_rationale,
             }
         )
 
     for name, label in (
-        ("washer", "洗衣机"),
-        ("dishwasher", "洗碗机"),
-        ("dryer", "烘干机"),
+        ("washer", "washer"),
+        ("dishwasher", "dishwasher"),
+        ("dryer", "dryer"),
     ):
         dev = _present_device_config(appliance_config, name)
         if not dev:
@@ -169,17 +189,17 @@ def _device_actions(
         skip = _action_value(appliance_actions, day_decisions, f"{name}_skip")
         dev_duration = _duration_text(float(dev.get("duration_h", 1.0) or 1.0))
         if skip is True:
-            summary = f"今天不启动{label}；仅在任务确实不需要时使用跳过。"
+            summary = f"Do not run the {label} today; use skip only when the task is genuinely unnecessary."
             command = {"skip": True}
         elif start is not None:
-            summary = f"{label}安排在{_fmt_hour(start)}开始，运行约{dev_duration}，避开{window}。"
+            summary = f"Start the {label} at {_fmt_hour(start)} for about {dev_duration}, avoiding {window}."
             command = {"start_h": _float_or_none(start), "duration_h": _float_or_none(dev.get("duration_h"))}
         elif dev.get("dr_adjustable", dev.get("shiftable", True)) is False:
             pref = dev.get("preferred_h")
-            summary = f"{label}是固定/非DR可调任务，保持用户常规时间{_fmt_hour(pref)}。"
+            summary = f"The {label} is fixed or non-DR-adjustable, so keep the user's routine time at {_fmt_hour(pref)}."
             command = {"routine_start_h": _float_or_none(pref), "dr_adjustable": False}
         else:
-            summary = f"{label}在{window}内不启动；如当天需要运行，安排到窗口外。"
+            summary = f"Do not start the {label} inside {window}; if it must run today, schedule it outside the window."
             command = {"avoid_window": window}
         actions.append(
             {
@@ -199,17 +219,20 @@ def _device_actions(
         temp = _action_value(appliance_actions, day_decisions, "water_heater_preheat_temp_c")
         preheat = _action_value(appliance_actions, day_decisions, "water_heater_preheat")
         if preheat is False:
-            summary = f"电热水器本窗口不预热，避免{window}内额外用电。"
+            summary = f"Do not preheat the water heater in this window; avoid extra load during {window}."
             command = {"preheat": False}
         elif start is not None and end is not None:
-            temp_text = f"，目标{float(temp):.0f}°C" if temp is not None else ""
+            temp_text = f" at {float(temp):.0f}°C" if temp is not None else ""
             if wh.get("dr_adjustable", True) is False:
                 summary = (
-                    f"热水器保持固定预热{_fmt_hour(start)}-{_fmt_hour(end)}{temp_text}，"
-                    "保障洗浴热水，不把该例程作为削峰资源。"
+                    f"Keep the fixed water-heater preheat window {_fmt_hour(start)}-{_fmt_hour(end)}{temp_text}; "
+                    "protect bath-time hot water and do not use this routine as a shedding resource."
                 )
             else:
-                summary = f"热水器在{_fmt_hour(start)}-{_fmt_hour(end)}预热{temp_text}，洗浴前保温，避开{window}。"
+                summary = (
+                    f"Preheat the water heater from {_fmt_hour(start)} to {_fmt_hour(end)}{temp_text}; "
+                    f"store heat before bath time and avoid {window}."
+                )
             command = {
                 "preheat_start_h": _float_or_none(start),
                 "preheat_end_h": _float_or_none(end),
@@ -218,7 +241,10 @@ def _device_actions(
         else:
             routine_start = wh.get("pre_heat_window_start_h")
             routine_end = wh.get("pre_heat_window_end_h")
-            summary = f"热水器保持常规预热{_fmt_hour(routine_start)}-{_fmt_hour(routine_end)}，不为VPP牺牲洗浴可用性。"
+            summary = (
+                f"Keep the routine water-heater preheat window {_fmt_hour(routine_start)}-{_fmt_hour(routine_end)}; "
+                "do not sacrifice bath-time availability for VPP response."
+            )
             command = {
                 "routine_preheat_start_h": _float_or_none(routine_start),
                 "routine_preheat_end_h": _float_or_none(routine_end),
@@ -229,7 +255,7 @@ def _device_actions(
                 "action": "preheat",
                 "amount": command,
                 "unit": "hour_of_day",
-                "duration": "按热水需求窗口",
+                "duration": "according to the hot-water service window",
                 "rationale": summary,
             }
         )
@@ -240,12 +266,18 @@ def _device_actions(
         end = _action_value(appliance_actions, day_decisions, "ev_charge_end_h")
         target_soc = _float_or_none(ev.get("target_soc"))
         dep = ev.get("departure_h")
-        target_text = f"{target_soc:.0%} SOC" if target_soc is not None else "目标SOC"
+        target_text = f"{target_soc:.0%} SOC" if target_soc is not None else "the target SOC"
         if start is not None and end is not None:
-            summary = f"EV充电窗口设为{_fmt_hour(start)}-{_fmt_hour(end)}，避开{window}并保证{_fmt_hour(dep)}前达到{target_text}。"
+            summary = (
+                f"Set the EV charging window to {_fmt_hour(start)}-{_fmt_hour(end)}, "
+                f"avoid {window}, and reach {target_text} before {_fmt_hour(dep)}."
+            )
             command = {"charge_start_h": _float_or_none(start), "charge_end_h": _float_or_none(end)}
         else:
-            summary = f"EV不在{window}充电；必要时从窗口后开始补能，保证{_fmt_hour(dep)}前达到{target_text}。"
+            summary = (
+                f"Do not charge the EV during {window}; if needed, start after the window "
+                f"and reach {target_text} before {_fmt_hour(dep)}."
+            )
             command = {"avoid_window": window, "departure_h": _float_or_none(dep), "target_soc": target_soc}
         actions.append(
             {
@@ -253,7 +285,7 @@ def _device_actions(
                 "action": "charge_window",
                 "amount": command,
                 "unit": "hour_of_day",
-                "duration": "直到满足SOC约束",
+                "duration": "until the SOC constraint is satisfied",
                 "rationale": summary,
             }
         )
@@ -268,22 +300,25 @@ def _protected_constraints(persona_config: dict | None, appliance_config: dict |
     ac_min, ac_max = _comfort_bounds(appliance_config)
     constraints: list[str] = []
     if ac_min is not None and ac_max is not None:
-        constraints.append(f"室温策略不得越过用户偏好舒适范围 {ac_min:.1f}-{ac_max:.1f}°C，{window}结束后自动恢复。")
+        constraints.append(
+            f"Indoor-temperature control must stay within the user's preferred comfort range "
+            f"{ac_min:.1f}-{ac_max:.1f}°C and auto-restore after {window}."
+        )
     else:
-        constraints.append("室温策略必须留在已授权舒适边界内，事件结束后自动恢复。")
+        constraints.append("Indoor-temperature control must stay within authorized comfort boundaries and auto-restore after the event.")
     if tags.get("control") in {"confirm_required", "suggestion_first", "low_auto_accept", "privacy_sensitive"}:
-        constraints.append("用户保留事件级确认权；未确认的更大幅度控制不能自动执行。")
+        constraints.append("The user keeps event-level confirmation authority; larger unconfirmed actions cannot execute automatically.")
     if tags.get("schedule") == "caregiver" or schedule.get("vulnerable_members"):
         members = ", ".join(schedule.get("vulnerable_members") or ["caregiving routine"])
-        constraints.append(f"护理/脆弱成员约束优先（{members}）；不把安全和稳定性作为削峰资源。")
+        constraints.append(f"Caregiving or vulnerable-member constraints come first ({members}); safety and stability are not shedding resources.")
     ev = _present_device_config(appliance_config, "ev")
     if ev:
         target = _float_or_none(ev.get("target_soc"))
-        target_text = f"{target:.0%} SOC" if target is not None else "目标SOC"
-        constraints.append(f"EV必须在{_fmt_hour(ev.get('departure_h'))}出发前达到{target_text}。")
+        target_text = f"{target:.0%} SOC" if target is not None else "the target SOC"
+        constraints.append(f"The EV must reach {target_text} before departure at {_fmt_hour(ev.get('departure_h'))}.")
     wh = _present_device_config(appliance_config, "water_heater")
     if wh:
-        constraints.append(f"热水器必须保障{_fmt_hour(wh.get('bath_required_h'))}前洗浴热水可用。")
+        constraints.append(f"The water heater must keep bath-time hot water available before {_fmt_hour(wh.get('bath_required_h'))}.")
     fixed = []
     for name in ("washer", "dishwasher", "dryer"):
         dev = _present_device_config(appliance_config, name)
@@ -292,22 +327,22 @@ def _protected_constraints(persona_config: dict | None, appliance_config: dict |
     if wh and wh.get("dr_adjustable", True) is False:
         fixed.append("water_heater")
     if fixed:
-        constraints.append("固定/非DR可调任务保持原例程：" + ", ".join(fixed) + "。")
-    constraints.append(f"所有可控非空调负荷都不得安排在VPP窗口 {window} 内运行。")
+        constraints.append("Fixed or non-DR-adjustable tasks keep their original routines: " + ", ".join(fixed) + ".")
+    constraints.append(f"No present controllable non-AC load may be scheduled to run inside the VPP window {window}.")
     return constraints
 
 
 def _user_control_notes(persona_config: dict | None, appliance_config: dict | None) -> list[str]:
     tags = (persona_config or {}).get("tags") or {}
     _, ac_max = _comfort_bounds(appliance_config)
-    restore = f"{ac_max:.1f}°C或用户常用设定" if ac_max is not None else "用户常用设定"
+    restore = f"{ac_max:.1f}°C or the user's usual setpoint" if ac_max is not None else "the user's usual setpoint"
     notes = [
-        "用户可以在事件开始前或事件进行中取消、暂停或改成保守方案。",
-        f"如果感觉不舒适，空调立即恢复到{restore}，设备任务重新排到窗口外。",
-        "任何超出本次授权边界的动作都需要重新确认，不能被默认延续到下一次事件。",
+        "The user can cancel, pause, or switch to the conservative option before or during the event.",
+        f"If the user feels uncomfortable, restore the AC to {restore} immediately and reschedule device tasks outside the window.",
+        "Any action beyond this event's authorization boundary requires renewed confirmation and cannot carry over by default.",
     ]
     if tags.get("control") == "high_trust_auto":
-        notes.append("即使当前允许自动执行，用户仍可随时接管并要求恢复。")
+        notes.append("Even when automation is currently allowed, the user can take over and request restoration at any time.")
     return notes
 
 
@@ -328,21 +363,21 @@ def _benefit(
     assessment = ((capacity_context or {}).get("assessment") or {}) if isinstance(capacity_context, dict) else {}
     recommended_bid_kw = _float_or_none(assessment.get("recommended_bid_kw"))
     if estimate_kw <= 0.0:
-        message = "当前没有可安全转移的可控设备负荷；收益主要来自提醒用户避免在窗口内新增非关键用电。"
+        message = "No controllable device load can be safely shifted now; the benefit is mainly avoiding new noncritical load during the window."
     elif target_kw is not None and 0.0 < target_kw <= 0.75:
-        message = f"本次参考目标约{target_kw:.2f}kW，采用低干扰动作即可，重点是把可控非空调负荷移出窗口。"
+        message = f"The reference target is about {target_kw:.2f} kW, so low-disruption actions are enough; focus on moving controllable non-AC load out of the window."
     elif target_kw is not None and target_kw > 0:
-        message = f"本次参考削峰目标约{target_kw:.2f}kW；计划优先转移约{estimate_kw:.1f}kW的可控设备负荷。"
+        message = f"The reference shedding target is about {target_kw:.2f} kW; the plan prioritizes shifting roughly {estimate_kw:.1f} kW of controllable device load."
     elif estimate_kw > 0:
-        message = f"预计可把约{estimate_kw:.1f}kW的可控设备负荷移出VPP窗口，并形成可核验的响应记录。"
+        message = f"The plan can move roughly {estimate_kw:.1f} kW of controllable device load out of the VPP window and create a verifiable response record."
     else:
-        message = "当前可转移负荷有限，收益主要来自避免事件窗口内新增可控负荷。"
+        message = "Shiftable load is limited; the main benefit is avoiding new controllable load during the event window."
     return {
         "load_shift_kw_estimate": estimate_kw,
         "target_shed_kw": target_kw,
         "target_shed_kwh_or_cap_kwh": target_kwh,
         "recommended_bid_kw": recommended_bid_kw,
-        "compensation_note": "不编造具体金额；若项目有补偿或分时电价，按实际VPP/电价结算规则计算。",
+        "compensation_note": "Do not invent a monetary amount; if compensation or TOU pricing applies, calculate it from the actual VPP or tariff settlement rules.",
         "message": message,
     }
 
@@ -351,37 +386,37 @@ def _alternatives(persona_config: dict | None, appliance_config: dict | None, ev
     window = _fmt_window(event)
     tags = (persona_config or {}).get("tags") or {}
     ac_min, ac_max = _comfort_bounds(appliance_config)
-    comfort_text = f"{ac_min:.1f}-{ac_max:.1f}°C" if ac_min is not None and ac_max is not None else "授权舒适范围"
+    comfort_text = f"{ac_min:.1f}-{ac_max:.1f}°C" if ac_min is not None and ac_max is not None else "the authorized comfort range"
     alternatives = [
         {
-            "name": "保守方案",
-            "summary": f"空调保持舒适设定，只把可控设备移出{window}。",
-            "tradeoff": "舒适风险最低，削峰能力较小。",
+            "name": "Conservative option",
+            "summary": f"Keep the AC at the comfort setting and only move controllable devices out of {window}.",
+            "tradeoff": "Lowest comfort risk, smaller shedding capability.",
         },
         {
-            "name": "平衡方案",
-            "summary": f"空调在{comfort_text}内小幅调整，洗衣/热水/EV等避开{window}。",
-            "tradeoff": "兼顾用户体验和VPP响应，是默认建议。",
+            "name": "Balanced option",
+            "summary": f"Make a small AC adjustment within {comfort_text} and avoid {window} for laundry, hot water, EV charging, and other controllable devices.",
+            "tradeoff": "Balances user experience and VPP response; this is the default recommendation.",
         },
         {
-            "name": "增强响应方案",
-            "summary": "在用户再次确认后，采用更靠近舒适上限的空调设定，并提前完成可蓄能任务。",
-            "tradeoff": "削峰更强，但需要明确授权和事件后快速恢复。",
+            "name": "Enhanced response option",
+            "summary": "With renewed confirmation, use an AC setpoint closer to the comfort upper bound and complete storable-energy tasks earlier.",
+            "tradeoff": "Stronger shedding, but it requires explicit authorization and fast post-event restoration.",
         },
     ]
     if tags.get("schedule") == "caregiver" or tags.get("control") == "low_auto_accept":
         alternatives[2] = {
-            "name": "仅提醒方案",
-            "summary": "不自动调节空调或护理相关任务，只提示避免在VPP窗口启动非关键设备。",
-            "tradeoff": "最保护护理稳定性，但VPP贡献最低。",
+            "name": "Advisory-only option",
+            "summary": "Do not automatically adjust AC or caregiving-related routines; only remind the household to avoid starting noncritical devices in the VPP window.",
+            "tradeoff": "Best for caregiving stability, but lowest VPP contribution.",
         }
     ev = _present_device_config(appliance_config, "ev")
     if ev:
         alternatives.append(
             {
-                "name": "EV优先方案",
-                "summary": f"所有削峰动作以{_fmt_hour(ev.get('departure_h'))}前达到目标SOC为硬约束，必要时从{window}结束后立刻充电。",
-                "tradeoff": "保障出行，可能减少可用削峰时间。",
+                "name": "EV-priority option",
+                "summary": f"Treat reaching target SOC before {_fmt_hour(ev.get('departure_h'))} as a hard constraint; if needed, start charging immediately after {window}.",
+                "tradeoff": "Protects mobility, but may reduce available shedding time.",
             }
         )
     return alternatives[:3]
@@ -390,23 +425,23 @@ def _alternatives(persona_config: dict | None, appliance_config: dict | None, ev
 def _personalization_notes(persona_config: dict | None) -> list[str]:
     role, label = _persona_role(persona_config)
     tags = (persona_config or {}).get("tags") or {}
-    notes = [f"画像: {label}。"]
+    notes = [f"Persona: {label}."]
     if role == "A":
-        notes.append("强调晚高峰负荷和可量化影响，同时保证到家舒适。")
+        notes.append("Emphasize evening peak load and quantified impact while preserving comfort at home arrival.")
     elif role == "B":
-        notes.append("舒适和确认权优先，只允许短时、微小、可撤销调整。")
+        notes.append("Comfort and confirmation authority come first; allow only short, small, reversible adjustments.")
     elif role == "C":
-        notes.append("解释基于当前事件和实时输入，不依赖昨天的历史习惯。")
+        notes.append("Base the explanation on the current event and real-time input, not yesterday's habits.")
     elif role == "D":
-        notes.append("可在预设边界内自动执行，并适合展示响应收益和执行回顾。")
+        notes.append("Automation can execute within preset boundaries; show response benefit and execution review.")
     elif role == "E":
-        notes.append("护理安全与稳定性优先，VPP只能作为低风险提醒或非关键负荷避让。")
+        notes.append("Caregiving safety and stability come first; VPP response should be low-risk advisory action or noncritical load avoidance.")
     elif role == "F":
-        notes.append("EV出发SOC是硬约束，充电优化必须先保证次日行程。")
+        notes.append("EV departure SOC is a hard constraint; charging optimization must protect the next trip first.")
     if tags.get("price") in {"price_sensitive", "price_driven"}:
-        notes.append("用户需要看到负荷/电价影响，但不能编造补偿金额。")
+        notes.append("The user needs load or tariff impact, but compensation amounts must not be invented.")
     if tags.get("control") in {"confirm_required", "suggestion_first"}:
-        notes.append("用建议和确认语言，而不是默认持续授权。")
+        notes.append("Use suggestion and confirmation language, not default continuing authorization.")
     return notes
 
 
@@ -415,12 +450,12 @@ def _why_request(event: dict | None, demand_context: dict | None, capacity_conte
     demand_context = demand_context or {}
     target_kw = _float_or_none(demand_context.get("target_shed_kw") or demand_context.get("demand_target_kw"))
     if target_kw is not None and target_kw > 0:
-        return f"{window}是VPP需求响应窗口，电网侧希望家庭在这段晚高峰减少约{target_kw:.2f}kW的可调负荷。"
+        return f"{window} is a VPP demand-response window; the grid is asking the household to reduce about {target_kw:.2f} kW of adjustable load during this peak period."
     assessment = ((capacity_context or {}).get("assessment") or {}) if isinstance(capacity_context, dict) else {}
     bid = _float_or_none(assessment.get("recommended_bid_kw"))
     if bid is not None and bid > 0:
-        return f"{window}是VPP需求响应窗口，家庭容量评估建议可承诺约{bid:.2f}kW的低风险响应。"
-    return f"{window}是VPP需求响应窗口，目标是在不破坏舒适和服务约束的前提下减少事件窗口用电。"
+        return f"{window} is a VPP demand-response window; the household capacity assessment suggests about {bid:.2f} kW of low-risk response."
+    return f"{window} is a VPP demand-response window; the goal is to reduce event-window electricity use without breaking comfort or service constraints."
 
 
 def _structured_constraints(
@@ -490,22 +525,22 @@ def _build_natural_language(
     alternatives: list[dict],
 ) -> str:
     action_parts = [
-        str(item.get("rationale", "")).strip().rstrip("。；; ")
+        str(item.get("rationale", "")).strip().rstrip(".; ")
         for item in actions[:4]
         if item.get("rationale")
     ]
-    action_text = "；".join(action_parts)
+    action_text = "; ".join(action_parts)
     alt_text = " / ".join(str(item.get("name", "")) for item in alternatives[:3] if item.get("name"))
-    strategy_name = "仅提醒方案" if any(
-        isinstance(item, dict) and item.get("name") == "仅提醒方案"
+    strategy_name = "Advisory-only option" if any(
+        isinstance(item, dict) and item.get("name") == "Advisory-only option"
         for item in alternatives
-    ) else "平衡方案"
-    protect_text = protected[0] if protected else "舒适和服务约束优先。"
-    control_text = user_control[0] if user_control else "用户可以随时取消。"
+    ) else "Balanced option"
+    protect_text = protected[0] if protected else "Comfort and service constraints come first."
+    control_text = user_control[0] if user_control else "The user can cancel at any time."
     return (
-        f"{why} 建议采用{strategy_name}：{action_text}。 "
-        f"保护边界：{protect_text} {control_text} "
-        f"预期收益：{benefit.get('message', '')} 可选方案包括：{alt_text}。"
+        f"{why} Recommended strategy: {strategy_name}. {action_text}. "
+        f"Protected boundary: {protect_text} {control_text} "
+        f"Expected benefit: {benefit.get('message', '')} Options include: {alt_text}."
     ).strip()
 
 
@@ -566,7 +601,7 @@ def build_vpp_strategy_explanation(
     explanation = {
         "schema_version": SCHEMA_VERSION,
         "source": source,
-        "language": "zh-CN",
+        "language": "en-US",
         "persona_id": str((persona_config or {}).get("id", "")),
         "persona_role": role,
         "persona_role_label": role_label,
@@ -574,7 +609,7 @@ def build_vpp_strategy_explanation(
         "city": city,
         "event_id": (event or {}).get("id"),
         "vpp_window": _fmt_window(event),
-        "agent_reason": str(reason or ""),
+        "agent_reason": english_only_text(reason),
         "why_request": why,
         "recommended_actions": actions,
         "protected_constraints": protected,
@@ -652,17 +687,17 @@ def normalize_vpp_strategy_explanation(
     merged["source"] = source + "_with_completion"
     for key in ("natural_language", "why_request"):
         value = _coerce_str(raw.get(key))
-        if value:
+        if value and not contains_cjk_text(value):
             merged[key] = value
     for key in ("recommended_actions", "protected_constraints", "user_control", "alternatives", "personalization_notes"):
         value = _coerce_list(raw.get(key))
-        if value:
+        if value and not contains_cjk_text(value):
             merged[key] = value
     benefit = _coerce_dict(raw.get("expected_benefit"))
-    if benefit:
+    if benefit and not contains_cjk_text(benefit):
         merged["expected_benefit"] = {**base["expected_benefit"], **benefit}
     structured = _coerce_dict(raw.get("structured_control_constraints"))
-    if structured:
+    if structured and not contains_cjk_text(structured):
         merged["structured_control_constraints"] = {
             **base["structured_control_constraints"],
             **structured,
@@ -674,7 +709,9 @@ def normalize_vpp_strategy_explanation(
         merged["recommended_actions"] = base["recommended_actions"]
     if not merged.get("natural_language"):
         merged["natural_language"] = base["natural_language"]
-    merged["llm_raw_explanation"] = raw
+    merged["llm_raw_explanation"] = (
+        {"omitted": "non_english_text_detected"} if contains_cjk_text(raw) else raw
+    )
     merged["review_dimensions"] = _review_dimensions(merged)
     return merged
 

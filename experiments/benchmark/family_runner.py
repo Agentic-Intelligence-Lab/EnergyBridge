@@ -26,7 +26,7 @@ for p in (str(EPLUS_ROOT), str(PROJECT_ROOT)):
     if p not in sys.path: sys.path.insert(0, p)
 
 from energybridge.data.vpp_events import describe_vpp_events, make_daily_vpp_events
-from experiments.benchmark.strategy_explanations import normalize_vpp_strategy_explanation
+from experiments.benchmark.strategy_explanations import english_only_text, normalize_vpp_strategy_explanation
 
 _EXPERIMENTS_DIR = BENCHMARK_DIR.parent
 DEFAULT_FAMILY_IDF = _EXPERIMENTS_DIR / "models" / "family_home" / "family_simple_3day.idf"
@@ -2784,7 +2784,8 @@ EV CHARGER (home charger, arrival/departure shown in status)
 
 [VPP STRATEGY EXPLANATION]
 When VPP_ACTIVE or VPP_TODAY is present, include a concise `strategy_explanation` object for collaborator review.
-Use Chinese natural language for user-facing explanation, but keep field names exactly as specified.
+Use English only for every text value in EnergyBridge output, including `reason`, `strategy_explanation`,
+`selected_skill`, and `skill_selection`; keep field names exactly as specified.
 The explanation must say why the VPP request occurs, concrete device actions with amount/time/duration,
 protected constraints (comfort, EV SOC, caregiving/routine boundaries, control limits), user opt-out/restore authority,
 expected load/compensation benefit without inventing money, and 2-3 alternatives.
@@ -2815,13 +2816,13 @@ Final control JSON ONLY (no markdown, no explanation):
    "ev_charge_end_h": null_or_float
  }},
  "strategy_explanation": null_or_{{
-   "natural_language": "Chinese explanation for the household",
+   "natural_language": "English explanation for the household",
    "why_request": "why this VPP request happens",
    "recommended_actions": [{{"device": "ac|washer|dishwasher|dryer|water_heater|ev", "action": "...", "amount": "...", "duration": "...", "rationale": "..."}}],
    "protected_constraints": ["comfort/control/service constraints protected"],
    "user_control": ["opt out / restore / confirmation authority"],
    "expected_benefit": {{"message": "load/benefit note, no invented money"}},
-   "alternatives": [{{"name": "保守方案", "summary": "...", "tradeoff": "..."}}],
+   "alternatives": [{{"name": "Conservative option", "summary": "...", "tradeoff": "..."}}],
    "structured_control_constraints": {{"vpp_window": "...", "hvac": {{}}, "appliances": {{}}, "hard_constraints": []}},
    "personalization_notes": ["role-specific emphasis"]
  }},
@@ -3265,6 +3266,10 @@ All times are hour-of-day (0–23.9)."""
                 vpp_event,
                 prompt_vpp_demand_kw,
             )
+            reason = english_only_text(
+                reason,
+                default="VPP control within comfort and service constraints" if vpp_event else "Comfort control within user limits",
+            )[:100]
             # --- Independent appliance commands from LLM ---
             appl_actions = _filter_controllable_appliance_actions(
                 data.get("appliances", {}), appliance_config
