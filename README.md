@@ -83,7 +83,7 @@ Dashboard workflow:
 
 1. Select user category: `Role-play LLM` or `Human`.
 2. Select user type/name.
-3. Select method: `EnergyBridge`, `mpc_dynamic`, `rule_milp`, `eb_rule_milp`, or `hema_agent`.
+3. Select method: `EnergyBridge`, `mpc_dynamic`, `rule_milp`, `rl_ppo_pref_v2`, or `hema_agent`.
 4. Start the run and watch live logs, progressive event cards, appliance
    schedules, user scores, and the final `run_summary.txt`.
 5. Open historical results from the collapsible sidebar.
@@ -122,7 +122,7 @@ available.
 ```bash
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_baseline_matrix.py \
-  --methods EnergyBridge mpc_dynamic rule_milp eb_rule_milp hema_agent \
+  --methods EnergyBridge mpc_dynamic rule_milp rl_ppo_pref_v2 hema_agent \
   --city Tianjin \
   --days 7 \
   --mpc-horizon 6 \
@@ -138,7 +138,7 @@ Germany price CSV to make the report use total electricity cost.
 ```bash
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_baseline_matrix.py \
-  --methods EnergyBridge mpc_dynamic rule_milp eb_rule_milp hema_agent \
+  --methods EnergyBridge mpc_dynamic rule_milp rl_ppo_pref_v2 hema_agent \
   --city Germany \
   --days 7 \
   --start-date 2025-06-01 \
@@ -191,7 +191,7 @@ The current report reads each job's `benchmark_result.json` and visualizes:
 - VPP-window electricity consumption
 - appliance shift success rate
 
-### Multi-User Household Matrix And EB+rule+MILP
+### Multi-User Household Matrix And EnergyBridge Skills
 
 The fixed multi-user household benchmark treats each household JSON under
 `energybridge/roleplay/households/` as one large user. Each member keeps an
@@ -200,34 +200,20 @@ physical household owns one shared full appliance set: AC, washer, dryer,
 dishwasher, water heater, EV, and refrigerator. Household scores are the mean
 of the independent member scores.
 
-`EB+rule+MILP` is the current hybrid Agent method for this path. Its design is:
+EnergyBridge is the agent method for this path. It sees the household context,
+member preferences, calendar state, and available skills. It may call
+`mpc_dynamic`, `rule_milp`, and/or `dynamic_hvac`, then choose, combine, or
+reject their outputs in its final control JSON. Preference memory is run-local
+by default. Set `ENERGYBRIDGE_PERSIST_AGENT_MEMORY=1` only when you want review
+files written into the run output directory.
 
-- Rule+MILP proposes physically feasible appliance schedules and PMV/cost-min
-  AC guidance, filtering out VPP-overlap appliance candidates before solving
-  whenever a no-VPP schedule is feasible.
-- EnergyBridge reads those candidates, member preferences, calendar context,
-  and prior in-run feedback.
-- Appliance timing is inherited from Rule+MILP by default, so every present
-  appliance has a real emitted policy and VPP-window non-AC loads stay avoided.
-- The Agent may choose among equal-objective MILP options and explain the
-  preference tradeoff.
-- AC starts from the PMV/cost-min setpoint. If a member gives explicit warm or
-  comfort-boundary feedback, the next decision may move back to the warm edge
-  of the household comfort band. Set
-  `ENERGYBRIDGE_HYBRID_COMFORT_OVERRIDE_AFTER=1` for one-feedback override,
-  which is the default comparison setting.
-- Preference memory is run-local by default. Set
-  `ENERGYBRIDGE_PERSIST_AGENT_MEMORY=1` only when you want review files written
-  into the run output directory.
-
-Run one household with the hybrid method:
+Run one household with EnergyBridge:
 
 ```bash
-ENERGYBRIDGE_HYBRID_COMFORT_OVERRIDE_AFTER=1 \
 ENERGYBRIDGE_PERSIST_AGENT_MEMORY=0 \
 python experiments/benchmark/run_multi_user_household.py \
   --household household_s2_multigeneration_caregiver \
-  --method eb_rule_milp \
+  --method EnergyBridge \
   --city Tianjin \
   --days 7 \
   --start-date 2025-06-01 \
@@ -239,11 +225,10 @@ Run all five households for Tianjin with all five comparable methods and five
 parallel workers. Tianjin automatically uses the normalized TOU price profile.
 
 ```bash
-ENERGYBRIDGE_HYBRID_COMFORT_OVERRIDE_AFTER=1 \
 ENERGYBRIDGE_PERSIST_AGENT_MEMORY=0 \
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_household_matrix.py \
-  --methods EnergyBridge mpc_dynamic rule_milp eb_rule_milp hema_agent \
+  --methods EnergyBridge mpc_dynamic rule_milp rl_ppo_pref_v2 hema_agent \
   --city Tianjin \
   --days 7 \
   --start-date 2025-06-01 \
@@ -256,11 +241,10 @@ Run all five households for Germany with all five comparable methods. Germany
 uses the Berlin family IDF by default; pass Germany day-ahead prices explicitly.
 
 ```bash
-ENERGYBRIDGE_HYBRID_COMFORT_OVERRIDE_AFTER=1 \
 ENERGYBRIDGE_PERSIST_AGENT_MEMORY=0 \
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_household_matrix.py \
-  --methods EnergyBridge mpc_dynamic rule_milp eb_rule_milp hema_agent \
+  --methods EnergyBridge mpc_dynamic rule_milp rl_ppo_pref_v2 hema_agent \
   --city Germany \
   --days 7 \
   --start-date 2025-06-01 \
@@ -313,11 +297,10 @@ benchmark_results/<YYYY-MM-DD>/_batch_logs/personal_germany_7day_5method_report/
 benchmark_results/<YYYY-MM-DD>/_batch_logs/household_5x2_7day_5method_report/
 ```
 
-When the four-method household baseline has already been run and EB+rule+MILP
-is rerun separately, merge the JSON summaries first, then pass the merged
-`*_main_5method.json` files to `generate_baseline_matrix_report.py`. The report
-script supports multiple summary JSONs in one call and automatically appends
-city labels to the household rows.
+When multiple household summaries are produced separately, pass all of the
+summary JSON files to `generate_baseline_matrix_report.py`. The report script
+supports multiple summary JSONs in one call and automatically appends city
+labels to the household rows.
 
 ### Counterfactual No-DR Capacity Settlement
 
@@ -413,9 +396,8 @@ remain generated data and are not committed.
 
 The no-DR counterfactual workflow above is for benchmark settlement after the
 run. For capacity reporting before a future event, use a separate historical
-DR event memory. The current internal default is to build this only from the
-agentic `eb_rule_milp` method, because it is the deployable EnergyBridge hybrid
-controller and plain EnergyBridge can later reuse the same reporting layer.
+DR event memory. The current internal default is to build this from the
+`EnergyBridge` agent method.
 
 The idea is:
 
@@ -435,7 +417,7 @@ This keeps two quantities separate:
 | historical DR event memory | Used before the event to estimate/report credible capacity |
 
 Generate a reusable historical event schedule. For the June-memory demo, run
-the same schedule for both `no_dr` and `eb_rule_milp` so realized delivery can
+the same schedule for both `no_dr` and `EnergyBridge` so realized delivery can
 be computed with the no-DR counterfactual library.
 
 ```bash
@@ -457,7 +439,7 @@ mixes daily feedback and state carry-over into the historical event library.
 ```bash
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_daily_dr_memory_matrix.py \
-  --methods no_dr eb_rule_milp \
+  --methods no_dr EnergyBridge \
   --cities Germany Tianjin \
   --days 30 \
   --start-date 2025-06-01 \
@@ -474,7 +456,7 @@ This expands to:
 ```
 
 The daily runner writes the raw summary, applies the no-DR counterfactual to
-each `eb_rule_milp` one-day result, and builds the historical memory:
+each `EnergyBridge` one-day result, and builds the historical memory:
 
 ```text
 benchmark_results/<DATE>/_batch_logs/
@@ -483,14 +465,14 @@ benchmark_results/<DATE>/_batch_logs/
 ├── daily_dr_memory_summary_with_counterfactual.json
 ├── daily_dr_memory_summary_with_counterfactual.csv
 ├── daily_dr_memory_no_dr_counterfactual_library.json
-└── eb_rule_milp_daily_dr_memory.json
+└── energybridge_daily_dr_memory.json
 ```
 
 The committed reusable June historical-memory toolkit is kept outside benchmark
 output folders:
 
 ```text
-dr_capacity_memory_toolkit/june_2025_daily_eb_rule_milp/
+dr_capacity_memory_toolkit/june_2025_daily_energybridge/
 ```
 
 Use this toolkit for future capacity reporting. Per-evaluation capacity reports
@@ -502,10 +484,10 @@ calibrator:
 
 ```bash
 python experiments/benchmark/dr_event_memory_library.py estimate \
-  --memory benchmark_results/<DATE>/_batch_logs/eb_rule_milp_daily_dr_memory.json \
+  --memory benchmark_results/<DATE>/_batch_logs/energybridge_daily_dr_memory.json \
   --summary-json benchmark_results/<DATE>/_batch_logs/household_matrix_summary_5method_with_counterfactual_delivery_7days_H6.json \
   --output-summary-json benchmark_results/<DATE>/_batch_logs/household_matrix_summary_5method_with_dr_memory_capacity_7days_H6.json \
-  --methods eb_rule_milp \
+  --methods EnergyBridge \
   --top-k 5 \
   --write-result-json
 ```
@@ -520,10 +502,10 @@ historical events from the same `household_id`/`persona_id`.
 
 ```bash
 python experiments/benchmark/dr_event_memory_library.py agent-report \
-  --memory benchmark_results/<DATE>/_batch_logs/eb_rule_milp_daily_dr_memory.json \
+  --memory benchmark_results/<DATE>/_batch_logs/energybridge_daily_dr_memory.json \
   --summary-json benchmark_results/<DATE>/_batch_logs/household_matrix_summary_5method_with_counterfactual_delivery_7days_H6.json \
-  --output-summary-json benchmark_results/<DATE>/_batch_logs/household_matrix_summary_eb_rule_milp_agent_capacity_report_7days_H6.json \
-  --methods eb_rule_milp \
+  --output-summary-json benchmark_results/<DATE>/_batch_logs/household_matrix_summary_energybridge_agent_capacity_report_7days_H6.json \
+  --methods EnergyBridge \
   --top-k 5 \
   --write-result-json
 ```
@@ -838,7 +820,7 @@ normalized TOU price profile automatically.
 ```bash
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_baseline_matrix.py \
-  --methods EnergyBridge mpc_dynamic rule_milp eb_rule_milp hema_agent \
+  --methods EnergyBridge mpc_dynamic rule_milp rl_ppo_pref_v2 hema_agent \
   --city Tianjin --days 7 --mpc-horizon 6 \
   --workers 5 --resume
 ```
@@ -849,7 +831,7 @@ right-top metric is total electricity cost:
 ```bash
 PYTHONUNBUFFERED=1 \
 python experiments/benchmark/run_baseline_matrix.py \
-  --methods EnergyBridge mpc_dynamic rule_milp eb_rule_milp hema_agent \
+  --methods EnergyBridge mpc_dynamic rule_milp rl_ppo_pref_v2 hema_agent \
   --city Germany --days 7 --start-date 2025-06-01 --mpc-horizon 6 \
   --price-csv experiments/real_data/germany_2025_price.csv \
   --workers 5 --resume
@@ -859,7 +841,7 @@ Current full personal-user matrix:
 
 ```text
 10 approved personas x 5 methods = 50 jobs per city
-methods: EnergyBridge, mpc_dynamic, rule_milp, eb_rule_milp, hema_agent
+methods: EnergyBridge, mpc_dynamic, rule_milp, rl_ppo_pref_v2, hema_agent
 duration: 7 days for the comparable full run
 calendar: enabled
 capacity quantification: enabled
@@ -1074,14 +1056,12 @@ appliances, water-heater preheat, and EV charging are scheduled by a small MILP
 over feasible windows, with a large penalty for non-AC appliance operation
 inside VPP windows.
 
-### `eb_rule_milp`
+### `EnergyBridge`
 
-Hybrid EnergyBridge method for the multi-user household benchmark. Rule+MILP
-provides the appliance schedule and PMV/cost-min AC candidate; EnergyBridge
-uses member role-play feedback and run-local preference memory to choose among
-equivalent candidates and make bounded comfort adjustments. This method is
-intended to keep Rule+MILP-like energy/VPP behavior while recovering user
-preference score through explicit household feedback.
+EnergyBridge is the agent method. It can decide whether to call `mpc_dynamic`,
+`rule_milp`, and/or the regional `dynamic_hvac` function as skills, inspect the
+returned plans, then choose or combine them into the final control JSON. RL is
+kept as a separate baseline, not an agent skill.
 
 ### RL Baseline
 

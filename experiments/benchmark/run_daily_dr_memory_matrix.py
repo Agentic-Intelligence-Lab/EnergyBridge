@@ -47,6 +47,7 @@ from energybridge.quantification.counterfactual_baseline import (  # noqa: E402
 from energybridge.quantification.dr_event_memory import build_dr_event_memory  # noqa: E402
 from energybridge.roleplay.households import list_household_ids  # noqa: E402
 from experiments.benchmark.run_baseline_matrix import (  # noqa: E402
+    ENERGYBRIDGE_METHOD_ID,
     METHOD_CHOICES,
     _canonical_method,
     _first_metric,
@@ -56,7 +57,7 @@ from experiments.benchmark.run_baseline_matrix import (  # noqa: E402
 )
 
 
-DEFAULT_METHODS = ("no_dr", "eb_rule_milp")
+DEFAULT_METHODS = ("no_dr", ENERGYBRIDGE_METHOD_ID)
 DEFAULT_CITIES = ("Germany", "Tianjin")
 
 
@@ -363,14 +364,14 @@ def _postprocess(rows: list[dict[str, Any]], summary_dir: Path) -> None:
             result_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
             row = _copy_counterfactual_metrics(row, result)
         applied_rows.append(row)
-        if str(row.get("method") or "").lower() == "eb_rule_milp":
+        if _canonical_method(str(row.get("method") or "")) == ENERGYBRIDGE_METHOD_ID:
             memory_items.append((result, row, result_path))
     applied_json = summary_dir / "daily_dr_memory_summary_with_counterfactual.json"
     applied_csv = summary_dir / "daily_dr_memory_summary_with_counterfactual.csv"
     _write_rows(applied_json, applied_rows)
     _write_csv(applied_csv, applied_rows)
-    memory = build_dr_event_memory(memory_items, methods=["eb_rule_milp"])
-    memory_path = summary_dir / "eb_rule_milp_daily_dr_memory.json"
+    memory = build_dr_event_memory(memory_items, methods=[ENERGYBRIDGE_METHOD_ID])
+    memory_path = summary_dir / "energybridge_daily_dr_memory.json"
     memory_path.write_text(json.dumps(memory, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[POST] no-DR library: {library_path} baselines={len(library.get('baselines') or [])}", flush=True)
     print(f"[POST] applied summary: {applied_json}", flush=True)

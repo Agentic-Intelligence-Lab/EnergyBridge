@@ -1487,7 +1487,6 @@ def score_user_preference(
             "EnergyBridge",
             "hema_agent",
             "rl",
-            "rl_ppo_3day",
             "rl_ppo_pref_v2",
             "mpc",
             "mpc_dynamic",
@@ -1505,7 +1504,7 @@ def score_user_preference(
         elif method == "rule_milp":
             controller = "Rule+MILP baseline"
         elif method == "eb_rule_milp":
-            controller = "EB+rule+MILP agent"
+            controller = "EnergyBridge agent"
         else:
             controller = "LLM agent"
         within_preferred = pref_min - pref_tol <= float(agent_setpoint_c) <= pref_max + pref_tol

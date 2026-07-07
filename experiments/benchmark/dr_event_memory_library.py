@@ -143,7 +143,7 @@ def cmd_generate_events(args: argparse.Namespace) -> None:
     payload = {
         "description": (
             "Generated historical DR events for capacity-reporting memory. "
-            "Use this schedule for both no_dr and EB+rule+MILP runs."
+            "Use this schedule for both no_dr and EnergyBridge runs."
         ),
         "seed": args.seed,
         "days": args.days,
@@ -276,10 +276,10 @@ def parse_args() -> argparse.Namespace:
     gen.add_argument("--output", required=True)
     gen.set_defaults(func=cmd_generate_events)
 
-    build = sub.add_parser("build", help="Build memory from calibrated EB+rule+MILP result(s).")
+    build = sub.add_parser("build", help="Build memory from calibrated EnergyBridge result(s).")
     build.add_argument("--summary-json", nargs="*", default=[], help="Matrix summary JSON(s).")
     build.add_argument("--result-json", nargs="*", default=[], help="Standalone benchmark_result.json path(s).")
-    build.add_argument("--methods", nargs="+", default=["eb_rule_milp"], help="Methods to include.")
+    build.add_argument("--methods", nargs="+", default=["EnergyBridge"], help="Methods to include.")
     build.add_argument("--output", required=True)
     build.set_defaults(func=cmd_build)
 
@@ -300,7 +300,7 @@ def parse_args() -> argparse.Namespace:
     agent.add_argument("--output-summary-json", required=True)
     agent.add_argument("--output-summary-csv", default="")
     agent.add_argument("--top-k", type=int, default=5, help="Default is top-5 to provide a compact delivery distribution.")
-    agent.add_argument("--methods", nargs="*", default=["eb_rule_milp"], help="Target methods to annotate.")
+    agent.add_argument("--methods", nargs="*", default=["EnergyBridge"], help="Target methods to annotate.")
     agent.add_argument("--dry-run", action="store_true", help="Use deterministic calibrated choice without LLM calls.")
     agent.add_argument("--write-result-json", action="store_true")
     agent.set_defaults(func=cmd_agent_report)

@@ -1,5 +1,5 @@
 {
-  "description": "Generated historical DR events for capacity-reporting memory. Use this schedule for both no_dr and EB+rule+MILP runs.",
+  "description": "Generated historical DR events for capacity-reporting memory. Use this schedule for both no_dr and EnergyBridge runs.",
   "seed": 20260630,
   "days": 30,
   "events": [

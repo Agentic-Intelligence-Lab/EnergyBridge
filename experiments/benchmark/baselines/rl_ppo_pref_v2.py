@@ -1,6 +1,5 @@
-"""PPO v2 policy adapter for the EnergyBridge benchmark interface.
+"""PPO Pref-v2 policy adapter for the EnergyBridge benchmark interface.
 
-Key differences from rl_ppo_3day:
 - Action: 8 dims (AC, washer, dishwasher, WH start, WH temp, EV start, EV end, dryer)
 - Observation: 41 dims with price + preference proxy
 - Decision cooldown: once-per-day appliance scheduling
@@ -31,12 +30,24 @@ OBJECTIVE_SOURCE = "rl_ppo_pref_v2_policy"
 MODEL_ENV_VAR = "ENERGYBRIDGE_RL_PREF_V2_MODEL"
 DEBUG_ENV_VAR = "ENERGYBRIDGE_RL_PREF_V2_DEBUG_POLICY"
 DEFAULT_MODEL_CANDIDATES = (
+    PROJECT_ROOT / "models" / "rl_ppo_pref_v2_tianjin.zip",
+    PROJECT_ROOT / "models" / "rl_ppo_pref_v2_germany.zip",
     PROJECT_ROOT / "benchmark_results" / "rl_ppo_pref_v2_1h_fixed" / "ppo_energyplus_3day.zip",
     PROJECT_ROOT / "benchmark_results" / "rl_ppo_pref_v2_1h" / "ppo_energyplus_3day.zip",
     PROJECT_ROOT / "benchmark_results" / "rl_ppo_pref_v2_smoke_fixed" / "ppo_energyplus_3day.zip",
     PROJECT_ROOT / "benchmark_results" / "rl_ppo_pref_v2_smoke" / "ppo_energyplus_3day.zip",
     PROJECT_ROOT / "benchmark_results" / "rl_ppo_pref_v2_4h" / "ppo_energyplus_3day.zip",
 )
+DEFAULT_MODEL_CANDIDATES_BY_REGION = {
+    "tianjin": (
+        PROJECT_ROOT / "models" / "rl_ppo_pref_v2_tianjin.zip",
+        PROJECT_ROOT / "models" / "rl_ppo_pref_v2_germany.zip",
+    ),
+    "germany": (
+        PROJECT_ROOT / "models" / "rl_ppo_pref_v2_germany.zip",
+        PROJECT_ROOT / "models" / "rl_ppo_pref_v2_tianjin.zip",
+    ),
+}
 DECISION_INTERVAL_H = 1.0 / 6.0
 OBS_DIM = 41  # must match environment_pref_v2.OBS_DIM_V2 (41; obs unchanged for 8-dim action)
 
@@ -76,7 +87,18 @@ def _debug_mode() -> str:
     return os.environ.get(DEBUG_ENV_VAR, "").strip().lower()
 
 
-def resolve_model_path() -> Path:
+def _region_key(value: Any = None) -> str | None:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    if text in {"germany", "de", "deu", "berlin"} or "germany" in text or "berlin" in text:
+        return "germany"
+    if text in {"tianjin", "tj", "china", "cn", "chn"} or "tianjin" in text:
+        return "tianjin"
+    return None
+
+
+def resolve_model_path(region: Any = None) -> Path:
     configured = os.environ.get(MODEL_ENV_VAR, "").strip()
     if configured:
         path = Path(configured)
@@ -85,17 +107,20 @@ def resolve_model_path() -> Path:
         if path.exists():
             return path
         raise FileNotFoundError(f"RL Pref-v2 model not found: {path}. Set {MODEL_ENV_VAR}.")
-    for candidate in DEFAULT_MODEL_CANDIDATES:
+    region_key = _region_key(region)
+    candidates = list(DEFAULT_MODEL_CANDIDATES_BY_REGION.get(region_key, ()))
+    candidates.extend(path for path in DEFAULT_MODEL_CANDIDATES if path not in candidates)
+    for candidate in candidates:
         if candidate.exists():
             return candidate
-    checked = "\n  ".join(str(p) for p in DEFAULT_MODEL_CANDIDATES)
+    checked = "\n  ".join(str(p) for p in candidates)
     raise FileNotFoundError(f"No RL Pref-v2 model found. Set {MODEL_ENV_VAR}. Checked:\n  {checked}")
 
 
-def load_policy(model_path: str | Path | None = None, *, device: str = "cpu") -> Any:
+def load_policy(model_path: str | Path | None = None, *, device: str = "cpu", region: Any = None) -> Any:
     if _debug_mode() in ("fixed", "1", "true", "yes"):
         return None
-    path = Path(model_path) if model_path else resolve_model_path()
+    path = Path(model_path) if model_path else resolve_model_path(region)
     if not path.is_absolute():
         path = PROJECT_ROOT / path
     key = (path.resolve(), device)
@@ -218,6 +243,7 @@ def predict_control_result(
     pref_proxy: dict[str, float] | None = None,
     daily_scheduled: dict[int, set] | None = None,
     model_path: str | Path | None = None, device: str = "cpu",
+    model_region: Any = None,
 ) -> dict[str, Any]:
     debug_mode = _debug_mode()
 
@@ -230,9 +256,11 @@ def predict_control_result(
             action_decoded, sim_h=sim_h, appliance_config=appliance_config,
             base_actions=base_actions, vpp_event=vpp_event,
             daily_scheduled=daily_scheduled, source="fixed_debug_policy",
+            resolved_model_path="debug_fixed",
         )
 
-    model = load_policy(model_path, device=device)
+    resolved_model_path = Path(model_path) if model_path is not None else resolve_model_path(model_region)
+    model = load_policy(resolved_model_path, device=device, region=model_region)
     observation = build_observation(
         loop=loop, sim_h=sim_h, temp_c=temp_c, outdoor_temp_c=outdoor_temp_c,
         vpp_active=vpp_active, assessment=assessment,
@@ -246,6 +274,7 @@ def predict_control_result(
         action_decoded, sim_h=sim_h, appliance_config=appliance_config,
         base_actions=base_actions, vpp_event=vpp_event,
         daily_scheduled=daily_scheduled, source="ppo_policy",
+        resolved_model_path=resolved_model_path,
     )
 
 
@@ -332,6 +361,7 @@ def action_to_control_result_decoded(
     vpp_event: dict[str, Any] | None = None,
     daily_scheduled: dict[int, set] | None = None,
     source: str = "ppo_policy",
+    resolved_model_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Core logic: turn physical action values into benchmark control result."""
     # Keep RL benchmark actions policy-only.  The runner passes an empty dict,
@@ -419,7 +449,15 @@ def action_to_control_result_decoded(
         ),
         "appliance_actions": actions,
         "objective_source": OBJECTIVE_SOURCE,
-        "model_path": str(resolve_model_path()) if _debug_mode() not in ("fixed", "1", "true", "yes") else "debug_fixed",
+        "model_path": (
+            str(resolved_model_path)
+            if resolved_model_path is not None
+            else (
+                str(resolve_model_path())
+                if _debug_mode() not in ("fixed", "1", "true", "yes")
+                else "debug_fixed"
+            )
+        ),
     }
 
 

@@ -43,7 +43,7 @@ from experiments.benchmark.run_baseline_matrix import (  # noqa: E402
 )
 
 
-DEFAULT_METHODS = (ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "rule_milp", "eb_rule_milp", "hema_agent")
+DEFAULT_METHODS = (ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "rule_milp", "rl_ppo_pref_v2", "hema_agent")
 
 
 @dataclass(frozen=True)

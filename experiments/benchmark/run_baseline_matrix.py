@@ -2,7 +2,7 @@
 """Run the 10-persona baseline matrix for EnergyBridge.
 
 Default matrix:
-  approved personas x {EnergyBridge, mpc_dynamic, rule_milp, eb_rule_milp, hema_agent}
+  approved personas x {EnergyBridge, mpc_dynamic, rule_milp, rl_ppo_pref_v2, hema_agent}
 
 Each job delegates to run_persona_json.py so that calendar loading, output
 directory naming, run_summary generation, and MPC horizon handling stay aligned
@@ -42,7 +42,7 @@ from energybridge.data.day_ahead import DEFAULT_TIANJIN_TOU_PRICE_CSV  # noqa: E
 
 
 ENERGYBRIDGE_METHOD_ID = "EnergyBridge"
-DEFAULT_METHODS = (ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "rule_milp", "eb_rule_milp", "hema_agent")
+DEFAULT_METHODS = (ENERGYBRIDGE_METHOD_ID, "mpc_dynamic", "rule_milp", "rl_ppo_pref_v2", "hema_agent")
 METHOD_CHOICES = (
     ENERGYBRIDGE_METHOD_ID,
     "agent",
@@ -50,18 +50,11 @@ METHOD_CHOICES = (
     "mpc",
     "rl",
     "rl_ppo",
-    "rl_ppo_3day",
     "rl_ppo_pref_v2",
     "rl_pref_v2",
     "rule_milp",
     "rule+milp",
     "pmv_milp",
-    "eb_rule_milp",
-    "EB+rule+MILP",
-    "eb+rule+milp",
-    "energybridge_rule_milp",
-    "agent_milp",
-    "agent+milp",
     "no_dr",
     "none",
     "baseline",
@@ -96,19 +89,18 @@ def _canonical_method(method: str) -> str:
         "agent": ENERGYBRIDGE_METHOD_ID,
         "energybridge": ENERGYBRIDGE_METHOD_ID,
         "mpc": "mpc_dynamic",
-        "rl": "rl_ppo_3day",
-        "rl_ppo": "rl_ppo_3day",
-        "rl_ppo_3day": "rl_ppo_3day",
+        "rl": "rl_ppo_pref_v2",
+        "rl_ppo": "rl_ppo_pref_v2",
         "rl_ppo_pref_v2": "rl_ppo_pref_v2",
         "rl_pref_v2": "rl_ppo_pref_v2",
         "rule_milp": "rule_milp",
         "rule+milp": "rule_milp",
         "pmv_milp": "rule_milp",
-        "eb_rule_milp": "eb_rule_milp",
-        "eb+rule+milp": "eb_rule_milp",
-        "energybridge_rule_milp": "eb_rule_milp",
-        "agent_milp": "eb_rule_milp",
-        "agent+milp": "eb_rule_milp",
+        "eb_rule_milp": ENERGYBRIDGE_METHOD_ID,
+        "eb+rule+milp": ENERGYBRIDGE_METHOD_ID,
+        "energybridge_rule_milp": ENERGYBRIDGE_METHOD_ID,
+        "agent_milp": ENERGYBRIDGE_METHOD_ID,
+        "agent+milp": ENERGYBRIDGE_METHOD_ID,
         "no_dr": "no_dr",
         "none": "no_dr",
         "baseline": "no_dr",
@@ -406,7 +398,7 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         choices=list(METHOD_CHOICES),
         default=None,
-        help="Methods to run. Defaults to EnergyBridge mpc_dynamic rule_milp eb_rule_milp hema_agent. 'agent' is a deprecated alias.",
+        help="Methods to run. Defaults to EnergyBridge mpc_dynamic rule_milp rl_ppo_pref_v2 hema_agent. 'agent' is a deprecated alias.",
     )
     parser.add_argument(
         "--city",

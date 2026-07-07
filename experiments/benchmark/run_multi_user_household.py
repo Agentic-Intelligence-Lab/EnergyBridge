@@ -597,7 +597,7 @@ def _method_label(method: str) -> str:
         ENERGYBRIDGE_METHOD_ID: "EnergyBridge",
         "mpc_dynamic": "MPC Dynamic",
         "rule_milp": "Rule+MILP",
-        "eb_rule_milp": "EB+rule+MILP",
+        "eb_rule_milp": "EnergyBridge",
     }
     return labels.get(str(method), str(method))
 
