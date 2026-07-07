@@ -64,7 +64,7 @@ def plan_rule_milp_action(
     hvac_objective = float((hvac_diagnostics.get("selected") or {}).get("objective", 0.0) or 0.0)
     total_cost = appliance_cost + hvac_objective
     action["objective_terms"] = {
-        "version": "rule_milp_dynamic_cost_min_v2",
+            "version": "rule_milp_vpp_penalty_v7",
         "total": total_cost,
         "cost": {
             "total": total_cost,
@@ -86,10 +86,10 @@ def plan_rule_milp_action(
             "hvac": hvac_diagnostics.get("status", "regional_dynamic_model"),
             "appliance_schedule": solver_meta.get("solver", "unknown"),
         },
-        "active_terms": ["cost.shiftable", "cost.hvac_dynamic", "user.service", "user.pmv"],
+        "active_terms": ["cost.shiftable", "cost.hvac_dynamic", "user.service", "vpp.hvac_energy"],
         "inactive_or_missing_terms": [],
         "diagnostics": {
-            "formula": "min dynamic HVAC rollout cost + sum(price_t * appliance_power_t) after strict no-VPP candidate filtering when feasible",
+            "formula": "min dynamic HVAC rollout cost + VPP-window HVAC energy penalty + sum(price_t * appliance_power_t) after strict no-VPP candidate filtering when feasible; standalone Rule+MILP may use HVAC-off during VPP",
             "hvac_setpoint": hvac_diagnostics,
             "solver": solver_meta,
             "candidate_groups": {
@@ -284,6 +284,7 @@ def _choose_dynamic_cost_min_setpoint(state: dict) -> tuple[float, dict]:
 def _dynamic_setpoint_options(state: dict) -> dict:
     pref_min, pref_max, allowed_min, allowed_max = _ac_setpoint_bounds(state)
     fallback = _pmv_setpoint_options(state)
+    standalone_baseline = bool(state.get("standalone_baseline"))
     scorer, scorer_meta = _dynamic_hvac_scorer_for_state(state)
     if scorer is None:
         fallback.update(
@@ -303,6 +304,7 @@ def _dynamic_setpoint_options(state: dict) -> dict:
 
     rows = []
     price = _float(state.get("price"), _float(state.get("tou_price"), 1.0))
+    sim_h = _float(state.get("sim_h"), 0.0)
     for sp in _ac_setpoint_candidates(state):
         action = {"setpoint": sp, "appliances": {key: None for key in APPLIANCE_ACTION_KEYS}}
         try:
@@ -333,19 +335,37 @@ def _dynamic_setpoint_options(state: dict) -> dict:
         horizon_minutes = float(dyn_diag.get("horizon_minutes", DYNAMIC_HVAC_HORIZON_STEPS * 10.0) or 0.0)
         dt_h = max(1e-9, horizon_minutes / 60.0 / max(1, len(stage_hvac_kw)))
         hvac_energy_kwh = sum(max(0.0, float(value or 0.0)) * dt_h for value in stage_hvac_kw)
+        vpp_hvac_energy_kwh = 0.0
+        for idx, value in enumerate(stage_hvac_kw):
+            step_start = sim_h + idx * dt_h
+            overlap_h = _vpp_overlap_hours(step_start, step_start + dt_h, state)
+            if overlap_h > 0.0:
+                vpp_hvac_energy_kwh += max(0.0, float(value or 0.0)) * min(dt_h, overlap_h)
         hvac_cost = hvac_energy_kwh * price
-        warm_violation_c = max(0.0, max(temps) - allowed_max)
-        cold_violation_c = max(0.0, allowed_min - min(temps))
-        comfort_violation_c = warm_violation_c + cold_violation_c
+        vpp_hvac_penalty = BIG_VPP_PENALTY * vpp_hvac_energy_kwh
         pmv_value = _pmv(sp)
-        pmv_violation = max(0.0, abs(pmv_value) - 0.5)
-        objective = hvac_cost + 100.0 * comfort_violation_c**2 + 10.0 * pmv_violation**2
+        if standalone_baseline:
+            comfort_violation_c = 0.0
+            pmv_violation = 0.0
+        else:
+            warm_violation_c = max(0.0, max(temps) - allowed_max)
+            cold_violation_c = max(0.0, allowed_min - min(temps))
+            comfort_violation_c = warm_violation_c + cold_violation_c
+            pmv_violation = max(0.0, abs(pmv_value) - 0.5)
+        objective = (
+            hvac_cost
+            + vpp_hvac_penalty
+            + 100.0 * comfort_violation_c**2
+            + 10.0 * pmv_violation**2
+        )
         rows.append(
             {
                 "setpoint_c": round(float(sp), 1),
                 "objective": round(float(objective), 6),
                 "hvac_energy_kwh": round(float(hvac_energy_kwh), 6),
+                "vpp_hvac_energy_kwh": round(float(vpp_hvac_energy_kwh), 6),
                 "hvac_cost": round(float(hvac_cost), 6),
+                "vpp_hvac_penalty": round(float(vpp_hvac_penalty), 6),
                 "predicted_final_temp_c": round(float(temps[-1]), 3),
                 "predicted_max_temp_c": round(float(max(temps)), 3),
                 "predicted_min_temp_c": round(float(min(temps)), 3),
@@ -364,6 +384,11 @@ def _dynamic_setpoint_options(state: dict) -> dict:
             -float(row["setpoint_c"]),
         ),
     )
+    vpp_overlap_h = sum(
+        _vpp_overlap_hours(sim_h + idx * dt_h, sim_h + (idx + 1) * dt_h, state)
+        for idx in range(len(stage_hvac_kw))
+    )
+    selection_rule = "vpp_penalty_weighted_dynamic_objective" if vpp_overlap_h > 0 else "normal_dynamic_cost_min_setpoint"
     return {
         "source": "regional_dynamic_model",
         "status": "regional_dynamic_model",
@@ -376,7 +401,13 @@ def _dynamic_setpoint_options(state: dict) -> dict:
         "cost_min_dynamic_setpoint_c": selected["setpoint_c"],
         "candidate_setpoints": rows,
         "selected": selected,
-        "rule": "choose the lowest dynamic HVAC rollout objective inside comfort/PMV feasibility",
+        "active_vpp_event_id": (_active_vpp_event_for_state(state) or {}).get("id"),
+        "vpp_overlap_hours_in_horizon": round(float(vpp_overlap_h), 6),
+        "vpp_hvac_penalty_weight": BIG_VPP_PENALTY,
+        "selection_rule": selection_rule,
+        "rule": (
+            "choose the lowest dynamic HVAC rollout objective; any predicted HVAC energy inside a VPP window receives a large penalty"
+        ),
     }
 
 
@@ -404,6 +435,8 @@ def _dynamic_hvac_scorer_for_state(state: dict):
 
 
 def _ac_setpoint_bounds(state: dict) -> tuple[float, float, float, float]:
+    if bool(state.get("standalone_baseline")):
+        return 22.0, 28.0, 22.0, 28.0
     cfg = ((state.get("appliance_config") or {}).get("ac", {}) or {})
     pref_min = _float(cfg.get("setpoint_preferred_min_c"), 24.0)
     pref_max = _float(cfg.get("setpoint_preferred_max_c"), 26.0)
@@ -416,10 +449,20 @@ def _ac_setpoint_bounds(state: dict) -> tuple[float, float, float, float]:
 def _ac_setpoint_candidates(state: dict) -> list[float]:
     _, _, allowed_min, allowed_max = _ac_setpoint_bounds(state)
     steps = int(round((allowed_max - allowed_min) / 0.5))
-    return [
+    candidates = [
         round(allowed_min + idx * 0.5, 1)
         for idx in range(max(0, steps) + 1)
     ]
+    if bool(state.get("standalone_baseline")) and _standalone_vpp_hvac_off_allowed(state):
+        candidates.append(40.0)
+    return sorted(set(candidates))
+
+
+def _standalone_vpp_hvac_off_allowed(state: dict) -> bool:
+    """Allow HVAC-off as an oracle VPP action, without using it all day."""
+    sim_h = _float(state.get("sim_h"), _float(state.get("hod"), 0.0))
+    horizon_h = max(1.0 / 6.0, _float(state.get("mpc_horizon_steps"), DYNAMIC_HVAC_HORIZON_STEPS) / 6.0)
+    return _vpp_overlap_hours(sim_h, sim_h + horizon_h, state) > 0.0
 
 
 def _choose_pmv_cost_min_setpoint(state: dict) -> float:
@@ -558,28 +601,42 @@ def _water_heater_candidates(
     default_abs = day_idx * 24.0 + default_start
     if start_min <= default_abs <= start_max:
         starts.append(default_abs)
+    temp_candidates = _water_heater_temp_candidates(cfg)
     candidates = []
     for start_abs in sorted(set(round(v, 6) for v in starts)):
         end_abs = start_abs + duration
-        appliances = {
-            "water_heater_preheat": True,
-            "water_heater_preheat_start_h": round(start_abs % 24.0, 2),
-            "water_heater_preheat_end_h": round(end_abs % 24.0, 2),
-            "water_heater_preheat_temp_c": 65.0,
-        }
-        candidates.append(
-            _candidate(
-                label=f"water_heater@{start_abs % 24.0:.2f}",
-                appliances=appliances,
-                start_abs=start_abs,
-                duration_h=duration,
-                power_kw=power_kw,
-                state=state,
-                price_profile=price_profile,
-                run_start_date=run_start_date,
+        for temp_c in temp_candidates:
+            appliances = {
+                "water_heater_preheat": True,
+                "water_heater_preheat_start_h": round(start_abs % 24.0, 2),
+                "water_heater_preheat_end_h": round(end_abs % 24.0, 2),
+                "water_heater_preheat_temp_c": temp_c,
+            }
+            candidates.append(
+                _candidate(
+                    label=f"water_heater@{start_abs % 24.0:.2f}_{temp_c:.0f}C",
+                    appliances=appliances,
+                    start_abs=start_abs,
+                    duration_h=duration,
+                    power_kw=power_kw * _water_heater_temp_cost_factor(temp_c),
+                    state=state,
+                    price_profile=price_profile,
+                    run_start_date=run_start_date,
+                )
             )
-        )
     return _filter_vpp_safe_candidates(candidates, state)
+
+
+def _water_heater_temp_candidates(cfg: dict) -> list[float]:
+    del cfg
+    return [63.0]
+
+
+def _water_heater_temp_cost_factor(temp_c: float) -> float:
+    standby_c = 40.0
+    reference_c = 65.0
+    usable_lift = max(1.0, reference_c - standby_c)
+    return max(0.05, (float(temp_c) - standby_c) / usable_lift)
 
 
 def _ev_candidates(
@@ -804,6 +861,16 @@ def _overlaps_any_vpp(start_abs: float, end_abs: float, state: dict) -> bool:
     return False
 
 
+def _vpp_overlap_hours(start_abs: float, end_abs: float, state: dict) -> float:
+    overlap = 0.0
+    for ev in _vpp_events_for_state(state):
+        try:
+            overlap += max(0.0, min(float(end_abs), float(ev["end_h"])) - max(float(start_abs), float(ev["trigger_h"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return overlap
+
+
 def _has_vpp_context(state: dict) -> bool:
     return bool(_vpp_events_for_state(state))
 
@@ -817,6 +884,20 @@ def _vpp_events_for_state(state: dict) -> list[dict]:
     if isinstance(history_event, dict):
         events.append(history_event)
     return events
+
+
+def _active_vpp_event_for_state(state: dict) -> dict | None:
+    try:
+        sim_h = float(state.get("sim_h"))
+    except (TypeError, ValueError):
+        return None
+    for ev in _vpp_events_for_state(state):
+        try:
+            if float(ev["trigger_h"]) <= sim_h < float(ev["end_h"]):
+                return ev
+        except (KeyError, TypeError, ValueError):
+            continue
+    return None
 
 
 def _ev_needed_kwh(cfg: dict, state: dict) -> float:

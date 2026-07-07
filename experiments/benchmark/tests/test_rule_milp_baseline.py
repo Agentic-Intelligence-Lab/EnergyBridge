@@ -84,7 +84,7 @@ def test_rule_milp_uses_low_price_window_and_avoids_vpp() -> None:
     assert appliances["water_heater_preheat"] is True
     assert appliances["water_heater_preheat_start_h"] != 18.0
     assert 22.0 <= action["setpoint"] <= 28.0
-    assert action["objective_terms"]["version"] == "rule_milp_dynamic_cost_min_v2"
+    assert action["objective_terms"]["version"] == "rule_milp_vpp_penalty_v7"
     assert action["objective_terms"]["diagnostics"]["hvac_setpoint"]["status"] == "regional_dynamic_model"
     assert action["objective_terms"]["diagnostics"]["solver"]["solver"] in {
         "pulp_cbc_milp",
@@ -102,6 +102,43 @@ def test_rule_milp_uses_berlin_dynamic_model_for_germany() -> None:
     hvac = action["objective_terms"]["diagnostics"]["hvac_setpoint"]
     assert hvac["region"] == "berlin"
     assert hvac["cost_min_dynamic_setpoint_c"] == action["setpoint"]
+
+
+def test_rule_milp_active_vpp_adds_large_hvac_energy_penalty() -> None:
+    state = _state()
+    state["sim_h"] = 18.0
+    state["hod"] = 18.0
+    state["vpp_active"] = True
+
+    action = plan_rule_milp_action(state=state)
+
+    hvac = action["objective_terms"]["diagnostics"]["hvac_setpoint"]
+    assert hvac["active_vpp_event_id"] == "vpp1"
+    assert hvac["selection_rule"] == "vpp_penalty_weighted_dynamic_objective"
+    assert hvac["vpp_hvac_penalty_weight"] >= 1000.0
+    assert hvac["selected"]["vpp_hvac_penalty"] >= 0.0
+    selected_energy = hvac["selected"]["vpp_hvac_energy_kwh"]
+    assert selected_energy == min(row["vpp_hvac_energy_kwh"] for row in hvac["candidate_setpoints"])
+
+
+def test_rule_milp_standalone_baseline_ignores_user_comfort_protection() -> None:
+    state = _state()
+    state["standalone_baseline"] = True
+    state["sim_h"] = 18.0
+    state["hod"] = 18.0
+
+    action = plan_rule_milp_action(state=state)
+
+    hvac = action["objective_terms"]["diagnostics"]["hvac_setpoint"]
+    assert hvac["allowed_range_c"] == [22.0, 28.0]
+    assert action["setpoint"] == 40.0
+    assert 40.0 in [row["setpoint_c"] for row in hvac["candidate_setpoints"]]
+    assert hvac["selected"]["vpp_hvac_energy_kwh"] == min(
+        row["vpp_hvac_energy_kwh"] for row in hvac["candidate_setpoints"]
+    )
+    assert action["appliances"]["washer_skip"] is False
+    assert action["appliances"]["washer_start_h"] is not None
+    assert action["appliances"]["water_heater_preheat"] is True
 
 
 def test_rule_milp_strictly_filters_vpp_candidates_even_when_vpp_is_cheapest() -> None:
@@ -176,6 +213,20 @@ def test_rule_milp_oracle_moves_fixed_water_heater_away_from_vpp() -> None:
     end = appliances["water_heater_preheat_end_h"]
     assert max(start, 18.0) >= min(end, 19.0)
     assert end <= 21.0
+
+
+def test_rule_milp_uses_conservative_water_heater_temperature() -> None:
+    state = _state()
+    state["appliance_config"]["washer"]["present"] = False
+
+    action = plan_rule_milp_action(
+        state=state,
+        price_profile=_FakePriceProfile(),
+        run_start_date=datetime(2025, 6, 1).date(),
+    )
+
+    assert action["appliances"]["water_heater_preheat"] is True
+    assert action["appliances"]["water_heater_preheat_temp_c"] == 63.0
 
 
 def test_rule_milp_ev_command_uses_charge_window_without_required_mode() -> None:

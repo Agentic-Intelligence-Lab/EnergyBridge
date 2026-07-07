@@ -2665,13 +2665,19 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     _ac_sp_max    = float(_ac_cfg.get("setpoint_preferred_max_c", 26.0))
     _ac_sp_tol    = float(_ac_cfg.get("temp_tolerance_c", 1.0))
     _ac_sp_default = round((_ac_sp_min + _ac_sp_max) / 2, 1)
-    _protective_mode = _protective_control_mode(persona_config)
+    _protective_mode = method == "agent" and _protective_control_mode(persona_config)
     _auto_saving_mode = _price_sensitive_auto_saving_mode(persona_config)
     _ac_sp_vpp_min = round(_ac_sp_max + 0.5, 1)   # minimum raise during VPP
     _ac_sp_vpp_max = round(_ac_sp_max + 1.5, 1)   # typical VPP raise ceiling
     # Override global SP_MIN based on persona comfort floor
-    _run_sp_min = max(SP_MIN, _ac_sp_min - _ac_sp_tol)
-    _run_sp_max = min(SP_MAX, _ac_sp_max + 2.0)  # allow VPP raise headroom
+    if method == "agent":
+        _run_sp_min = max(SP_MIN, _ac_sp_min - _ac_sp_tol)
+        _run_sp_max = min(SP_MAX, _ac_sp_max + 2.0)  # allow VPP raise headroom
+    else:
+        _run_sp_min = SP_MIN
+        _run_sp_max = SP_MAX
+    _rule_milp_sp_min = SP_MIN
+    _rule_milp_sp_max = AC_OFF_FALLBACK_COOLING_SETPOINT
     _energy_saving_sp_floor = _run_sp_min
     if _protective_mode:
         _run_sp_max = min(_run_sp_max, _ac_sp_max)
@@ -3596,12 +3602,13 @@ All times are hour-of-day (0–23.9)."""
             vpp_target_kwh=None,
             appliance_config=appliance_config or {},
         )
+        state_dict["standalone_baseline"] = True
         decision = plan_rule_milp_action(
             state=state_dict,
             price_profile=day_ahead_price_profile,
             run_start_date=run_start_date,
         )
-        sp = round(max(_run_sp_min, min(_run_sp_max, float(decision.get("setpoint", loop.sp)))), 1)
+        sp = round(max(_rule_milp_sp_min, min(_rule_milp_sp_max, float(decision.get("setpoint", loop.sp)))), 1)
         appliance_actions = _filter_controllable_appliance_actions(
             decision.get("appliances", {}), appliance_config
         )
@@ -4036,10 +4043,11 @@ All times are hour-of-day (0–23.9)."""
                         vpp_target_kwh=None,
                         appliance_config=appliance_config or {},
                     )
+                    state_dict["standalone_baseline"] = True
                     state_dict["mpc_horizon_steps"] = mpc_horizon_steps
                     rule_sp, _diag = _choose_dynamic_cost_min_setpoint(state_dict)
                     loop._rule_milp_hvac_cache = {"key": cache_key, "setpoint": rule_sp}
-                loop.sp = round(max(_run_sp_min, min(_run_sp_max, float(rule_sp))), 1)
+                loop.sp = round(max(_rule_milp_sp_min, min(_rule_milp_sp_max, float(rule_sp))), 1)
                 loop.planned_occupied_sp = loop.sp
             except Exception as _rme:
                 print(f"  [Rule+MILP HVAC] dynamics rule failed: {_rme}")
@@ -4217,7 +4225,10 @@ All times are hour-of-day (0–23.9)."""
                         "    Goal : Keep every present non-AC appliance out of this "
                         f"{ev_duration_h:.2f}h VPP window; do not score by shed/cap target"
                     )
-                    print(f"    AC   : May adjust only within user comfort/consent bounds")
+                    if method == "agent":
+                        print(f"    AC   : Agent may adjust only within user comfort/consent bounds")
+                    else:
+                        print(f"    AC   : Standalone baseline uses hard control bounds, not agent comfort protection")
                     print(f"    Other: Shift washer/dishwasher/dryer/EWH/EV away from {_event_window_text(triggered_vpp)}")
                     print(f"  {'='*62}")
                 elif triggered_daily_plan:
@@ -4327,6 +4338,9 @@ All times are hour-of-day (0–23.9)."""
                             res["objective_source"] = "posthoc_agent_decision_time_pdf_v15"
                         except Exception as _oe:
                             print(f"  [Agent Objective] posthoc objective error: {_oe}")
+                if method == "rule_milp" and (is_vpp or active_vpp is not None):
+                    res["setpoint"] = AC_OFF_FALLBACK_COOLING_SETPOINT
+                    res["reason"] = f"{res.get('reason', 'rule_milp')} | active VPP HVAC-off"
                 _raw_appliance_actions = dict(res.get("appliance_actions", {}) or {})
                 _vpp_replan_guard = {}
                 if method != "no_dr" and is_vpp and triggered_vpp is not None and loop.appliance_suite is not None:
