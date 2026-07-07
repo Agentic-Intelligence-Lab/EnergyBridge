@@ -1065,10 +1065,16 @@ kept as a separate baseline, not an agent skill.
 
 ### RL Baseline
 
-Preference-aware PPO baseline (RL PPO Pref-v2, 8-dim action space) trained
-against the same EnergyPlus 24.1 family model, weather, and VPP schedule as
-the agent benchmark. The 8-dim action covers AC setpoint, washer /
-dishwasher / dryer start hours, water-heater preheat, and EV charge window.
+Preference-aware PPO baseline (RL PPO Pref-v2, 8-dim action space). Training
+and benchmark evaluation are split: training steps against the region-aware
+MPC dynamic model (`experiments/benchmark/baselines/mpc/dynamic_model`,
+~7-10x faster than EnergyPlus, and automatically uses Berlin regional 5R3C
+parameters for Germany / Tianjin parameters otherwise), while benchmark
+evaluation always runs the same EnergyPlus 24.1 family model, weather, and
+VPP schedule used by every other baseline — so scores stay directly
+comparable. An EnergyPlus-backed training path (`--backend ep`) is retained
+for reference. The 8-dim action covers AC setpoint, washer / dishwasher /
+dryer start hours, water-heater preheat, and EV charge window.
 
 Key locations:
 
