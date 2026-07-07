@@ -23,6 +23,9 @@ from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
 from .environment_pref_v2 import EnergyPlusFamilyEnvV2
+from .environment_dynamic_v2 import DynamicFamilyEnvV2
+
+_ENV_CLASSES = {"ep": EnergyPlusFamilyEnvV2, "dynamic": DynamicFamilyEnvV2}
 
 
 class WallClockStopCallback(BaseCallback):
@@ -35,8 +38,10 @@ class WallClockStopCallback(BaseCallback):
 
 
 def evaluate(model: PPO, output: Path, persona_id: str,
-             city: str, start_date: str, price_csv: str) -> dict:
-    env = EnergyPlusFamilyEnvV2(
+             city: str, start_date: str, price_csv: str,
+             backend: str = "ep") -> dict:
+    EnvCls = _ENV_CLASSES[backend]
+    env = EnvCls(
         output / "eval_ep", persona_id=persona_id,
         city=city, start_date=start_date, price_csv=price_csv,
     )
@@ -178,11 +183,20 @@ def main() -> None:
                         help="Number of parallel EnergyPlus envs via SubprocVecEnv. "
                              "Each env runs on a separate CPU. Default 1 (original). "
                              "8-16 recommended for multi-core servers.")
+    parser.add_argument("--backend", choices=["ep", "dynamic"], default="dynamic",
+                        help="Training env backend. `dynamic` (default) = MPC dynamic "
+                             "model (fast, ~35-70min/10M; Germany auto-uses Berlin "
+                             "regional 5R3C params). `ep` = EnergyPlus (slow, ~4h/10M) "
+                             "— legacy/reference path. Benchmark evaluation always "
+                             "uses EnergyPlus regardless of this flag.")
     args = parser.parse_args()
+
+    EnvCls = _ENV_CLASSES[args.backend]
 
     args.output.mkdir(parents=True, exist_ok=True)
     n_envs = max(1, args.n_envs)
     print(f"Training RL PPO Pref-v2: persona={args.persona} city={args.city} "
+          f"backend={args.backend} "
           f"start={args.start_date or 'default'} price={args.price_csv or 'N/A'} "
           f"reward_mode={args.reward_mode} n_envs={n_envs}")
     print(f"  output={args.output}  device={args.device}  hours={args.hours}  timesteps={args.timesteps}")
@@ -198,12 +212,12 @@ def main() -> None:
         # Each env writes to its own subdirectory to avoid file conflicts.
         def _make_env(rank: int):
             def _init():
-                return EnergyPlusFamilyEnvV2(args.output / f"train_ep_{rank}", **env_kwargs)
+                return EnvCls(args.output / f"train_ep_{rank}", **env_kwargs)
             return _init
         env = SubprocVecEnv([_make_env(i) for i in range(n_envs)], start_method="spawn")
-        print(f"  [SubprocVecEnv] {n_envs} parallel EnergyPlus envs launched")
+        print(f"  [SubprocVecEnv] {n_envs} parallel {args.backend} envs launched")
     else:
-        env = EnergyPlusFamilyEnvV2(args.output / "train_ep", **env_kwargs)
+        env = EnvCls(args.output / "train_ep", **env_kwargs)
 
     # PPO hyperparams scale with n_envs:
     # - n_steps stays 432 per env (rollout buffer = n_envs × 432)
@@ -296,7 +310,7 @@ def main() -> None:
     env.close()
 
     # Evaluate using a fresh single env (not the VecEnv used for training)
-    summary = evaluate(model, args.output, args.persona, args.city, args.start_date, args.price_csv)
+    summary = evaluate(model, args.output, args.persona, args.city, args.start_date, args.price_csv, backend=args.backend)
     summary.update({"training_elapsed_seconds": elapsed, "training_timesteps": model.num_timesteps})
     (args.output / "formal_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2))

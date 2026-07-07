@@ -20,37 +20,65 @@ controllable appliances. The trained checkpoints are the ones used by
 
 Run from the repo root.
 
-### Training
+### Training backend: dynamic model (train) vs EnergyPlus (test)
 
-Both cities use the same PPO hyperparameters (10M timesteps, `--n-envs 96`, `--hours 8` wall-clock cap). Sim length and IDF are auto-selected from `--city`. Wall-clock: ~4h per city on 96 parallel envs.
+Training and benchmark evaluation are **split**:
 
-**Tianjin** (3-day sim, `family_simple_3day.idf`):
+- **Training** (`--backend dynamic`, default): the environment steps against
+  the MPC dynamic model (`experiments/benchmark/baselines/mpc/dynamic_model`)
+  instead of EnergyPlus. It is a synchronous, pure-Python 5R3C thermal +
+  behavior-MDP model — no `pyenergyplus` calls, no threading, ~150-250 µs per
+  step. `--city` is routed to a calibrated region via
+  `dynamic_model_region_for_state`: `Tianjin` → the legacy Tianjin 5R3C
+  parameters, `Germany` → the Berlin regional 5R3C assets
+  (`dynamic_model/assets/regional_5r3c/berlin/`). This is the same dynamic
+  model the `mpc_dynamic` baseline uses for planning, so it stays in sync
+  with any future region/parameter updates on that side automatically
+  (imported, not copied).
+- **Benchmark evaluation** is unchanged: `family_runner` always drives the
+  real EnergyPlus 24.1 family model, so reported scores are directly
+  comparable to every other baseline regardless of which backend trained
+  the checkpoint.
+- **`--backend ep`** (legacy) trains directly against EnergyPlus instead,
+  ~7-10x slower but useful as a reference/fallback path. Both backends share
+  the same 8-dim action / 41-dim observation space, so checkpoints trained
+  with one backend can be evaluated, resumed, or fine-tuned with the other.
+
+Both cities use the same PPO hyperparameters (10M timesteps). Sim length and
+region/IDF are auto-selected from `--city`.
+
+**Tianjin** (3-day sim, dynamic model uses Tianjin 5R3C params; ~35-70 min on 32 parallel envs):
 
 ```bash
 python -m baselines.rl_energyplus.train_pref_v2 \
-    --city Tianjin --persona all_appliances_full \
+    --backend dynamic --city Tianjin --persona all_appliances_full \
     --price-csv experiments/real_data/tianjin_tou_price_normalized.csv \
-    --hours 8 --timesteps 10000000 --n-envs 96 --device cuda:0 \
-    --output benchmark_results/rl_v2_8dim_tianjin
+    --hours 3 --timesteps 10000000 --n-envs 32 --device cpu \
+    --output benchmark_results/rl_dyn_v2_tianjin
 ```
 
-**Germany** (7-day sim, `berlin_family_geg_final.idf`):
+**Germany** (7-day sim, dynamic model uses Berlin 5R3C params; ~35-70 min on 32 parallel envs):
 
 ```bash
 python -m baselines.rl_energyplus.train_pref_v2 \
-    --city Germany --persona all_appliances_full \
+    --backend dynamic --city Germany --persona all_appliances_full \
     --start-date 2025-06-01 \
     --price-csv experiments/real_data/germany_2025_price.csv \
-    --hours 8 --timesteps 10000000 --n-envs 96 --device cuda:1 \
-    --output benchmark_results/rl_v2_8dim_germany
+    --hours 3 --timesteps 10000000 --n-envs 32 --device cpu \
+    --output benchmark_results/rl_dyn_v2_germany
 ```
+
+For the legacy EnergyPlus-backed path, add `--backend ep --device cuda:0`
+(or `cuda:1`), drop `--n-envs 32` to `96`, and expect ~4h per city
+(EnergyPlus is CPU-bound per-env, not GPU-bound, but a GPU still speeds up
+the PPO policy update).
 
 The trainer writes periodic checkpoints under `<output>/` and a final
 `ppo_energyplus_3day.zip`. Copy the finals to `models/`:
 
 ```bash
-cp benchmark_results/rl_v2_8dim_tianjin/ppo_energyplus_3day.zip models/rl_ppo_pref_v2_tianjin.zip
-cp benchmark_results/rl_v2_8dim_germany/ppo_energyplus_3day.zip models/rl_ppo_pref_v2_germany.zip
+cp benchmark_results/rl_dyn_v2_tianjin/ppo_energyplus_3day.zip models/rl_ppo_pref_v2_tianjin.zip
+cp benchmark_results/rl_dyn_v2_germany/ppo_energyplus_3day.zip models/rl_ppo_pref_v2_germany.zip
 ```
 
 ### Key hyperparameters
@@ -63,7 +91,8 @@ cp benchmark_results/rl_v2_8dim_germany/ppo_energyplus_3day.zip models/rl_ppo_pr
 | `gamma` | 0.995 | Long-horizon appliance scheduling |
 | `policy_kwargs.net_arch` | `[256, 256]` | MLP |
 | `--timesteps` | 10M | Convergence based on terminal_bonus plateau |
-| `--n-envs` | 96 | Parallel EnergyPlus instances via `SubprocVecEnv` |
+| `--n-envs` | 32 (dynamic) / 96 (ep) | Parallel env instances via `SubprocVecEnv`; dynamic model is lightweight so fewer workers still saturate the CPU |
+| `--backend` | `dynamic` (default) / `ep` | See "Training backend" below |
 
 ### Action space (8 dims, `_decode_action_v2`)
 
@@ -136,7 +165,10 @@ python experiments/benchmark/run_household_matrix.py \
 
 ### Verification
 
-30/30 PASS across (Tianjin, Germany) × (10 personas, 5 households):
+30/30 PASS across (Tianjin, Germany) × (10 personas, 5 households), evaluated
+on the real EnergyPlus benchmark using checkpoints **trained with
+`--backend dynamic`** (Tianjin → tianjin params, Germany → Berlin regional
+params):
 - `physical_appliance_task_completion_rate = 1.0` all scenarios
 - `ev_target_reached_rate = 1.0`
 - `output_uncovered_appliance_services = []`
