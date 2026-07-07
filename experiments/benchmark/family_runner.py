@@ -26,6 +26,7 @@ for p in (str(EPLUS_ROOT), str(PROJECT_ROOT)):
     if p not in sys.path: sys.path.insert(0, p)
 
 from energybridge.data.vpp_events import describe_vpp_events, make_daily_vpp_events
+from experiments.benchmark.strategy_explanations import normalize_vpp_strategy_explanation
 
 _EXPERIMENTS_DIR = BENCHMARK_DIR.parent
 DEFAULT_FAMILY_IDF = _EXPERIMENTS_DIR / "models" / "family_home" / "family_simple_3day.idf"
@@ -332,6 +333,7 @@ class _FamilyLoop:
         self.vpp_user_input: str = ""               # roleplay user preference before agent acts
         self.vpp_user_input_by_id: Dict[str, str] = {}
         self.vpp_strategy_trace_by_id: Dict[str, dict] = {}
+        self.vpp_strategy_explanation_by_id: Dict[str, dict] = {}
         self.vpp_last_reason: str = ""              # agent reason from last LLM call
         self.vpp_trigger_reason_by_id: Dict[str, str] = {}  # reason from the event-start control action
         # Per-event VPP energy tracking and demand-agent outputs
@@ -2764,6 +2766,15 @@ EV CHARGER (home charger, arrival/departure shown in status)
     ev_charge_start_h   : float  — override: begin charging at this hour (e.g. 22.0).
     ev_charge_end_h     : float  — override: stop  charging at this hour (e.g. 7.0 = 07:00 next morning).
 
+[VPP STRATEGY EXPLANATION]
+When VPP_ACTIVE or VPP_TODAY is present, include a concise `strategy_explanation` object for collaborator review.
+Use Chinese natural language for user-facing explanation, but keep field names exactly as specified.
+The explanation must say why the VPP request occurs, concrete device actions with amount/time/duration,
+protected constraints (comfort, EV SOC, caregiving/routine boundaries, control limits), user opt-out/restore authority,
+expected load/compensation benefit without inventing money, and 2-3 alternatives.
+For non-VPP calls, set `strategy_explanation` to null.
+Do not put the long explanation in `reason`; `reason` remains a compact <=100 char rationale.
+
 Return JSON ONLY (no markdown, no explanation):
 {{"setpoint": X, "next_check_hour": Y_or_null, "reason": "≤100 chars",
  "appliances": {{
@@ -2780,7 +2791,18 @@ Return JSON ONLY (no markdown, no explanation):
    "ev_mode": null_or_"smart"|"delay"|"normal",
    "ev_charge_start_h": null_or_float,
    "ev_charge_end_h": null_or_float
-}}
+}},
+ "strategy_explanation": null_or_{{
+   "natural_language": "Chinese explanation for the household",
+   "why_request": "why this VPP request happens",
+   "recommended_actions": [{{"device": "ac|washer|dishwasher|dryer|water_heater|ev", "action": "...", "amount": "...", "duration": "...", "rationale": "..."}}],
+   "protected_constraints": ["comfort/control/service constraints protected"],
+   "user_control": ["opt out / restore / confirmation authority"],
+   "expected_benefit": {{"message": "load/benefit note, no invented money"}},
+   "alternatives": [{{"name": "保守方案", "summary": "...", "tradeoff": "..."}}],
+   "structured_control_constraints": {{"vpp_window": "...", "hvac": {{}}, "appliances": {{}}, "hard_constraints": []}},
+   "personalization_notes": ["role-specific emphasis"]
+ }}
 }}
 For every PRESENT appliance, appliance fields must be explicit and non-null as described in the runtime prompt.
 Use null only for appliances that are absent from the home, or for optional ev_mode metadata.
@@ -3194,6 +3216,29 @@ All times are hour-of-day (0–23.9)."""
                 data.get("appliances", {}), appliance_config
             )
             data["appliances"] = appl_actions
+            strategy_explanation = {}
+            if vpp_event:
+                _exp_vid = str(vpp_event.get("id", ""))
+                _capacity_context = (
+                    loop.vpp_capacity_by_id.get(_exp_vid, {})
+                    or getattr(loop, "current_vpp_capacity", {})
+                    or {}
+                )
+                strategy_explanation = normalize_vpp_strategy_explanation(
+                    data.get("strategy_explanation"),
+                    persona_config=persona_config,
+                    appliance_config=appliance_config,
+                    event=vpp_event,
+                    setpoint_c=sp,
+                    reason=reason,
+                    appliance_actions=appl_actions,
+                    day_decisions=loop.day_agent_decisions[min(sim_days - 1, int(sim_h // 24))],
+                    demand_context=prompt_vpp_demand,
+                    capacity_context=_capacity_context,
+                    method=method,
+                    city=weather_label or "",
+                    source="family_llm_agent",
+                )
             day_num = int(sim_h // 24) + 1
             hh_mm = f"{int(hod % 24):02d}:{int((hod % 1)*60):02d}"
             vpp_tag = f" | VPP-{vpp_id}" if vpp_active else ""
@@ -3207,6 +3252,8 @@ All times are hour-of-day (0–23.9)."""
                 print(f"  └{'─'*56}")
             result = {"setpoint": sp, "next_check_hour": nch, "reason": reason,
                     "appliance_actions": appl_actions if isinstance(appl_actions, dict) else {}}
+            if strategy_explanation:
+                result["strategy_explanation"] = strategy_explanation
             if method == "eb_rule_milp":
                 result["objective_source"] = "eb_rule_milp_agent_choice_v1"
                 result["strategy_trace"] = {
@@ -3225,6 +3272,22 @@ All times are hour-of-day (0–23.9)."""
             print(f"  [FamilyAgent] LLM error at h={sim_h:.1f}: {e}")
             loop.llm_failures += 1
             fallback["reason"] = ""
+            if vpp_event:
+                fallback["strategy_explanation"] = normalize_vpp_strategy_explanation(
+                    None,
+                    persona_config=persona_config,
+                    appliance_config=appliance_config,
+                    event=vpp_event,
+                    setpoint_c=fallback.get("setpoint"),
+                    reason="",
+                    appliance_actions=fallback.get("appliance_actions", {}),
+                    day_decisions=loop.day_agent_decisions[min(sim_days - 1, int(sim_h // 24))],
+                    demand_context=prompt_vpp_demand,
+                    capacity_context=getattr(loop, "current_vpp_capacity", {}) or {},
+                    method=method,
+                    city=weather_label or "",
+                    source="family_llm_fallback",
+                )
             return fallback
 
     def _mpc_trigger(temp, out_t, hod, sim_h, facility_w=None, vpp_event=None):
@@ -3778,6 +3841,7 @@ All times are hour-of-day (0–23.9)."""
             cmt = str(r.get("comment", ""))
             src = r.get("source", "?")
             strategy_trace = loop_ref.vpp_strategy_trace_by_id.get(ev["id"], {})
+            strategy_explanation = loop_ref.vpp_strategy_explanation_by_id.get(ev["id"], {})
             print(
                 f"  [VPP Result | Event {event_index}/{len(vpp_events)} {ev['id']}] "
                 f"User score: {sc}/5 ({lbl}) | {cmt[:80]}"
@@ -3805,6 +3869,7 @@ All times are hour-of-day (0–23.9)."""
                     "strategy_candidates": strategy_trace.get("candidates", []),
                     "selected_strategy": strategy_trace.get("selected_strategy", {}),
                     "strategy_trace": strategy_trace,
+                    "strategy_explanation": strategy_explanation,
                     "source": src}
         except Exception as e:
             print(f"  [VPP score {ev['id']}] error: {e}")
@@ -3857,6 +3922,8 @@ All times are hour-of-day (0–23.9)."""
         result["demand_target_kw"] = _demand.get("target_shed_kw", None)
         result["demand_target_shed_kwh"] = _demand.get("target_shed_kwh", None)
         result["capacity_assessment"] = loop.vpp_capacity_by_id.get(ev["id"], {})
+        if not result.get("strategy_explanation") and loop.vpp_strategy_explanation_by_id.get(ev["id"]):
+            result["strategy_explanation"] = loop.vpp_strategy_explanation_by_id.get(ev["id"], {})
         _cap_rows = loop.vpp_capacity_window_by_id.get(ev["id"], [])
         if _cap_rows:
             result["capacity_window_summary"] = _capacity_window_summary_from_rows(_cap_rows)
@@ -4331,10 +4398,14 @@ All times are hour-of-day (0–23.9)."""
                     _decision_log["posthoc_objective_source"] = res.get("posthoc_objective_source")
                 if res.get("strategy_trace"):
                     _decision_log["strategy_trace"] = res.get("strategy_trace", {})
+                if res.get("strategy_explanation"):
+                    _decision_log["strategy_explanation"] = res.get("strategy_explanation", {})
                 _append_day_agent_decision(loop, sim_days, sim_h, _decision_log)
                 if is_vpp and triggered_vpp is not None:
                     loop.vpp_trigger_actions[vid] = res.get("appliance_actions", {})
                     loop.vpp_trigger_reason_by_id[vid] = res.get("reason", "")
+                    if res.get("strategy_explanation"):
+                        loop.vpp_strategy_explanation_by_id[vid] = res.get("strategy_explanation", {})
                     if res.get("strategy_trace"):
                         existing_trace = dict(loop.vpp_strategy_trace_by_id.get(vid, {}) or {})
                         existing_trace.update(res.get("strategy_trace", {}))

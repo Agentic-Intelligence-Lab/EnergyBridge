@@ -54,6 +54,11 @@ from energybridge.data.vpp_events import (
     make_daily_vpp_events,
 )
 from energybridge.roleplay.calendar import attach_calendar, hourly_occupancy_from_persona
+from experiments.benchmark.strategy_explanations import (
+    collect_strategy_explanation_records,
+    format_strategy_explanation_lines,
+    write_strategy_explanation_artifacts,
+)
 
 PERSONA_DIR = _PROJECT_ROOT / "energybridge" / "roleplay" / "personas"
 FAMILY_MODEL_DIR = _PROJECT_ROOT / "experiments" / "models" / "family_home"
@@ -615,6 +620,17 @@ def main() -> None:
     txt_path = _write_run_summary(result, persona, args.city, output_dir)
     print(f"[Saved] run_summary.txt         → {txt_path}")
 
+    has_strategy_explanations = any(
+        isinstance((event or {}).get("strategy_explanation"), dict)
+        and bool((event or {}).get("strategy_explanation"))
+        for event in (result.vpp_event_log or [])
+    )
+    if has_strategy_explanations:
+        explanation_records = collect_strategy_explanation_records(result, persona, args.city)
+        explanation_paths = write_strategy_explanation_artifacts(explanation_records, output_dir)
+        for label, path in explanation_paths.items():
+            print(f"[Saved] strategy explanations {label:<8} → {path}")
+
     # ── Call analyze_eplus_run.py --report for EP-level MD ────────────
 
 
@@ -944,6 +960,10 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
             demand_str = "(demand agent not run for this event)"
         reason = e.get("reason", "")
         comment = e.get("comment", "")
+        strategy_exp_lines = format_strategy_explanation_lines(
+            e.get("strategy_explanation"),
+            indent="    ",
+        )
         # Per-appliance VPP avoidance for this event
         appl_summ = e.get("appliance_summary", {})
         appl_avoid_parts = []
@@ -1013,6 +1033,7 @@ def _write_run_summary(result, persona: dict, city: str, output_dir: Path) -> Pa
             f"    Window capacity  : {capacity_window_str}",
             f"    90% firm capacity: {total_q90_str}",
             f"    Agent rationale  : {reason}" if reason else "",
+        ] + strategy_exp_lines + [
             f"    Appliance VPP use: {appl_avoid_str}",
             f"    User score       : {score_str}",
             f"    Score comment    : {comment[:100]}" if comment else "",
