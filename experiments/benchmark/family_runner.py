@@ -37,6 +37,8 @@ PMV_MET = 1.1; PMV_CLO = 0.5; PMV_V = 0.1; PMV_RH = 55.0
 PMV_DEADBAND = 0.5; SP_MIN = 22.0; SP_MAX = 28.0; SP_STEP = 0.5
 SP_DEFAULT = 26.0; HTG_SP = 20.0; UNMET_TOL = 0.556
 AC_OFF_FALLBACK_COOLING_SETPOINT = 40.0
+AGENT_PRE_VPP_PRECOOL_LEAD_H = 1.5
+AGENT_POST_VPP_RESTORE_H = 2.0
 
 # 3x VPP-1: same event type, configured as absolute simulation-hour windows.
 # The Agent prompt and appliance guardrails derive their timing from this list.
@@ -179,6 +181,60 @@ def _find_active_or_upcoming_vpp_event(
         if sim_h < float(ev["trigger_h"]) and int(float(ev["trigger_h"]) // 24) == day_idx
     ]
     return min(upcoming, key=lambda ev: float(ev["trigger_h"])) if upcoming else None
+
+
+def _agent_pre_vpp_precool_event(
+    sim_h: float,
+    *,
+    vpp_events: list[dict] | None = None,
+    lead_h: float = AGENT_PRE_VPP_PRECOOL_LEAD_H,
+) -> dict | None:
+    """Return the same-day event when EnergyBridge should pre-cool for VPP."""
+    ev = _find_active_or_upcoming_vpp_event(sim_h, vpp_events=vpp_events)
+    if ev is None:
+        return None
+    trigger_h = float(ev.get("trigger_h", 0.0))
+    end_h = float(ev.get("end_h", trigger_h))
+    if trigger_h <= sim_h < end_h:
+        return None
+    return ev if trigger_h - float(lead_h) <= sim_h < trigger_h else None
+
+
+def _agent_post_vpp_restore_event(
+    sim_h: float,
+    *,
+    vpp_events: list[dict] | None = None,
+    restore_h: float = AGENT_POST_VPP_RESTORE_H,
+) -> dict | None:
+    """Return the recent event when EnergyBridge should restore comfort."""
+    events = VPP_EVENTS if vpp_events is None else vpp_events
+    recent = [
+        ev for ev in events
+        if float(ev.get("end_h", 0.0)) <= sim_h < float(ev.get("end_h", 0.0)) + float(restore_h)
+    ]
+    return max(recent, key=lambda ev: float(ev.get("end_h", 0.0))) if recent else None
+
+
+def _agent_next_vpp_checkpoint_hour(
+    sim_h: float,
+    *,
+    vpp_events: list[dict] | None = None,
+    lead_h: float = AGENT_PRE_VPP_PRECOOL_LEAD_H,
+) -> float | None:
+    """Schedule EnergyBridge's pre-cool and event-start checks for the next VPP."""
+    ev = _find_active_or_upcoming_vpp_event(sim_h, vpp_events=vpp_events)
+    if ev is None:
+        return None
+    trigger_h = float(ev.get("trigger_h", 0.0))
+    end_h = float(ev.get("end_h", trigger_h))
+    if trigger_h <= sim_h < end_h:
+        return end_h
+    pre_h = max(float(int(trigger_h // 24) * 24), trigger_h - float(lead_h))
+    if sim_h < pre_h:
+        return pre_h
+    if sim_h < trigger_h:
+        return trigger_h
+    return None
 
 @dataclass
 class BenchmarkResult:
@@ -3024,6 +3080,16 @@ All times are hour-of-day (0–23.9)."""
                 )
             except Exception:
                 pass
+        agent_pre_vpp_precool = bool(
+            method == "agent"
+            and not vpp_active
+            and _agent_pre_vpp_precool_event(sim_h, vpp_events=vpp_events) is not None
+        )
+        agent_post_vpp_restore = bool(
+            method == "agent"
+            and not vpp_active
+            and _agent_post_vpp_restore_event(sim_h, vpp_events=vpp_events) is not None
+        )
         vpp_window = _event_window_text(vpp_event) if vpp_event else ""
         prompt_vpp_demand: dict[str, Any] = {}
         if vpp_event:
@@ -3073,6 +3139,11 @@ All times are hour-of-day (0–23.9)."""
                 "Emit explicit VPP-safe schedules: shiftable cycles avoid the window, "
                 "water-heater preheat ends before the event when feasible, and EV charging avoids the window. ***"
             )
+            if agent_pre_vpp_precool:
+                upcoming_vpp_tag += (
+                    f" EnergyBridge tradeoff mode: pre-cool now to about {_ac_sp_min:.1f}°C, "
+                    "then use a warmer low-power setpoint during the VPP window and restore comfort after it ends."
+                )
         # Post-VPP recovery signal: tell LLM to restore setpoint within 2h after VPP ends
         post_vpp_tag = ""
         if not vpp_active:
@@ -3334,14 +3405,40 @@ All times are hour-of-day (0–23.9)."""
                 data_out = dict(data_in or {})
                 rule_actions = dict(rule_skill.get("appliance_actions") or {})
                 rule_setpoint = rule_skill.get("setpoint", data_out.get("setpoint", fb_sp))
+                next_check_hour = rule_skill.get("next_check_hour")
+                if _protective_mode or _agent_multi_user_comfort_first:
+                    agent_vpp_tradeoff_sp = round(min(_run_sp_max, _ac_sp_max), 1)
+                else:
+                    agent_vpp_tradeoff_sp = round(
+                        min(
+                            _run_sp_max,
+                            max(
+                                _ac_sp_max,
+                                _ac_sp_max + min(1.5, max(0.5, float(_ac_sp_tol))),
+                            ),
+                        ),
+                        1,
+                    )
                 if vpp_active:
-                    rule_setpoint = _rule_milp_sp_max
-                    rule_skill["setpoint"] = _rule_milp_sp_max
+                    rule_setpoint = agent_vpp_tradeoff_sp
+                    rule_skill["setpoint"] = agent_vpp_tradeoff_sp
                     rule_skill["reason"] = (
-                        f"{rule_skill.get('reason', 'rule_milp')} | active VPP Rule+MILP HVAC-off"
+                        f"{rule_skill.get('reason', 'rule_milp')} | active VPP low-power drift after pre-cooling"
+                    )[:240]
+                elif agent_pre_vpp_precool and vpp_event:
+                    rule_setpoint = _ac_sp_min
+                    next_check_hour = float(vpp_event.get("trigger_h", sim_h + 1.0))
+                    rule_skill["reason"] = (
+                        f"{rule_skill.get('reason', 'rule_milp')} | pre-cool before VPP to preserve comfort"
+                    )[:240]
+                elif agent_post_vpp_restore:
+                    rule_setpoint = _ac_sp_default
+                    next_check_hour = None
+                    rule_skill["reason"] = (
+                        f"{rule_skill.get('reason', 'rule_milp')} | restore comfort after VPP"
                     )[:240]
                 data_out["setpoint"] = rule_setpoint
-                data_out["next_check_hour"] = rule_skill.get("next_check_hour")
+                data_out["next_check_hour"] = next_check_hour
                 data_out["appliances"] = rule_actions
                 data_out["selected_skill"] = "rule_milp"
                 data_out["control_source"] = "rule_milp_primary"
@@ -3475,7 +3572,12 @@ All times are hour-of-day (0–23.9)."""
             if rule_milp_direct_control:
                 sp_lower = _run_sp_min
                 sp_upper = _rule_milp_sp_max
-                if not vpp_active:
+                if agent_pre_vpp_precool:
+                    sp_upper = max(_run_sp_min, min(_run_sp_max, _ac_sp_min))
+                elif agent_post_vpp_restore:
+                    sp_upper = max(_run_sp_min, min(_run_sp_max, _ac_sp_default))
+                elif not vpp_active:
+                    sp_upper = min(sp_upper, _ac_sp_max)
                     feedback_floor = _agent_rule_milp_hvac_feedback_adjustment_c(
                         loop.vpp_event_log,
                         preferred_max_c=_ac_sp_max,
@@ -3485,7 +3587,7 @@ All times are hour-of-day (0–23.9)."""
                     if feedback_floor is not None:
                         efficient_floor = feedback_floor
                     else:
-                        efficient_floor = min(_run_sp_max, _ac_sp_max + 2.0)
+                        efficient_floor = min(_run_sp_max, _ac_sp_max)
                     sp_lower = max(sp_lower, efficient_floor)
             else:
                 learned_floor = _learned_efficiency_floor_c(
@@ -4264,6 +4366,7 @@ All times are hour-of-day (0–23.9)."""
         loop.current_occupied = occ
         loop.current_occupancy_count = occ_count
         loop.current_occupancy_source = occ_source
+        agent_precool_hvac_active = False
         hvac_control_occupied = True if method == "no_dr" else occ
         hvac_avail_set = _set_hvac_availability(ex, s, loop, hvac_control_occupied)
         if method == "rule_milp" and occ:
@@ -4328,7 +4431,7 @@ All times are hour-of-day (0–23.9)."""
                         f"  [No-DR HVAC | Day{int(sim_h // 24) + 1} {_fmt_clock_h(hod)}] "
                         "HVAC availability stays on; occupancy is not used for AC shutoff"
                     )
-            elif not occ:
+            elif not hvac_control_occupied:
                 if loop.prev_occupied is not False:
                     print(
                         f"  [AC Occupancy | Day{int(sim_h // 24) + 1} {_fmt_clock_h(hod)}] "
@@ -4372,6 +4475,7 @@ All times are hour-of-day (0–23.9)."""
                     "raw_appliance_actions": {},
                 })
             loop.prev_occupied = occ
+            loop.prev_precool_hvac_active = agent_precool_hvac_active
             # End-of-day completion check at each midnight after Day N.
             for _day_idx in range(max(0, sim_days - 1)):
                 _eod_h = float((_day_idx + 1) * 24)
@@ -4591,8 +4695,21 @@ All times are hour-of-day (0–23.9)."""
                     res["setpoint"] = AC_OFF_FALLBACK_COOLING_SETPOINT
                     res["reason"] = f"{res.get('reason', method)} | active VPP HVAC-off"
                 elif method == "agent" and (is_vpp or active_vpp is not None):
-                    res["setpoint"] = AC_OFF_FALLBACK_COOLING_SETPOINT
-                    res["reason"] = f"{res.get('reason', method)} | active VPP Rule+MILP HVAC-off"
+                    if _protective_mode or _agent_multi_user_comfort_first:
+                        _agent_vpp_tradeoff_sp = round(min(_run_sp_max, _ac_sp_max), 1)
+                    else:
+                        _agent_vpp_tradeoff_sp = round(
+                            min(
+                                _run_sp_max,
+                                max(
+                                    _ac_sp_max,
+                                    _ac_sp_max + min(1.5, max(0.5, float(_ac_sp_tol))),
+                                ),
+                            ),
+                            1,
+                        )
+                    res["setpoint"] = _agent_vpp_tradeoff_sp
+                    res["reason"] = f"{res.get('reason', method)} | active VPP low-power drift after pre-cooling"
                 _raw_appliance_actions = dict(res.get("appliance_actions", {}) or {})
                 _vpp_replan_guard = {}
                 if method != "no_dr" and is_vpp and triggered_vpp is not None and loop.appliance_suite is not None:
@@ -4608,6 +4725,18 @@ All times are hour-of-day (0–23.9)."""
                 effective_sp = res["setpoint"] if hvac_control_occupied or hvac_avail_set else AC_OFF_FALLBACK_COOLING_SETPOINT
                 loop.sp = effective_sp
                 loop.next_check = res.get("next_check_hour")
+                if method == "agent" and not is_vpp:
+                    _agent_checkpoint = _agent_next_vpp_checkpoint_hour(
+                        sim_h,
+                        vpp_events=vpp_events,
+                    )
+                    _min_next_gap = max(0.05, 0.5 * float(dt or 0.25))
+                    if (
+                        _agent_checkpoint is not None
+                        and _agent_checkpoint > sim_h + _min_next_gap
+                        and (loop.next_check is None or _agent_checkpoint < float(loop.next_check))
+                    ):
+                        loop.next_check = _agent_checkpoint
                 if is_vpp and triggered_vpp is not None:
                     _vpp_end = triggered_vpp["end_h"]
                     if loop.next_check is None or loop.next_check > _vpp_end:
