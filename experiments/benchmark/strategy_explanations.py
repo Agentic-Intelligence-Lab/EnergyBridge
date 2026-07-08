@@ -156,21 +156,37 @@ def _device_actions(
     actions: list[dict] = []
 
     if setpoint_c is not None:
+        setpoint_value = float(setpoint_c)
+        hvac_pause = setpoint_value >= 35.0
+        above_preferred = ac_max is not None and setpoint_value > float(ac_max) + 1e-6
         range_text = (
             f"{ac_min:.1f}-{ac_max:.1f}°C" if ac_min is not None and ac_max is not None else "the authorized comfort range"
         )
-        if tags.get("schedule") == "caregiver" or tags.get("control") == "low_auto_accept":
+        if hvac_pause:
             ac_rationale = (
-                f"Keep the AC setpoint at {float(setpoint_c):.1f}°C within {range_text}; "
+                "Pause active cooling only for this VPP window, then restore normal comfort control immediately afterward."
+            )
+            action_name = "temporary_hvac_pause"
+        elif above_preferred:
+            ac_rationale = (
+                f"Use a short event-only energy-saving setpoint at {setpoint_value:.1f}°C, "
+                f"above the usual {range_text} preference, then restore normal comfort control after the VPP window."
+            )
+            action_name = "energy_saving_setpoint"
+        elif tags.get("schedule") == "caregiver" or tags.get("control") == "low_auto_accept":
+            ac_rationale = (
+                f"Keep the AC setpoint at {setpoint_value:.1f}°C within {range_text}; "
                 "do not cross caregiving or comfort boundaries for the VPP event."
             )
+            action_name = "setpoint"
         else:
             ac_rationale = f"Temporarily adjust only within {range_text}, then restore comfort after the VPP window."
+            action_name = "setpoint"
         actions.append(
             {
                 "device": "ac",
-                "action": "setpoint",
-                "amount": round(float(setpoint_c), 1),
+                "action": action_name,
+                "amount": round(setpoint_value, 1),
                 "unit": "C",
                 "duration": f"{window} (about {duration})",
                 "rationale": ac_rationale,
@@ -293,13 +309,31 @@ def _device_actions(
     return actions
 
 
-def _protected_constraints(persona_config: dict | None, appliance_config: dict | None, event: dict | None) -> list[str]:
+def _protected_constraints(
+    persona_config: dict | None,
+    appliance_config: dict | None,
+    event: dict | None,
+    setpoint_c: float | None = None,
+) -> list[str]:
     tags = (persona_config or {}).get("tags") or {}
     schedule = (persona_config or {}).get("schedule") or {}
     window = _fmt_window(event)
     ac_min, ac_max = _comfort_bounds(appliance_config)
     constraints: list[str] = []
-    if ac_min is not None and ac_max is not None:
+    sp = _float_or_none(setpoint_c)
+    if sp is not None and sp >= 35.0:
+        constraints.append(
+            f"Active cooling may be paused only during {window}; normal comfort control must be restored after the event."
+        )
+    elif sp is not None and ac_max is not None and sp > ac_max + 1e-6:
+        range_text = (
+            f"{ac_min:.1f}-{ac_max:.1f}°C" if ac_min is not None else f"up to {ac_max:.1f}°C"
+        )
+        constraints.append(
+            f"The {sp:.1f}°C AC setting is an event-only energy-saving adjustment above the usual {range_text} preference; "
+            f"normal comfort control must be restored after {window}."
+        )
+    elif ac_min is not None and ac_max is not None:
         constraints.append(
             f"Indoor-temperature control must stay within the user's preferred comfort range "
             f"{ac_min:.1f}-{ac_max:.1f}°C and auto-restore after {window}."
@@ -555,9 +589,14 @@ def _device_plan_sentences(actions: list[dict], event: dict | None) -> list[str]
     if ac:
         amount = _float_or_none(ac.get("amount"))
         if amount is not None:
-            sentences.append(
-                f"I will keep the AC at {amount:.1f}°C during the event and restore normal comfort control afterward."
-            )
+            if amount >= 35.0:
+                sentences.append(
+                    "I will pause active cooling during the event window and restore normal comfort control afterward."
+                )
+            else:
+                sentences.append(
+                    f"I will keep the AC at {amount:.1f}°C during the event and restore normal comfort control afterward."
+                )
         else:
             sentences.append("I will keep the AC inside the authorized comfort range and restore normal control afterward.")
 
@@ -722,6 +761,12 @@ def _service_boundary_sentence(actions: list[dict]) -> str:
         if isinstance(item, dict) and item.get("device")
     }
     protected = ["comfort"]
+    ac = next((item for item in actions if isinstance(item, dict) and item.get("device") == "ac"), {})
+    ac_amount = _float_or_none(ac.get("amount") if isinstance(ac, dict) else None)
+    if ac_amount is not None and ac_amount >= 35.0:
+        protected = ["post-event comfort restoration"]
+    elif isinstance(ac, dict) and ac.get("action") == "energy_saving_setpoint":
+        protected = ["post-event comfort restoration"]
     if "water_heater" in devices:
         protected.append("hot water")
     if "ev" in devices:
@@ -824,7 +869,7 @@ def build_vpp_strategy_explanation(
         appliance_actions=appliance_actions,
         day_decisions=day_decisions,
     )
-    protected = _protected_constraints(persona_config, appliance_config, event)
+    protected = _protected_constraints(persona_config, appliance_config, event, setpoint_c)
     user_control = _user_control_notes(persona_config, appliance_config)
     benefit = _benefit(
         appliance_config=appliance_config,

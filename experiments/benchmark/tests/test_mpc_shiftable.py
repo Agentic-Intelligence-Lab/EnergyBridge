@@ -244,6 +244,31 @@ def test_completed_shiftable_task_gets_no_new_start_or_skip() -> None:
     assert action["appliances"]["washer_skip"] is None
 
 
+def test_mpc_schedules_shiftable_when_preferred_start_would_finish_too_late() -> None:
+    state = _sample_state()
+    state["sim_h"] = 0.0
+    state["hod"] = 0.0
+    state["vpp_active"] = False
+    state["vpp_event"] = None
+    state["appliance_config"]["washer"] = {"present": False}
+    state["appliance_config"]["dishwasher"] = {
+        "present": True,
+        "earliest_h": 9.0,
+        "latest_h": 23.0,
+        "preferred_h": 22.0,
+        "duration_h": 1.5,
+        "power_kw": 1.2,
+        "shiftable": True,
+        "dr_adjustable": True,
+    }
+
+    action = plan_mpc_action(state=state)
+
+    assert action["appliances"]["dishwasher_start_h"] is not None
+    assert action["appliances"]["dishwasher_start_h"] + 1.5 <= 23.0
+    assert action["appliances"]["dishwasher_skip"] is False
+
+
 def test_water_heater_vpp_boundary_uses_half_open_window() -> None:
     config = {
         "washer": {"present": False},

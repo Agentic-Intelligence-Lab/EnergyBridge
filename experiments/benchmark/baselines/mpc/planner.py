@@ -111,7 +111,7 @@ def _choose_best_shiftable(
     preferred_h = _float(cfg.get("preferred_h"), 14.0)
     duration_h = _float(cfg.get("duration_h"), 1.0)
     flexible = bool(cfg.get("shiftable", True)) and bool(cfg.get("dr_adjustable", True))
-    starts = {preferred_h}
+    starts = {preferred_h, earliest_h, latest_h - duration_h}
 
     if flexible:
         event = state.get("vpp_event") or {}
