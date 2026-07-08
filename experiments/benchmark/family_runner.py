@@ -3334,23 +3334,11 @@ All times are hour-of-day (0–23.9)."""
                 data_out = dict(data_in or {})
                 rule_actions = dict(rule_skill.get("appliance_actions") or {})
                 rule_setpoint = rule_skill.get("setpoint", data_out.get("setpoint", fb_sp))
-                feedback_sp = (
-                    _agent_rule_milp_hvac_feedback_adjustment_c(
-                        loop.vpp_event_log,
-                        preferred_max_c=_ac_sp_max,
-                        run_sp_min_c=_run_sp_min,
-                        run_sp_max_c=_run_sp_max,
-                    )
-                    if vpp_active
-                    else None
-                )
-                if vpp_active and _agent_multi_user_comfort_first:
-                    feedback_sp = round(max(_run_sp_min, min(_run_sp_max, _ac_sp_default)), 1)
-                if feedback_sp is not None:
-                    rule_setpoint = feedback_sp
-                    rule_skill["setpoint"] = feedback_sp
+                if vpp_active:
+                    rule_setpoint = _rule_milp_sp_max
+                    rule_skill["setpoint"] = _rule_milp_sp_max
                     rule_skill["reason"] = (
-                        f"{rule_skill.get('reason', 'rule_milp')} | feedback-adjusted AC cap"
+                        f"{rule_skill.get('reason', 'rule_milp')} | active VPP Rule+MILP HVAC-off"
                     )[:240]
                 data_out["setpoint"] = rule_setpoint
                 data_out["next_check_hour"] = rule_skill.get("next_check_hour")
@@ -3494,9 +3482,7 @@ All times are hour-of-day (0–23.9)."""
                         run_sp_min_c=_run_sp_min,
                         run_sp_max_c=_run_sp_max,
                     )
-                    if _agent_multi_user_comfort_first:
-                        efficient_floor = min(_run_sp_max, _ac_sp_default)
-                    elif feedback_floor is not None:
+                    if feedback_floor is not None:
                         efficient_floor = feedback_floor
                     else:
                         efficient_floor = min(_run_sp_max, _ac_sp_max + 2.0)
@@ -4601,33 +4587,12 @@ All times are hour-of-day (0–23.9)."""
                             res["objective_source"] = "posthoc_agent_decision_time_pdf_v15"
                         except Exception as _oe:
                             print(f"  [Agent Objective] posthoc objective error: {_oe}")
-                agent_feedback_sp = (
-                    _agent_rule_milp_hvac_feedback_adjustment_c(
-                        loop.vpp_event_log,
-                        preferred_max_c=_ac_sp_max,
-                        run_sp_min_c=_run_sp_min,
-                        run_sp_max_c=_run_sp_max,
-                    )
-                    if method == "agent" and (is_vpp or active_vpp is not None)
-                    else None
-                )
                 if method == "rule_milp" and (is_vpp or active_vpp is not None):
                     res["setpoint"] = AC_OFF_FALLBACK_COOLING_SETPOINT
                     res["reason"] = f"{res.get('reason', method)} | active VPP HVAC-off"
                 elif method == "agent" and (is_vpp or active_vpp is not None):
-                    if agent_feedback_sp is None:
-                        if _agent_multi_user_comfort_first:
-                            res["setpoint"] = round(max(_run_sp_min, min(_run_sp_max, _ac_sp_default)), 1)
-                            res["reason"] = f"{res.get('reason', method)} | household comfort cap"
-                        else:
-                            res["setpoint"] = AC_OFF_FALLBACK_COOLING_SETPOINT
-                            res["reason"] = f"{res.get('reason', method)} | active VPP HVAC-off"
-                    else:
-                        if _agent_multi_user_comfort_first:
-                            res["setpoint"] = round(max(_run_sp_min, min(_run_sp_max, _ac_sp_default)), 1)
-                        else:
-                            res["setpoint"] = agent_feedback_sp
-                        res["reason"] = f"{res.get('reason', method)} | feedback-adjusted AC cap"
+                    res["setpoint"] = AC_OFF_FALLBACK_COOLING_SETPOINT
+                    res["reason"] = f"{res.get('reason', method)} | active VPP Rule+MILP HVAC-off"
                 _raw_appliance_actions = dict(res.get("appliance_actions", {}) or {})
                 _vpp_replan_guard = {}
                 if method != "no_dr" and is_vpp and triggered_vpp is not None and loop.appliance_suite is not None:
