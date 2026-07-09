@@ -66,7 +66,7 @@ python experiments/benchmark/dr_event_memory_library.py agent-report \
   --write-result-json
 ```
 
-For a no-API dry run, add `--dry-run`. Dry-run selects the calibrated/P50 band
+For a no-API dry run, add `--dry-run`. Dry-run selects the balanced/P70 band
 deterministically, which is useful for checking the retrieval and distribution
 math before calling the LLM:
 
@@ -117,13 +117,15 @@ target no-DR baseline / historical no-DR baseline
 The adjustment is clamped to `[0.8, 1.25]` so weather/load differences can be
 reflected without allowing one outlier day to dominate.
 
-The top-k adjusted delivery values form a distribution. The agent is not allowed
-to invent a free-form capacity number; it must choose one precomputed band:
+The top-k adjusted delivery values form a distribution. EnergyBridge sends all
+three precomputed bands to the VPP side, then the agent recommends one default
+band from user preference, historical feedback, and reliability evidence. The
+agent is not allowed to invent a free-form capacity number:
 
 ```text
-P25 -> conservative
-P50 -> calibrated
-P75 -> assertive
+P50 -> lower-risk report
+P70 -> balanced default report
+P90 -> assertive report for price-sensitive / grid-cooperative users
 ```
 
 Important summary fields written by `agent-report`:
@@ -133,6 +135,8 @@ agent_capacity_report_total_kwh
 agent_capacity_report_avg_kw
 agent_capacity_report_primary_distribution_position
 agent_capacity_report_distribution_position_counts
+agent_capacity_report_primary_recommended_quantile
+agent_capacity_report_recommended_quantile_counts
 agent_capacity_report_distribution_positions
 agent_capacity_report_primary_choice
 agent_capacity_report_choice_counts
@@ -141,9 +145,10 @@ agent_capacity_report_choice_counts
 Example:
 
 ```text
-agent_capacity_report_primary_distribution_position = p50
-agent_capacity_report_distribution_position_counts = p25=0,p50=7,p75=0
-agent_capacity_report_primary_choice = calibrated
+agent_capacity_report_primary_distribution_position = p70
+agent_capacity_report_distribution_position_counts = p50=0,p70=7,p90=0
+agent_capacity_report_primary_recommended_quantile = p70
+agent_capacity_report_recommended_quantile_counts = p50=0,p70=7,p90=0
 ```
 
 ## Regenerate The Historical Memory Only If Needed

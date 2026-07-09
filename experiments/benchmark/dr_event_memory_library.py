@@ -113,6 +113,9 @@ def _update_row_from_agent_report(row: dict[str, Any], result: dict[str, Any]) -
         "agent_capacity_report_choices",
         "agent_capacity_report_primary_choice",
         "agent_capacity_report_choice_counts",
+        "agent_capacity_report_recommended_quantiles",
+        "agent_capacity_report_primary_recommended_quantile",
+        "agent_capacity_report_recommended_quantile_counts",
     ):
         if key in result:
             updated[key] = result[key]

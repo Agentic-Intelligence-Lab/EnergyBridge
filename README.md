@@ -83,10 +83,18 @@ Dashboard workflow:
 
 1. Select user category: `Role-play LLM` or `Human`.
 2. Select user type/name.
-3. Select method: `EnergyBridge`, `mpc_dynamic`, `rule_milp`, `rl_ppo_pref_v2`, or `hema_agent`.
-4. Start the run and watch live logs, progressive event cards, appliance
+3. Configure the city, date range, VPP event window, and optional price/event files.
+4. Start the `EnergyBridge` Agent run and watch live logs, progressive event cards, appliance
    schedules, user scores, and the final `run_summary.txt`.
 5. Open historical results from the collapsible sidebar.
+
+The dashboard frontend lives in `energybridge/frontend/agent_console.html` and is
+served by `experiments/benchmark/web_dashboard.py`. Its interaction shell is
+inspired by the open-source
+[Home Assistant frontend](https://github.com/home-assistant/frontend): a
+persistent sidebar, card-based status surfaces, and human-centered controls.
+EnergyBridge keeps its own implementation and extends that style for VPP
+capacity forecasting, Agent strategy selection, and human-in-the-loop feedback.
 
 The dashboard uses Python's standard library HTTP server. No extra package is
 needed beyond `requirements.txt`.

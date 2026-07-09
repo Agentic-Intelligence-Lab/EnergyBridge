@@ -3330,12 +3330,40 @@ All times are hour-of-day (0–23.9)."""
                     print(f"  │ {_line}")
                 print(f"  └{'─'*56}")
             agent_skill_trace: dict[str, Any] = {}
-            initial_data = _call_llm_json(prompt)
-            requested_skill_names = (
-                _requested_agent_skill_names(initial_data)
-                if method == "agent"
-                else []
+            force_rule_milp_primary = (
+                method == "agent"
+                and str(os.getenv("ENERGYBRIDGE_FORCE_RULE_MILP_PRIMARY_NO_LLM", "")).strip().lower()
+                in {"1", "true", "yes", "on"}
             )
+            if force_rule_milp_primary:
+                initial_data = {
+                    "skill_calls": ["rule_milp"],
+                    "reason": "deterministic historical-memory generation",
+                }
+                requested_skill_names = []
+                data = {
+                    "setpoint": fb_sp,
+                    "next_check_hour": fb_nch,
+                    "appliances": {},
+                    "reason": "Rule+MILP primary control selected for deterministic historical-memory generation.",
+                    "selected_skill": "rule_milp",
+                    "control_source": "rule_milp_primary",
+                }
+                if agent_skill_bundle is not None:
+                    agent_skill_trace = _agent_skill_trace_from_bundle(
+                        agent_skill_bundle,
+                        source="energybridge_agent_primary_rule_milp_no_llm",
+                        initial_request=initial_data,
+                        final_data=data,
+                        memory_path=str(getattr(loop, "agent_memory_path", "") or ""),
+                    )
+            else:
+                initial_data = _call_llm_json(prompt)
+                requested_skill_names = (
+                    _requested_agent_skill_names(initial_data)
+                    if method == "agent"
+                    else []
+                )
             if requested_skill_names:
                 if method == "agent" and "rule_milp" not in requested_skill_names:
                     requested_skill_names = ["rule_milp", *requested_skill_names]
@@ -3387,7 +3415,7 @@ All times are hour-of-day (0–23.9)."""
                     final_data=data,
                     memory_path=str(getattr(loop, "agent_memory_path", "") or ""),
                 )
-            else:
+            elif not force_rule_milp_primary:
                 data = initial_data
                 if method == "agent" and agent_skill_bundle is not None:
                     agent_skill_trace = _agent_skill_trace_from_bundle(
@@ -3453,7 +3481,12 @@ All times are hour-of-day (0–23.9)."""
                 if rule_skill.get("status") == "available":
                     data = _apply_agent_rule_milp_primary(data)
             hard_errors = _hard_policy_errors(data.get("appliances", {}))
-            if hard_errors and not vpp_active:
+            if hard_errors and force_rule_milp_primary:
+                print(
+                    "  [Agent Policy Retry] deterministic rule+MILP mode keeps primary plan despite: "
+                    + "; ".join(hard_errors)
+                )
+            elif hard_errors and not vpp_active:
                 print("  [Agent Policy Retry] hard policy errors: " + "; ".join(hard_errors))
                 correction_prompt = (
                     prompt

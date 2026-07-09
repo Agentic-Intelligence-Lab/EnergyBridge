@@ -451,6 +451,7 @@ def _distribution(values: list[float]) -> dict[str, Any]:
         "p10_kw": round(_percentile(cleaned, 0.10), 6),
         "p25_kw": round(_percentile(cleaned, 0.25), 6),
         "median_kw": round(_percentile(cleaned, 0.50), 6),
+        "p70_kw": round(_percentile(cleaned, 0.70), 6),
         "p75_kw": round(_percentile(cleaned, 0.75), 6),
         "p90_kw": round(_percentile(cleaned, 0.90), 6),
         "max_kw": round(cleaned[-1], 6),

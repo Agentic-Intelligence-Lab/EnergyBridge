@@ -1,509 +1,4 @@
-"""Local web dashboard for EnergyBridge benchmark results.
-
-Run:
-    python experiments/benchmark/web_dashboard.py --port 8787
-"""
-
-from __future__ import annotations
-
-import argparse
-import json
-import math
-import os
-import re
-import shlex
-import subprocess
-import sys
-import threading
-import uuid
-from datetime import datetime
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
-from urllib.parse import parse_qs, urlparse
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_RESULTS_DIR = PROJECT_ROOT / "benchmark_results"
-PERSONA_DIR = PROJECT_ROOT / "energybridge" / "roleplay" / "personas"
-FRONTEND_INDEX_PATH = PROJECT_ROOT / "energybridge" / "frontend" / "agent_console.html"
-JOBS: dict[str, dict] = {}
-JOB_PROCS: dict[str, subprocess.Popen] = {}
-JOBS_LOCK = threading.Lock()
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-
-def _append_job_log(job_id: str, line: str) -> None:
-    with JOBS_LOCK:
-        job = JOBS.get(job_id)
-        if job is not None:
-            job.setdefault("logs", []).append(line.rstrip("\n"))
-
-
-def _set_job(job_id: str, **updates) -> None:
-    with JOBS_LOCK:
-        if job_id in JOBS:
-            JOBS[job_id].update(updates)
-
-
-def _infer_human_input_context(logs: list[str], requested_kind: str = "") -> tuple[str, str]:
-    """Infer which blocking human prompt the web input is answering."""
-    tail = "\n".join(logs[-100:])
-    event_matches = re.findall(r"VPP event\s*(\d+)", tail)
-    selected_matches = re.findall(r"\[Strategy Selected\s+\|\s+event=(\d+)\]", tail)
-    score_matches = re.findall(r"\[Human Score Selected\s+\|\s+event=(\d+)\]", tail)
-    event_id = (event_matches or selected_matches or score_matches or [""])[-1]
-
-    strategy_idx = max(tail.rfind("[Choose Strategy"), tail.rfind("Enter A / B / C"))
-    selected_idx = tail.rfind("[Strategy Selected")
-    score_prompt_idx = tail.rfind("Rate this VPP handling")
-    score_done_idx = tail.rfind("[Human Score Selected")
-    comment_idx = tail.rfind("Optional: leave brief feedback")
-
-    if comment_idx > max(score_prompt_idx, strategy_idx) and comment_idx > score_done_idx:
-        return "score_comment", event_id
-    if score_prompt_idx > max(strategy_idx, selected_idx) and score_prompt_idx > score_done_idx:
-        return "score", event_id
-    if strategy_idx > selected_idx:
-        return "strategy_choice", event_id
-    return requested_kind or "unknown", event_id
-
-
-def _attach_finished_summary(job_id: str) -> None:
-    with JOBS_LOCK:
-        logs = list(JOBS.get(job_id, {}).get("logs", []))
-    summary_path = None
-    for line in reversed(logs):
-        if "run_summary.txt" in line:
-            tail = line.split("run_summary.txt", 1)[-1].strip()
-            if "→" in line:
-                tail = line.rsplit("→", 1)[-1].strip()
-            summary_path = tail if tail.endswith("run_summary.txt") else None
-            if summary_path:
-                break
-    if not summary_path:
-        for line in reversed(logs):
-            if line.strip().startswith("OUTPUT"):
-                output_dir = line.split(":", 1)[-1].strip()
-                candidate = Path(output_dir) / "run_summary.txt"
-                if candidate.exists():
-                    summary_path = str(candidate)
-                    break
-    if summary_path:
-        path = Path(summary_path)
-        if path.exists():
-            updates = {
-                "run_summary_path": str(path),
-                "run_summary_text": path.read_text(encoding="utf-8", errors="replace"),
-            }
-            result_path = path.parent / "benchmark_result.json"
-            if result_path.exists():
-                try:
-                    result_data = json.loads(result_path.read_text(encoding="utf-8"))
-                    _apply_meter_vpp_energy(result_data, path.parent)
-                    _normalize_dashboard_result(result_data)
-                    updates["benchmark_result"] = result_data
-                except Exception:
-                    pass
-            _set_job(job_id, **updates)
-
-
-def _run_command_job(job_id: str, argv: list[str]) -> None:
-    _set_job(job_id, status="running", started_at=datetime.now().isoformat(timespec="seconds"))
-    try:
-        env = dict(os.environ)
-        env["PYTHONUNBUFFERED"] = "1"
-        proc = subprocess.Popen(
-            argv,
-            cwd=str(PROJECT_ROOT),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.PIPE,
-            text=True,
-            bufsize=0,
-            env=env,
-        )
-        with JOBS_LOCK:
-            JOB_PROCS[job_id] = proc
-            if job_id in JOBS:
-                JOBS[job_id]["pid"] = proc.pid
-        assert proc.stdout is not None
-        chunk = []
-        while True:
-            char = proc.stdout.read(1)
-            if char == "" and proc.poll() is not None:
-                break
-            if not char:
-                continue
-            chunk.append(char)
-            if char == "\n" or "".join(chunk).endswith("  > "):
-                _append_job_log(job_id, "".join(chunk))
-                chunk = []
-        if chunk:
-            _append_job_log(job_id, "".join(chunk))
-        code = proc.wait()
-        _attach_finished_summary(job_id)
-        _set_job(
-            job_id,
-            status="succeeded" if code == 0 else "failed",
-            exit_code=code,
-            finished_at=datetime.now().isoformat(timespec="seconds"),
-        )
-    except Exception as exc:
-        _append_job_log(job_id, f"[dashboard error] {exc}")
-        _set_job(
-            job_id,
-            status="failed",
-            exit_code=-1,
-            finished_at=datetime.now().isoformat(timespec="seconds"),
-        )
-    finally:
-        with JOBS_LOCK:
-            JOB_PROCS.pop(job_id, None)
-
-
-def _validate_run_command(command: str) -> list[str]:
-    argv = shlex.split(command)
-    if not argv:
-        raise ValueError("Command is empty")
-    allowed_prefixes = [
-        ["python", "experiments/benchmark/run_persona_json.py"],
-        [sys.executable, "experiments/benchmark/run_persona_json.py"],
-        ["conda", "run", "--no-capture-output", "-n", "energybridge", "python", "experiments/benchmark/run_persona_json.py"],
-        ["conda", "run", "-n", "energybridge", "python", "experiments/benchmark/run_persona_json.py"],
-    ]
-    if not any(argv[: len(prefix)] == prefix for prefix in allowed_prefixes):
-        raise ValueError(
-            "Only run_persona_json commands are allowed from the dashboard."
-        )
-    forbidden = {";", "&&", "||", "|", ">", "<"}
-    if any(token in forbidden for token in argv):
-        raise ValueError("Shell operators are not allowed")
-    if "--method" in argv:
-        method_idx = argv.index("--method")
-        method = argv[method_idx + 1] if method_idx + 1 < len(argv) else ""
-        if str(method).strip().lower() not in {"energybridge", "agent"}:
-            raise ValueError("The dashboard only starts EnergyBridge Agent runs.")
-    if argv[:2] == ["conda", "run"] and "--no-capture-output" not in argv[:6]:
-        argv = ["conda", "run", "--no-capture-output"] + argv[2:]
-    return argv
-
-
-def _list_personas() -> list[dict]:
-    personas = []
-    for path in sorted(PERSONA_DIR.glob("*.json")):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        persona_id = data.get("id") or path.stem
-        label = persona_id
-        if persona_id.startswith("basic_role_"):
-            parts = persona_id.split("_")
-            label = f"role_{parts[2]}" if len(parts) > 2 else persona_id
-        personas.append({
-            "id": persona_id,
-            "label": label,
-            "name": data.get("name", persona_id),
-            "path": str(path),
-        })
-    return personas
-
-
-def _read_meter_vpp_energy(run_path: Path, events_source: list[dict] | None = None) -> dict[str, float]:
-    """Read VPP-window Electricity:Facility kWh from EnergyPlus timestep meters."""
-    mtr_path = run_path / "eplusout.mtr"
-    if not mtr_path.exists():
-        return {}
-    events = {}
-    for idx, event in enumerate(events_source or [], start=1):
-        try:
-            event_id = str(event.get("id") or f"vpp{idx}")
-            events[event_id] = (float(event["trigger_h"]), float(event["end_h"]))
-        except (KeyError, TypeError, ValueError):
-            continue
-    if not events:
-        events = {
-            "vpp1": (18.0, 19.0),
-            "vpp2": (42.0, 43.0),
-            "vpp3": (66.0, 67.0),
-        }
-    values = {key: 0.0 for key in events}
-    in_data = False
-    current_window = None
-    facility_code = None
-    try:
-        with mtr_path.open(errors="ignore") as f:
-            for raw in f:
-                line = raw.strip()
-                if not in_data:
-                    parts = [part.strip() for part in line.split(",")]
-                    if (
-                        len(parts) >= 3
-                        and parts[0].isdigit()
-                        and "Electricity:Facility" in line
-                        and "!TimeStep" in line
-                    ):
-                        facility_code = int(parts[0])
-                if line.startswith("End of Data Dictionary"):
-                    in_data = True
-                    continue
-                if not in_data or not line:
-                    continue
-                parts = [part.strip() for part in line.split(",")]
-                if not parts or not parts[0].isdigit():
-                    continue
-                code = int(parts[0])
-                if code == 2 and len(parts) >= 8:
-                    day = int(parts[1])
-                    hour = int(parts[5])
-                    start_min = float(parts[6])
-                    end_min = float(parts[7])
-                    start_h = (day - 1) * 24.0 + (hour - 1) + start_min / 60.0
-                    end_h = (day - 1) * 24.0 + (hour - 1) + end_min / 60.0
-                    current_window = (start_h, end_h)
-                    continue
-                if facility_code is None:
-                    facility_code = 9
-                if code != facility_code or current_window is None or len(parts) < 2:
-                    continue
-                try:
-                    kwh = float(parts[1]) / 3_600_000.0
-                except ValueError:
-                    continue
-                start_h, end_h = current_window
-                duration_h = max(1e-9, end_h - start_h)
-                for event_id, (event_start, event_end) in events.items():
-                    overlap_h = max(0.0, min(end_h, event_end) - max(start_h, event_start))
-                    if overlap_h > 0.0:
-                        values[event_id] += kwh * overlap_h / duration_h
-    except Exception:
-        return {}
-    return {key: round(value, 6) for key, value in values.items() if value > 0.0}
-
-
-def _event_duration_h(event: dict) -> float:
-    try:
-        return max(1e-6, float(event.get("end_h", 0.0)) - float(event.get("trigger_h", 0.0)))
-    except (TypeError, ValueError):
-        return 1.0
-
-
-def _event_physical_shed_cap_kwh(event: dict) -> float | None:
-    summary = event.get("capacity_window_summary") or {}
-    value = summary.get("recommended_bid_energy_kwh")
-    try:
-        if value is not None:
-            return max(0.0, float(value))
-    except (TypeError, ValueError):
-        pass
-    assessment = ((event.get("capacity_assessment") or {}).get("assessment") or {})
-    value = assessment.get("recommended_bid_kw")
-    try:
-        if value is not None:
-            return max(0.0, float(value) * _event_duration_h(event))
-    except (TypeError, ValueError):
-        pass
-    return None
-
-
-def _update_event_reference_shed_diagnostics(event: dict) -> None:
-    baseline_kwh = event.get("demand_baseline_kwh")
-    actual_kwh = event.get("actual_kwh")
-    event["actual_shed_kwh"] = None
-    event["actual_shed_basis"] = "unavailable_without_same_run_no_dr_counterfactual"
-    if baseline_kwh is None or actual_kwh is None:
-        return
-    try:
-        raw_shed = max(0.0, float(baseline_kwh) - float(actual_kwh))
-    except (TypeError, ValueError):
-        return
-    cap_kwh = _event_physical_shed_cap_kwh(event)
-    event["reference_baseline_shed_kwh"] = round(raw_shed, 4)
-    event["reference_pbase_minus_actual_kwh"] = round(raw_shed, 4)
-    event["reference_shed_diagnostic_basis"] = (
-        "reference_a3_pbase_minus_current_ep_actual_not_actual_shed"
-    )
-    if cap_kwh is not None:
-        event["physical_shed_cap_kwh"] = round(cap_kwh, 4)
-        event["capacity_limited_reference_shed_kwh"] = round(min(raw_shed, cap_kwh), 4)
-        event["capacity_limited_reference_shed_basis"] = (
-            "min(reference_a3_pbase_minus_current_ep_actual, physical_capacity_recommended_bid)"
-        )
-
-
-def _read_meter_daily_energy(run_path: Path) -> list[dict]:
-    """Read per-day Electricity:Facility kWh from EnergyPlus timestep meters."""
-    mtr_path = run_path / "eplusout.mtr"
-    if not mtr_path.exists():
-        return []
-    values: dict[int, float] = {}
-    in_data = False
-    current_day = None
-    facility_code = None
-    try:
-        with mtr_path.open(errors="ignore") as f:
-            for raw in f:
-                line = raw.strip()
-                if not in_data:
-                    parts = [part.strip() for part in line.split(",")]
-                    if (
-                        len(parts) >= 3
-                        and parts[0].isdigit()
-                        and "Electricity:Facility" in line
-                        and "!TimeStep" in line
-                    ):
-                        facility_code = int(parts[0])
-                if line.startswith("End of Data Dictionary"):
-                    in_data = True
-                    continue
-                if not in_data or not line:
-                    continue
-                parts = [part.strip() for part in line.split(",")]
-                if not parts or not parts[0].isdigit():
-                    continue
-                code = int(parts[0])
-                if code == 2 and len(parts) >= 2:
-                    try:
-                        current_day = int(parts[1])
-                    except ValueError:
-                        current_day = None
-                    continue
-                if facility_code is None:
-                    facility_code = 9
-                if code != facility_code or current_day is None or len(parts) < 2:
-                    continue
-                try:
-                    values[current_day] = values.get(current_day, 0.0) + float(parts[1]) / 3_600_000.0
-                except ValueError:
-                    continue
-    except Exception:
-        return []
-    return [
-        {"day": day, "energy_kwh": round(value, 6), "source": "meter"}
-        for day, value in sorted(values.items())
-        if value > 0.0
-    ]
-
-
-def _coerce_daily_energy_values(raw) -> list[dict]:
-    if isinstance(raw, dict):
-        items = []
-        for key, value in raw.items():
-            if isinstance(value, dict):
-                item = dict(value)
-                item.setdefault("day", key)
-            else:
-                item = {"day": key, "energy_kwh": value}
-            items.append(item)
-    elif isinstance(raw, list):
-        items = []
-        for idx, value in enumerate(raw, start=1):
-            if isinstance(value, dict):
-                item = dict(value)
-                item.setdefault("day", idx)
-            else:
-                item = {"day": idx, "energy_kwh": value}
-            items.append(item)
-    else:
-        return []
-
-    normalized = []
-    for item in items:
-        try:
-            day = int(item.get("day"))
-            energy = float(item.get("energy_kwh", item.get("total_energy_kwh")))
-        except (TypeError, ValueError):
-            continue
-        normalized.append({"day": day, "energy_kwh": round(energy, 6), "source": item.get("source", "runtime")})
-    return normalized
-
-
-def _apply_meter_vpp_energy(data: dict, run_path: Path) -> None:
-    meter_values = _read_meter_vpp_energy(run_path, data.get("vpp_event_log", []))
-    if meter_values:
-        total = 0.0
-        for event in data.get("vpp_event_log", []) or []:
-            event_id = event.get("id")
-            if event_id not in meter_values:
-                continue
-            actual_kwh = round(float(meter_values[event_id]), 4)
-            total += actual_kwh
-            event["actual_kwh"] = actual_kwh
-            baseline_kwh = event.get("demand_baseline_kwh")
-            if baseline_kwh is not None:
-                _update_event_reference_shed_diagnostics(event)
-        if total > 0.0:
-            data["vpp_window_energy_kwh"] = round(total, 4)
-    else:
-        for event in data.get("vpp_event_log", []) or []:
-            _update_event_reference_shed_diagnostics(event)
-    total_duration_h = 0.0
-    for event in data.get("vpp_event_log", []) or []:
-        total_duration_h += _event_duration_h(event)
-    if total_duration_h > 0.0 and data.get("vpp_window_energy_kwh") is not None:
-        try:
-            data["vpp_window_energy_avg_per_hour_kwh"] = round(
-                float(data["vpp_window_energy_kwh"]) / total_duration_h,
-                4,
-            )
-        except (TypeError, ValueError):
-            pass
-    data["vpp_energy_reduction_basis"] = "unavailable_without_same_run_no_dr_counterfactual"
-    existing_daily_values = _coerce_daily_energy_values(data.get("daily_energy_kwh") or data.get("energy_kwh_per_day"))
-    meter_daily_values = _read_meter_daily_energy(run_path)
-    daily_values = existing_daily_values or meter_daily_values
-    if daily_values and not data.get("daily_energy_kwh"):
-        data["daily_energy_kwh"] = daily_values
-    if daily_values:
-        daily_by_day = {
-            int(item["day"]): item
-            for item in daily_values
-            if isinstance(item, dict) and str(item.get("day", "")).isdigit()
-        }
-        for event in data.get("vpp_event_log", []) or []:
-            try:
-                day = int(event.get("day"))
-            except (TypeError, ValueError):
-                continue
-            if day in daily_by_day and not event.get("daily_energy_kwh"):
-                event["daily_energy_kwh"] = daily_by_day[day]["energy_kwh"]
-
-
-def _normalize_dashboard_result(data: dict) -> None:
-    """Backfill optional dashboard fields so old/new result JSONs render alike."""
-    for event in data.get("vpp_event_log", []) or []:
-        trace = event.get("strategy_trace") or {}
-        if not event.get("strategy_candidates") and trace.get("candidates"):
-            event["strategy_candidates"] = trace.get("candidates") or []
-        if not event.get("selected_strategy") and trace.get("selected_strategy"):
-            event["selected_strategy"] = trace.get("selected_strategy") or {}
-        event.setdefault("strategy_candidates", [])
-        event.setdefault("selected_strategy", {})
-
-
-def _json_safe(value):
-    """Return browser-parseable JSON data by replacing NaN/Inf with null."""
-    if isinstance(value, float):
-        return value if math.isfinite(value) else None
-    if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_json_safe(item) for item in value]
-    if isinstance(value, tuple):
-        return [_json_safe(item) for item in value]
-    return value
-
-
-def _dashboard_index_html() -> str:
-    if FRONTEND_INDEX_PATH.exists():
-        return FRONTEND_INDEX_PATH.read_text(encoding="utf-8")
-    return INDEX_HTML
-
-
-INDEX_HTML = r"""<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -794,20 +289,531 @@ INDEX_HTML = r"""<!doctype html>
       aside { position: relative; height: auto; }
       .metrics, .event-layout, .progress-viz { grid-template-columns: 1fr; }
     }
+    /* Home Assistant inspired interaction shell: own implementation, HA-like control surface. */
+    :root {
+      --ha-primary: #03a9f4;
+      --ha-primary-dark: #0288d1;
+      --ha-accent: #ffb300;
+      --ha-success: #43a047;
+      --ha-warning: #f57c00;
+      --ha-ink: #1f2937;
+      --ha-muted: #667085;
+      --ha-line: #dde3ea;
+      --ha-bg: #f4f6f8;
+      --ha-card: #ffffff;
+      --ha-subtle: #f8fafc;
+      --ha-shadow: 0 2px 8px rgba(15, 23, 42, .08);
+      --ink: var(--ha-ink);
+      --muted: var(--ha-muted);
+      --line: var(--ha-line);
+      --paper: var(--ha-bg);
+      --panel: var(--ha-card);
+      --leaf: var(--ha-success);
+      --clay: #d84315;
+      --sky: var(--ha-primary);
+      --gold: var(--ha-accent);
+      --shadow: var(--ha-shadow);
+    }
+    body {
+      background: var(--ha-bg);
+      font-family: "Inter", "Roboto", "Segoe UI", "Noto Sans SC", ui-sans-serif, sans-serif;
+    }
+    .shell { grid-template-columns: 300px 1fr; }
+    aside {
+      background: var(--ha-card);
+      border-right: 1px solid var(--ha-line);
+      padding: 18px;
+      box-shadow: none;
+      backdrop-filter: none;
+    }
+    main {
+      padding: 22px;
+      max-width: 1440px;
+      width: 100%;
+    }
+    .ha-brand {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 18px;
+    }
+    .ha-logo {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--ha-primary);
+      color: #fff;
+      font-weight: 850;
+      box-shadow: 0 4px 10px rgba(3, 169, 244, .28);
+    }
+    aside h1 {
+      font-size: 18px;
+      margin: 0;
+    }
+    aside .sub {
+      margin: 3px 0 0;
+      font-size: 12px;
+    }
+    aside label {
+      display: block;
+      color: var(--ha-muted);
+      font-size: 12px;
+      font-weight: 800;
+      margin: 14px 0 6px;
+    }
+    .side-nav {
+      display: grid;
+      gap: 7px;
+      margin: 14px 0 4px;
+      padding: 10px 0;
+      border-top: 1px solid var(--ha-line);
+      border-bottom: 1px solid var(--ha-line);
+    }
+    .nav-item {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      border: 0;
+      border-radius: 7px;
+      padding: 10px;
+      background: transparent;
+      color: var(--ha-ink);
+      box-shadow: none;
+      text-align: left;
+      font-weight: 750;
+    }
+    .nav-item.active {
+      background: rgba(3, 169, 244, .12);
+      color: var(--ha-primary-dark);
+    }
+    .nav-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--ha-primary);
+      flex: 0 0 auto;
+    }
+    button {
+      background: var(--ha-primary);
+      border-color: var(--ha-primary);
+      border-radius: 7px;
+      box-shadow: none;
+    }
+    button:hover { background: var(--ha-primary-dark); border-color: var(--ha-primary-dark); }
+    button.secondary {
+      background: #fff;
+      color: var(--ha-primary-dark);
+      border-color: var(--ha-line);
+    }
+    button.secondary:hover {
+      background: rgba(3, 169, 244, .08);
+      border-color: rgba(3, 169, 244, .36);
+    }
+    select, textarea, input {
+      border-radius: 7px;
+      background: #fff;
+    }
+    select:focus, textarea:focus, input:focus {
+      outline: 2px solid rgba(3, 169, 244, .22);
+      border-color: var(--ha-primary);
+    }
+    .sidebar-toggle {
+      background: var(--ha-card);
+      color: var(--ha-primary-dark);
+      border: 1px solid var(--ha-line);
+      box-shadow: var(--ha-shadow);
+    }
+    .panel {
+      background: var(--ha-card);
+      border: 1px solid var(--ha-line);
+      border-radius: 8px;
+      box-shadow: var(--ha-shadow);
+    }
+    .brand-title {
+      font-size: 32px;
+      letter-spacing: 0;
+      margin-bottom: 4px;
+    }
+    .title-block .sub { margin-bottom: 0; }
+    .hero-console {
+      display: grid;
+      grid-template-columns: minmax(260px, 1.1fr) minmax(300px, 2fr);
+      gap: 16px;
+      align-items: stretch;
+    }
+    .agent-card {
+      background: linear-gradient(180deg, rgba(3, 169, 244, .12), rgba(3, 169, 244, .03));
+      border: 1px solid rgba(3, 169, 244, .28);
+      border-radius: 8px;
+      padding: 16px;
+      min-height: 100%;
+    }
+    .agent-card h2 { margin-bottom: 6px; }
+    .agent-badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .agent-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      border-radius: 999px;
+      padding: 5px 10px;
+      background: #fff;
+      border: 1px solid rgba(3, 169, 244, .28);
+      color: var(--ha-primary-dark);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .agent-flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .flow-step {
+      min-height: 86px;
+      border-radius: 8px;
+      border: 1px solid var(--ha-line);
+      background: #fff;
+      padding: 10px;
+    }
+    .flow-step span {
+      display: block;
+      color: var(--ha-primary-dark);
+      font-size: 11px;
+      font-weight: 850;
+      margin-bottom: 5px;
+      text-transform: uppercase;
+    }
+    .flow-step strong {
+      display: block;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .control-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .control-grid .field-row { margin-bottom: 0; }
+    .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 18px 0 10px;
+    }
+    .section-title h3 { margin: 0; color: var(--ha-ink); }
+    .method-lock {
+      display: grid;
+      grid-template-columns: 44px 1fr;
+      gap: 12px;
+      align-items: center;
+      border: 1px solid rgba(67, 160, 71, .28);
+      background: rgba(67, 160, 71, .08);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .method-lock-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--ha-success);
+      color: #fff;
+      font-weight: 900;
+    }
+    .method-lock strong { display: block; margin-bottom: 3px; }
+    .method-lock span {
+      display: block;
+      color: var(--ha-muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    .preset-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .live-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .live-card, .kv div {
+      background: var(--ha-subtle);
+      border-color: var(--ha-line);
+    }
+    .progress-card {
+      border-radius: 8px;
+      box-shadow: none;
+    }
+    .dialogue-feed, .summary-log, .human-dialogue {
+      background: var(--ha-subtle);
+      border-color: var(--ha-line);
+    }
+    .terminal {
+      background: #0f172a;
+      color: #dbeafe;
+      border: 1px solid #1e293b;
+    }
+    .run-btn.active {
+      border-color: rgba(3, 169, 244, .36);
+      box-shadow: inset 4px 0 0 var(--ha-primary);
+    }
+    .event { border-left-color: var(--ha-primary); }
+    .score { color: var(--ha-primary-dark); }
+    .ha-dashboard-grid {
+      display: grid;
+      grid-template-columns: minmax(320px, 1fr) minmax(360px, 1.15fr) minmax(320px, 1fr);
+      gap: 12px;
+      align-items: stretch;
+    }
+    .ha-stack {
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+    .ha-card {
+      background: var(--ha-card);
+      border: 1px solid var(--ha-line);
+      border-radius: 8px;
+      box-shadow: var(--ha-shadow);
+      padding: 14px;
+      min-width: 0;
+    }
+    .ha-card h3 {
+      margin: 0 0 10px;
+      color: var(--ha-ink);
+      font-size: 17px;
+    }
+    .entity-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .entity-card {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr);
+      gap: 10px;
+      align-items: center;
+      min-height: 72px;
+      border: 1px solid var(--ha-line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 10px;
+    }
+    .entity-card.active { border-color: rgba(3, 169, 244, .34); background: rgba(3, 169, 244, .06); }
+    .entity-card.warning { border-color: rgba(245, 124, 0, .32); background: rgba(245, 124, 0, .06); }
+    .entity-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: #eef2f7;
+      color: var(--ha-muted);
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+    .entity-card.active .entity-icon { background: rgba(3, 169, 244, .16); color: var(--ha-primary-dark); }
+    .entity-card.warning .entity-icon { background: rgba(245, 124, 0, .18); color: var(--ha-warning); }
+    .entity-name {
+      font-weight: 800;
+      overflow-wrap: anywhere;
+    }
+    .entity-state {
+      color: var(--ha-muted);
+      font-size: 13px;
+      line-height: 1.35;
+      margin-top: 2px;
+      overflow-wrap: anywhere;
+    }
+    .entity-meter {
+      grid-column: 1 / -1;
+      height: 7px;
+      border-radius: 999px;
+      background: #e8edf3;
+      overflow: hidden;
+      margin-top: 7px;
+    }
+    .entity-meter span {
+      display: block;
+      height: 100%;
+      width: var(--value, 0%);
+      background: var(--ha-primary);
+      border-radius: inherit;
+    }
+    .strategy-summary {
+      display: grid;
+      gap: 8px;
+    }
+    .strategy-line {
+      display: grid;
+      grid-template-columns: 88px minmax(0, 1fr);
+      gap: 10px;
+      border-top: 1px solid var(--ha-line);
+      padding-top: 8px;
+      font-size: 13px;
+    }
+    .strategy-line:first-child { border-top: 0; padding-top: 0; }
+    .strategy-line span {
+      color: var(--ha-muted);
+      font-weight: 800;
+    }
+    .strategy-line strong {
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+    .energy-flow {
+      min-height: 330px;
+      position: relative;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+    }
+    .flow-svg {
+      width: min(100%, 480px);
+      height: 300px;
+      display: block;
+    }
+    .flow-line { fill: none; stroke: #8fb8d8; stroke-width: 3; stroke-linecap: round; }
+    .flow-line.warn { stroke: #ffb74d; }
+    .flow-node { fill: #fff; stroke-width: 4; }
+    .flow-node.grid { stroke: var(--ha-primary); }
+    .flow-node.home { stroke: #4b8fbd; }
+    .flow-node.flex { stroke: #26a69a; }
+    .flow-node.comfort { stroke: #ff9800; }
+    .flow-label { fill: var(--ha-ink); font-size: 13px; font-weight: 800; text-anchor: middle; }
+    .flow-value { fill: var(--ha-muted); font-size: 12px; text-anchor: middle; }
+    .floorplan {
+      display: grid;
+      grid-template-columns: 1.1fr .9fr;
+      grid-template-rows: 130px 110px 120px;
+      min-height: 380px;
+      border: 1px solid var(--ha-line);
+      background: #eef1f5;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .room {
+      position: relative;
+      border: 2px solid #fff;
+      background: #f9fafb;
+      padding: 10px;
+      min-width: 0;
+    }
+    .room.living { grid-row: 1 / 3; background: #f7f8fb; }
+    .room.kitchen { background: #fff8ee; }
+    .room.utility { background: #eef9f7; }
+    .room.garage { grid-column: 1 / 3; background: #f4f7fb; }
+    .room-title {
+      color: var(--ha-muted);
+      font-size: 12px;
+      font-weight: 850;
+      text-transform: uppercase;
+    }
+    .room-device {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      max-width: 100%;
+      border-radius: 999px;
+      background: #fff;
+      border: 1px solid var(--ha-line);
+      padding: 6px 8px;
+      margin: 9px 6px 0 0;
+      font-size: 12px;
+      font-weight: 800;
+      overflow-wrap: anywhere;
+    }
+    .room-device.active { border-color: rgba(3, 169, 244, .34); color: var(--ha-primary-dark); }
+    .room-device.warning { border-color: rgba(245, 124, 0, .34); color: var(--ha-warning); }
+    .climate-dial {
+      display: grid;
+      place-items: center;
+      min-height: 280px;
+    }
+    .dial-ring {
+      width: 230px;
+      height: 230px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at center, #fff 0 59%, transparent 60%),
+        conic-gradient(from 220deg, #ffab91 0 32%, #e8edf3 32% 50%, #90caf9 50% 82%, #e8edf3 82% 100%);
+      border: 1px solid var(--ha-line);
+    }
+    .dial-inner {
+      width: 150px;
+      height: 150px;
+      border-radius: 50%;
+      background: #fff;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      box-shadow: inset 0 0 0 1px var(--ha-line);
+    }
+    .dial-value {
+      font-size: 44px;
+      font-weight: 500;
+      line-height: 1;
+    }
+    .dial-unit {
+      color: var(--ha-muted);
+      font-size: 13px;
+      margin-top: 4px;
+    }
+    .mini-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .mini-stat {
+      border-radius: 8px;
+      background: var(--ha-subtle);
+      border: 1px solid var(--ha-line);
+      padding: 9px;
+    }
+    .mini-stat span { display: block; color: var(--ha-muted); font-size: 11px; font-weight: 800; }
+    .mini-stat strong { display: block; margin-top: 4px; overflow-wrap: anywhere; }
+    @media (max-width: 1120px) {
+      .hero-console, .control-grid, .ha-dashboard-grid { grid-template-columns: 1fr; }
+      .agent-flow, .live-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 680px) {
+      main { padding: 14px; }
+      .agent-flow, .live-grid, .preset-grid, .entity-grid, .mini-row { grid-template-columns: 1fr; }
+      .command-row, .inline-fields, .human-custom { grid-template-columns: 1fr; }
+      .brand-title { font-size: 26px; }
+      .floorplan { grid-template-columns: 1fr; grid-template-rows: repeat(4, minmax(110px, auto)); }
+      .room.living, .room.garage { grid-column: auto; grid-row: auto; }
+    }
   </style>
 </head>
 <body>
   <button id="sidebarToggle" class="sidebar-toggle secondary">Hide history</button>
   <div class="shell" id="shell">
     <aside id="sidebar">
-      <h1>EnergyBridge</h1>
-      <div class="sub">Agent decisions and VPP capacity quantification console</div>
+      <div class="ha-brand">
+        <div class="ha-logo">EB</div>
+        <div>
+          <h1>EnergyBridge</h1>
+          <div class="sub">Human-centered VPP Agent console</div>
+        </div>
+      </div>
       <button id="newRunButton">New run</button>
-      <div style="height:14px"></div>
+      <div class="side-nav">
+        <button class="nav-item active" type="button"><span class="nav-dot"></span>Agent console</button>
+        <button class="nav-item" type="button"><span class="nav-dot"></span>Historical runs</button>
+      </div>
       <label for="dateSelect">Date</label>
       <select id="dateSelect"></select>
-      <div style="height:10px"></div>
-      <label for="runSelect">Method / result</label>
+      <label for="runSelect">Historical result</label>
       <select id="runSelect"></select>
     </aside>
     <main>
@@ -948,7 +954,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function methodRunToken(method) {
       if (method === 'agent' || String(method || '').toLowerCase() === 'energybridge') return 'EnergyBridge';
-      return method === 'mpc_dynamic' ? `${method}_H6` : (method || 'EnergyBridge');
+      return 'EnergyBridge';
     }
 
     function todayIso() {
@@ -1008,6 +1014,180 @@ INDEX_HTML = r"""<!doctype html>
         plan.ev = `mode ${a.ev_mode} only`;
       }
       return plan;
+    }
+
+    function deviceStateClass(text) {
+      const value = String(text || '').toLowerCase();
+      if (!value || value === 'waiting') return '';
+      if (value.includes('skip') || value.includes('off') || value.includes('unavailable')) return 'warning';
+      return 'active';
+    }
+
+    function collectAppliancePlan(progress = [], resultData = null) {
+      const merged = {};
+      for (const ev of progress || []) {
+        Object.entries(ev.appliances || {}).forEach(([key, value]) => {
+          if (value && value !== 'waiting') merged[key] = value;
+        });
+      }
+      for (const ev of resultData?.vpp_event_log || []) {
+        const decisions = ev.day_decisions || [];
+        const lastDecision = decisions[decisions.length - 1] || {};
+        const actions = ev.vpp_trigger_actions || lastDecision.actions || lastDecision.raw_appliance_actions || {};
+        Object.entries(appliancePlanFromActions(actions)).forEach(([key, value]) => {
+          if (value) merged[key] = value;
+        });
+      }
+      return merged;
+    }
+
+    function latestProgressItem(progress = []) {
+      return progress && progress.length ? progress[progress.length - 1] : {};
+    }
+
+    function visualModel(progress = [], resultData = null, live = {}) {
+      const latest = latestProgressItem(progress);
+      const appliances = collectAppliancePlan(progress, resultData);
+      const firstEvent = resultData?.vpp_event_log?.[0] || null;
+      const setpoint = resultData?.agent_setpoint_c
+        ? `${fmt(resultData.agent_setpoint_c, 1)}°C`
+        : (latest.setpoint || live.sp || 'waiting');
+      const score = resultData?.user_pref_score
+        ? `${fmt(resultData.user_pref_score, 1)}/5`
+        : (latest.score || live.score || 'waiting');
+      const totalEnergy = resultData?.energy_kwh_total
+        ? `${fmt(resultData.energy_kwh_total, 1)} kWh`
+        : (live.energy || 'running');
+      const vppEnergy = resultData?.vpp_window_energy_kwh
+        ? `${fmt(resultData.vpp_window_energy_kwh, 3)} kWh`
+        : (live.vpp || 'running');
+      const target = firstEvent ? vppTargetText(firstEvent) : (latest.target || live.demand || 'waiting');
+      const selectedStrategy = latest.selectedStrategy || 'waiting for Agent decision';
+      return {appliances, setpoint, score, totalEnergy, vppEnergy, target, selectedStrategy};
+    }
+
+    function applianceValue(model, key, fallback = 'waiting') {
+      return model.appliances?.[key] || fallback;
+    }
+
+    function entityCard(icon, name, stateText, meter = null) {
+      const cls = deviceStateClass(stateText);
+      const meterHtml = meter === null ? '' : `<div class="entity-meter" style="--value:${Math.max(0, Math.min(100, Number(meter)))}%"><span></span></div>`;
+      return `
+        <div class="entity-card ${cls}">
+          <div class="entity-icon">${icon}</div>
+          <div>
+            <div class="entity-name">${name}</div>
+            <div class="entity-state">${stateText}</div>
+          </div>
+          ${meterHtml}
+        </div>`;
+    }
+
+    function renderEntityDashboard(progress = [], resultData = null, live = {}) {
+      const model = visualModel(progress, resultData, live);
+      const hvacValue = model.setpoint;
+      const targetNumber = parseFloat(model.target);
+      const targetMeter = Number.isFinite(targetNumber) ? Math.min(100, targetNumber * 18) : 18;
+      const scoreNumber = parseFloat(model.score);
+      const scoreMeter = Number.isFinite(scoreNumber) ? scoreNumber * 20 : 0;
+      const setpointNumber = parseFloat(hvacValue);
+      const dialValue = Number.isFinite(setpointNumber) ? fmt(setpointNumber, 1) : '--';
+      return `
+        <div class="ha-dashboard-grid" id="haEntityDashboard">
+          <div class="ha-stack">
+            <div class="ha-card">
+              <h3>Appliance strategy</h3>
+              <div class="entity-grid">
+                ${entityCard('AC', 'HVAC setpoint', hvacValue, Number.isFinite(setpointNumber) ? Math.max(0, Math.min(100, (setpointNumber - 16) * 8)) : null)}
+                ${entityCard('WH', 'Water heater', applianceValue(model, 'water_heater'))}
+                ${entityCard('WM', 'Washer', applianceValue(model, 'washer'))}
+                ${entityCard('DW', 'Dishwasher', applianceValue(model, 'dishwasher'))}
+                ${entityCard('EV', 'EV charging', applianceValue(model, 'ev'))}
+                ${entityCard('VPP', 'VPP target', model.target, targetMeter)}
+              </div>
+            </div>
+            <div class="ha-card">
+              <h3>Agent decision</h3>
+              <div class="strategy-summary">
+                <div class="strategy-line"><span>Strategy</span><strong>${model.selectedStrategy}</strong></div>
+                <div class="strategy-line"><span>Comfort</span><strong>${model.score}</strong></div>
+                <div class="strategy-line"><span>VPP energy</span><strong>${model.vppEnergy}</strong></div>
+              </div>
+            </div>
+          </div>
+          <div class="ha-stack">
+            <div class="ha-card">
+              <h3>Energy distribution today</h3>
+              <div class="energy-flow">
+                <svg class="flow-svg" viewBox="0 0 480 300" role="img" aria-label="Energy flow">
+                  <path class="flow-line" d="M108 150 C178 150 178 84 240 84" />
+                  <path class="flow-line warn" d="M240 84 C300 84 300 150 372 150" />
+                  <path class="flow-line" d="M240 84 C240 142 240 196 240 232" />
+                  <path class="flow-line" d="M240 232 C300 232 300 206 372 206" />
+                  <circle class="flow-node grid" cx="108" cy="150" r="48" />
+                  <circle class="flow-node comfort" cx="240" cy="84" r="48" />
+                  <circle class="flow-node flex" cx="240" cy="232" r="48" />
+                  <circle class="flow-node home" cx="372" cy="150" r="52" />
+                  <circle class="flow-node grid" cx="372" cy="206" r="40" />
+                  <text class="flow-label" x="108" y="145">VPP</text>
+                  <text class="flow-value" x="108" y="165">${model.target}</text>
+                  <text class="flow-label" x="240" y="79">Comfort</text>
+                  <text class="flow-value" x="240" y="99">${model.score}</text>
+                  <text class="flow-label" x="240" y="227">Flexible</text>
+                  <text class="flow-value" x="240" y="247">${model.vppEnergy}</text>
+                  <text class="flow-label" x="372" y="145">Home</text>
+                  <text class="flow-value" x="372" y="166">${model.totalEnergy}</text>
+                  <text class="flow-label" x="372" y="202">Grid</text>
+                  <text class="flow-value" x="372" y="221">Agent bid</text>
+                </svg>
+              </div>
+            </div>
+            <div class="ha-card">
+              <h3>Climate</h3>
+              <div class="climate-dial">
+                <div class="dial-ring">
+                  <div class="dial-inner">
+                    <div>
+                      <div class="dial-value">${dialValue}</div>
+                      <div class="dial-unit">setpoint °C</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="mini-row">
+                <div class="mini-stat"><span>Target</span><strong>${model.target}</strong></div>
+                <div class="mini-stat"><span>Score</span><strong>${model.score}</strong></div>
+                <div class="mini-stat"><span>Status</span><strong>${model.selectedStrategy === 'waiting for Agent decision' ? 'waiting' : 'selected'}</strong></div>
+              </div>
+            </div>
+          </div>
+          <div class="ha-stack">
+            <div class="ha-card">
+              <h3>Home strategy map</h3>
+              <div class="floorplan">
+                <div class="room living">
+                  <div class="room-title">Living room</div>
+                  <span class="room-device ${deviceStateClass(hvacValue)}">AC ${hvacValue}</span>
+                </div>
+                <div class="room kitchen">
+                  <div class="room-title">Kitchen</div>
+                  <span class="room-device ${deviceStateClass(applianceValue(model, 'dishwasher'))}">Dishwasher ${applianceValue(model, 'dishwasher')}</span>
+                </div>
+                <div class="room utility">
+                  <div class="room-title">Utility</div>
+                  <span class="room-device ${deviceStateClass(applianceValue(model, 'water_heater'))}">Water heater ${applianceValue(model, 'water_heater')}</span>
+                  <span class="room-device ${deviceStateClass(applianceValue(model, 'washer'))}">Washer ${applianceValue(model, 'washer')}</span>
+                </div>
+                <div class="room garage">
+                  <div class="room-title">Garage / energy</div>
+                  <span class="room-device ${deviceStateClass(applianceValue(model, 'ev'))}">EV ${applianceValue(model, 'ev')}</span>
+                  <span class="room-device ${deviceStateClass(model.target)}">VPP ${model.target}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>`;
     }
 
     function vppTargetText(ev) {
@@ -1200,8 +1380,8 @@ INDEX_HTML = r"""<!doctype html>
     function commandPreset(method, persona, userMode, humanName) {
       normalizeScenarioSelection();
       const base = `conda run --no-capture-output -n energybridge python experiments/benchmark/run_persona_json.py ${persona || state.selectedPersona}`;
-      const controllerMethod = method || 'EnergyBridge';
-      const horizon = controllerMethod === 'mpc_dynamic' ? ' --mpc-horizon 6' : '';
+      const controllerMethod = 'EnergyBridge';
+      const horizon = '';
       const human = userMode === 'human'
         ? ` --user-mode human --human-name ${shellQuote(humanName || 'human')}`
         : ' --user-mode roleplay';
@@ -1216,11 +1396,7 @@ INDEX_HTML = r"""<!doctype html>
     function methodLabel(method) {
       return {
         EnergyBridge: 'EnergyBridge',
-        agent: 'EnergyBridge',
-        mpc_dynamic: 'MPC Dynamic',
-        rule_milp: 'Rule+MILP',
-        no_dr: 'No-DR',
-        rl_ppo_pref_v2: 'RL PPO Pref-v2'
+        agent: 'EnergyBridge'
       }[method] || method;
     }
 
@@ -1481,7 +1657,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function renderOps(events) {
       normalizeScenarioSelection();
-      const methods = ['EnergyBridge', 'mpc_dynamic', 'rule_milp', 'rl_ppo_pref_v2'];
+      state.selectedMethod = 'EnergyBridge';
       const personaOptions = state.personas.map(p => `
         <option value="${p.id}" ${state.selectedPersona === p.id ? 'selected' : ''}>
           ${p.label} · ${p.name}
@@ -1498,7 +1674,6 @@ INDEX_HTML = r"""<!doctype html>
       const humanInputPanel = state.userMode === 'human' ? `
         <div class="human-dialogue">
           <h3>Human-in-loop input</h3>
-          <div class="sub">Follow the current terminal prompt: enter A/B/C for strategy, 1-5 for score, or a short feedback sentence. Sending an empty value means pressing Enter.</div>
           <div class="human-custom">
             <input id="humanCustomInput" placeholder="Enter A/B/C, 1-5, feedback text, or leave blank">
             <button id="sendHumanCustom">Enter</button>
@@ -1507,54 +1682,77 @@ INDEX_HTML = r"""<!doctype html>
       return `
         <div class="grid">
           <section class="panel">
-            <h2>Live run</h2>
-            <div class="result-name">Result name: <strong id="resultName">${expectedRunName()}</strong></div>
-            <div class="sub">Select a user and method, then run. Logs and results will appear below.</div>
-            <h3>1. User category</h3>
-            <div class="preset-grid">
-              <button class="${state.userMode === 'roleplay' ? '' : 'secondary'}" data-user-mode="roleplay">Role-play LLM</button>
-              <button class="${state.userMode === 'human' ? '' : 'secondary'}" data-user-mode="human">Human</button>
-            </div>
-            ${userTypeField}
-            <div class="field-row">
-              <label for="citySelect">3. Scenario</label>
-              <select id="citySelect">
-                ${['Tianjin', 'Beijing', 'Shanghai', 'Germany'].map(c => `<option value="${c}" ${state.selectedCity === c ? 'selected' : ''}>${c}</option>`).join('')}
-              </select>
-            </div>
-            <div class="field-row">
-              <label for="daysSelect">Days / start date</label>
-              <div class="inline-fields">
-                <select id="daysSelect">
-                  ${DAY_OPTIONS.map(item => `<option value="${item.value}" ${Number(state.selectedDays || 3) === item.value ? 'selected' : ''}>${item.label}</option>`).join('')}
-                </select>
-                <select id="startDateSelect">
-                  ${START_DATE_OPTIONS.map(item => `<option value="${item.value}" ${state.startDate === item.value ? 'selected' : ''}>${item.label}</option>`).join('')}
-                </select>
+            <div class="hero-console">
+              <div class="agent-card">
+                <h2>EnergyBridge Agent</h2>
+                <div class="result-name">Result: <strong id="resultName">${expectedRunName()}</strong></div>
+                <div class="agent-badge-row">
+                  <span class="agent-badge">VPP capacity forecast</span>
+                  <span class="agent-badge">User preference reasoning</span>
+                  <span class="agent-badge">Human-in-loop ready</span>
+                </div>
+                <div class="agent-flow">
+                  <div class="flow-step"><span>1</span><strong>Read user context</strong></div>
+                  <div class="flow-step"><span>2</span><strong>Predict flexible capacity</strong></div>
+                  <div class="flow-step"><span>3</span><strong>Recommend VPP action</strong></div>
+                  <div class="flow-step"><span>4</span><strong>Score comfort tradeoff</strong></div>
+                </div>
+              </div>
+              <div>
+                <div class="method-lock">
+                  <div class="method-lock-icon">A</div>
+                  <div>
+                    <strong>Primary method: EnergyBridge Agent</strong>
+                    <span>New runs use the Agent path. Historical baseline results remain available from the sidebar.</span>
+                  </div>
+                </div>
+                <div class="section-title"><h3>User</h3></div>
+                <div class="preset-grid">
+                  <button class="${state.userMode === 'roleplay' ? '' : 'secondary'}" data-user-mode="roleplay">Role-play LLM</button>
+                  <button class="${state.userMode === 'human' ? '' : 'secondary'}" data-user-mode="human">Human</button>
+                </div>
+                ${userTypeField}
               </div>
             </div>
-            <div class="field-row">
-              <label for="priceCsvInput">Advanced: day-ahead price CSV</label>
-              <input id="priceCsvInput" value="${state.priceCsv}" placeholder="Leave empty if no price file is used; you can edit the CSV path manually">
-            </div>
-            <div class="field-row">
-              <label for="vppStartHourInput">VPP window: start / duration (hours)</label>
-              <div class="inline-fields">
-                <input id="vppStartHourInput" type="number" step="0.25" min="0" max="23.99" value="${Number(state.vppStartHour || 18)}">
-                <input id="vppDurationHoursInput" type="number" step="0.25" min="0.25" value="${Number(state.vppDurationHours || 1)}">
+            <div class="section-title"><h3>Scenario and VPP event</h3></div>
+            <div class="control-grid">
+              <div class="field-row">
+                <label for="citySelect">City</label>
+                <select id="citySelect">
+                  ${['Tianjin', 'Beijing', 'Shanghai', 'Germany'].map(c => `<option value="${c}" ${state.selectedCity === c ? 'selected' : ''}>${c}</option>`).join('')}
+                </select>
+              </div>
+              <div class="field-row">
+                <label for="daysSelect">Days / start date</label>
+                <div class="inline-fields">
+                  <select id="daysSelect">
+                    ${DAY_OPTIONS.map(item => `<option value="${item.value}" ${Number(state.selectedDays || 3) === item.value ? 'selected' : ''}>${item.label}</option>`).join('')}
+                  </select>
+                  <select id="startDateSelect">
+                    ${START_DATE_OPTIONS.map(item => `<option value="${item.value}" ${state.startDate === item.value ? 'selected' : ''}>${item.label}</option>`).join('')}
+                  </select>
+                </div>
+              </div>
+              <div class="field-row">
+                <label for="vppStartHourInput">VPP start / duration</label>
+                <div class="inline-fields">
+                  <input id="vppStartHourInput" type="number" step="0.25" min="0" max="23.99" value="${Number(state.vppStartHour || 18)}">
+                  <input id="vppDurationHoursInput" type="number" step="0.25" min="0.25" value="${Number(state.vppDurationHours || 1)}">
+                </div>
+              </div>
+              <div class="field-row">
+                <label for="vppEventsJsonInput">VPP events JSON</label>
+                <input id="vppEventsJsonInput" value="${state.vppEventsJson}" placeholder="Optional event config path">
+              </div>
+              <div class="field-row">
+                <label for="priceCsvInput">Day-ahead price CSV</label>
+                <input id="priceCsvInput" value="${state.priceCsv}" placeholder="Optional price CSV path">
               </div>
             </div>
-            <div class="field-row">
-              <label for="vppEventsJsonInput">Advanced: VPP events JSON</label>
-              <input id="vppEventsJsonInput" value="${state.vppEventsJson}" placeholder="Optional; e.g. experiments/benchmark/configs/vpp_events_7day_variable.json">
-            </div>
-            <h3>4. Method</h3>
-            <div class="preset-grid">
-              ${methods.map(m => `<button class="${state.selectedMethod === m ? '' : 'secondary'}" data-method="${m}">${methodLabel(m)}</button>`).join('')}
-            </div>
+            <div class="section-title"><h3>Run command</h3></div>
             <div class="command-row">
               <input id="commandInput" value="${defaultCommand()}">
-              <button id="startRun">Run ${state.userMode === 'human' ? 'Human' : 'Role-play LLM'}</button>
+              <button id="startRun">Run Agent</button>
             </div>
             <div class="live-grid" id="liveMetrics">
               <div class="live-card"><span>Day/Event</span><strong>-</strong></div>
@@ -1562,14 +1760,14 @@ INDEX_HTML = r"""<!doctype html>
               <div class="live-card"><span>VPP target</span><strong>waiting</strong></div>
               <div class="live-card"><span>User score</span><strong>waiting</strong></div>
             </div>
-            <div style="height:10px"></div>
-            <h3>Step-by-step visualization</h3>
+            <div class="section-title"><h3>Home Assistant style device view</h3></div>
+            ${renderEntityDashboard([], null, {})}
+            <div class="section-title"><h3>Step-by-step visualization</h3></div>
             <div class="progress-viz" id="progressViz"><div class="sub">Visualization cards will appear event by event during the run.</div></div>
-            <div style="height:10px"></div>
-            <h3>Live log summary / dialogue</h3>
+            <div class="section-title"><h3>Live dialogue</h3></div>
             <div class="dialogue-feed" id="dialogueFeed"><div class="sub">Grid, Agent, user choices, role-play scores, and LLM stats will appear during the run.</div></div>
             <div id="finishedSummary"></div>
-            <div style="height:10px"></div>
+            <div class="section-title"><h3>Terminal</h3></div>
             <div class="terminal" id="runLog">Waiting for a run command...</div>
             ${humanInputPanel}
           </section>
@@ -1612,6 +1810,9 @@ INDEX_HTML = r"""<!doctype html>
               ['Status', `exit ${d.exit_code}`]
             ])}
             <div style="height:10px"></div>
+            <h3>Home Assistant style device view</h3>
+            ${renderEntityDashboard(live.progress, d, {})}
+            <div style="height:10px"></div>
             <h3>Step-by-step visualization</h3>
             <div class="progress-viz">${progressCardsHtml(live.progress, 'No event records.')}</div>
             <div style="height:10px"></div>
@@ -1628,12 +1829,6 @@ INDEX_HTML = r"""<!doctype html>
 
     function bindRunControls() {
       $('startRun').onclick = startRun;
-      document.querySelectorAll('[data-method]').forEach(btn => {
-        btn.onclick = () => {
-          state.selectedMethod = btn.dataset.method;
-          render();
-        };
-      });
       const personaSelect = $('personaSelect');
       if (personaSelect) {
         personaSelect.onchange = (e) => {
@@ -1837,6 +2032,10 @@ INDEX_HTML = r"""<!doctype html>
       if (progressViz) {
         progressViz.innerHTML = progressCardsHtml(shownProgress, 'Visualization cards will appear event by event during the run.');
       }
+      const entityDashboard = $('haEntityDashboard');
+      if (entityDashboard) {
+        entityDashboard.outerHTML = renderEntityDashboard(shownProgress, resultData, live);
+      }
       const summary = $('finishedSummary');
       if (summary) {
         if (job.run_summary_text) {
@@ -1870,261 +2069,4 @@ INDEX_HTML = r"""<!doctype html>
     })().catch(err => $('app').textContent = `Load failed: ${err.message}`);
   </script>
 </body>
-</html>"""
-
-
-class DashboardHandler(BaseHTTPRequestHandler):
-    results_dir: Path = DEFAULT_RESULTS_DIR
-
-    def do_HEAD(self) -> None:
-        parsed = urlparse(self.path)
-        if parsed.path in {"/", "/api/runs", "/api/run"}:
-            self.send_response(HTTPStatus.OK)
-            self.end_headers()
-            return
-        self.send_response(HTTPStatus.NOT_FOUND)
-        self.end_headers()
-
-    def do_GET(self) -> None:
-        parsed = urlparse(self.path)
-        if parsed.path == "/":
-            self._send_text(_dashboard_index_html(), "text/html; charset=utf-8")
-            return
-        if parsed.path == "/api/runs":
-            self._send_json(self._list_runs())
-            return
-        if parsed.path == "/api/personas":
-            self._send_json(_list_personas())
-            return
-        if parsed.path == "/api/run":
-            run_id = parse_qs(parsed.query).get("id", [""])[0]
-            run_path = self._resolve_run(run_id)
-            if run_path is None:
-                self._send_error(HTTPStatus.NOT_FOUND, "Unknown run")
-                return
-            result_path = run_path / "benchmark_result.json"
-            if result_path.exists():
-                try:
-                    data = json.loads(result_path.read_text(encoding="utf-8"))
-                    data["method"] = self._canonical_method_id(data.get("method") or self._infer_method_from_run_name(run_path.name))
-                    _apply_meter_vpp_energy(data, run_path)
-                    _normalize_dashboard_result(data)
-                except Exception as exc:
-                    rel = run_path.relative_to(self.results_dir).as_posix()
-                    data = {
-                        "_run_id": rel,
-                        "output_dir": str(run_path),
-                        "method": self._canonical_method_id(self._infer_method_from_run_name(run_path.name)),
-                        "weather": self._infer_city_from_run_name(run_path.name),
-                        "exit_code": "incomplete",
-                        "vpp_event_log": [],
-                        "error": f"benchmark_result.json could not be loaded yet: {exc}",
-                    }
-            else:
-                rel = run_path.relative_to(self.results_dir).as_posix()
-                data = {
-                    "_run_id": rel,
-                    "output_dir": str(run_path),
-                    "method": self._canonical_method_id(self._infer_method_from_run_name(run_path.name)),
-                    "weather": self._infer_city_from_run_name(run_path.name),
-                    "exit_code": "incomplete",
-                    "vpp_event_log": [],
-                    "error": "benchmark_result.json not found; run may still be running or stopped before summary export.",
-                }
-            data["_run_id"] = run_id
-            summary_path = run_path / "run_summary.txt"
-            if summary_path.exists():
-                data["run_summary_text"] = summary_path.read_text(encoding="utf-8", errors="replace")
-            elif not result_path.exists():
-                err_path = run_path / "eplusout.err"
-                if err_path.exists():
-                    data["run_summary_text"] = err_path.read_text(encoding="utf-8", errors="replace")
-            self._send_json(data)
-            return
-        if parsed.path == "/api/job":
-            job_id = parse_qs(parsed.query).get("id", [""])[0]
-            with JOBS_LOCK:
-                existing = dict(JOBS.get(job_id, {}))
-            if existing and existing.get("status") in {"succeeded", "failed"} and not existing.get("run_summary_text"):
-                _attach_finished_summary(job_id)
-            with JOBS_LOCK:
-                job = dict(JOBS.get(job_id, {}))
-            if not job:
-                self._send_error(HTTPStatus.NOT_FOUND, "Unknown job")
-                return
-            self._send_json(job)
-            return
-        self._send_error(HTTPStatus.NOT_FOUND, "Not found")
-
-    def do_POST(self) -> None:
-        parsed = urlparse(self.path)
-        if parsed.path == "/api/start_run":
-            self._handle_start_run()
-            return
-        if parsed.path == "/api/job_input":
-            self._handle_job_input()
-            return
-        self._send_error(HTTPStatus.NOT_FOUND, "Not found")
-
-    def _handle_start_run(self) -> None:
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-            payload = json.loads(self.rfile.read(length).decode("utf-8"))
-            command = str(payload.get("command", "")).strip()
-            argv = _validate_run_command(command)
-            job_id = uuid.uuid4().hex[:12]
-            with JOBS_LOCK:
-                JOBS[job_id] = {
-                    "id": job_id,
-                    "status": "queued",
-                    "command": command,
-                    "argv": argv,
-                    "logs": [],
-                    "created_at": datetime.now().isoformat(timespec="seconds"),
-                }
-            thread = threading.Thread(target=_run_command_job, args=(job_id, argv), daemon=True)
-            thread.start()
-            self._send_json({"ok": True, "job_id": job_id})
-        except Exception as exc:
-            self._send_error(HTTPStatus.BAD_REQUEST, str(exc))
-
-    def _handle_job_input(self) -> None:
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-            payload = json.loads(self.rfile.read(length).decode("utf-8"))
-            job_id = str(payload.get("job_id", ""))
-            text = str(payload.get("text", ""))
-            requested_kind = str(payload.get("kind", ""))
-            if "\n" in text or "\r" in text:
-                raise ValueError("Input must be a single line")
-            with JOBS_LOCK:
-                proc = JOB_PROCS.get(job_id)
-                logs = list(JOBS.get(job_id, {}).get("logs", []))
-            if proc is None or proc.stdin is None or proc.poll() is not None:
-                self._send_error(HTTPStatus.NOT_FOUND, "Job is not accepting input")
-                return
-            kind, event_id = _infer_human_input_context(logs, requested_kind=requested_kind)
-            proc.stdin.write(text + "\n")
-            proc.stdin.flush()
-            _append_job_log(job_id, f"[web human input | kind={kind} event={event_id or '?'}] {text}")
-            self._send_json({"ok": True})
-        except Exception as exc:
-            self._send_error(HTTPStatus.BAD_REQUEST, str(exc))
-
-    def log_message(self, fmt: str, *args) -> None:
-        print(f"[dashboard] {self.address_string()} - {fmt % args}")
-
-    def _list_runs(self) -> list[dict]:
-        runs = []
-        for run_dir in sorted((p for p in self.results_dir.glob("*/*") if p.is_dir()), reverse=True):
-            result_path = run_dir / "benchmark_result.json"
-            data = {}
-            if result_path.exists():
-                try:
-                    data = json.loads(result_path.read_text(encoding="utf-8"))
-                except Exception:
-                    data = {}
-            rel = run_dir.relative_to(self.results_dir).as_posix()
-            method = self._canonical_method_id(data.get("method") or self._infer_method_from_run_name(run_dir.name))
-            city = data.get("weather") or self._infer_city_from_run_name(run_dir.name)
-            runs.append({
-                "id": rel,
-                "label": run_dir.name,
-                "date": rel.split("/", 1)[0] if "/" in rel else "",
-                "persona": run_dir.name.split("_", 2)[0],
-                "method": method,
-                "city": city,
-                "score": data.get("user_pref_score"),
-                "has_result": result_path.exists(),
-            })
-        return runs
-
-    @staticmethod
-    def _canonical_method_id(method: str) -> str:
-        key = str(method or "").strip().lower()
-        if key in {"agent", "energybridge"}:
-            return "EnergyBridge"
-        if key == "mpc":
-            return "mpc_dynamic"
-        if key in {"rule_milp", "rule+milp", "pmv_milp"}:
-            return "rule_milp"
-        if key in {"rl", "rl_ppo", "rl_ppo_pref_v2", "rl_pref_v2"}:
-            return "rl_ppo_pref_v2"
-        return str(method or "unknown")
-
-    @staticmethod
-    def _infer_method_from_run_name(name: str) -> str:
-        lower_name = name.lower()
-        if "_mpc_dynamic" in lower_name:
-            return "mpc_dynamic"
-        if "_rule_milp" in lower_name or "_pmv_milp" in lower_name:
-            return "rule_milp"
-        if "_rl_ppo_pref_v2" in lower_name:
-            return "rl_ppo_pref_v2"
-        if "_rl_" in lower_name:
-            return "rl_ppo_pref_v2"
-        if "_energybridge_" in lower_name or "_agent_" in lower_name:
-            return "EnergyBridge"
-        return "unknown"
-
-    @staticmethod
-    def _infer_city_from_run_name(name: str) -> str:
-        parts = name.split("_")
-        for city in ("tianjin", "beijing", "shanghai", "germany"):
-            if city in parts:
-                return city
-        return ""
-
-    def _resolve_run(self, run_id: str) -> Path | None:
-        if not run_id or ".." in Path(run_id).parts:
-            return None
-        run_path = (self.results_dir / run_id).resolve()
-        try:
-            run_path.relative_to(self.results_dir.resolve())
-        except ValueError:
-            return None
-        if not run_path.is_dir():
-            return None
-        return run_path
-
-    def _send_json(self, data: object) -> None:
-        raw = json.dumps(_json_safe(data), ensure_ascii=False, allow_nan=False).encode("utf-8")
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(raw)))
-        self.end_headers()
-        self.wfile.write(raw)
-
-    def _send_text(self, text: str, content_type: str) -> None:
-        raw = text.encode("utf-8")
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(raw)))
-        self.end_headers()
-        self.wfile.write(raw)
-
-    def _send_error(self, status: HTTPStatus, message: str) -> None:
-        raw = json.dumps({"error": message}, ensure_ascii=False, allow_nan=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(raw)))
-        self.end_headers()
-        self.wfile.write(raw)
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Serve EnergyBridge benchmark dashboard")
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8787)
-    parser.add_argument("--results-dir", type=Path, default=DEFAULT_RESULTS_DIR)
-    args = parser.parse_args()
-
-    DashboardHandler.results_dir = args.results_dir.resolve()
-    server = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
-    print(f"EnergyBridge dashboard: http://{args.host}:{args.port}")
-    print(f"Reading results from: {DashboardHandler.results_dir}")
-    server.serve_forever()
-
-
-if __name__ == "__main__":
-    main()
+</html>
