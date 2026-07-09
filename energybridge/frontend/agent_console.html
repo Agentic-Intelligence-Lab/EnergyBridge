@@ -480,27 +480,43 @@
     .score { color: var(--ha-primary-dark); }
     .ha-dashboard-grid {
       display: grid;
-      grid-template-columns: minmax(500px, 1.3fr) minmax(390px, .95fr) minmax(360px, .9fr);
-      gap: 12px;
+      grid-template-columns: minmax(430px, 1fr) minmax(380px, 1fr) minmax(330px, .82fr);
+      gap: 10px;
       align-items: stretch;
+      min-height: min(760px, calc(100vh - 150px));
     }
     .ha-stack {
       display: grid;
-      gap: 12px;
-      align-content: start;
+      gap: 10px;
+      align-content: stretch;
+      height: 100%;
+      min-height: 0;
+    }
+    .energy-stack { grid-template-rows: auto minmax(0, 1fr); }
+    .device-stack { grid-template-rows: minmax(330px, .95fr) minmax(300px, 1fr); }
+    .explain-stack { grid-template-rows: minmax(0, 1fr); }
+    .energy-stack .tariff-card { grid-template-rows: auto auto auto minmax(0, 1fr); }
+    .device-stack > .ha-card:first-child {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+    .device-stack > .ha-card:nth-child(2) {
+      display: grid;
+      grid-template-rows: auto auto auto minmax(0, 1fr);
     }
     .ha-card {
       background: var(--ha-card);
       border: 1px solid var(--ha-line);
       border-radius: 8px;
       box-shadow: var(--ha-shadow);
-      padding: 14px;
+      padding: 10px;
       min-width: 0;
+      min-height: 0;
     }
     .ha-card h3 {
-      margin: 0 0 10px;
+      margin: 0 0 8px;
       color: var(--ha-ink);
-      font-size: 17px;
+      font-size: 16px;
     }
     .entity-grid {
       display: grid;
@@ -562,15 +578,15 @@
     }
     .strategy-summary {
       display: grid;
-      gap: 8px;
+      gap: 6px;
     }
     .strategy-line {
       display: grid;
-      grid-template-columns: 88px minmax(0, 1fr);
-      gap: 10px;
+      grid-template-columns: 82px minmax(0, 1fr);
+      gap: 8px;
       border-top: 1px solid var(--ha-line);
-      padding-top: 8px;
-      font-size: 13px;
+      padding-top: 6px;
+      font-size: 12px;
     }
     .strategy-line:first-child { border-top: 0; padding-top: 0; }
     .strategy-line span {
@@ -578,7 +594,7 @@
       font-weight: 800;
     }
     .strategy-line strong {
-      line-height: 1.4;
+      line-height: 1.25;
       overflow-wrap: anywhere;
     }
     .energy-card {
@@ -727,7 +743,8 @@
     }
     .tariff-card {
       display: grid;
-      gap: 12px;
+      gap: 9px;
+      min-height: 0;
     }
     .tariff-summary {
       display: grid;
@@ -737,7 +754,7 @@
     .schedule-strip {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px;
+      gap: 6px;
       align-items: center;
     }
     .schedule-pill {
@@ -745,8 +762,8 @@
       background: rgba(3, 169, 244, .07);
       color: var(--ha-primary-dark);
       border-radius: 999px;
-      padding: 5px 9px;
-      font-size: 12px;
+      padding: 4px 8px;
+      font-size: 11px;
       font-weight: 850;
       max-width: 100%;
       overflow-wrap: anywhere;
@@ -755,7 +772,7 @@
       border: 1px solid var(--ha-line);
       border-radius: 8px;
       background: #fff;
-      padding: 9px;
+      padding: 7px;
       min-width: 0;
     }
     .tariff-stat span {
@@ -772,15 +789,15 @@
       overflow-wrap: anywhere;
     }
     .tariff-chart {
-      min-height: 320px;
+      min-height: 255px;
       border: 1px solid var(--ha-line);
       border-radius: 8px;
-      padding: 12px;
+      padding: 8px;
       background: #fff;
     }
     .tariff-chart svg {
       width: 100%;
-      height: 255px;
+      height: 205px;
       display: block;
     }
     .chart-grid { stroke: #dfe5ec; stroke-width: 1; }
@@ -817,15 +834,15 @@
     .legend-vpp { background: #d1c4e9; border: 1px solid #7e57c2; }
     .forecast-table {
       display: grid;
-      gap: 8px;
+      gap: 6px;
     }
     .forecast-row {
       display: grid;
-      grid-template-columns: 150px minmax(0, 1fr);
+      grid-template-columns: 136px minmax(0, 1fr);
       gap: 10px;
       border-top: 1px solid var(--ha-line);
-      padding-top: 8px;
-      font-size: 13px;
+      padding-top: 6px;
+      font-size: 12px;
     }
     .forecast-row:first-child { border-top: 0; padding-top: 0; }
     .forecast-row span {
@@ -851,7 +868,8 @@
     }
     .agent-editor {
       width: 100%;
-      min-height: 132px;
+      min-height: 0;
+      height: 100%;
       resize: vertical;
       border: 1px solid var(--ha-line);
       border-radius: 8px;
@@ -859,13 +877,18 @@
       padding: 12px;
       color: var(--ha-ink);
       font: inherit;
-      font-size: 14px;
-      line-height: 1.5;
+      font-size: 13px;
+      line-height: 1.42;
     }
-    .agent-editor.small { min-height: 86px; }
+    .agent-editor.small { min-height: 0; height: 100%; }
+    .strategy-card {
+      height: 100%;
+      display: grid;
+      grid-template-rows: auto auto auto minmax(170px, 1fr) auto minmax(105px, .65fr);
+    }
     .agent-field-label {
       display: block;
-      margin: 10px 0 6px;
+      margin: 8px 0 5px;
       color: var(--ha-muted);
       font-size: 12px;
       font-weight: 850;
@@ -895,8 +918,9 @@
     .floorplan {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      grid-template-rows: 210px 210px 240px 240px;
-      min-height: 900px;
+      grid-template-rows: 116px 116px 102px 102px;
+      min-height: 0;
+      height: 100%;
       border: 1px solid var(--ha-line);
       background: #eef1f5;
       border-radius: 8px;
@@ -906,7 +930,7 @@
       position: relative;
       border: 2px solid #fff;
       background: #f9fafb;
-      padding: 10px;
+      padding: 7px;
       min-width: 0;
     }
     .room.ac-zone { grid-row: 1 / 3; background: #f7f8fb; }
@@ -916,7 +940,7 @@
     .room.garage { grid-column: 1 / 3; background: #f4f7fb; }
     .room-title {
       color: var(--ha-muted);
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 850;
       text-transform: uppercase;
     }
@@ -931,11 +955,11 @@
       border-radius: 999px;
       background: #fff;
       border: 1px solid var(--ha-line);
-      padding: 10px 16px;
-      margin: 9px 6px 0 0;
-      font-size: 14px;
+      padding: 6px 10px;
+      margin: 6px 4px 0 0;
+      font-size: 12px;
       font-weight: 800;
-      line-height: 1.28;
+      line-height: 1.18;
       overflow-wrap: anywhere;
     }
     .room-device.active { border-color: rgba(3, 169, 244, .34); color: var(--ha-primary-dark); }
@@ -943,11 +967,11 @@
     .climate-dial {
       display: grid;
       place-items: center;
-      min-height: 280px;
+      min-height: 145px;
     }
     .dial-ring {
-      width: 230px;
-      height: 230px;
+      width: 142px;
+      height: 142px;
       border-radius: 50%;
       display: grid;
       place-items: center;
@@ -957,8 +981,8 @@
       border: 1px solid var(--ha-line);
     }
     .dial-inner {
-      width: 150px;
-      height: 150px;
+      width: 94px;
+      height: 94px;
       border-radius: 50%;
       background: #fff;
       display: grid;
@@ -967,26 +991,26 @@
       box-shadow: inset 0 0 0 1px var(--ha-line);
     }
     .dial-value {
-      font-size: 44px;
+      font-size: 30px;
       font-weight: 500;
       line-height: 1;
     }
     .dial-unit {
       color: var(--ha-muted);
-      font-size: 13px;
+      font-size: 11px;
       margin-top: 4px;
     }
     .mini-row {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 8px;
-      margin-top: 10px;
+      margin-top: 6px;
     }
     .mini-stat {
       border-radius: 8px;
       background: var(--ha-subtle);
       border: 1px solid var(--ha-line);
-      padding: 9px;
+      padding: 7px;
     }
     .mini-stat span { display: block; color: var(--ha-muted); font-size: 11px; font-weight: 800; }
     .mini-stat strong { display: block; margin-top: 4px; overflow-wrap: anywhere; }
@@ -994,12 +1018,12 @@
       border: 1px solid var(--ha-line);
       border-radius: 8px;
       background: #fff;
-      margin-top: 12px;
-      padding: 10px;
+      margin-top: 8px;
+      padding: 8px;
     }
     .temperature-chart svg {
       width: 100%;
-      height: 190px;
+      height: 145px;
       display: block;
     }
     .temp-band { fill: rgba(144, 202, 249, .12); }
@@ -1586,7 +1610,7 @@
       const outdoorTemperatureRaw = selectedDayOutdoorTemperature(resultData);
       const outdoorTemperature = outdoorTemperatureRaw !== null ? `${fmt(outdoorTemperatureRaw, 1)}°C` : 'waiting';
       const target = firstEvent ? vppTargetText(firstEvent) : (latest.target || live.demand || 'waiting');
-      const selectedStrategy = latest.selectedStrategy || 'waiting';
+      const selectedStrategy = briefStrategyLabel(latest.selectedStrategy || 'waiting');
       const humanNote = [...notes].reverse().find(note => /human|feedback|input|score/i.test(note));
       const fallbackReason = firstEvent?.reason || notes.find(note => !/human|feedback|input|score/i.test(note)) || '';
       const capacity = vppCapacityOptions({appliances}, resultData);
@@ -1607,6 +1631,20 @@
       const explanation = edit.explanation ?? explanationBase;
       const userFeedback = edit.userFeedback ?? userFeedbackBase;
       return {appliances, setpoint, score, totalEnergy, vppEnergy: selectedVppEnergy, temperature, outdoorTemperature, target, selectedStrategy, explanation, userFeedback};
+    }
+
+    function briefStrategyLabel(value) {
+      const text = String(value || '').trim();
+      if (!text || text === 'waiting') return 'waiting';
+      const bracket = text.match(/\[([A-Z])\]\s*([A-Za-z][A-Za-z ]*)/);
+      if (bracket) {
+        const label = bracket[2].split(/\s+[-–—;(|]/)[0].trim() || bracket[2].trim();
+        const firstWord = label.split(/\s+/)[0] || label;
+        return `[${bracket[1]}] ${firstWord}`;
+      }
+      const named = text.match(/\b(Balanced|Conservative|Aggressive|Comfort|Cost[- ]saving|EV[- ]safe)\b/i);
+      if (named) return named[0].replace(/\b\w/g, c => c.toUpperCase());
+      return text.length > 26 ? `${text.slice(0, 26).trim()}...` : text;
     }
 
     function applianceValue(model, key, fallback = 'waiting') {
@@ -2115,10 +2153,14 @@
       const reduction = selectedVppReductionKwh(resultData);
       const capacity = vppCapacityOptions(model, resultData);
       const quantileText = capacity.recommendedKey ? capacity.recommendedKey.toUpperCase() : 'waiting';
+      const reportText = capacity.recommendedEnergy !== null
+        ? capacityKwhText(capacity.recommendedEnergy)
+        : 'missing agent capacity report';
       return `
         <div class="ha-card">
           <h3>VPP forecast and market</h3>
           <div class="forecast-table">
+            <div class="forecast-row"><span>Report to VPP</span><strong>${reportText}</strong></div>
             <div class="forecast-row"><span>Selected quantile</span><strong>${quantileText}</strong></div>
             <div class="forecast-row"><span>Event time</span><strong>${eventWindowText(resultData)}</strong></div>
             <div class="forecast-row"><span>Daily cost</span><strong>${dailyCostText(resultData)}</strong></div>
@@ -2129,7 +2171,7 @@
     }
 
     function renderEnergyDashboard(model, resultData = null) {
-      return `${renderVppInteraction(model, resultData)}${renderVppMarketDashboard(model, resultData)}${renderTariffDashboard(model, resultData)}`;
+      return `${renderVppMarketDashboard(model, resultData)}${renderTariffDashboard(model, resultData)}`;
     }
 
     function entityCard(icon, name, stateText, meter = null) {
@@ -2154,10 +2196,10 @@
       const editKey = agentEditKey(resultData);
       return `
         <div class="ha-dashboard-grid" id="haEntityDashboard">
-          <div class="ha-stack">
+          <div class="ha-stack energy-stack">
             ${renderEnergyDashboard(model, resultData)}
           </div>
-          <div class="ha-stack">
+          <div class="ha-stack device-stack">
             <div class="ha-card">
               <h3>Home strategy map</h3>
               <div class="floorplan">
@@ -2204,8 +2246,8 @@
               ${renderTemperatureTrend(resultData, model.setpoint)}
             </div>
           </div>
-          <div class="ha-stack">
-            <div class="ha-card">
+          <div class="ha-stack explain-stack">
+            <div class="ha-card strategy-card">
               <h3>Strategy explanation</h3>
               <div class="strategy-summary">
                 <div class="strategy-line"><span>Strategy</span><strong>${model.selectedStrategy}</strong></div>
