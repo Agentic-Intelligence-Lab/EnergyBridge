@@ -586,10 +586,25 @@ class EnergyBridgeToHEMA:
                 for tc in msg.tool_calls:
                     name = tc.get("name", "")
                     args = tc.get("args", {})
-                    dev = str(args.get("device_name", "")).lower().replace(" ", "_")
                     action = str(args.get("action", "")).lower().replace(" ", "_")
                     value = args.get("value", "")
                     time_str = args.get("time", "")
+
+                    _raw = str(args.get("device_name", "")).lower().replace(" ", "_")
+                    if "water" in _raw and "heater" in _raw:
+                        dev = "water_heater"
+                    elif "dishwasher" in _raw:
+                        dev = "dishwasher"
+                    elif "washer" in _raw or "washing" in _raw or "laundry" in _raw:
+                        dev = "washer"
+                    elif "dryer" in _raw:
+                        dev = "dryer"
+                    elif "ev" in _raw or "charger" in _raw or "tesla" in _raw or "car" in _raw:
+                        dev = "ev"
+                    elif "hvac" in _raw or "thermostat" in _raw or _raw in ("ac", "heat", "heater"):
+                        dev = "hvac"
+                    else:
+                        dev = _raw
 
                     if name == "control_device":
                         if dev in ("hvac", "thermostat", "ac", "heat", "heater"):
@@ -646,16 +661,6 @@ class EnergyBridgeToHEMA:
                                 wh_end = (wh_start + 4.0) % 24.0 if wh_start is not None else None
                                 wh_preheat = True
 
-                        elif dev in ("ev_charger", "electric_vehicle", "ev", "tesla_charger", "car_charger"):
-                            if action in ("set_mode", "mode", "change_mode"):
-                                mode = str(value).lower().replace(" ", "_")
-                                if mode in ("smart", "delay", "normal"):
-                                    ev_mode = mode
-                            elif action in ("start_charging", "begin_charging", "start"):
-                                ev_mode = "normal"
-                            elif action in ("stop_charging", "end_charging", "stop"):
-                                ev_mode = "delay"
-
                     elif name == "schedule_device_action":
                         if dev in ("washing_machine", "washer", "laundry", "Washing Machine"):
                             washer_start = _parse_hod(time_str)
@@ -673,21 +678,25 @@ class EnergyBridgeToHEMA:
                             elif action_str in ("stop", "end", "off"):
                                 wh_end = _parse_hod(time_str)
                                 wh_preheat = True
-                            else:
-                                wh_start = _parse_hod(time_str)
-                                wh_end = (wh_start + 4.0) % 24.0 if wh_start is not None else None
-                                wh_preheat = True
+                            elif action_str in ("set_temperature", "set_temp", "temperature"):
+                                wh_temp_f = float(value)
 
                         elif dev in ("ev_charger", "electric_vehicle", "ev", "tesla_charger", "car_charger"):
-                            action_str = str(action).lower()
+                            action_str = str(action).lower().replace(" ", "_")
                             if action_str in ("start", "start_charging", "begin_charging"):
                                 ev_charge_start = _parse_hod(time_str)
                             elif action_str in ("stop", "stop_charging", "end_charging"):
                                 ev_charge_end = _parse_hod(time_str)
                             elif action_str in ("set_schedule", "schedule"):
-                                sched_time = _parse_hod(time_str or value)
+                                sched_time = _parse_hod(time_str)
                                 if sched_time is not None:
-                                    ev_charge_start = sched_time
+                                    value_str = str(value).lower().replace(" ", "_")
+                                    if value_str in ("start", "start_charging", "begin_charging"):
+                                        ev_charge_start = sched_time
+                                    elif value_str in ("stop", "stop_charging", "end_charging"):
+                                        ev_charge_end = sched_time
+                                    else:
+                                        ev_charge_start = sched_time
 
         return {
             "setpoint_f": setpoint_f,
