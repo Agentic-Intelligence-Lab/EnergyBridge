@@ -65,6 +65,7 @@ class HEMAControlBaseline:
         self.persona_config = persona_config or {}
         self._agent = None
         self._bridge = None
+        self._max_retries = 5
 
     def _lazy_init(self):
         if self._agent is not None:
@@ -119,8 +120,27 @@ class HEMAControlBaseline:
             user_pref: str = "",
     ) -> Dict[str, Any]:
         self._lazy_init()
-
         self._bridge.ensure_device_config(appliance_config or {}, eplus_state)
+
+        return self._decide_with_retry(
+            current_time=current_time,
+            eplus_state=eplus_state,
+            vpp_event=vpp_event,
+            price_context=price_context,
+            appliance_config=appliance_config,
+            user_pref=user_pref,
+            retry_count=0,
+            missing_appliances=[],
+        )
+
+    def _decide_with_retry(
+            self,
+            current_time, eplus_state, vpp_event, price_context,
+            appliance_config, user_pref,
+            retry_count: int,
+            missing_appliances: list,
+    ):
+
         query = self._bridge.build_query(
             eplus_state, vpp_event, price_context, current_time,
             persona_config=self.persona_config,
@@ -138,18 +158,32 @@ class HEMAControlBaseline:
             "\n\nCRITICAL MANDATORY ACTIONS: "
             "If the following appliances are present in this home and "
             "MUST each receive an explicit control command in your response. You CANNOT skip any of them:\n"
-            "- washing_machine (washer): MUST schedule a start time today using schedule_device_action. "
+            "- washing_machine: MUST schedule a start time today using schedule_device_action. "
             "   Choose a time outside the VPP window (18:00-19:00). Use 24-hour format like '08:00'.\n"
             "- dishwasher: MUST schedule a start time today using schedule_device_action. "
             "   Choose a time outside the VPP window (18:00-19:00). Use 24-hour format like '09:00'.\n"
-            "- water_heater: MUST set a preheat schedule using control_device or schedule_device_action. "
-            "   Set start time, end time, and temperature. Preheat should end before 18:00.\n"
-            "- clothes_dryer (dryer): MUST schedule a start time today using schedule_device_action. "
+            "- clothes_dryer: MUST schedule a start time today using schedule_device_action. "
             "   Choose a time outside the VPP window (18:00-19:00). Use 24-hour format like '10:00'.\n"
-            "- ev_charger (ev): MUST set charging mode and schedule. Use set_mode='smart' or 'delay', "
-            "   and schedule_device_action with start/stop times.\n"
+            "- water_heater: MUST set a preheat schedule using schedule_device_action. "
+            "   Set start time with action 'start', end time with action 'stop', and temperature with action 'set_temperature'. Must finish end time before the VPP window (18:00-19:00)\n"
+            "- ev_charger: MUST set the charging schedule. "
+            "   Ensure the charging window greater or equal to Minimum charging hours to reach target_soc. "
+            "  EV CHARGING TIME CALCULATION GUIDE:\n"
+            "  - Battery capacity: {capacity_kwh} kWh\n"
+            "  - Charger power: {charger_kw} kW\n"
+            "  - Target SOC: {target_soc}\n"
+            "  - Required charge = target_soc * capacity\n"
+            "  - Minimum charging hours = required_charge / charger_power\n"
+            "   Use schedule_device_action to set start time with action 'start' and stop time with action 'stop' separately. Choose a time outside the VPP window (18:00-19:00)."
+            "   start charging as soon as VPP_WINDOW ends."
+            "   start time and stop time must be after arrival_h of the first day and before departure_h of the second day. \n"
             "If you fail to emit commands for any present device, the system will report failure and user satisfaction will be 1/5."
         )
+
+        if missing_appliances:
+            query += (
+                f"Retry {retry_count}/{self._max_retries}. You MUST emit tool calls for these devices if present."
+            )
 
         import time
         start_time = time.time()
@@ -172,8 +206,44 @@ class HEMAControlBaseline:
                 completion_tokens += um.get("output_tokens", 0)
 
         parsed = self._bridge.extract_actions(result)
-        energybridge_actions = self._to_energybridge(parsed, eplus_state, vpp_event, appliance_config)
 
+        cfg = appliance_config or {}
+        present = set()
+        for name in ("washer", "dishwasher", "dryer", "water_heater", "ev"):
+            if cfg.get(name, {}).get("present"):
+                present.add(name)
+
+        missing = []
+        for name in ("washer", "dishwasher", "dryer"):
+            if name in present:
+                start_key = f"{name}_start_h"
+                skip_key = f"{name}_skip"
+                if parsed.get(start_key) is None:
+                    missing.append(name)
+
+        if "water_heater" in present:
+            if parsed.get("water_heater_preheat_start_h") is None or parsed.get("water_heater_preheat_end_h") is None:
+                missing.append("water_heater")
+        if "ev" in present:
+            if parsed.get("ev_charge_start_h") is None or parsed.get("ev_charge_end_h") is None:
+                missing.append("ev")
+
+        if missing and retry_count < self._max_retries:
+            print(f"  [HEMA Retry {retry_count + 1}/{self._max_retries}] Missing: {missing}")
+            return self._decide_with_retry(
+                current_time=current_time,
+                eplus_state=eplus_state,
+                vpp_event=vpp_event,
+                price_context=price_context,
+                appliance_config=appliance_config,
+                user_pref=user_pref,
+                retry_count=retry_count + 1,
+                missing_appliances=missing,
+            )
+        elif missing:
+            print(f"  [HEMA Retry] Max retries reached. Still missing: {missing}")
+
+        energybridge_actions = self._to_energybridge(parsed, eplus_state, vpp_event, appliance_config)
         energybridge_actions["llm_metrics"] = {
             "latency_seconds": round(latency, 3),
             "prompt_tokens": prompt_tokens,
@@ -206,56 +276,16 @@ class HEMAControlBaseline:
         if parsed.get("dryer_start_h") is not None:
             appl["dryer_start_h"] = float(parsed["dryer_start_h"])
             appl["dryer_skip"] = False
-        if parsed.get("water_heater_preheat"):
+        if parsed.get("water_heater_preheat") is not None:
             appl["water_heater_preheat"] = True
-            appl["water_heater_preheat_start_h"] = parsed.get("water_heater_preheat_start_h", 14.0)
-            appl["water_heater_preheat_end_h"] = parsed.get("water_heater_preheat_end_h", 18.0)
-            appl["water_heater_preheat_temp_c"] = parsed.get("water_heater_preheat_temp_c", 65.0)
-        appl["ev_mode"] = str(parsed.get("ev_mode", "smart"))
-
-        cfg = appliance_config or {}
-        if cfg.get("washer", {}).get("present") and "washer_start_h" not in appl and "washer_skip" not in appl:
-            from agents.tools.control_tools.device_state import load_device_config
-            hema_config = load_device_config()
-            devices = hema_config.get("devices", {})
-            wm = devices.get("washing_machine", {})
-            scheduled = wm.get("current_state", {}).get("scheduled_start_time")
-            if scheduled:
-                from .device_bridge import _parse_hod
-                start_h = _parse_hod(scheduled)
-                if start_h is not None:
-                    appl["washer_start_h"] = start_h
-                    appl["washer_skip"] = False
-            else:
-                appl["washer_start_h"] = 8.0
-                appl["washer_skip"] = False
-
-        if cfg.get("water_heater", {}).get("present") and "water_heater_preheat" not in appl:
-            from agents.tools.control_tools.device_state import load_device_config
-            hema_config = load_device_config()
-            devices = hema_config.get("devices", {})
-            wh = devices.get("water_heater", {})
-            wh_state = wh.get("current_state", {})
-
-
-            scheduled = wh_state.get("scheduled_start_time")
-            if scheduled:
-                from .device_bridge import _parse_hod
-                start_h = _parse_hod(scheduled)
-                if start_h is not None:
-                    appl["water_heater_preheat"] = True
-                    appl["water_heater_preheat_start_h"] = start_h
-                    appl["water_heater_preheat_end_h"] = (start_h + 4.0) % 24.0
-                    appl["water_heater_preheat_temp_c"] = 65.0
-            else:
-                appl["water_heater_preheat"] = True
-                appl["water_heater_preheat_start_h"] = 14.0
-                appl["water_heater_preheat_end_h"] = 18.0
-                appl["water_heater_preheat_temp_c"] = 65.0
-
-        if cfg.get("ev", {}).get("present") and "ev_charge_start_h" not in appl:
-            appl["ev_charge_start_h"] = 21.0
-            appl["ev_charge_end_h"] = 7.0
+            appl["water_heater_preheat_start_h"] = float(parsed["water_heater_preheat_start_h"])
+            appl["water_heater_preheat_end_h"] = float(parsed["water_heater_preheat_end_h"])
+            appl["water_heater_preheat_temp_c"] = float(parsed["water_heater_preheat_temp_c"])
+        if parsed.get("ev_charge_start_h") is not None:
+            appl["ev_charge_start_h"] = float(parsed["ev_charge_start_h"])
+            appl["ev_mode"] = "smart"
+        if parsed.get("ev_charge_end_h") is not None:
+            appl["ev_charge_end_h"] = float(parsed["ev_charge_end_h"])
 
         next_check = None
         if vpp_event:
