@@ -32,6 +32,13 @@ from dotenv import load_dotenv
 _BENCH_DIR    = Path(__file__).resolve().parent
 _PROJECT_ROOT = _BENCH_DIR.parent.parent
 DEFAULT_BENCHMARK_RESULTS_DIR = _PROJECT_ROOT / "benchmark_results"
+DEFAULT_CAPACITY_MEMORY_JSON = (
+    _PROJECT_ROOT
+    / "dr_capacity_memory_toolkit"
+    / "june_2025_daily_eb_rule_milp"
+    / "data"
+    / "eb_rule_milp_daily_dr_memory.json"
+)
 load_dotenv(_PROJECT_ROOT / ".env")
 
 if str(_PROJECT_ROOT) not in sys.path:
@@ -53,6 +60,7 @@ from energybridge.data.vpp_events import (
     load_vpp_events_config,
     make_daily_vpp_events,
 )
+from energybridge.quantification.agent_capacity_reporter import apply_agent_capacity_reporting
 from energybridge.roleplay.calendar import attach_calendar, hourly_occupancy_from_persona
 from experiments.benchmark.strategy_explanations import (
     collect_strategy_explanation_records,
@@ -82,6 +90,13 @@ STANDARD_TIMEZONE_BY_CITY = {
     "germany": 1.0,
 }
 ENERGYBRIDGE_METHOD_ID = "EnergyBridge"
+PERSONA_TO_MEMORY_HOUSEHOLD = {
+    "basic_role_a_commuter_price_cooperative": "household_s1_dual_commuter_standard",
+    "basic_role_b_family_caregiver": "household_s2_multigeneration_caregiver",
+    "basic_role_c_irregular_cautious": "household_s5_shared_roommates_irregular",
+    "basic_role_d_commuter_ideal_dr": "household_s3_hybrid_work_from_home",
+    "basic_role_f_commuter_ev_optimizer": "household_s4_ev_commuter_flexible",
+}
 
 
 def _load_persona_json(persona_arg: str) -> dict:
@@ -431,6 +446,80 @@ def _method_label(method: str) -> str:
     return labels.get(method, method or "unknown")
 
 
+def _capacity_memory_metadata(
+    *,
+    persona: dict,
+    persona_id: str,
+    method: str,
+    city: str,
+    days: int,
+    output_dir: Path,
+) -> dict:
+    meta = persona.get("meta") if isinstance(persona.get("meta"), dict) else {}
+    household_id = (
+        meta.get("household_id")
+        or persona.get("household_id")
+        or PERSONA_TO_MEMORY_HOUSEHOLD.get(persona_id)
+        or persona_id
+    )
+    return {
+        "persona_id": persona_id,
+        "household_id": household_id,
+        "method": method,
+        "city": city,
+        "days": days,
+        "output_dir": str(output_dir),
+    }
+
+
+def _attach_agent_capacity_report(
+    result_dict: dict,
+    *,
+    persona: dict,
+    persona_id: str,
+    method: str,
+    city: str,
+    days: int,
+    output_dir: Path,
+    memory_json: str,
+    top_k: int,
+    dry_run: bool,
+) -> dict:
+    if method != ENERGYBRIDGE_METHOD_ID:
+        return result_dict
+    memory_path = Path(memory_json) if memory_json else DEFAULT_CAPACITY_MEMORY_JSON
+    if not memory_path.exists():
+        print(f"[Capacity report] historical memory not found; skipped: {memory_path}")
+        return result_dict
+    metadata = _capacity_memory_metadata(
+        persona=persona,
+        persona_id=persona_id,
+        method=method,
+        city=city,
+        days=days,
+        output_dir=output_dir,
+    )
+    try:
+        memory = json.loads(memory_path.read_text(encoding="utf-8"))
+        updated = apply_agent_capacity_reporting(
+            result_dict,
+            memory,
+            metadata=metadata,
+            top_k=top_k,
+            dry_run=dry_run,
+        )
+    except Exception as exc:
+        print(f"[Capacity report] failed; result saved without report: {exc}")
+        return result_dict
+    count = updated.get("agent_capacity_report_event_count", 0)
+    quantile = updated.get("agent_capacity_report_primary_recommended_quantile") or "n/a"
+    print(
+        "[Capacity report] attached "
+        f"events={count} quantile={quantile} memory={memory_path}"
+    )
+    return updated
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run family home benchmark for a single persona."
@@ -520,6 +609,30 @@ def main() -> None:
         "--mpc-horizon", type=int, default=6,
         help="MPC prediction horizon in 10-minute steps; used by mpc_dynamic (default: 6).",
     )
+    parser.add_argument(
+        "--capacity-memory-json",
+        default=str(DEFAULT_CAPACITY_MEMORY_JSON),
+        help=(
+            "Historical DR memory JSON for EnergyBridge capacity reporting. "
+            "Defaults to the June daily memory toolkit file when present."
+        ),
+    )
+    parser.add_argument(
+        "--capacity-memory-top-k",
+        type=int,
+        default=5,
+        help="Number of similar historical events used for P50/P70/P90 capacity reporting.",
+    )
+    parser.add_argument(
+        "--capacity-report-dry-run",
+        action="store_true",
+        help="Attach deterministic P70 capacity report without calling the LLM.",
+    )
+    parser.add_argument(
+        "--no-agent-capacity-report",
+        action="store_true",
+        help="Disable historical-memory agent capacity reporting for this run.",
+    )
     args = parser.parse_args()
 
     persona = _load_persona_json(args.persona)
@@ -597,20 +710,24 @@ def main() -> None:
     if human_mode:
         result.user_label = f"{_slug_label(human_name) or 'human'}_human"
 
-    print()
-    print("=" * 70)
-    print("RESULT SUMMARY")
-    print("=" * 70)
-    for k, v in result.as_dict().items():
-        print(f"  {k}: {v}")
-
     # ── Save structured JSON ──────────────────────────────────────────
     output_dir.mkdir(parents=True, exist_ok=True)
     json_path = output_dir / "benchmark_result.json"
-    json_path.write_text(
-        json.dumps(result.as_dict(), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    result_dict = result.as_dict()
+    if not args.no_agent_capacity_report:
+        result_dict = _attach_agent_capacity_report(
+            result_dict,
+            persona=persona,
+            persona_id=pid,
+            method=result_method,
+            city=args.city,
+            days=days,
+            output_dir=output_dir,
+            memory_json=args.capacity_memory_json,
+            top_k=args.capacity_memory_top_k,
+            dry_run=args.capacity_report_dry_run,
+        )
+    json_path.write_text(json.dumps(result_dict, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\n[Saved] benchmark_result.json → {json_path}")
 
     # ── Generate human-readable run_summary.txt (pure algorithm) ─────
@@ -627,6 +744,27 @@ def main() -> None:
         explanation_paths = write_strategy_explanation_artifacts(explanation_records, output_dir)
         for label, path in explanation_paths.items():
             print(f"[Saved] strategy explanations {label:<8} → {path}")
+
+    print()
+    print("=" * 70)
+    print("RESULT SUMMARY")
+    print("=" * 70)
+    summary_keys = [
+        "method",
+        "user_label",
+        "weather_label",
+        "days",
+        "total_energy_kwh",
+        "vpp_window_energy_kwh",
+        "vpp_energy_reduction_avg_per_event_kwh",
+        "user_pref_score",
+        "user_pref_scores",
+        "output_dir",
+    ]
+    for key in summary_keys:
+        if key in result_dict:
+            print(f"  {key}: {result_dict[key]}")
+    print(f"  vpp_events: {len(result_dict.get('vpp_event_log') or [])}")
 
     # ── Call analyze_eplus_run.py --report for EP-level MD ────────────
 
