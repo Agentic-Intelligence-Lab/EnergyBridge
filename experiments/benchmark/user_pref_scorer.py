@@ -1297,7 +1297,7 @@ def score_user_preference(
         if calendar_context.get("available"):
             print(f"  ║  Calendar constraints: {calendar_context.get('summary', '')[:80]}")
         if agent_reason:
-            print(f"  ║  Agent rationale: {agent_reason[:100]}")
+            print(f"  ║  EnergyBridge explanation: {agent_reason[:160]}")
         print(f"  ╚{'═'*52}")
         print("  Rate this VPP handling (1=very dissatisfied / 5=very satisfied), press Enter=3:")
         try:
@@ -1349,7 +1349,7 @@ def score_user_preference(
         "controller_explanation_is_user_facing": bool(explanation_is_user_facing),
     }
     if agent_reason:
-        home_state["controller_explanation_excerpt"] = str(agent_reason)[:600]
+        home_state["controller_explanation_excerpt"] = str(agent_reason)[:1200]
     if agent_reason and not explanation_is_user_facing:
         home_state["controller_explanation_note"] = (
             "The provided controller explanation is not household-facing. It may be used as a technical trace, "

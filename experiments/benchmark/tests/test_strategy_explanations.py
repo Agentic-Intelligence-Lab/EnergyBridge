@@ -10,6 +10,10 @@ from experiments.benchmark.strategy_explanations import (
     normalize_vpp_strategy_explanation,
     write_strategy_explanation_artifacts,
 )
+from energybridge.skills.vpp_participation_explainer import (
+    finalize_vpp_participation_explanation,
+    scoring_explanation_text,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -63,6 +67,50 @@ def test_vpp_strategy_explanation_contains_review_required_fields_for_ev_user() 
     assert explanation["structured_control_constraints"]["hvac"]["setpoint_c"] == 26.0
     assert all(explanation["review_dimensions"].values())
     assert CJK_RE.search(json.dumps(explanation, ensure_ascii=False)) is None
+
+
+def test_vpp_participation_explainer_speaks_as_energybridge_to_customer() -> None:
+    persona = _persona("basic_role_f_commuter_ev_optimizer")
+    explanation = build_vpp_strategy_explanation(
+        persona_config=persona,
+        appliance_config=persona["appliances"],
+        event={"id": "vpp1", "trigger_h": 18.0, "end_h": 19.0, "day": 1},
+        setpoint_c=26.0,
+        reason="EV charge shifted after VPP",
+        appliance_actions={
+            "washer_start_h": 20.0,
+            "ev_charge_start_h": 19.5,
+            "ev_charge_end_h": 23.5,
+        },
+        demand_context={"target_shed_kw": 1.2, "target_shed_kwh": 1.2},
+        method="EnergyBridge",
+        city="Germany",
+    )
+
+    customer_explanation = finalize_vpp_participation_explanation(explanation)
+    text = scoring_explanation_text(customer_explanation)
+
+    assert customer_explanation["audience"] == "household_customer"
+    assert customer_explanation["speaker"] == "EnergyBridge"
+    assert text == customer_explanation["score_prompt_text"]
+    assert text == customer_explanation["natural_language"]
+    assert "EnergyBridge recommends" in text
+    assert "Customer control" in text
+    assert "Expected benefit" in text
+    assert "Alternatives:" in text
+    assert "EV" in text
+    for key in (
+        "comfort_guarantee",
+        "task_guarantee",
+        "controllability",
+        "economic_benefit",
+        "executable_actions",
+        "personalization",
+        "verifiable_values",
+        "alternatives",
+    ):
+        assert customer_explanation["review_dimensions"][key] is True
+    assert CJK_RE.search(json.dumps(customer_explanation, ensure_ascii=False)) is None
 
 
 def test_collect_and_write_strategy_explanation_artifacts(tmp_path: Path) -> None:

@@ -6,6 +6,7 @@ from energybridge.skills.explanation_generator import generate_explanation
 from energybridge.skills.grid_signal_translator import translate_vpp_context_to_grid_demand
 from energybridge.skills.preference_parser import parse_user_preference
 from energybridge.skills.strategy_generator import generate_candidate_strategy
+from energybridge.skills.vpp_participation_explainer import finalize_vpp_participation_explanation
 
 
 SKILL_REGISTRY = {
@@ -24,6 +25,10 @@ SKILL_REGISTRY = {
     "generate_explanation": {
         "function": generate_explanation,
         "description": "Generate concise user-facing explanation for selected control plan.",
+    },
+    "explain_vpp_participation": {
+        "function": finalize_vpp_participation_explanation,
+        "description": "Explain a VPP participation strategy from EnergyBridge to the household customer.",
     },
 }
 
