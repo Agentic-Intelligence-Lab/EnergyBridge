@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>EnergyBridge Agent Console</title>
+  <title>EnergyBridge</title>
   <style>
     :root {
       --ink: #1f2933;
@@ -439,64 +439,6 @@
       margin-bottom: 4px;
     }
     .title-block .sub { margin-bottom: 0; }
-    .hero-console {
-      display: grid;
-      grid-template-columns: minmax(260px, 1.1fr) minmax(300px, 2fr);
-      gap: 16px;
-      align-items: stretch;
-    }
-    .agent-card {
-      background: linear-gradient(180deg, rgba(3, 169, 244, .12), rgba(3, 169, 244, .03));
-      border: 1px solid rgba(3, 169, 244, .28);
-      border-radius: 8px;
-      padding: 16px;
-      min-height: 100%;
-    }
-    .agent-card h2 { margin-bottom: 6px; }
-    .agent-badge-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 12px;
-    }
-    .agent-badge {
-      display: inline-flex;
-      align-items: center;
-      min-height: 30px;
-      border-radius: 999px;
-      padding: 5px 10px;
-      background: #fff;
-      border: 1px solid rgba(3, 169, 244, .28);
-      color: var(--ha-primary-dark);
-      font-size: 12px;
-      font-weight: 800;
-    }
-    .agent-flow {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 8px;
-      margin-top: 12px;
-    }
-    .flow-step {
-      min-height: 86px;
-      border-radius: 8px;
-      border: 1px solid var(--ha-line);
-      background: #fff;
-      padding: 10px;
-    }
-    .flow-step span {
-      display: block;
-      color: var(--ha-primary-dark);
-      font-size: 11px;
-      font-weight: 850;
-      margin-bottom: 5px;
-      text-transform: uppercase;
-    }
-    .flow-step strong {
-      display: block;
-      font-size: 13px;
-      line-height: 1.35;
-    }
     .control-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -511,34 +453,6 @@
       margin: 18px 0 10px;
     }
     .section-title h3 { margin: 0; color: var(--ha-ink); }
-    .method-lock {
-      display: grid;
-      grid-template-columns: 44px 1fr;
-      gap: 12px;
-      align-items: center;
-      border: 1px solid rgba(67, 160, 71, .28);
-      background: rgba(67, 160, 71, .08);
-      border-radius: 8px;
-      padding: 12px;
-      margin-bottom: 12px;
-    }
-    .method-lock-icon {
-      width: 44px;
-      height: 44px;
-      border-radius: 50%;
-      display: grid;
-      place-items: center;
-      background: var(--ha-success);
-      color: #fff;
-      font-weight: 900;
-    }
-    .method-lock strong { display: block; margin-bottom: 3px; }
-    .method-lock span {
-      display: block;
-      color: var(--ha-muted);
-      font-size: 13px;
-      line-height: 1.4;
-    }
     .preset-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .live-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     .live-card, .kv div {
@@ -566,7 +480,7 @@
     .score { color: var(--ha-primary-dark); }
     .ha-dashboard-grid {
       display: grid;
-      grid-template-columns: minmax(320px, 1fr) minmax(360px, 1.15fr) minmax(320px, 1fr);
+      grid-template-columns: minmax(500px, 1.3fr) minmax(390px, .95fr) minmax(360px, .9fr);
       gap: 12px;
       align-items: stretch;
     }
@@ -667,6 +581,296 @@
       line-height: 1.4;
       overflow-wrap: anywhere;
     }
+    .energy-card {
+      display: grid;
+      gap: 12px;
+    }
+    .vpp-interaction-card {
+      display: grid;
+      gap: 12px;
+    }
+    .vpp-process {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      position: relative;
+    }
+    .process-step {
+      border: 1px solid var(--ha-line);
+      border-radius: 8px;
+      background: #fff;
+      min-height: 98px;
+      padding: 10px;
+      display: grid;
+      gap: 7px;
+      align-content: start;
+      position: relative;
+      z-index: 1;
+    }
+    .process-step.active {
+      border-color: rgba(3, 169, 244, .36);
+      background: rgba(3, 169, 244, .06);
+    }
+    .process-step.recommended {
+      border-color: rgba(67, 160, 71, .36);
+      background: rgba(67, 160, 71, .08);
+    }
+    .step-node {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--ha-primary);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 900;
+    }
+    .process-step.recommended .step-node { background: var(--ha-success); }
+    .step-label {
+      color: var(--ha-muted);
+      font-size: 11px;
+      font-weight: 850;
+      text-transform: uppercase;
+    }
+    .step-value {
+      color: var(--ha-ink);
+      font-size: 13px;
+      font-weight: 850;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .capacity-options {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .capacity-card {
+      border: 1px solid var(--ha-line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 10px;
+      min-height: 112px;
+      display: grid;
+      gap: 6px;
+      align-content: start;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.3);
+    }
+    .capacity-card.recommended {
+      border-color: rgba(3, 169, 244, .48);
+      background: linear-gradient(180deg, rgba(3, 169, 244, .09), #fff);
+      box-shadow: inset 0 4px 0 var(--ha-primary);
+    }
+    .selected-capacity-report {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      padding: 18px 20px;
+      border: 1px solid rgba(67, 160, 71, .38);
+      border-radius: 8px;
+      background: rgba(67, 160, 71, .08);
+      margin-bottom: 14px;
+    }
+    .selected-capacity-report span {
+      display: block;
+      color: var(--ha-muted);
+      font-weight: 850;
+      margin-bottom: 7px;
+    }
+    .selected-capacity-report strong {
+      display: block;
+      color: var(--ha-ink);
+      font-size: 24px;
+      line-height: 1.2;
+    }
+    .capacity-label {
+      color: var(--ha-muted);
+      font-size: 12px;
+      font-weight: 850;
+    }
+    .capacity-value {
+      color: var(--ha-ink);
+      font-size: 22px;
+      font-weight: 900;
+      line-height: 1.05;
+    }
+    .recommend-banner {
+      border: 1px solid rgba(67, 160, 71, .35);
+      border-radius: 8px;
+      background: rgba(67, 160, 71, .08);
+      padding: 10px 12px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+    }
+    .recommend-banner strong {
+      display: block;
+      color: var(--ha-ink);
+      font-size: 14px;
+      margin-bottom: 2px;
+    }
+    .recommend-banner span {
+      color: var(--ha-muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .recommend-badge {
+      border-radius: 999px;
+      background: var(--ha-success);
+      color: #fff;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+    .tariff-card {
+      display: grid;
+      gap: 12px;
+    }
+    .tariff-summary {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .schedule-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .schedule-pill {
+      border: 1px solid rgba(3, 169, 244, .25);
+      background: rgba(3, 169, 244, .07);
+      color: var(--ha-primary-dark);
+      border-radius: 999px;
+      padding: 5px 9px;
+      font-size: 12px;
+      font-weight: 850;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+    }
+    .tariff-stat {
+      border: 1px solid var(--ha-line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 9px;
+      min-width: 0;
+    }
+    .tariff-stat span {
+      display: block;
+      color: var(--ha-muted);
+      font-size: 11px;
+      font-weight: 850;
+    }
+    .tariff-stat strong {
+      display: block;
+      color: var(--ha-ink);
+      font-size: 14px;
+      margin-top: 3px;
+      overflow-wrap: anywhere;
+    }
+    .tariff-chart {
+      min-height: 320px;
+      border: 1px solid var(--ha-line);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+    }
+    .tariff-chart svg {
+      width: 100%;
+      height: 255px;
+      display: block;
+    }
+    .chart-grid { stroke: #dfe5ec; stroke-width: 1; }
+    .chart-axis { stroke: #c9d3df; stroke-width: 1.2; }
+    .chart-price-line { fill: none; stroke: #fb8c00; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+    .bar-grid { fill: #bbdefb; stroke: #4b8fbd; stroke-width: .8; }
+    .bar-price { fill: #ffcc80; stroke: #fb8c00; stroke-width: .8; }
+    .bar-vpp { fill: #d1c4e9; stroke: #7e57c2; stroke-width: .8; }
+    .event-band { fill: rgba(3, 169, 244, .08); }
+    .event-line { stroke: var(--ha-primary); stroke-width: 1.5; stroke-dasharray: 4 4; }
+    .tariff-legend {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px 12px;
+      color: var(--ha-muted);
+      font-size: 12px;
+      margin-top: 8px;
+    }
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-weight: 750;
+    }
+    .legend-dot {
+      width: 13px;
+      height: 13px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .legend-grid { background: #bbdefb; border: 1px solid #4b8fbd; }
+    .legend-price { background: #ffcc80; border: 1px solid #fb8c00; }
+    .legend-vpp { background: #d1c4e9; border: 1px solid #7e57c2; }
+    .forecast-table {
+      display: grid;
+      gap: 8px;
+    }
+    .forecast-row {
+      display: grid;
+      grid-template-columns: 150px minmax(0, 1fr);
+      gap: 10px;
+      border-top: 1px solid var(--ha-line);
+      padding-top: 8px;
+      font-size: 13px;
+    }
+    .forecast-row:first-child { border-top: 0; padding-top: 0; }
+    .forecast-row span {
+      color: var(--ha-muted);
+      font-weight: 850;
+    }
+    .forecast-row strong {
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+    .agent-explain {
+      display: grid;
+      gap: 8px;
+    }
+    .agent-note {
+      border: 1px solid var(--ha-line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #f8fafc;
+      font-size: 13px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+    .agent-editor {
+      width: 100%;
+      min-height: 132px;
+      resize: vertical;
+      border: 1px solid var(--ha-line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 12px;
+      color: var(--ha-ink);
+      font: inherit;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .agent-editor.small { min-height: 86px; }
+    .agent-field-label {
+      display: block;
+      margin: 10px 0 6px;
+      color: var(--ha-muted);
+      font-size: 12px;
+      font-weight: 850;
+      text-transform: uppercase;
+    }
     .energy-flow {
       min-height: 330px;
       position: relative;
@@ -690,9 +894,9 @@
     .flow-value { fill: var(--ha-muted); font-size: 12px; text-anchor: middle; }
     .floorplan {
       display: grid;
-      grid-template-columns: 1.1fr .9fr;
-      grid-template-rows: 130px 110px 120px;
-      min-height: 380px;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 210px 210px 240px 240px;
+      min-height: 900px;
       border: 1px solid var(--ha-line);
       background: #eef1f5;
       border-radius: 8px;
@@ -705,9 +909,10 @@
       padding: 10px;
       min-width: 0;
     }
-    .room.living { grid-row: 1 / 3; background: #f7f8fb; }
+    .room.ac-zone { grid-row: 1 / 3; background: #f7f8fb; }
     .room.kitchen { background: #fff8ee; }
-    .room.utility { background: #eef9f7; }
+    .room.utility-laundry { background: #eef9f7; }
+    .room.utility-hot-water { grid-column: 1 / 3; background: #edf9f6; }
     .room.garage { grid-column: 1 / 3; background: #f4f7fb; }
     .room-title {
       color: var(--ha-muted);
@@ -716,17 +921,21 @@
       text-transform: uppercase;
     }
     .room-device {
-      display: inline-flex;
+      display: flex;
       align-items: center;
+      justify-content: center;
+      text-align: center;
+      white-space: normal;
       gap: 6px;
-      max-width: 100%;
+      max-width: 96%;
       border-radius: 999px;
       background: #fff;
       border: 1px solid var(--ha-line);
-      padding: 6px 8px;
+      padding: 10px 16px;
       margin: 9px 6px 0 0;
-      font-size: 12px;
+      font-size: 14px;
       font-weight: 800;
+      line-height: 1.28;
       overflow-wrap: anywhere;
     }
     .room-device.active { border-color: rgba(3, 169, 244, .34); color: var(--ha-primary-dark); }
@@ -781,17 +990,99 @@
     }
     .mini-stat span { display: block; color: var(--ha-muted); font-size: 11px; font-weight: 800; }
     .mini-stat strong { display: block; margin-top: 4px; overflow-wrap: anywhere; }
+    .temperature-chart {
+      border: 1px solid var(--ha-line);
+      border-radius: 8px;
+      background: #fff;
+      margin-top: 12px;
+      padding: 10px;
+    }
+    .temperature-chart svg {
+      width: 100%;
+      height: 190px;
+      display: block;
+    }
+    .temp-band { fill: rgba(144, 202, 249, .12); }
+    .temp-line { fill: none; stroke: var(--ha-primary); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+    .temp-outdoor-line { fill: none; stroke: #fb8c00; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+    .temp-setpoint { stroke: #ffab91; stroke-width: 1.4; stroke-dasharray: 5 5; }
+    .temp-dot { fill: var(--ha-primary); stroke: #fff; stroke-width: 1.5; }
+    .temp-axis-label { fill: #667085; font-size: 10px; }
+    .temp-legend {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px 12px;
+      color: var(--ha-muted);
+      font-size: 12px;
+      margin-top: 6px;
+    }
+    .legend-room { background: var(--ha-primary); }
+    .legend-setpoint { background: #ffab91; }
+    .legend-outdoor { background: #fb8c00; }
+    .choice-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .choice-card {
+      min-height: 118px;
+      border: 1px solid var(--ha-line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--ha-ink);
+      padding: 12px;
+      text-align: left;
+      box-shadow: none;
+      font-weight: 700;
+    }
+    .choice-card:hover {
+      background: rgba(3, 169, 244, .08);
+      border-color: rgba(3, 169, 244, .36);
+    }
+    .choice-card small {
+      display: inline-grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      margin-bottom: 8px;
+      background: rgba(3, 169, 244, .14);
+      color: var(--ha-primary-dark);
+      font-size: 13px;
+      font-weight: 900;
+    }
+    .choice-card span {
+      display: block;
+      color: var(--ha-muted);
+      font-size: 12px;
+      line-height: 1.42;
+      margin-top: 5px;
+      overflow-wrap: anywhere;
+    }
+    .score-buttons {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .score-buttons button {
+      min-height: 42px;
+      border-radius: 8px;
+    }
     @media (max-width: 1120px) {
-      .hero-console, .control-grid, .ha-dashboard-grid { grid-template-columns: 1fr; }
-      .agent-flow, .live-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .control-grid, .ha-dashboard-grid { grid-template-columns: 1fr; }
+      .live-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 680px) {
       main { padding: 14px; }
-      .agent-flow, .live-grid, .preset-grid, .entity-grid, .mini-row { grid-template-columns: 1fr; }
+      .live-grid, .preset-grid, .entity-grid, .mini-row, .choice-grid,
+      .vpp-process, .capacity-options, .tariff-summary { grid-template-columns: 1fr; }
       .command-row, .inline-fields, .human-custom { grid-template-columns: 1fr; }
       .brand-title { font-size: 26px; }
-      .floorplan { grid-template-columns: 1fr; grid-template-rows: repeat(4, minmax(110px, auto)); }
-      .room.living, .room.garage { grid-column: auto; grid-row: auto; }
+      .floorplan { grid-template-columns: 1fr; grid-template-rows: repeat(5, minmax(110px, auto)); }
+      .room.ac-zone, .room.utility-hot-water, .room.garage { grid-column: auto; grid-row: auto; }
     }
   </style>
 </head>
@@ -821,6 +1112,9 @@
     </main>
   </div>
   <script>
+    const FULL_APPLIANCE_PERSONA_ID = 'all_appliances_full';
+    const FULL_APPLIANCE_PERSONA_RUN_ID = 'basic_role_f_commuter_ev_optimizer';
+    const FULL_APPLIANCE_PERSONA_PATH = 'energybridge/roleplay/personas/all_appliances_full.json';
     const state = {
       runs: [],
       personas: [],
@@ -833,9 +1127,10 @@
       jobPoll: null,
       selectedDate: '',
       selectedMethod: 'EnergyBridge',
-      selectedPersona: 'basic_role_a_commuter_price_cooperative',
+      selectedPersona: FULL_APPLIANCE_PERSONA_ID,
       selectedCity: 'Tianjin',
       selectedDays: 3,
+      selectedDay: 1,
       startDate: '',
       priceCsv: '',
       priceCsvManual: false,
@@ -843,10 +1138,16 @@
       vppDurationHours: 1,
       vppEventsJson: '',
       userMode: 'roleplay',
-      humanName: 'human_user'
+      humanName: 'human_user',
+      agentEdits: {}
     };
     const $ = (id) => document.getElementById(id);
     const fmt = (n, d=2) => Number.isFinite(Number(n)) ? Number(n).toFixed(d) : 'N/A';
+    const esc = value => String(value ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;');
     const pct = (n) => Number.isFinite(Number(n)) ? `${(Number(n)*100).toFixed(0)}%` : 'N/A';
     const DAY_OPTIONS = [
       {value: 3, label: '3day'},
@@ -857,8 +1158,10 @@
       {value: '2025-06-01', label: '2025-06-01'}
     ];
     const PRICE_CSV_DEFAULTS = {
+      Tianjin: 'experiments/real_data/tianjin_tou_price_normalized.csv',
       Germany: 'experiments/real_data/germany_2025_price.csv'
     };
+    const DEFAULT_CAPACITY_MEMORY_JSON = 'dr_capacity_memory_toolkit/june_2025_daily_eb_rule_milp/data/eb_rule_milp_daily_dr_memory.json';
 
     async function api(path, opts) {
       const res = await fetch(path, opts);
@@ -878,8 +1181,9 @@
 
     async function loadPersonas() {
       state.personas = await api('/api/personas');
-      if (!state.personas.some(p => p.id === state.selectedPersona) && state.personas[0]) {
-        state.selectedPersona = state.personas[0].id;
+      const preferred = state.personas.find(p => p.id === FULL_APPLIANCE_PERSONA_ID);
+      if (!state.personas.some(p => p.id === state.selectedPersona)) {
+        state.selectedPersona = preferred?.id || state.personas[0]?.id || FULL_APPLIANCE_PERSONA_ID;
       }
     }
 
@@ -963,9 +1267,12 @@
 
     function expectedRunName() {
       normalizeScenarioSelection();
+      const personaForRunLabel = state.selectedPersona === FULL_APPLIANCE_PERSONA_ID
+        ? FULL_APPLIANCE_PERSONA_RUN_ID
+        : state.selectedPersona;
       const prefix = state.userMode === 'human'
         ? `${slug(state.humanName) || 'human'}_human`
-        : personaRunLabel(state.selectedPersona);
+        : personaRunLabel(personaForRunLabel);
       return `${todayIso()}/${prefix}_${methodRunToken(state.selectedMethod)}_${String(state.selectedCity || 'Tianjin').toLowerCase()}_${Number(state.selectedDays || 3)}days`;
     }
 
@@ -974,7 +1281,119 @@
       state.selectedDays = DAY_OPTIONS.some(item => item.value === selectedDays) ? selectedDays : 3;
       const allowedDates = START_DATE_OPTIONS.map(item => item.value);
       if (!allowedDates.includes(state.startDate)) state.startDate = '';
+      normalizeDaySelection();
       syncDefaultPriceCsv();
+    }
+
+    function dayCountForData(resultData = null) {
+      const eventCount = Array.isArray(resultData?.vpp_event_log) ? resultData.vpp_event_log.length : 0;
+      return Math.max(1, eventCount || Number(state.selectedDays || 1));
+    }
+
+    function normalizeDaySelection(resultData = null) {
+      const maxDay = dayCountForData(resultData);
+      const day = Number(state.selectedDay || 1);
+      state.selectedDay = Math.max(1, Math.min(maxDay, Number.isFinite(day) ? Math.floor(day) : 1));
+      return state.selectedDay;
+    }
+
+    function dayOptionsHtml(resultData = null) {
+      const count = dayCountForData(resultData);
+      const selected = normalizeDaySelection(resultData);
+      return Array.from({length: count}, (_, idx) => {
+        const day = idx + 1;
+        return `<option value="${day}" ${selected === day ? 'selected' : ''}>Day ${day}</option>`;
+      }).join('');
+    }
+
+    function selectedVppEvent(resultData = null) {
+      const events = Array.isArray(resultData?.vpp_event_log) ? resultData.vpp_event_log : [];
+      if (!events.length) return null;
+      const day = normalizeDaySelection(resultData);
+      return events.find(ev => Number(ev?.day) === day) || events[day - 1] || events[0];
+    }
+
+    function selectedDayTraceRows(resultData = null) {
+      const rows = Array.isArray(resultData?.daily_trace_rows)
+        ? resultData.daily_trace_rows
+        : (Array.isArray(resultData?.power_trace_rows) ? resultData.power_trace_rows : []);
+      if (!rows.length) return [];
+      const day = normalizeDaySelection(resultData);
+      return rows
+        .map(row => {
+          const simH = numOrNull(row?.sim_h);
+          const explicitDay = numOrNull(row?.day);
+          const inferredDay = simH !== null ? Math.floor(simH / 24) + 1 : null;
+          const hour = numOrNull(row?.hour)
+            ?? numOrNull(row?.hod)
+            ?? (simH !== null ? ((simH % 24) + 24) % 24 : null);
+          return {...row, _day: explicitDay ?? inferredDay, _hour: hour};
+        })
+        .filter(row => Number(row._day) === day && row._hour !== null)
+        .sort((a, b) => Number(a._hour) - Number(b._hour));
+    }
+
+    function selectedDayTemperature(resultData = null) {
+      const trace = selectedDayTraceRows(resultData);
+      const traced = trace
+        .map(row => numOrNull(row?.indoor_temperature_c) ?? numOrNull(row?.room_temp_c) ?? numOrNull(row?.zone_temp_c))
+        .filter(value => value !== null);
+      if (traced.length) return traced[traced.length - 1];
+      return null;
+    }
+
+    function selectedDayOutdoorTemperature(resultData = null) {
+      const trace = selectedDayTraceRows(resultData);
+      const traced = trace
+        .map(row => numOrNull(row?.outdoor_temperature_c) ?? numOrNull(row?.outdoor_temp_c) ?? numOrNull(row?.weather_temp_c))
+        .filter(value => value !== null);
+      if (traced.length) return traced[traced.length - 1];
+      return null;
+    }
+
+    function selectedDayTemperatureSeries(resultData = null) {
+      const trace = selectedDayTraceRows(resultData);
+      const traced = trace
+        .map(row => ({
+          hour: numOrNull(row?._hour),
+          value: numOrNull(row?.indoor_temperature_c) ?? numOrNull(row?.room_temp_c) ?? numOrNull(row?.zone_temp_c)
+        }))
+        .filter(point => point.hour !== null && point.value !== null);
+      if (traced.length) return traced;
+      return [];
+    }
+
+    function selectedDaySetpointSeries(resultData = null) {
+      const trace = selectedDayTraceRows(resultData);
+      const traced = trace
+        .map(row => ({
+          hour: numOrNull(row?._hour),
+          value: numOrNull(row?.ac_setpoint_c)
+            ?? numOrNull(row?.setpoint_c)
+            ?? numOrNull(row?.effective_setpoint)
+        }))
+        .filter(point => point.hour !== null && point.value !== null);
+      if (traced.length) return traced;
+      return [];
+    }
+
+    function selectedDayOutdoorTemperatureSeries(resultData = null) {
+      const trace = selectedDayTraceRows(resultData);
+      const traced = trace
+        .map(row => ({
+          hour: numOrNull(row?._hour),
+          value: numOrNull(row?.outdoor_temperature_c) ?? numOrNull(row?.outdoor_temp_c) ?? numOrNull(row?.weather_temp_c)
+        }))
+        .filter(point => point.hour !== null && point.value !== null);
+      if (traced.length) return traced;
+      return [];
+    }
+
+    function selectedProgressItem(progress = [], resultData = null) {
+      const items = Array.isArray(progress) ? progress : [];
+      if (!items.length) return {};
+      const day = normalizeDaySelection(resultData);
+      return items.find(item => Number(item.day) === day || Number(item.key) === day) || items[day - 1] || items[items.length - 1] || {};
     }
 
     function defaultPriceCsvForCity(city) {
@@ -1002,6 +1421,8 @@
       else if (a.washer_start_h !== undefined && a.washer_start_h !== null) plan.washer = `scheduled@${Number(a.washer_start_h).toFixed(1)}`;
       if (a.dishwasher_skip) plan.dishwasher = 'skipped';
       else if (a.dishwasher_start_h !== undefined && a.dishwasher_start_h !== null) plan.dishwasher = `scheduled@${Number(a.dishwasher_start_h).toFixed(1)}`;
+      if (a.dryer_skip) plan.dryer = 'skipped';
+      else if (a.dryer_start_h !== undefined && a.dryer_start_h !== null) plan.dryer = `scheduled@${Number(a.dryer_start_h).toFixed(1)}`;
       if (a.water_heater_preheat) {
         const start = a.water_heater_preheat_start_h ?? '?';
         const end = a.water_heater_preheat_end_h ?? '?';
@@ -1016,6 +1437,10 @@
       return plan;
     }
 
+    function actionObjectHasValues(actions) {
+      return Object.values(actions || {}).some(value => value !== undefined && value !== null && value !== false && value !== '');
+    }
+
     function deviceStateClass(text) {
       const value = String(text || '').toLowerCase();
       if (!value || value === 'waiting') return '';
@@ -1026,16 +1451,26 @@
     function collectAppliancePlan(progress = [], resultData = null) {
       const merged = {};
       for (const ev of progress || []) {
+        const selectedDay = normalizeDaySelection(resultData);
+        if (resultData && Number(ev.day || ev.key) !== selectedDay) continue;
         Object.entries(ev.appliances || {}).forEach(([key, value]) => {
           if (value && value !== 'waiting') merged[key] = value;
         });
       }
-      for (const ev of resultData?.vpp_event_log || []) {
+      const resultEvents = resultData?.vpp_event_log
+        ? [selectedVppEvent(resultData)].filter(Boolean)
+        : [];
+      for (const ev of resultEvents) {
         const decisions = ev.day_decisions || [];
-        const lastDecision = decisions[decisions.length - 1] || {};
-        const actions = ev.vpp_trigger_actions || lastDecision.actions || lastDecision.raw_appliance_actions || {};
-        Object.entries(appliancePlanFromActions(actions)).forEach(([key, value]) => {
-          if (value) merged[key] = value;
+        const actionCandidates = [
+          ev.vpp_trigger_actions,
+          ...decisions.map(item => item.actions),
+          ...decisions.map(item => item.raw_appliance_actions)
+        ].filter(actionObjectHasValues);
+        actionCandidates.forEach(actions => {
+          Object.entries(appliancePlanFromActions(actions)).forEach(([key, value]) => {
+            if (value) merged[key] = value;
+          });
         });
       }
       return merged;
@@ -1045,29 +1480,656 @@
       return progress && progress.length ? progress[progress.length - 1] : {};
     }
 
+    function isSolverTrace(text) {
+      return /mpc_|solver|objective|total=|penalty|lambda|constraint|milp|cost=/i.test(String(text || ''));
+    }
+
+    function compactText(text) {
+      return String(text || '').replace(/\s+/g, ' ').trim();
+    }
+
+    function structuredStrategyExplanation(ev = null) {
+      const candidates = [
+        ev?.strategy_explanation,
+        ev?.vpp_strategy_explanation,
+        ev?.explanation,
+        ev?.llm_raw_explanation,
+        ev?.strategy_explanation?.llm_raw_explanation
+      ].filter(item => item && typeof item === 'object' && Object.keys(item).length);
+      for (const item of candidates) {
+        const natural = compactText(item.natural_language);
+        if (natural) return natural;
+        const parts = [
+          item.why_request,
+          ...(Array.isArray(item.recommended_actions)
+            ? item.recommended_actions.map(action => {
+                const device = action.device ? `${action.device}: ` : '';
+                return compactText(`${device}${action.action || ''} ${action.duration || ''} ${action.rationale || ''}`);
+              })
+            : []),
+          ...(Array.isArray(item.protected_constraints) ? item.protected_constraints : []),
+          item.expected_benefit?.message
+        ].map(compactText).filter(Boolean);
+        if (parts.length) return parts.join('\n\n');
+      }
+      return '';
+    }
+
+    function humanStrategyExplanation({
+      ev = null,
+      appliances = {},
+      setpoint = 'waiting',
+      capacity = null,
+      priceText = 'waiting',
+      selectedStrategy = 'EnergyBridge Agent',
+      fallbackReason = ''
+    } = {}) {
+      const window = eventWindowText(ev ? {vpp_event_log: [ev]} : null).replace(/^D\d+\s+/, '');
+      const vppWindow = window || 'the next VPP event';
+      const applianceItems = Object.entries(appliances)
+        .filter(([, value]) => value && value !== 'waiting')
+        .slice(0, 4)
+        .map(([key, value]) => `${key.replaceAll('_', ' ')} ${value}`);
+      const capacityText = capacity?.recommendedKw !== null && capacity?.recommendedKw !== undefined
+        ? `${fmt(capacity.recommendedKw, 2)} kW / ${capacityKwhText(capacity.recommendedEnergy)}`
+        : 'the conservative available-capacity band';
+      const reason = isSolverTrace(fallbackReason) ? '' : compactText(fallbackReason);
+      const applianceSentence = applianceItems.length
+        ? `Flexible appliances are scheduled around the event: ${applianceItems.join('; ')}.`
+        : 'No flexible appliance is forced into the event window; the plan keeps routine service intact.';
+      const priceSentence = priceText && priceText !== 'waiting'
+        ? `The price signal is ${priceText}, so the plan avoids concentrating controllable load in the event window.`
+        : 'The plan keeps the event window light while waiting for a confirmed market price signal.';
+      return compactText(
+        `For ${vppWindow}, ${selectedStrategy} keeps cooling at ${setpoint} and recommends reporting ${capacityText} to the VPP. ` +
+        `${applianceSentence} ${priceSentence} ` +
+        `This is the bid I would present to the user because it preserves comfort first, protects appliance routines, and still gives the VPP a usable flexible-capacity offer.` +
+        (reason ? ` ${reason}` : '')
+      );
+    }
+
     function visualModel(progress = [], resultData = null, live = {}) {
-      const latest = latestProgressItem(progress);
+      const latest = resultData ? selectedProgressItem(progress, resultData) : latestProgressItem(progress);
       const appliances = collectAppliancePlan(progress, resultData);
-      const firstEvent = resultData?.vpp_event_log?.[0] || null;
-      const setpoint = resultData?.agent_setpoint_c
-        ? `${fmt(resultData.agent_setpoint_c, 1)}°C`
-        : (latest.setpoint || live.sp || 'waiting');
-      const score = resultData?.user_pref_score
-        ? `${fmt(resultData.user_pref_score, 1)}/5`
-        : (latest.score || live.score || 'waiting');
-      const totalEnergy = resultData?.energy_kwh_total
-        ? `${fmt(resultData.energy_kwh_total, 1)} kWh`
-        : (live.energy || 'running');
-      const vppEnergy = resultData?.vpp_window_energy_kwh
-        ? `${fmt(resultData.vpp_window_energy_kwh, 3)} kWh`
-        : (live.vpp || 'running');
+      const firstEvent = selectedVppEvent(resultData) || firstVppEvent(resultData);
+      const notes = (latest.notes || []).filter(Boolean);
+      const edit = state.agentEdits[agentEditKey(resultData)] || {};
+      const setpointSeries = selectedDaySetpointSeries(resultData);
+      const latestSetpoint = setpointSeries.length ? setpointSeries[setpointSeries.length - 1].value : null;
+      const setpoint = latestSetpoint !== null && latestSetpoint !== undefined
+        ? `${fmt(latestSetpoint, 1)}°C`
+        : firstEvent?.setpoint !== undefined && firstEvent?.setpoint !== null
+        ? `${fmt(firstEvent.setpoint, 1)}°C`
+        : resultData?.agent_setpoint_c
+          ? `${fmt(resultData.agent_setpoint_c, 1)}°C`
+          : (latest.setpoint || live.sp || 'waiting');
+      const score = firstEvent?.score !== undefined && firstEvent?.score !== null
+        ? `${fmt(firstEvent.score, 0)}/5 ${firstEvent.label || ''}`.trim()
+        : resultData?.user_pref_score
+          ? `${fmt(resultData.user_pref_score, 1)}/5`
+          : (latest.score || live.score || 'waiting');
+      const selectedDay = normalizeDaySelection(resultData);
+      const dailyEnergy = dailyTotalEnergyKwh(resultData, selectedDay);
+      const totalEnergy = dailyEnergy !== null
+        ? `${fmt(dailyEnergy, 1)} kWh`
+        : resultData?.energy_kwh_total
+          ? `${fmt(resultData.energy_kwh_total, 1)} kWh`
+          : (live.energy || 'running');
+      const eventEnergy = numOrNull(firstEvent?.actual_kwh);
+      const selectedVppEnergy = eventEnergy !== null
+        ? `${fmt(eventEnergy, 3)} kWh`
+        : resultData?.vpp_window_energy_kwh
+          ? `${fmt(resultData.vpp_window_energy_kwh, 3)} kWh`
+          : (live.vpp || 'running');
+      const roomTemperature = selectedDayTemperature(resultData);
+      const temperature = roomTemperature !== null ? `${fmt(roomTemperature, 1)}°C` : 'waiting';
+      const outdoorTemperatureRaw = selectedDayOutdoorTemperature(resultData);
+      const outdoorTemperature = outdoorTemperatureRaw !== null ? `${fmt(outdoorTemperatureRaw, 1)}°C` : 'waiting';
       const target = firstEvent ? vppTargetText(firstEvent) : (latest.target || live.demand || 'waiting');
-      const selectedStrategy = latest.selectedStrategy || 'waiting for Agent decision';
-      return {appliances, setpoint, score, totalEnergy, vppEnergy, target, selectedStrategy};
+      const selectedStrategy = latest.selectedStrategy || 'waiting';
+      const humanNote = [...notes].reverse().find(note => /human|feedback|input|score/i.test(note));
+      const fallbackReason = firstEvent?.reason || notes.find(note => !/human|feedback|input|score/i.test(note)) || '';
+      const capacity = vppCapacityOptions({appliances}, resultData);
+      const explanationBase = structuredStrategyExplanation(firstEvent)
+        || humanStrategyExplanation({
+          ev: firstEvent,
+          appliances,
+          setpoint,
+          capacity,
+          priceText: priceForecastText(resultData),
+          selectedStrategy,
+          fallbackReason
+        });
+      const userFeedbackBase = firstEvent?.comment
+        || resultData?.user_pref_comment
+        || humanNote
+        || 'waiting';
+      const explanation = edit.explanation ?? explanationBase;
+      const userFeedback = edit.userFeedback ?? userFeedbackBase;
+      return {appliances, setpoint, score, totalEnergy, vppEnergy: selectedVppEnergy, temperature, outdoorTemperature, target, selectedStrategy, explanation, userFeedback};
     }
 
     function applianceValue(model, key, fallback = 'waiting') {
       return model.appliances?.[key] || fallback;
+    }
+
+    function applianceScheduleItems(model) {
+      const labels = {
+        washer: 'Washer',
+        dishwasher: 'Dishwasher',
+        dryer: 'Dryer',
+        water_heater: 'Water heater',
+        ev: 'EV charger'
+      };
+      return Object.entries(labels)
+        .map(([key, label]) => {
+          const value = applianceValue(model, key, '');
+          if (!value || value === 'waiting' || value === 'skipped') return null;
+          return `${label}: ${value}`;
+        })
+        .filter(Boolean);
+    }
+
+    function agentEditKey(resultData = null) {
+      const runKey = resultData?.run_dir || resultData?.run_path || state.active || state.jobId || 'live';
+      const day = normalizeDaySelection(resultData);
+      return `${runKey}::day${day}`;
+    }
+
+    function firstVppEvent(resultData = null) {
+      return selectedVppEvent(resultData);
+    }
+
+    function numOrNull(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : null;
+    }
+
+    function positiveOrNull(value) {
+      const n = numOrNull(value);
+      return n !== null && n > 0 ? n : null;
+    }
+
+    function nonNegativeOrNull(value) {
+      const n = numOrNull(value);
+      return n !== null && n >= 0 ? n : null;
+    }
+
+    function eventWindowText(resultData = null) {
+      const ev = selectedVppEvent(resultData) || firstVppEvent(resultData);
+      const start = numOrNull(ev?.trigger_h) ?? Number(state.vppStartHour || 18);
+      const duration = numOrNull(ev?.duration_hours) ?? Number(state.vppDurationHours || 1);
+      const end = numOrNull(ev?.end_h) ?? (start + duration);
+      const day = ev?.day ? `D${ev.day}` : 'next event';
+      return `${day} ${clockHour(start)}-${clockHour(end)}`;
+    }
+
+    function priceForecastText(resultData = null) {
+      const price = resultData?.day_ahead_price_metrics || {};
+      const selectedDay = normalizeDaySelection(resultData);
+      const perDay = (price.per_day || []).find(item => Number(item.day) === selectedDay) || {};
+      if (price.available === false) return 'waiting';
+      const weighted = numOrNull(perDay.weighted_price_eur_per_kwh) ?? numOrNull(price.weighted_price_eur_per_kwh);
+      const cost = numOrNull(perDay.cost_eur) ?? numOrNull(price.total_cost_eur);
+      if (weighted !== null) {
+        const unit = price.price_unit || 'price/kWh';
+        const costText = cost !== null ? `; total cost ${fmt(cost, 2)}` : '';
+        return `${fmt(weighted, 3)} ${unit}${costText}`;
+      }
+      const profile = priceProfileForDay(resultData);
+      const values = (profile?.prices || []).map(value => numOrNull(value)).filter(value => value !== null);
+      if (values.length) {
+        const avg = values.reduce((sum, value) => sum + value, 0) / values.length;
+        return `${fmt(avg, 3)} ${price.price_unit || 'price/kWh'} avg`;
+      }
+      return 'waiting';
+    }
+
+    function dailyCostValue(resultData = null) {
+      const price = resultData?.day_ahead_price_metrics || {};
+      const selectedDay = normalizeDaySelection(resultData);
+      const perDay = (price.per_day || []).find(item => Number(item.day) === selectedDay) || {};
+      return numOrNull(perDay.cost_eur)
+        ?? numOrNull(perDay.total_cost_eur)
+        ?? numOrNull(perDay.cost)
+        ?? numOrNull(price.total_cost_eur);
+    }
+
+    function dailyCostText(resultData = null) {
+      const cost = dailyCostValue(resultData);
+      if (cost === null) return 'waiting';
+      const unit = resultData?.day_ahead_price_metrics?.cost_unit || '';
+      return `${fmt(cost, 2)} ${unit}`.trim();
+    }
+
+    function selectedVppReductionKwh(resultData = null) {
+      const ev = selectedVppEvent(resultData) || firstVppEvent(resultData);
+      return nonNegativeOrNull(ev?.actual_shed_kwh)
+        ?? nonNegativeOrNull(ev?.reference_baseline_shed_kwh)
+        ?? nonNegativeOrNull(ev?.capacity_limited_reference_shed_kwh)
+        ?? nonNegativeOrNull(ev?.event_baseline_estimate?.actual_shed_kwh)
+        ?? nonNegativeOrNull(ev?.event_baseline_estimate?.reference_baseline_shed_kwh);
+    }
+
+    function reductionRatioValue(resultData = null) {
+      const reduction = selectedVppReductionKwh(resultData);
+      const reported = positiveOrNull(vppCapacityOptions({}, resultData).recommendedEnergy);
+      if (reduction === null || reported === null) return null;
+      return reduction / reported;
+    }
+
+    function reductionRatioText(resultData = null) {
+      const ratio = reductionRatioValue(resultData);
+      return ratio === null ? 'waiting' : `${fmt(ratio * 100, 0)}%`;
+    }
+
+    function quantileSuccessProbability(key) {
+      const match = String(key || '').match(/p(\d+)/i);
+      if (!match) return null;
+      const q = Number(match[1]);
+      if (!Number.isFinite(q)) return null;
+      return Math.max(0, Math.min(100, 100 - q));
+    }
+
+    function vppCapacityReportText(model, resultData = null) {
+      const capacity = vppCapacityOptions(model, resultData);
+      const parts = [];
+      if (capacity.recommendedKey) parts.push(capacity.recommendedKey.toUpperCase());
+      if (capacity.recommendedEnergy !== null) parts.push(`${fmt(capacity.recommendedEnergy, 2)} kWh`);
+      if (!parts.length) return 'waiting';
+      return parts.join(' / ');
+    }
+
+    function flexibleLoadText(resultData = null) {
+      const capacity = vppCapacityOptions({}, resultData);
+      if (capacity.retrievalCount !== null) return `${fmt(capacity.retrievalCount, 0)} similar historical events`;
+      return capacity.recommendedEnergy !== null ? `${fmt(capacity.recommendedEnergy, 2)} kWh reported option` : 'waiting';
+    }
+
+    function sparklinePoints(values, width = 350, height = 110, pad = 8) {
+      const clean = values.map(v => Number(v)).filter(v => Number.isFinite(v));
+      const min = Math.min(...clean, 0);
+      const max = Math.max(...clean, 1);
+      return values.map((value, idx) => {
+        const x = pad + (idx / Math.max(1, values.length - 1)) * (width - pad * 2);
+        const y = height - pad - ((Number(value) - min) / Math.max(0.001, max - min)) * (height - pad * 2);
+        return `${fmt(x, 1)},${fmt(y, 1)}`;
+      }).join(' ');
+    }
+
+    function priceProfileForDay(resultData = null) {
+      const price = resultData?.day_ahead_price_metrics || {};
+      const selectedDay = normalizeDaySelection(resultData);
+      const perDay = (price.per_day || []).find(item => Number(item.day) === selectedDay) || {};
+      const prices = Array.isArray(perDay.hourly_prices) ? perDay.hourly_prices.map(value => numOrNull(value)) : null;
+      const labels = Array.isArray(perDay.hour_labels) ? perDay.hour_labels : null;
+      if (prices && prices.some(value => value !== null)) {
+        return {prices, labels};
+      }
+      return null;
+    }
+
+    function decisionObjectiveTerms(item) {
+      return item?.objective_terms || item?.objective_terms_posthoc || {};
+    }
+
+    function decisionPredictedPowerKw(item) {
+      const terms = decisionObjectiveTerms(item);
+      const raw = terms?.cost?.raw || {};
+      const dynamic = terms?.diagnostics?.dynamic_model_prediction || {};
+      const direct = positiveOrNull(dynamic.predicted_total_power_kw)
+        ?? positiveOrNull(raw.total_power_kw)
+        ?? positiveOrNull(raw.home_power_kw)
+        ?? positiveOrNull(raw.load_kw);
+      if (direct !== null) return direct;
+      const parts = [
+        raw.hvac_power_kw,
+        raw.shift_power_kw,
+        raw.water_heater?.power_kw,
+        raw.ev?.power_kw,
+        raw.tasks?.washer?.power_kw,
+        raw.tasks?.dishwasher?.power_kw,
+        raw.tasks?.dryer?.power_kw
+      ].map(numOrNull).filter(value => value !== null);
+      if (!parts.length) return null;
+      return parts.reduce((sum, value) => sum + value, 0);
+    }
+
+    function dashboardEnergySeries(resultData = null) {
+      const ev = selectedVppEvent(resultData) || firstVppEvent(resultData);
+      const start = Math.floor(numOrNull(ev?.trigger_h) ?? Number(state.vppStartHour || 18));
+      const duration = Math.max(1, Math.ceil(numOrNull(ev?.duration_hours) ?? Number(state.vppDurationHours || 1)));
+      const actualPriceProfile = priceProfileForDay(resultData);
+      const actualPrices = Array.isArray(actualPriceProfile?.prices) ? actualPriceProfile.prices : [];
+      const actualVppEnergy = selectedVppReductionKwh(resultData);
+      const load = Array.from({length: 24}, () => null);
+      const vpp = Array.from({length: 24}, () => null);
+      const price = Array.from({length: 24}, (_, h) => numOrNull(actualPrices[h]));
+      const trace = selectedDayTraceRows(resultData);
+      if (trace.length) {
+        const buckets = Array.from({length: 24}, () => []);
+        trace.forEach(row => {
+          const h = Math.max(0, Math.min(23, Math.floor(numOrNull(row?._hour) ?? -1)));
+          const power = positiveOrNull(row?.power_kw);
+          if (h >= 0 && power !== null) buckets[h].push(power);
+        });
+        buckets.forEach((values, h) => {
+          if (values.length) load[h] = values.reduce((sum, value) => sum + value, 0) / values.length;
+        });
+      }
+      for (let h = 0; h < 24; h += 1) {
+        const inEvent = h >= start && h < start + duration;
+        if (inEvent && actualVppEnergy !== null) vpp[h] = Math.max(0, actualVppEnergy / duration);
+      }
+      return {load, vpp, price};
+    }
+
+    function capacityKwText(value, fallback = 'waiting') {
+      const n = numOrNull(value);
+      return n === null ? fallback : `${fmt(n, 2)} kW`;
+    }
+
+    function capacityKwhText(value, fallback = 'waiting') {
+      const n = numOrNull(value);
+      return n === null ? fallback : `${fmt(n, 2)} kWh`;
+    }
+
+    function vppCapacityOptions(model, resultData = null) {
+      const ev = selectedVppEvent(resultData) || firstVppEvent(resultData);
+      const agentReport = ev?.agent_capacity_report || {};
+      const agentOptions = agentReport?.vpp_capacity_options || {};
+      const optionMap = agentOptions.options || agentOptions || {};
+      const quantileKeys = ['p50', 'p70', 'p90'];
+      const hasHistoricalOptions = quantileKeys.some(q => (
+        numOrNull(optionMap[q]?.reported_capacity_kw) !== null
+        || numOrNull(optionMap[q]?.reported_capacity_kwh) !== null
+      ));
+      if (hasHistoricalOptions) {
+        const options = quantileKeys.map(q => ({
+          key: q,
+          label: q.toUpperCase(),
+          value: numOrNull(optionMap[q]?.reported_capacity_kw),
+          energy: numOrNull(optionMap[q]?.reported_capacity_kwh),
+          detail: q === 'p50'
+            ? 'comfort-first historical memory band'
+            : q === 'p70'
+              ? 'balanced historical memory band'
+              : 'grid-cooperative historical memory band'
+        }));
+        const rawRecommendedKey = String(agentReport.recommended_quantile || agentReport.choice || '').toLowerCase();
+        const recommendedKey = quantileKeys.includes(rawRecommendedKey)
+          ? rawRecommendedKey
+          : (options.find(option => option.value !== null || option.energy !== null)?.key || '');
+        const selectedOption = recommendedKey ? optionMap[recommendedKey] : {};
+        const successProbability = quantileSuccessProbability(recommendedKey);
+        return {
+          options,
+          recommendedKey,
+          recommendedKw: numOrNull(agentReport.reported_capacity_kw)
+            ?? numOrNull(selectedOption?.reported_capacity_kw),
+          recommendedEnergy: numOrNull(agentReport.reported_capacity_kwh)
+            ?? numOrNull(selectedOption?.reported_capacity_kwh),
+          success: successProbability,
+          confidence: successProbability,
+          memoryConfidence: numOrNull(agentReport.deterministic_memory_estimate?.confidence),
+          retrievalCount: numOrNull(agentReport.deterministic_memory_estimate?.retrieval_count),
+          basis: agentReport.basis || agentReport.capacity_bands?.basis || agentOptions.basis || '',
+          reason: agentReport.reason || '',
+          source: `${recommendedKey.toUpperCase()} from historical similar-event distribution`
+        };
+      }
+      return {
+        options: [],
+        recommendedKey: '',
+        recommendedKw: null,
+        recommendedEnergy: null,
+        success: null,
+        confidence: null,
+        memoryConfidence: null,
+        retrievalCount: null,
+        basis: '',
+        reason: '',
+        source: ''
+      };
+    }
+
+    function renderVppInteraction(model, resultData = null) {
+      const capacity = vppCapacityOptions(model, resultData);
+      const ev = selectedVppEvent(resultData) || firstVppEvent(resultData);
+      const confidenceText = capacity.confidence !== null ? `${fmt(capacity.confidence, 0)}%` : 'waiting';
+      const quantileText = capacity.recommendedKey ? capacity.recommendedKey.toUpperCase() : 'waiting';
+      const reportText = capacity.recommendedEnergy !== null
+        ? capacityKwhText(capacity.recommendedEnergy)
+        : 'missing agent capacity report';
+      return `
+        <div class="ha-card vpp-interaction-card">
+          <h3>VPP interaction</h3>
+          <div class="selected-capacity-report">
+            <div>
+              <span>Report to VPP</span>
+              <strong>${reportText}</strong>
+            </div>
+            <div class="recommend-badge">${quantileText}</div>
+          </div>
+          <div class="forecast-table">
+            <div class="forecast-row"><span>Event window</span><strong>${eventWindowText(resultData)}</strong></div>
+            <div class="forecast-row"><span>Selected quantile</span><strong>${quantileText}</strong></div>
+            <div class="forecast-row"><span>Historical samples</span><strong>${capacity.retrievalCount !== null ? fmt(capacity.retrievalCount, 0) : 'waiting'}</strong></div>
+            <div class="forecast-row"><span>Confidence</span><strong>${confidenceText}</strong></div>
+          </div>
+        </div>`;
+    }
+
+    function tariffSeries(resultData = null) {
+      const traces = dashboardEnergySeries(resultData);
+      const ev = selectedVppEvent(resultData) || firstVppEvent(resultData);
+      const start = Math.floor(numOrNull(ev?.trigger_h) ?? Number(state.vppStartHour || 18));
+      const duration = Math.max(1, Math.ceil(numOrNull(ev?.duration_hours) ?? Number(state.vppDurationHours || 1)));
+      return Array.from({length: 24}, (_, h) => {
+        const event = h >= start && h < start + duration;
+        const grid = numOrNull(traces.load[h]);
+        const price = numOrNull(traces.price[h]);
+        const vppEnergy = numOrNull(traces.vpp[h]);
+        return {
+          hour: h,
+          grid,
+          price,
+          vpp: event && vppEnergy !== null ? -vppEnergy : null,
+          event
+        };
+      });
+    }
+
+    function chartPolyline(values, width, height, pad, min, max) {
+      return values.map((value, idx) => {
+        const x = pad + (idx / Math.max(1, values.length - 1)) * (width - pad * 2);
+        const y = height - pad - ((value - min) / Math.max(0.001, max - min)) * (height - pad * 2);
+        return `${fmt(x, 1)},${fmt(y, 1)}`;
+      }).join(' ');
+    }
+
+    function sparsePolyline(rows, valueKey, width, height, pad, min, max) {
+      return rows
+        .filter(row => numOrNull(row?.[valueKey]) !== null)
+        .map(row => {
+          const x = pad + (row.hour / 23) * (width - pad * 2);
+          const y = height - pad - ((Number(row[valueKey]) - min) / Math.max(0.001, max - min)) * (height - pad * 2);
+          return `${fmt(x, 1)},${fmt(y, 1)}`;
+        })
+        .join(' ');
+    }
+
+    function renderTemperatureTrend(resultData = null, setpointText = '') {
+      const indoor = selectedDayTemperatureSeries(resultData)
+        .map(point => ({hour: numOrNull(point?.hour), value: numOrNull(point?.value)}))
+        .filter(point => point.hour !== null && point.value !== null);
+      const outdoor = selectedDayOutdoorTemperatureSeries(resultData)
+        .map(point => ({hour: numOrNull(point?.hour), value: numOrNull(point?.value)}))
+        .filter(point => point.hour !== null && point.value !== null);
+      const setpoints = selectedDaySetpointSeries(resultData)
+        .map(point => ({hour: numOrNull(point?.hour), value: numOrNull(point?.value)}))
+        .filter(point => point.hour !== null && point.value !== null);
+      const width = 440;
+      const height = 190;
+      const padLeft = 42;
+      const padRight = 18;
+      const padTop = 18;
+      const padBottom = 34;
+      const plotW = width - padLeft - padRight;
+      const plotH = height - padTop - padBottom;
+      const cleanIndoor = indoor;
+      const cleanOutdoor = outdoor.length ? outdoor : [];
+      const cleanSetpoints = setpoints;
+      const all = [...cleanIndoor, ...cleanOutdoor, ...cleanSetpoints].map(point => point.value);
+      if (!all.length) {
+        return `
+          <div class="temperature-chart">
+            <div class="empty-state">No temperature time series</div>
+          </div>`;
+      }
+      const min = Math.floor(Math.min(...all) - 0.8);
+      const max = Math.ceil(Math.max(...all) + 0.8);
+      const yFor = value => padTop + (1 - ((value - min) / Math.max(0.001, max - min))) * plotH;
+      const xForHour = hour => padLeft + (Math.max(0, Math.min(24, hour)) / 24) * plotW;
+      const lineFor = points => points.map(point => `${fmt(xForHour(point.hour), 1)},${fmt(yFor(point.value), 1)}`).join(' ');
+      const line = lineFor(cleanIndoor);
+      const outdoorLine = cleanOutdoor.length ? lineFor(cleanOutdoor) : '';
+      const setpointLine = cleanSetpoints.length ? lineFor(cleanSetpoints) : '';
+      const lastIndoor = cleanIndoor.length ? cleanIndoor[cleanIndoor.length - 1] : null;
+      const lastX = lastIndoor ? xForHour(lastIndoor.hour) : null;
+      const lastY = lastIndoor ? yFor(lastIndoor.value) : null;
+      const ticks = [max, (min + max) / 2, min];
+      return `
+        <div class="temperature-chart">
+          <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Room temperature trend">
+            <rect class="temp-band" x="${padLeft}" y="${padTop}" width="${plotW}" height="${plotH}" rx="6" />
+            ${ticks.map(tick => {
+              const y = yFor(tick);
+              return `
+                <line class="chart-grid" x1="${padLeft}" y1="${fmt(y, 1)}" x2="${width - padRight}" y2="${fmt(y, 1)}" />
+                <text class="temp-axis-label" x="${padLeft - 6}" y="${fmt(y + 3, 1)}" text-anchor="end">${fmt(tick, 0)}°C</text>`;
+            }).join('')}
+            ${[0, 6, 12, 18, 23].map(h => {
+              const x = padLeft + h / 23 * plotW;
+              return `
+                <line class="chart-grid" x1="${fmt(x, 1)}" y1="${padTop}" x2="${fmt(x, 1)}" y2="${padTop + plotH}" />
+                <text class="temp-axis-label" x="${fmt(x, 1)}" y="${height - 12}" text-anchor="middle">${h === 23 ? '24' : String(h).padStart(2, '0')}</text>`;
+            }).join('')}
+            ${setpointLine ? `<polyline class="temp-setpoint" points="${setpointLine}" fill="none" />` : ''}
+            ${outdoorLine ? `<polyline class="temp-outdoor-line" points="${outdoorLine}" />` : ''}
+            ${line ? `<polyline class="temp-line" points="${line}" />` : ''}
+            ${lastX === null || lastY === null ? '' : `<circle class="temp-dot" cx="${fmt(lastX, 1)}" cy="${fmt(lastY, 1)}" r="4" />`}
+          </svg>
+          <div class="temp-legend">
+            <span class="legend-item"><span class="legend-dot legend-room"></span>Room temp</span>
+            <span class="legend-item"><span class="legend-dot legend-setpoint"></span>AC setpoint</span>
+            <span class="legend-item"><span class="legend-dot legend-outdoor"></span>Outdoor temp</span>
+          </div>
+        </div>`;
+    }
+
+    function renderTariffBars(resultData = null) {
+      const rows = tariffSeries(resultData);
+      const width = 440;
+      const height = 190;
+      const pad = 28;
+      const axisY = 132;
+      const positiveValues = rows.map(r => r.grid).map(numOrNull).filter(value => value !== null);
+      const negativeValues = rows.map(r => Math.abs(numOrNull(r.vpp) ?? 0)).filter(value => value > 0);
+      const anyRealSeries = rows.some(r => (
+        numOrNull(r.grid) !== null
+        || numOrNull(r.price) !== null
+        || numOrNull(r.vpp) !== null
+      ));
+      if (!anyRealSeries) {
+        return `
+          <div class="tariff-chart">
+            <div class="empty-state">No hourly price, load, or VPP event reduction series</div>
+          </div>`;
+      }
+      const maxPos = Math.max(...positiveValues, 1);
+      const maxNeg = Math.max(...negativeValues, 0.3);
+      const barW = (width - pad * 2) / 24 * 0.58;
+      const xFor = h => pad + h / 23 * (width - pad * 2);
+      const yPos = value => axisY - (value / maxPos) * 94;
+      const yNeg = value => axisY + (Math.abs(value) / maxNeg) * 38;
+      const priceValues = rows.map(r => r.price).map(numOrNull).filter(value => value !== null);
+      const priceMin = priceValues.length ? Math.min(...priceValues) : 0;
+      const priceMax = priceValues.length ? Math.max(...priceValues) : 1;
+      const eventStart = Math.min(...rows.filter(r => r.event).map(r => r.hour), Number(state.vppStartHour || 18));
+      const eventEnd = Math.max(...rows.filter(r => r.event).map(r => r.hour + 1), eventStart + Number(state.vppDurationHours || 1));
+      const eventX = xFor(Math.max(0, Math.min(23, eventStart)));
+      const eventW = Math.max(10, (eventEnd - eventStart) / 24 * (width - pad * 2));
+      const timeTicks = [0, 4, 8, 12, 16, 20, 23];
+      return `
+        <div class="tariff-chart">
+          <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Day-ahead price and load estimate">
+            <rect class="event-band" x="${fmt(eventX, 1)}" y="18" width="${fmt(eventW, 1)}" height="${height - 48}" rx="4" />
+            ${[46, 74, 102, axisY, 160].map(y => `<line class="chart-grid" x1="${pad}" y1="${y}" x2="${width - pad}" y2="${y}" />`).join('')}
+            ${timeTicks.map(h => `<line class="chart-grid" x1="${fmt(xFor(h), 1)}" y1="18" x2="${fmt(xFor(h), 1)}" y2="${height - 28}" />`).join('')}
+            <line class="chart-axis" x1="${pad}" y1="${axisY}" x2="${width - pad}" y2="${axisY}" />
+            ${rows.map(r => {
+              const x = xFor(r.hour) - barW / 2;
+              const grid = numOrNull(r.grid);
+              const vpp = numOrNull(r.vpp);
+              const gy = grid === null ? null : yPos(grid);
+              const vy = axisY;
+              const vh = vpp === null ? 0 : Math.max(0, yNeg(vpp) - axisY);
+              return `
+                ${gy === null ? '' : `<rect class="bar-grid" x="${fmt(x, 1)}" y="${fmt(gy, 1)}" width="${fmt(barW, 1)}" height="${fmt(axisY - gy, 1)}" rx="3" />`}
+                ${vh > 1 ? `<rect class="bar-vpp" x="${fmt(x, 1)}" y="${fmt(vy, 1)}" width="${fmt(barW, 1)}" height="${fmt(vh, 1)}" rx="3" />` : ''}`;
+            }).join('')}
+            ${priceValues.length >= 2 ? `<polyline class="chart-price-line" points="${sparsePolyline(rows, 'price', width, height, pad, priceMin, priceMax)}" />` : ''}
+            <line class="event-line" x1="${fmt(eventX, 1)}" y1="18" x2="${fmt(eventX, 1)}" y2="${height - 28}" />
+            <text x="${fmt(eventX + eventW / 2, 1)}" y="14" fill="#008bd2" font-size="10" text-anchor="middle">VPP ${clockHour(eventStart)}-${clockHour(eventEnd)}</text>
+            ${timeTicks.map(h => `
+              <text x="${fmt(xFor(h), 1)}" y="${height - 6}" fill="#667085" font-size="10" text-anchor="middle">${h === 23 ? '24:00' : `${String(h).padStart(2, '0')}:00`}</text>
+            `).join('')}
+            <text x="${width / 2}" y="${height - 20}" fill="#667085" font-size="11" text-anchor="middle">load / VPP / day-ahead price</text>
+          </svg>
+          <div class="tariff-legend">
+            <span class="legend-item"><span class="legend-dot legend-grid"></span>Grid load</span>
+            <span class="legend-item"><span class="legend-dot legend-vpp"></span>VPP event reduction</span>
+            <span class="legend-item"><span class="legend-dot legend-price"></span>Day-ahead price</span>
+          </div>
+        </div>`;
+    }
+
+    function renderTariffDashboard(model, resultData = null) {
+      const reduction = selectedVppReductionKwh(resultData);
+      const schedule = applianceScheduleItems(model);
+      return `
+        <div class="ha-card tariff-card">
+          <h3>Day-ahead price and load</h3>
+          <div class="tariff-summary">
+            <div class="tariff-stat"><span>Daily cost</span><strong>${dailyCostText(resultData)}</strong></div>
+            <div class="tariff-stat"><span>VPP reduction</span><strong>${reduction !== null ? `${fmt(reduction, 2)} kWh` : 'waiting'}</strong></div>
+            <div class="tariff-stat"><span>Reduction / report</span><strong>${reductionRatioText(resultData)}</strong></div>
+          </div>
+          ${schedule.length ? `<div class="schedule-strip">${schedule.map(item => `<span class="schedule-pill">${esc(item)}</span>`).join('')}</div>` : ''}
+          ${renderTariffBars(resultData)}
+        </div>`;
+    }
+
+    function renderVppMarketDashboard(model, resultData = null) {
+      const reduction = selectedVppReductionKwh(resultData);
+      const capacity = vppCapacityOptions(model, resultData);
+      const quantileText = capacity.recommendedKey ? capacity.recommendedKey.toUpperCase() : 'waiting';
+      return `
+        <div class="ha-card">
+          <h3>VPP forecast and market</h3>
+          <div class="forecast-table">
+            <div class="forecast-row"><span>Selected quantile</span><strong>${quantileText}</strong></div>
+            <div class="forecast-row"><span>Event time</span><strong>${eventWindowText(resultData)}</strong></div>
+            <div class="forecast-row"><span>Daily cost</span><strong>${dailyCostText(resultData)}</strong></div>
+            <div class="forecast-row"><span>VPP reduction</span><strong>${reduction !== null ? `${fmt(reduction, 2)} kWh` : 'waiting'}</strong></div>
+            <div class="forecast-row"><span>Reduction / report</span><strong>${reductionRatioText(resultData)}</strong></div>
+          </div>
+        </div>`;
+    }
+
+    function renderEnergyDashboard(model, resultData = null) {
+      return `${renderVppInteraction(model, resultData)}${renderVppMarketDashboard(model, resultData)}${renderTariffDashboard(model, resultData)}`;
     }
 
     function entityCard(icon, name, stateText, meter = null) {
@@ -1087,104 +2149,73 @@
     function renderEntityDashboard(progress = [], resultData = null, live = {}) {
       const model = visualModel(progress, resultData, live);
       const hvacValue = model.setpoint;
-      const targetNumber = parseFloat(model.target);
-      const targetMeter = Number.isFinite(targetNumber) ? Math.min(100, targetNumber * 18) : 18;
-      const scoreNumber = parseFloat(model.score);
-      const scoreMeter = Number.isFinite(scoreNumber) ? scoreNumber * 20 : 0;
-      const setpointNumber = parseFloat(hvacValue);
-      const dialValue = Number.isFinite(setpointNumber) ? fmt(setpointNumber, 1) : '--';
+      const temperatureValue = parseFloat(model.temperature);
+      const temperatureDial = Number.isFinite(temperatureValue) ? fmt(temperatureValue, 1) : '--';
+      const editKey = agentEditKey(resultData);
       return `
         <div class="ha-dashboard-grid" id="haEntityDashboard">
           <div class="ha-stack">
-            <div class="ha-card">
-              <h3>Appliance strategy</h3>
-              <div class="entity-grid">
-                ${entityCard('AC', 'HVAC setpoint', hvacValue, Number.isFinite(setpointNumber) ? Math.max(0, Math.min(100, (setpointNumber - 16) * 8)) : null)}
-                ${entityCard('WH', 'Water heater', applianceValue(model, 'water_heater'))}
-                ${entityCard('WM', 'Washer', applianceValue(model, 'washer'))}
-                ${entityCard('DW', 'Dishwasher', applianceValue(model, 'dishwasher'))}
-                ${entityCard('EV', 'EV charging', applianceValue(model, 'ev'))}
-                ${entityCard('VPP', 'VPP target', model.target, targetMeter)}
-              </div>
-            </div>
-            <div class="ha-card">
-              <h3>Agent decision</h3>
-              <div class="strategy-summary">
-                <div class="strategy-line"><span>Strategy</span><strong>${model.selectedStrategy}</strong></div>
-                <div class="strategy-line"><span>Comfort</span><strong>${model.score}</strong></div>
-                <div class="strategy-line"><span>VPP energy</span><strong>${model.vppEnergy}</strong></div>
-              </div>
-            </div>
-          </div>
-          <div class="ha-stack">
-            <div class="ha-card">
-              <h3>Energy distribution today</h3>
-              <div class="energy-flow">
-                <svg class="flow-svg" viewBox="0 0 480 300" role="img" aria-label="Energy flow">
-                  <path class="flow-line" d="M108 150 C178 150 178 84 240 84" />
-                  <path class="flow-line warn" d="M240 84 C300 84 300 150 372 150" />
-                  <path class="flow-line" d="M240 84 C240 142 240 196 240 232" />
-                  <path class="flow-line" d="M240 232 C300 232 300 206 372 206" />
-                  <circle class="flow-node grid" cx="108" cy="150" r="48" />
-                  <circle class="flow-node comfort" cx="240" cy="84" r="48" />
-                  <circle class="flow-node flex" cx="240" cy="232" r="48" />
-                  <circle class="flow-node home" cx="372" cy="150" r="52" />
-                  <circle class="flow-node grid" cx="372" cy="206" r="40" />
-                  <text class="flow-label" x="108" y="145">VPP</text>
-                  <text class="flow-value" x="108" y="165">${model.target}</text>
-                  <text class="flow-label" x="240" y="79">Comfort</text>
-                  <text class="flow-value" x="240" y="99">${model.score}</text>
-                  <text class="flow-label" x="240" y="227">Flexible</text>
-                  <text class="flow-value" x="240" y="247">${model.vppEnergy}</text>
-                  <text class="flow-label" x="372" y="145">Home</text>
-                  <text class="flow-value" x="372" y="166">${model.totalEnergy}</text>
-                  <text class="flow-label" x="372" y="202">Grid</text>
-                  <text class="flow-value" x="372" y="221">Agent bid</text>
-                </svg>
-              </div>
-            </div>
-            <div class="ha-card">
-              <h3>Climate</h3>
-              <div class="climate-dial">
-                <div class="dial-ring">
-                  <div class="dial-inner">
-                    <div>
-                      <div class="dial-value">${dialValue}</div>
-                      <div class="dial-unit">setpoint °C</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div class="mini-row">
-                <div class="mini-stat"><span>Target</span><strong>${model.target}</strong></div>
-                <div class="mini-stat"><span>Score</span><strong>${model.score}</strong></div>
-                <div class="mini-stat"><span>Status</span><strong>${model.selectedStrategy === 'waiting for Agent decision' ? 'waiting' : 'selected'}</strong></div>
-              </div>
-            </div>
+            ${renderEnergyDashboard(model, resultData)}
           </div>
           <div class="ha-stack">
             <div class="ha-card">
               <h3>Home strategy map</h3>
               <div class="floorplan">
-                <div class="room living">
-                  <div class="room-title">Living room</div>
+                <div class="room ac-zone">
+                  <div class="room-title">Air conditioning</div>
                   <span class="room-device ${deviceStateClass(hvacValue)}">AC ${hvacValue}</span>
                 </div>
                 <div class="room kitchen">
                   <div class="room-title">Kitchen</div>
                   <span class="room-device ${deviceStateClass(applianceValue(model, 'dishwasher'))}">Dishwasher ${applianceValue(model, 'dishwasher')}</span>
                 </div>
-                <div class="room utility">
-                  <div class="room-title">Utility</div>
-                  <span class="room-device ${deviceStateClass(applianceValue(model, 'water_heater'))}">Water heater ${applianceValue(model, 'water_heater')}</span>
+                <div class="room utility-laundry">
+                  <div class="room-title">Utility / laundry</div>
                   <span class="room-device ${deviceStateClass(applianceValue(model, 'washer'))}">Washer ${applianceValue(model, 'washer')}</span>
+                  <span class="room-device ${deviceStateClass(applianceValue(model, 'dryer'))}">Dryer ${applianceValue(model, 'dryer')}</span>
+                </div>
+                <div class="room utility-hot-water">
+                  <div class="room-title">Utility / hot water</div>
+                  <span class="room-device ${deviceStateClass(applianceValue(model, 'water_heater'))}">Water heater ${applianceValue(model, 'water_heater')}</span>
                 </div>
                 <div class="room garage">
-                  <div class="room-title">Garage / energy</div>
-                  <span class="room-device ${deviceStateClass(applianceValue(model, 'ev'))}">EV ${applianceValue(model, 'ev')}</span>
-                  <span class="room-device ${deviceStateClass(model.target)}">VPP ${model.target}</span>
+                  <div class="room-title">Garage</div>
+                  <span class="room-device ${deviceStateClass(applianceValue(model, 'ev'))}">EV charger ${applianceValue(model, 'ev')}</span>
                 </div>
               </div>
+            </div>
+            <div class="ha-card">
+              <h3>Temperature</h3>
+              <div class="climate-dial">
+                <div class="dial-ring">
+                  <div class="dial-inner">
+                    <div>
+                      <div class="dial-value">${temperatureDial}</div>
+                      <div class="dial-unit">room temperature</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="mini-row">
+                <div class="mini-stat"><span>AC setpoint</span><strong>${model.setpoint}</strong></div>
+                <div class="mini-stat"><span>Room temp</span><strong>${model.temperature}</strong></div>
+                <div class="mini-stat"><span>Outdoor temp</span><strong>${model.outdoorTemperature}</strong></div>
+              </div>
+              ${renderTemperatureTrend(resultData, model.setpoint)}
+            </div>
+          </div>
+          <div class="ha-stack">
+            <div class="ha-card">
+              <h3>Strategy explanation</h3>
+              <div class="strategy-summary">
+                <div class="strategy-line"><span>Strategy</span><strong>${model.selectedStrategy}</strong></div>
+                <div class="strategy-line"><span>User score</span><strong>${model.score}</strong></div>
+                <div class="strategy-line"><span>VPP energy</span><strong>${model.vppEnergy}</strong></div>
+              </div>
+              <label class="agent-field-label" for="agentRationaleEdit">EnergyBridge explanation</label>
+              <textarea id="agentRationaleEdit" class="agent-editor" data-edit-key="${esc(editKey)}">${esc(model.explanation)}</textarea>
+              <label class="agent-field-label" for="userFeedbackEdit">User feedback</label>
+              <textarea id="userFeedbackEdit" class="agent-editor small" data-edit-key="${esc(editKey)}">${esc(model.userFeedback)}</textarea>
             </div>
           </div>
         </div>`;
@@ -1251,14 +2282,6 @@
       return ['not recorded in this run'];
     }
 
-    function metricCardsInner(items) {
-      return items.map(([label, value]) => `<div class="live-card"><span>${label}</span><strong>${value}</strong></div>`).join('');
-    }
-
-    function resultMetricsHtml(items) {
-      return `<div class="live-grid" id="liveMetrics">${metricCardsInner(items)}</div>`;
-    }
-
     function progressCardsHtml(progress, emptyText = 'Waiting for results...') {
       return progress && progress.length
         ? progress.map(ev => `
@@ -1289,6 +2312,42 @@
             </div>
           </div>`).join('')
         : `<div class="sub">${emptyText}</div>`;
+    }
+
+    function strategyChoicesFromProgress(progress = []) {
+      const latestWithStrategies = [...(progress || [])].reverse().find(ev => ev.strategies && ev.strategies.length);
+      const strategies = latestWithStrategies?.strategies || [];
+      return ['A', 'B', 'C'].map(letter => {
+        const raw = strategies.find(item => item.trim().startsWith(`[${letter}]`)) || '';
+        const cleaned = raw.replace(new RegExp(`^\\\\[${letter}\\\\]\\\\s*`), '').trim();
+        const [title, ...rest] = cleaned.split(/\s+\|\s+/);
+        return {
+          letter,
+          title: title || `Strategy ${letter}`,
+          detail: rest.join(' | ') || 'Waiting for Agent candidate details'
+        };
+      });
+    }
+
+    function renderHumanChoicePanel(progress = [], jobStatus = '') {
+      if (state.userMode !== 'human') return '';
+      const choices = strategyChoicesFromProgress(progress);
+      const disabled = !state.jobId || ['succeeded', 'failed'].includes(jobStatus);
+      return `
+        <div class="human-dialogue" id="strategyChoicePanel">
+          <h3>Human strategy choice</h3>
+          <div class="choice-grid">
+            ${choices.map(choice => `
+              <button class="choice-card" data-human-choice="${choice.letter}" ${disabled ? 'disabled' : ''}>
+                <small>${choice.letter}</small>
+                ${choice.title}
+                <span>${choice.detail}</span>
+              </button>`).join('')}
+          </div>
+          <div class="score-buttons">
+            ${[1, 2, 3, 4, 5].map(score => `<button class="secondary" data-human-score="${score}" ${disabled ? 'disabled' : ''}>${score}</button>`).join('')}
+          </div>
+        </div>`;
     }
 
     function historyToLive(d) {
@@ -1379,7 +2438,13 @@
 
     function commandPreset(method, persona, userMode, humanName) {
       normalizeScenarioSelection();
-      const base = `conda run --no-capture-output -n energybridge python experiments/benchmark/run_persona_json.py ${persona || state.selectedPersona}`;
+      const selectedPersona = persona || state.selectedPersona || FULL_APPLIANCE_PERSONA_ID;
+      const personaArg = userMode === 'human'
+        ? FULL_APPLIANCE_PERSONA_PATH
+        : (selectedPersona === FULL_APPLIANCE_PERSONA_ID
+          ? FULL_APPLIANCE_PERSONA_PATH
+          : selectedPersona);
+      const base = `conda run --no-capture-output -n energybridge python experiments/benchmark/run_persona_json.py ${shellQuote(personaArg)}`;
       const controllerMethod = 'EnergyBridge';
       const horizon = '';
       const human = userMode === 'human'
@@ -1390,7 +2455,8 @@
       const price = state.priceCsv ? ` --price-csv ${shellQuote(state.priceCsv)}` : '';
       const vpp = ` --vpp-start-hour ${Number(state.vppStartHour || 18)} --vpp-duration-hours ${Number(state.vppDurationHours || 1)}`;
       const vppJson = state.vppEventsJson ? ` --vpp-events-json ${shellQuote(state.vppEventsJson)}` : '';
-      return `${base} --method ${controllerMethod}${horizon}${human}${city}${start}${price}${vpp}${vppJson}`;
+      const memory = ` --capacity-memory-json ${shellQuote(DEFAULT_CAPACITY_MEMORY_JSON)}`;
+      return `${base} --method ${controllerMethod}${horizon}${human}${city}${start}${price}${vpp}${vppJson}${memory}`;
     }
 
     function methodLabel(method) {
@@ -1403,8 +2469,6 @@
     function syncCommandFromSelections() {
       const input = $('commandInput');
       if (input) input.value = defaultCommand();
-      const resultName = $('resultName');
-      if (resultName) resultName.textContent = expectedRunName();
     }
 
     function ensureProgressEvent(events, key) {
@@ -1421,6 +2485,9 @@
           strategies: [],
           selectedStrategy: 'waiting',
           appliances: {},
+          capacity: {},
+          tempSamples: [],
+          setpointSamples: [],
           notes: []
         };
       }
@@ -1433,7 +2500,68 @@
       ev.label = day === String(key) ? `Day ${day}` : `Day ${day} / Event ${key}`;
     }
 
-    function parseLive(logs) {
+    function hourFromAgentLine(line) {
+      const hms = line.match(/\|\s*h=(\d{1,2}):(\d{2})/);
+      if (hms) return Number(hms[1]) + Number(hms[2]) / 60;
+      const dec = line.match(/\|\s*h=([0-9.]+)/);
+      return dec ? Number(dec[1]) % 24 : null;
+    }
+
+    function progressEventToResultEvent(ev) {
+      const day = Number(ev.day || ev.key || 1);
+      const cap = ev.capacity || {};
+      const trigger = numOrNull(cap.triggerH) ?? Number(state.vppStartHour || 18);
+      const duration = numOrNull(cap.durationH) ?? Number(state.vppDurationHours || 1);
+      const scoreMatch = String(ev.score || '').match(/([0-9.]+)/);
+      const setpointMatch = String(ev.setpoint || '').match(/([0-9.]+)/);
+      const sampleByHour = new Map();
+      (ev.setpointSamples || []).forEach(sample => {
+        if (numOrNull(sample.h) === null || numOrNull(sample.sp) === null) return;
+        const key = Number(sample.h).toFixed(3);
+        sampleByHour.set(key, {
+          ...(sampleByHour.get(key) || {}),
+          h: Number(sample.h),
+          sp: Number(sample.sp),
+          effective_setpoint: Number(sample.sp),
+          reason: sample.reason || ''
+        });
+      });
+      (ev.tempSamples || []).forEach(sample => {
+        if (numOrNull(sample.h) === null || numOrNull(sample.temp) === null) return;
+        const key = Number(sample.h).toFixed(3);
+        sampleByHour.set(key, {
+          ...(sampleByHour.get(key) || {}),
+          h: Number(sample.h),
+          objective_terms_posthoc: {
+            diagnostics: {
+              dynamic_model_prediction: {
+                predicted_temp_c: Number(sample.temp)
+              }
+            }
+          }
+        });
+      });
+      const decisions = [...sampleByHour.values()].sort((a, b) => a.h - b.h);
+      return {
+        id: `live-vpp${ev.key}`,
+        day,
+        trigger_h: trigger,
+        end_h: trigger + duration,
+        duration_hours: duration,
+        setpoint: setpointMatch ? Number(setpointMatch[1]) : null,
+        score: scoreMatch ? Number(scoreMatch[1]) : null,
+        label: String(ev.score || '').replace(scoreMatch?.[1] || '', '').replace('/5', '').trim(),
+        reason: ev.selectedStrategy !== 'waiting' ? ev.selectedStrategy : '',
+        comment: (ev.notes || []).find(note => /\[VPP Result/i.test(note)) || '',
+        actual_kwh: numOrNull(cap.actualKwh),
+        demand_target_kw: null,
+        demand_target_kwh: null,
+        strategy_explanation: ev.explanation ? {natural_language: ev.explanation} : {},
+        day_decisions: decisions
+      };
+    }
+
+    function parseLive(logs, job = {}) {
       const text = (logs || []).join('\n');
       const latest = (pattern) => {
         const matches = [...text.matchAll(pattern)];
@@ -1476,6 +2604,13 @@
         setProgressEventDay(ev, key, mappedDay);
         return ev;
       };
+      const setEventWindow = (ev, startHour, endHour) => {
+        const start = numOrNull(startHour);
+        const end = numOrNull(endHour);
+        if (start === null || end === null) return;
+        ev.capacity.triggerH = start;
+        ev.capacity.durationH = end >= start ? end - start : (24 - start) + end;
+      };
       for (const raw of logs || []) {
         const line = raw.trim();
         if (!line) continue;
@@ -1508,6 +2643,15 @@
           const ev = ensureEventForKey(currentKey);
           ev.status = 'active';
           ev.notes.push('VPP event started');
+          const windowMatch = line.match(/Day(\d+)\s+(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})/);
+          if (windowMatch) {
+            setProgressEventDay(ev, currentKey, windowMatch[1]);
+            setEventWindow(
+              ev,
+              Number(windowMatch[2]) + Number(windowMatch[3]) / 60,
+              Number(windowMatch[4]) + Number(windowMatch[5]) / 60
+            );
+          }
         }
         const candidateHeader = line.match(/\[Strategy Candidates\s*\|\s*VPP event\s+(\d+)\]/i);
         if (candidateHeader) {
@@ -1572,15 +2716,52 @@
         if (selectedMatch) {
           const selectedEv = ensureEventForKey(selectedMatch[1]);
           selectedEv.selectedStrategy = selectedMatch[2].trim();
+          const parts = selectedMatch[2].split('|').map(part => part.trim()).filter(Boolean);
+          if (parts.length > 1) selectedEv.explanation = parts.slice(1).join(' ');
+          else selectedEv.explanation = selectedMatch[2].trim();
         }
         const targetMatch = line.match(/shed_target=([0-9.]+)kW\s+\(cap=([0-9.]+)kWh\)/);
         if (targetMatch) {
           const targetEv = inferredEventKey ? ensureEventForKey(inferredEventKey) : ev;
           targetEv.target = `${targetMatch[1]} kW`;
+          targetEv.capacity.targetKw = Number(targetMatch[1]);
+          targetEv.capacity.targetKwh = Number(targetMatch[2]);
+        }
+        const gridDiagnosticMatch = line.match(/\[VPP Grid Agent\]\s+vpp(\d+)\s+diagnostic_shed_ref=([0-9.]+)kW\s+\(diagnostic_cap=([0-9.]+)kWh\)/);
+        if (gridDiagnosticMatch) {
+          const gridEv = ensureEventForKey(gridDiagnosticMatch[1]);
+          gridEv.capacity.targetKw = Number(gridDiagnosticMatch[2]);
+          gridEv.capacity.targetKwh = Number(gridDiagnosticMatch[3]);
+          gridEv.target = `${gridDiagnosticMatch[2]} kW`;
+        }
+        const householdCapacityMatch = line.match(/\[Household Capacity\]\s+committable=([0-9.]+)kW\s+bid=([0-9.]+)kW\s+success=([0-9.]+)%/);
+        if (householdCapacityMatch) {
+          const capEv = ensureEventForKey(currentEventKey || currentKey);
+          const committableKw = Number(householdCapacityMatch[1]);
+          const bidKw = Number(householdCapacityMatch[2]);
+          const success = Number(householdCapacityMatch[3]) / 100;
+          const dur = numOrNull(capEv.capacity.durationH) ?? Number(state.vppDurationHours || 1);
+          capEv.capacity.committableKw = committableKw;
+          capEv.capacity.reportedKw = committableKw;
+          capEv.capacity.reportedEnergyKwh = committableKw * dur;
+          capEv.capacity.committableEnergyKwh = committableKw * dur;
+          capEv.capacity.recommendedKw = bidKw;
+          capEv.capacity.recommendedEnergyKwh = bidKw * dur;
+          capEv.capacity.firmKw = bidKw;
+          capEv.capacity.successProbability = success;
         }
         const acMatch = line.match(/\[(?:AC|MPC) Agent[^\]]*\].*?setpoint(?:→|->)([0-9.]+)/);
         if (acMatch) {
           ev.setpoint = `${acMatch[1]}°C`;
+          const h = hourFromAgentLine(line);
+          if (h !== null) {
+            const reasonParts = line.split('|').map(part => part.trim()).filter(Boolean);
+            ev.setpointSamples.push({
+              h,
+              sp: Number(acMatch[1]),
+              reason: reasonParts.slice(2).join(' | ')
+            });
+          }
         }
         const scoreMatch = line.match(/User score:\s*([0-9.]+)\/5\s+\(([^)]+)\)/);
         if (scoreMatch) {
@@ -1590,6 +2771,7 @@
         const energyMatch = line.match(/\[family\/[^\]]+\]\s+exit=\d+\s+energy=([0-9.]+)kWh\s+vpp_window=([0-9.]+)kWh/);
         if (energyMatch) {
           ev.notes.push(`Run summary: ${energyMatch[1]} kWh total / ${energyMatch[2]} kWh VPP`);
+          ev.capacity.actualKwh = Number(energyMatch[2]);
         }
         const shiftMatch = line.match(/\[Appliance\]\s+shift\s+(\w+)\s+day=(\d+)\s+hod=([0-9.]+)\s+->\s+(\w+)/);
         if (shiftMatch) {
@@ -1633,6 +2815,13 @@
         } else if (line.includes('[VPP Result')) {
           dialogue.push({type: 'result', label: 'Role-play Score', text: line});
           ev.notes.push(line);
+          const tempMatch = line.match(/at\s+([0-9.]+)C(?:\/([0-9.]+)C)?/i);
+          if (tempMatch) {
+            const temp = Number(tempMatch[2] || tempMatch[1]);
+            const h = (numOrNull(ev.capacity.triggerH) ?? Number(state.vppStartHour || 18)) +
+              (numOrNull(ev.capacity.durationH) ?? Number(state.vppDurationHours || 1));
+            ev.tempSamples.push({h, temp});
+          }
         } else if (line.includes('[LLM stats')) {
           dialogue.push({type: 'result', label: 'LLM Stats', text: line});
         }
@@ -1640,6 +2829,7 @@
       }
       const progress = Object.values(progressEvents)
         .sort((a, b) => Number(a.key) - Number(b.key));
+      const liveEvents = progress.map(ev => progressEventToResultEvent(ev));
       return {
         day,
         event,
@@ -1651,7 +2841,12 @@
         cap: demand ? `${demand[2]} kWh` : 'waiting',
         outputName: output ? runNameFromOutput(output[1].trim()) : expectedRunName(),
         dialogue,
-        progress
+        progress,
+        resultData: {
+          method: 'EnergyBridge',
+          vpp_event_log: liveEvents,
+          day_ahead_price_metrics: job.live_price_metrics || null
+        }
       };
     }
 
@@ -1682,40 +2877,18 @@
       return `
         <div class="grid">
           <section class="panel">
-            <div class="hero-console">
-              <div class="agent-card">
-                <h2>EnergyBridge Agent</h2>
-                <div class="result-name">Result: <strong id="resultName">${expectedRunName()}</strong></div>
-                <div class="agent-badge-row">
-                  <span class="agent-badge">VPP capacity forecast</span>
-                  <span class="agent-badge">User preference reasoning</span>
-                  <span class="agent-badge">Human-in-loop ready</span>
-                </div>
-                <div class="agent-flow">
-                  <div class="flow-step"><span>1</span><strong>Read user context</strong></div>
-                  <div class="flow-step"><span>2</span><strong>Predict flexible capacity</strong></div>
-                  <div class="flow-step"><span>3</span><strong>Recommend VPP action</strong></div>
-                  <div class="flow-step"><span>4</span><strong>Score comfort tradeoff</strong></div>
-                </div>
-              </div>
-              <div>
-                <div class="method-lock">
-                  <div class="method-lock-icon">A</div>
-                  <div>
-                    <strong>Primary method: EnergyBridge Agent</strong>
-                    <span>New runs use the Agent path. Historical baseline results remain available from the sidebar.</span>
-                  </div>
-                </div>
-                <div class="section-title"><h3>User</h3></div>
-                <div class="preset-grid">
-                  <button class="${state.userMode === 'roleplay' ? '' : 'secondary'}" data-user-mode="roleplay">Role-play LLM</button>
-                  <button class="${state.userMode === 'human' ? '' : 'secondary'}" data-user-mode="human">Human</button>
-                </div>
-                ${userTypeField}
-              </div>
+            <div class="section-title"><h3>User</h3></div>
+            <div class="preset-grid">
+              <button class="${state.userMode === 'roleplay' ? '' : 'secondary'}" data-user-mode="roleplay">Role-play LLM</button>
+              <button class="${state.userMode === 'human' ? '' : 'secondary'}" data-user-mode="human">Human</button>
             </div>
+            ${userTypeField}
             <div class="section-title"><h3>Scenario and VPP event</h3></div>
             <div class="control-grid">
+              <div class="field-row">
+                <label for="dayViewSelect">Current day view</label>
+                <select id="dayViewSelect">${dayOptionsHtml()}</select>
+              </div>
               <div class="field-row">
                 <label for="citySelect">City</label>
                 <select id="citySelect">
@@ -1754,21 +2927,12 @@
               <input id="commandInput" value="${defaultCommand()}">
               <button id="startRun">Run Agent</button>
             </div>
-            <div class="live-grid" id="liveMetrics">
-              <div class="live-card"><span>Day/Event</span><strong>-</strong></div>
-              <div class="live-card"><span>Setpoint</span><strong>waiting</strong></div>
-              <div class="live-card"><span>VPP target</span><strong>waiting</strong></div>
-              <div class="live-card"><span>User score</span><strong>waiting</strong></div>
-            </div>
-            <div class="section-title"><h3>Home Assistant style device view</h3></div>
             ${renderEntityDashboard([], null, {})}
-            <div class="section-title"><h3>Step-by-step visualization</h3></div>
-            <div class="progress-viz" id="progressViz"><div class="sub">Visualization cards will appear event by event during the run.</div></div>
             <div class="section-title"><h3>Live dialogue</h3></div>
             <div class="dialogue-feed" id="dialogueFeed"><div class="sub">Grid, Agent, user choices, role-play scores, and LLM stats will appear during the run.</div></div>
-            <div id="finishedSummary"></div>
             <div class="section-title"><h3>Terminal</h3></div>
             <div class="terminal" id="runLog">Waiting for a run command...</div>
+            <div id="humanChoiceSlot">${renderHumanChoicePanel([], '')}</div>
             ${humanInputPanel}
           </section>
         </div>`;
@@ -1776,59 +2940,35 @@
 
     function renderRunPage() {
       $('app').innerHTML = `
-        <div class="topbar">
-          <div class="title-block">
-            <h1 class="brand-title">EnergyBridge</h1>
-          </div>
-        </div>
         ${renderOps()}`;
       bindRunControls();
+      bindAgentEditors();
     }
 
     function renderHistoryPage() {
       const d = state.data;
+      normalizeDaySelection(d);
       const live = historyToLive(d);
-      const resultName = d._run_id || runNameFromOutput(d.output_dir);
       $('app').innerHTML = `
-        <div class="topbar">
-          <div class="title-block">
-            <h1 class="brand-title">EnergyBridge</h1>
-          </div>
-        </div>
         <div class="grid">
           <section class="panel">
-            <h2>Historical result</h2>
-            <div class="result-name">Result name: <strong>${resultName}</strong></div>
-            ${resultMetricsHtml([
-              ['Method', methodLabel(d.method || 'unknown')],
-              ['City', d.weather || 'unknown'],
-              ['User score', `${fmt(d.user_pref_score, 1)}/5`],
-              ['Total energy', `${fmt(d.energy_kwh_total, 1)} kWh`],
-              ['VPP energy', `${fmt(d.vpp_window_energy_kwh, 3)} kWh`],
-              ['VPP energy / h', `${fmt(d.vpp_window_energy_avg_per_hour_kwh, 3)} kWh`],
-              ['Appliance shift', pct(d.appliance_shift_success_rate)],
-              ['Status', `exit ${d.exit_code}`]
-            ])}
-            <div style="height:10px"></div>
-            <h3>Home Assistant style device view</h3>
-            ${renderEntityDashboard(live.progress, d, {})}
-            <div style="height:10px"></div>
-            <h3>Step-by-step visualization</h3>
-            <div class="progress-viz">${progressCardsHtml(live.progress, 'No event records.')}</div>
-            <div style="height:10px"></div>
-            <h3>Log summary / dialogue</h3>
-            <div class="dialogue-feed">
-              ${live.dialogue.length
-                ? live.dialogue.map(item => `<div class="dialogue-item ${item.type}"><small>${item.label}</small>${item.text}</div>`).join('')
-                : '<div class="sub">No dialogue records.</div>'}
+            <div class="section-title"><h3>Daily VPP event view</h3></div>
+            <div class="control-grid" style="margin-bottom:14px">
+              <div class="field-row">
+                <label for="dayViewSelect">Current day view</label>
+                <select id="dayViewSelect">${dayOptionsHtml(d)}</select>
+              </div>
             </div>
-            ${d.run_summary_text ? `<h3>Full user log / run_summary.txt</h3><div class="summary-log">${d.run_summary_text}</div>` : ''}
+            ${renderEntityDashboard(live.progress, d, {})}
           </section>
         </div>`;
+      bindDayViewControls();
+      bindAgentEditors();
     }
 
     function bindRunControls() {
       $('startRun').onclick = startRun;
+      bindDayViewControls();
       const personaSelect = $('personaSelect');
       if (personaSelect) {
         personaSelect.onchange = (e) => {
@@ -1930,6 +3070,33 @@
       }
     }
 
+    function bindDayViewControls() {
+      const daySelect = $('dayViewSelect');
+      if (!daySelect) return;
+      daySelect.onchange = (e) => {
+        state.selectedDay = Number(e.target.value || 1);
+        normalizeDaySelection(state.data);
+        render();
+      };
+    }
+
+    function bindAgentEditors() {
+      const rationale = $('agentRationaleEdit');
+      const feedback = $('userFeedbackEdit');
+      if (rationale) {
+        rationale.oninput = (e) => {
+          const key = e.target.dataset.editKey || agentEditKey(state.data);
+          state.agentEdits[key] = {...(state.agentEdits[key] || {}), explanation: e.target.value};
+        };
+      }
+      if (feedback) {
+        feedback.oninput = (e) => {
+          const key = e.target.dataset.editKey || agentEditKey(state.data);
+          state.agentEdits[key] = {...(state.agentEdits[key] || {}), userFeedback: e.target.value};
+        };
+      }
+    }
+
     function render() {
       const shell = $('shell');
       shell.classList.toggle('sidebar-collapsed', !state.sidebarOpen);
@@ -2001,26 +3168,11 @@
     }
 
     function renderLiveJob(job) {
-      const live = parseLive(job.logs || []);
-      const resultData = job.benchmark_result || null;
-      const resultLive = resultData ? historyToLive(resultData) : null;
+      const live = parseLive(job.logs || [], job);
+      const resultData = job.benchmark_result || live.resultData || null;
+      const resultLive = job.benchmark_result ? historyToLive(job.benchmark_result) : null;
       const shownProgress = resultLive ? resultLive.progress : live.progress;
       const shownDialogue = resultLive ? resultLive.dialogue : live.dialogue;
-      const resultName = $('resultName');
-      if (resultName) resultName.textContent = live.outputName || expectedRunName();
-      const metrics = $('liveMetrics');
-      if (metrics) {
-        const firstEvent = resultData?.vpp_event_log?.[0] || null;
-        metrics.innerHTML = metricCardsInner([
-          ['Day/Event', `D${live.day} / E${live.event}`],
-          ['Setpoint', resultData?.agent_setpoint_c ? `${fmt(resultData.agent_setpoint_c, 1)}°C` : live.sp],
-          ['VPP target', firstEvent ? vppTargetText(firstEvent) : live.demand],
-          ['User score', resultData?.user_pref_score ? `${fmt(resultData.user_pref_score, 1)}/5` : live.score],
-          ['Total energy', resultData?.energy_kwh_total ? `${fmt(resultData.energy_kwh_total, 1)} kWh` : live.energy],
-          ['VPP energy', resultData?.vpp_window_energy_kwh ? `${fmt(resultData.vpp_window_energy_kwh, 3)} kWh` : live.vpp],
-          ['Status', job.status]
-        ]);
-      }
       const feed = $('dialogueFeed');
       if (feed) {
         feed.innerHTML = shownDialogue.length
@@ -2028,21 +3180,20 @@
           : '<div class="sub">Grid, Agent, user choices, and role-play scores will appear after the run starts.</div>';
         feed.scrollTop = feed.scrollHeight;
       }
-      const progressViz = $('progressViz');
-      if (progressViz) {
-        progressViz.innerHTML = progressCardsHtml(shownProgress, 'Visualization cards will appear event by event during the run.');
-      }
       const entityDashboard = $('haEntityDashboard');
       if (entityDashboard) {
         entityDashboard.outerHTML = renderEntityDashboard(shownProgress, resultData, live);
+        bindAgentEditors();
       }
-      const summary = $('finishedSummary');
-      if (summary) {
-        if (job.run_summary_text) {
-          summary.innerHTML = `<h3>Full user log / run_summary.txt</h3><div class="summary-log">${job.run_summary_text}</div>`;
-        } else {
-          summary.innerHTML = '';
-        }
+      const choiceSlot = $('humanChoiceSlot');
+      if (choiceSlot) {
+        choiceSlot.innerHTML = renderHumanChoicePanel(shownProgress, job.status);
+        document.querySelectorAll('[data-human-choice]').forEach(btn => {
+          btn.onclick = () => sendHumanInput(btn.dataset.humanChoice, 'strategy_choice');
+        });
+        document.querySelectorAll('[data-human-score]').forEach(btn => {
+          btn.onclick = () => sendHumanInput(btn.dataset.humanScore, 'score');
+        });
       }
     }
 

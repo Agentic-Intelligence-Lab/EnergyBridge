@@ -7,6 +7,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import math
 import os
@@ -16,7 +17,7 @@ import subprocess
 import sys
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -36,10 +37,16 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 def _append_job_log(job_id: str, line: str) -> None:
+    max_line_chars = 12000
+    if len(line) > max_line_chars:
+        line = line[:max_line_chars] + "\n[dashboard] log line truncated"
     with JOBS_LOCK:
         job = JOBS.get(job_id)
         if job is not None:
-            job.setdefault("logs", []).append(line.rstrip("\n"))
+            logs = job.setdefault("logs", [])
+            logs.append(line.rstrip("\n"))
+            if len(logs) > 2000:
+                del logs[:-2000]
 
 
 def _set_job(job_id: str, **updates) -> None:
@@ -75,6 +82,7 @@ def _attach_finished_summary(job_id: str) -> None:
     with JOBS_LOCK:
         logs = list(JOBS.get(job_id, {}).get("logs", []))
     summary_path = None
+    output_dir = None
     for line in reversed(logs):
         if "run_summary.txt" in line:
             tail = line.split("run_summary.txt", 1)[-1].strip()
@@ -91,6 +99,8 @@ def _attach_finished_summary(job_id: str) -> None:
                 if candidate.exists():
                     summary_path = str(candidate)
                     break
+                if Path(output_dir).exists():
+                    break
     if summary_path:
         path = Path(summary_path)
         if path.exists():
@@ -104,10 +114,62 @@ def _attach_finished_summary(job_id: str) -> None:
                     result_data = json.loads(result_path.read_text(encoding="utf-8"))
                     _apply_meter_vpp_energy(result_data, path.parent)
                     _normalize_dashboard_result(result_data)
+                    _attach_price_hourly_profiles(result_data)
                     updates["benchmark_result"] = result_data
                 except Exception:
                     pass
             _set_job(job_id, **updates)
+    elif output_dir:
+        result_path = Path(output_dir) / "benchmark_result.json"
+        if result_path.exists():
+            try:
+                result_data = json.loads(result_path.read_text(encoding="utf-8"))
+                _apply_meter_vpp_energy(result_data, result_path.parent)
+                _normalize_dashboard_result(result_data)
+                _attach_price_hourly_profiles(result_data)
+                _set_job(job_id, benchmark_result=result_data)
+            except Exception:
+                pass
+
+
+def _argv_option(argv: list[str], name: str) -> str | None:
+    try:
+        idx = argv.index(name)
+    except ValueError:
+        return None
+    if idx + 1 >= len(argv):
+        return None
+    return argv[idx + 1]
+
+
+def _job_live_price_metrics(job: dict) -> dict | None:
+    argv = job.get("argv") or []
+    source = _argv_option(argv, "--price-csv")
+    if not source:
+        for line in reversed(job.get("logs") or []):
+            if line.strip().startswith("PRICE"):
+                source = line.split(":", 1)[-1].strip()
+                break
+    if not source:
+        return None
+    days_text = _argv_option(argv, "--days") or "1"
+    try:
+        days = max(1, int(float(days_text)))
+    except (TypeError, ValueError):
+        days = 1
+    data = {
+        "day_ahead_price_metrics": {
+            "available": True,
+            "source": source,
+            "price_unit": "normalized TOU cost/kWh"
+            if str(source).endswith("tianjin_tou_price_normalized.csv")
+            else "price/kWh",
+            "per_day": [{"day": day} for day in range(1, days + 1)],
+        }
+    }
+    _attach_price_hourly_profiles(data)
+    metrics = data.get("day_ahead_price_metrics")
+    return metrics if isinstance(metrics, dict) else None
 
 
 def _run_command_job(job_id: str, argv: list[str]) -> None:
@@ -131,6 +193,7 @@ def _run_command_job(job_id: str, argv: list[str]) -> None:
                 JOBS[job_id]["pid"] = proc.pid
         assert proc.stdout is not None
         chunk = []
+        max_chunk_chars = 12000
         while True:
             char = proc.stdout.read(1)
             if char == "" and proc.poll() is not None:
@@ -138,6 +201,9 @@ def _run_command_job(job_id: str, argv: list[str]) -> None:
             if not char:
                 continue
             chunk.append(char)
+            if len(chunk) >= max_chunk_chars:
+                _append_job_log(job_id, "".join(chunk) + "\n[dashboard] continued long output")
+                chunk = []
             if char == "\n" or "".join(chunk).endswith("  > "):
                 _append_job_log(job_id, "".join(chunk))
                 chunk = []
@@ -198,7 +264,7 @@ def _list_personas() -> list[dict]:
             data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             continue
-        persona_id = data.get("id") or path.stem
+        persona_id = path.stem
         label = persona_id
         if persona_id.startswith("basic_role_"):
             parts = persona_id.split("_")
@@ -206,7 +272,8 @@ def _list_personas() -> list[dict]:
         personas.append({
             "id": persona_id,
             "label": label,
-            "name": data.get("name", persona_id),
+            "name": data.get("display_name") or data.get("name", persona_id),
+            "run_id": data.get("id") or path.stem,
             "path": str(path),
         })
     return personas
@@ -482,6 +549,90 @@ def _normalize_dashboard_result(data: dict) -> None:
             event["selected_strategy"] = trace.get("selected_strategy") or {}
         event.setdefault("strategy_candidates", [])
         event.setdefault("selected_strategy", {})
+
+
+def _resolve_dashboard_source_path(source: str | None) -> Path | None:
+    if not source:
+        return None
+    path = Path(str(source))
+    if path.is_absolute() and path.exists():
+        return path
+    candidate = PROJECT_ROOT / path
+    if candidate.exists():
+        return candidate
+    return None
+
+
+def _attach_price_hourly_profiles(data: dict) -> None:
+    metrics = data.get("day_ahead_price_metrics")
+    if not isinstance(metrics, dict):
+        return
+    per_day = metrics.get("per_day")
+    if not isinstance(per_day, list) or not per_day:
+        return
+    source_path = _resolve_dashboard_source_path(metrics.get("source"))
+    if source_path is None or not source_path.exists():
+        return
+
+    try:
+        if source_path.name.endswith("tianjin_tou_price_normalized.csv"):
+            with source_path.open(encoding="utf-8-sig", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            hourly_prices = []
+            hour_labels = []
+            for row in rows[:24]:
+                try:
+                    hourly_prices.append(float(row.get("normalized_aggregator_tou_incentive")))
+                except (TypeError, ValueError):
+                    hourly_prices.append(None)
+                hour_labels.append(str(row.get("hour_start") or ""))
+            for item in per_day:
+                item["hourly_prices"] = hourly_prices
+                item["hour_labels"] = hour_labels
+            metrics["hourly_profile_kind"] = "recurring_24h"
+            return
+
+        by_date: dict[str, list[float | None]] = {}
+        hour_labels = [f"{hour:02d}:00" for hour in range(24)]
+        with source_path.open(encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                local_value = (row.get("Datetime (Local)") or "").strip()
+                price_value = row.get("Price (EUR/MWhe)")
+                if not local_value or price_value is None:
+                    continue
+                try:
+                    local_dt = datetime.fromisoformat(local_value)
+                    price = float(price_value)
+                except ValueError:
+                    continue
+                date_key = local_dt.date().isoformat()
+                values = by_date.setdefault(date_key, [None] * 24)
+                values[int(local_dt.hour)] = price
+
+        start_date_text = str(data.get("start_date") or "").strip()
+        start_date = None
+        try:
+            if start_date_text:
+                start_date = datetime.fromisoformat(start_date_text).date()
+        except ValueError:
+            start_date = None
+
+        for item in per_day:
+            day_index = item.get("day")
+            date_key = str(item.get("date") or "")
+            if start_date is not None:
+                try:
+                    date_key = (start_date + timedelta(days=int(day_index) - 1)).isoformat()
+                except Exception:
+                    pass
+            prices = by_date.get(date_key)
+            if prices:
+                item["hourly_prices"] = prices
+                item["hour_labels"] = hour_labels
+        metrics["hourly_profile_kind"] = "date_indexed_24h"
+    except Exception:
+        return
 
 
 def _json_safe(value):
@@ -827,7 +978,7 @@ INDEX_HTML = r"""<!doctype html>
       jobPoll: null,
       selectedDate: '',
       selectedMethod: 'EnergyBridge',
-      selectedPersona: 'basic_role_a_commuter_price_cooperative',
+      selectedPersona: 'all_appliances_full',
       selectedCity: 'Tianjin',
       selectedDays: 3,
       startDate: '',
@@ -851,6 +1002,7 @@ INDEX_HTML = r"""<!doctype html>
       {value: '2025-06-01', label: '2025-06-01'}
     ];
     const PRICE_CSV_DEFAULTS = {
+      Tianjin: 'experiments/real_data/tianjin_tou_price_normalized.csv',
       Germany: 'experiments/real_data/germany_2025_price.csv'
     };
 
@@ -1210,7 +1362,8 @@ INDEX_HTML = r"""<!doctype html>
       const price = state.priceCsv ? ` --price-csv ${shellQuote(state.priceCsv)}` : '';
       const vpp = ` --vpp-start-hour ${Number(state.vppStartHour || 18)} --vpp-duration-hours ${Number(state.vppDurationHours || 1)}`;
       const vppJson = state.vppEventsJson ? ` --vpp-events-json ${shellQuote(state.vppEventsJson)}` : '';
-      return `${base} --method ${controllerMethod}${horizon}${human}${city}${start}${price}${vpp}${vppJson}`;
+      const memory = ` --capacity-memory-json ${shellQuote('dr_capacity_memory_toolkit/june_2025_daily_eb_rule_milp/data/eb_rule_milp_daily_dr_memory.json')}`;
+      return `${base} --method ${controllerMethod}${horizon}${human}${city}${start}${price}${vpp}${vppJson}${memory}`;
     }
 
     function methodLabel(method) {
@@ -1909,6 +2062,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     data["method"] = self._canonical_method_id(data.get("method") or self._infer_method_from_run_name(run_path.name))
                     _apply_meter_vpp_energy(data, run_path)
                     _normalize_dashboard_result(data)
+                    _attach_price_hourly_profiles(data)
                 except Exception as exc:
                     rel = run_path.relative_to(self.results_dir).as_posix()
                     data = {
@@ -1945,6 +2099,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             job_id = parse_qs(parsed.query).get("id", [""])[0]
             with JOBS_LOCK:
                 existing = dict(JOBS.get(job_id, {}))
+            if existing and not existing.get("benchmark_result"):
+                _attach_finished_summary(job_id)
             if existing and existing.get("status") in {"succeeded", "failed"} and not existing.get("run_summary_text"):
                 _attach_finished_summary(job_id)
             with JOBS_LOCK:
@@ -1952,6 +2108,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if not job:
                 self._send_error(HTTPStatus.NOT_FOUND, "Unknown job")
                 return
+            live_price_metrics = _job_live_price_metrics(job)
+            if live_price_metrics is not None:
+                job["live_price_metrics"] = live_price_metrics
             self._send_json(job)
             return
         self._send_error(HTTPStatus.NOT_FOUND, "Not found")
