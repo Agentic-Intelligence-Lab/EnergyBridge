@@ -26,6 +26,10 @@ for p in (str(EPLUS_ROOT), str(PROJECT_ROOT)):
     if p not in sys.path: sys.path.insert(0, p)
 
 from energybridge.data.vpp_events import describe_vpp_events, make_daily_vpp_events
+from energybridge.skills.vpp_participation_explainer import (
+    finalize_vpp_participation_explanation,
+    scoring_explanation_text,
+)
 from experiments.benchmark.strategy_explanations import english_only_text, normalize_vpp_strategy_explanation
 
 _EXPERIMENTS_DIR = BENCHMARK_DIR.parent
@@ -289,6 +293,7 @@ class BenchmarkResult:
     appliance_results: dict = field(default_factory=dict)  # per-device per-day details
     no_dr_routine_actions: List[dict] = field(default_factory=list)
     day_ahead_price_metrics: dict = field(default_factory=dict)
+    daily_trace_rows: List[dict] = field(default_factory=list)
     control_decisions: List[Tuple[float, float, float]] = field(default_factory=list)
     vpp_event_log: List[dict] = field(default_factory=list)  # scored VPP events with reason
     agent_preference_memory_path: str = ""
@@ -3689,6 +3694,7 @@ All times are hour-of-day (0–23.9)."""
                     city=weather_label or "",
                     source="family_energybridge_agent_skills" if agent_skill_trace else "family_llm_agent",
                 )
+                strategy_explanation = finalize_vpp_participation_explanation(strategy_explanation)
             day_num = int(sim_h // 24) + 1
             hh_mm = f"{int(hod % 24):02d}:{int((hod % 1)*60):02d}"
             vpp_tag = f" | VPP-{vpp_id}" if vpp_active else ""
@@ -3730,6 +3736,9 @@ All times are hour-of-day (0–23.9)."""
                     method=method,
                     city=weather_label or "",
                     source="family_llm_fallback",
+                )
+                fallback["strategy_explanation"] = finalize_vpp_participation_explanation(
+                    fallback["strategy_explanation"]
                 )
             return fallback
 
@@ -4197,13 +4206,19 @@ All times are hour-of-day (0–23.9)."""
                     if isinstance(item, dict) and item.get("ac_mode") is not None
                 ],
             }
+            strategy_trace = loop_ref.vpp_strategy_trace_by_id.get(ev["id"], {})
+            strategy_explanation = loop_ref.vpp_strategy_explanation_by_id.get(ev["id"], {})
+            _score_explanation = scoring_explanation_text(strategy_explanation)
             r = score_fn(
                 building="family", method=method,
                 mean_temp_c=mean_t, pmv_ok_fraction=pmv_ok,
                 energy_kwh_per_day=e_day, agent_setpoint_c=sp_w,
                 event_index=event_index,
                 user_preference_text=loop_ref.vpp_user_input_by_id.get(ev["id"], loop_ref.vpp_user_input),
-                agent_reason=loop_ref.vpp_trigger_reason_by_id.get(ev["id"], loop_ref.vpp_last_reason),
+                agent_reason=(
+                    _score_explanation
+                    or loop_ref.vpp_trigger_reason_by_id.get(ev["id"], loop_ref.vpp_last_reason)
+                ),
                 persona=persona_config,
                 appliance_summary=appliance_summary,
                 vpp_context=ev,
@@ -4223,8 +4238,6 @@ All times are hour-of-day (0–23.9)."""
             lbl = r.get("label", "?")
             cmt = str(r.get("comment", ""))
             src = r.get("source", "?")
-            strategy_trace = loop_ref.vpp_strategy_trace_by_id.get(ev["id"], {})
-            strategy_explanation = loop_ref.vpp_strategy_explanation_by_id.get(ev["id"], {})
             print(
                 f"  [VPP Result | Event {event_index}/{len(vpp_events)} {ev['id']}] "
                 f"User score: {sc}/5 ({lbl}) | {cmt[:80]}"
@@ -4451,6 +4464,7 @@ All times are hour-of-day (0–23.9)."""
                 "facility_power_w": max(0.0, float(fac or 0.0)),
                 "outdoor_temperature_c": float(out_t),
                 "indoor_temperature_c": float(temp),
+                "ac_setpoint_c": float(loop.sp),
                 "occupied": bool(occ),
                 "vpp_active": active_vpp is not None,
                 "vpp_event_id": str(active_vpp.get("id", "")) if active_vpp else "",
@@ -4477,6 +4491,8 @@ All times are hour-of-day (0–23.9)."""
                         "h": sim_h,
                         "sp": loop.planned_occupied_sp,
                         "effective_setpoint": loop.sp,
+                        "room_temp_c": round(float(temp), 3),
+                        "outdoor_temp_c": round(float(out_t), 3),
                         "hvac_availability": 0.0,
                         "hvac_availability_source": "HVAC_Availability_Control" if hvac_avail_set else "setpoint_fallback",
                         "occupied": False,
@@ -4497,6 +4513,8 @@ All times are hour-of-day (0–23.9)."""
                     "h": sim_h,
                     "sp": loop.planned_occupied_sp,
                     "effective_setpoint": loop.sp,
+                    "room_temp_c": round(float(temp), 3),
+                    "outdoor_temp_c": round(float(out_t), 3),
                     "hvac_availability": 1.0,
                     "hvac_availability_source": "HVAC_Availability_Control" if hvac_avail_set else "setpoint_fallback",
                     "occupied": True,
@@ -4781,6 +4799,8 @@ All times are hour-of-day (0–23.9)."""
                     "h": sim_h,
                     "sp": res["setpoint"],
                     "effective_setpoint": effective_sp,
+                    "room_temp_c": round(float(temp), 3),
+                    "outdoor_temp_c": round(float(out_t), 3),
                     "hvac_availability": 1.0 if hvac_control_occupied else 0.0,
                     "hvac_availability_source": "HVAC_Availability_Control" if hvac_avail_set else "setpoint_fallback",
                     "occupied": bool(occ),
@@ -5159,6 +5179,22 @@ All times are hour-of-day (0–23.9)."""
         appliance_results=appl_results_dict,
         no_dr_routine_actions=list(loop.no_dr_routine_actions),
         day_ahead_price_metrics=price_metrics,
+        daily_trace_rows=[
+            {
+                "day": int(float(row.get("sim_h", 0.0)) // 24) + 1,
+                "sim_h": round(float(row.get("sim_h", 0.0)), 4),
+                "hour": round(float(row.get("hod", 0.0)), 4),
+                "dt_h": round(float(row.get("dt_h", 0.0)), 6),
+                "power_kw": round(float(row.get("power_kw", 0.0)), 6),
+                "indoor_temperature_c": round(float(row.get("indoor_temperature_c", 0.0)), 4),
+                "outdoor_temperature_c": round(float(row.get("outdoor_temperature_c", 0.0)), 4),
+                "ac_setpoint_c": round(float(row.get("ac_setpoint_c", 0.0)), 4),
+                "occupied": bool(row.get("occupied", False)),
+                "vpp_active": bool(row.get("vpp_active", False)),
+                "vpp_event_id": str(row.get("vpp_event_id", "") or ""),
+            }
+            for row in loop.power_trace_rows
+        ],
         vpp_event_log=loop.vpp_event_log,
         agent_preference_memory_path=str(getattr(loop, "agent_memory_path", "") or ""),
         agent_preference_memory_md_path=str(getattr(loop, "agent_memory_md_path", "") or ""),
