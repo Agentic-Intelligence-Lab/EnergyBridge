@@ -3169,8 +3169,10 @@
 
     function renderLiveJob(job) {
       const live = parseLive(job.logs || [], job);
-      const resultData = job.benchmark_result || live.resultData || null;
-      const resultLive = job.benchmark_result ? historyToLive(job.benchmark_result) : null;
+      const structuredResult = job.benchmark_result || job.live_result || null;
+      const resultData = structuredResult || live.resultData || null;
+      const hasStructuredEvents = Array.isArray(structuredResult?.vpp_event_log) && structuredResult.vpp_event_log.length > 0;
+      const resultLive = hasStructuredEvents ? historyToLive(structuredResult) : null;
       const shownProgress = resultLive ? resultLive.progress : live.progress;
       const shownDialogue = resultLive ? resultLive.dialogue : live.dialogue;
       const feed = $('dialogueFeed');

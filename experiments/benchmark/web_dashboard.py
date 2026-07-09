@@ -172,6 +172,42 @@ def _job_live_price_metrics(job: dict) -> dict | None:
     return metrics if isinstance(metrics, dict) else None
 
 
+def _job_output_dir(job: dict) -> Path | None:
+    output_dir = job.get("output_dir")
+    if not output_dir:
+        for line in reversed(job.get("logs") or []):
+            if line.strip().startswith("OUTPUT"):
+                output_dir = line.split(":", 1)[-1].strip()
+                break
+    if not output_dir:
+        return None
+    path = Path(str(output_dir)).expanduser()
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return path
+
+
+def _job_live_snapshot(job: dict) -> dict | None:
+    output_dir = _job_output_dir(job)
+    if output_dir is None:
+        return None
+    snapshot_path = output_dir / "live_snapshot.json"
+    if not snapshot_path.exists():
+        return None
+    try:
+        data = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        data["output_dir"] = str(output_dir)
+        _normalize_dashboard_result(data)
+        live_price_metrics = _job_live_price_metrics(job)
+        if live_price_metrics is not None:
+            data["day_ahead_price_metrics"] = live_price_metrics
+        else:
+            _attach_price_hourly_profiles(data)
+        return data
+    except Exception:
+        return None
+
+
 def _run_command_job(job_id: str, argv: list[str]) -> None:
     _set_job(job_id, status="running", started_at=datetime.now().isoformat(timespec="seconds"))
     try:
@@ -2111,6 +2147,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             live_price_metrics = _job_live_price_metrics(job)
             if live_price_metrics is not None:
                 job["live_price_metrics"] = live_price_metrics
+            live_snapshot = _job_live_snapshot(job)
+            if live_snapshot is not None and not job.get("benchmark_result"):
+                job["live_result"] = live_snapshot
             self._send_json(job)
             return
         self._send_error(HTTPStatus.NOT_FOUND, "Not found")

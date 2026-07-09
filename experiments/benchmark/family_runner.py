@@ -303,6 +303,31 @@ class BenchmarkResult:
         _skip = {"control_decisions", "appliance_results"}
         return {k: v for k, v in self.__dict__.items() if not k.startswith("_") and k not in _skip}
 
+
+def _dashboard_trace_rows(power_trace_rows: list[dict]) -> list[dict]:
+    """Compact simulator rows for the web dashboard and live snapshots."""
+    rows: list[dict] = []
+    for row in power_trace_rows:
+        try:
+            sim_h = float(row.get("sim_h", 0.0))
+            rows.append({
+                "day": int(sim_h // 24) + 1,
+                "sim_h": round(sim_h, 4),
+                "hour": round(float(row.get("hod", 0.0)), 4),
+                "dt_h": round(float(row.get("dt_h", 0.0)), 6),
+                "power_kw": round(float(row.get("power_kw", 0.0)), 6),
+                "indoor_temperature_c": round(float(row.get("indoor_temperature_c", 0.0)), 4),
+                "outdoor_temperature_c": round(float(row.get("outdoor_temperature_c", 0.0)), 4),
+                "ac_setpoint_c": round(float(row.get("ac_setpoint_c", 0.0)), 4),
+                "occupied": bool(row.get("occupied", False)),
+                "vpp_active": bool(row.get("vpp_active", False)),
+                "vpp_event_id": str(row.get("vpp_event_id", "") or ""),
+            })
+        except (TypeError, ValueError):
+            continue
+    return rows
+
+
 def _compute_pmv(tdb, rh=PMV_RH):
     try:
         from pythermalcomfort.models import pmv_ppd_iso
@@ -2838,6 +2863,29 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
         method=method,
         persona_config=persona_config,
     )
+
+    def _write_live_snapshot(status: str = "running") -> None:
+        try:
+            data = {
+                "scenario": f"family/{weather_label}",
+                "building": "family",
+                "weather": weather_label,
+                "method": method,
+                "sim_days": sim_days,
+                "start_date": run_start_date.isoformat() if run_start_date else "",
+                "vpp_schedule_source": loop.vpp_schedule_source,
+                "live_status": status,
+                "daily_trace_rows": _dashboard_trace_rows(loop.power_trace_rows),
+                "vpp_event_log": list(loop.vpp_event_log),
+                "output_dir": str(output_dir),
+            }
+            path = output_dir / "live_snapshot.json"
+            tmp = output_dir / "live_snapshot.json.tmp"
+            tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(path)
+        except Exception:
+            pass
+
     ex = api.exchange
     ex.request_variable(state, "Zone Mean Air Temperature", "living_unit1")
     ex.request_variable(state, "Facility Total Electricity Demand Rate", "Whole Building")
@@ -4340,6 +4388,7 @@ All times are hour-of-day (0–23.9)."""
         result["day_decisions"] = loop.day_agent_decisions[_event_day_idx]
         loop.vpp_event_log.append(result)
         loop.vpp_scored.add(ev["id"])
+        _write_live_snapshot(status="scored_event")
         # Update memory context for subsequent LLM calls.
         # Keep it compact, but convert repeated feedback into actionable rules
         # so the next strategy does not relearn the same preference from scratch.
@@ -4469,6 +4518,10 @@ All times are hour-of-day (0–23.9)."""
                 "vpp_active": active_vpp is not None,
                 "vpp_event_id": str(active_vpp.get("id", "")) if active_vpp else "",
             })
+            _last_snapshot_h = getattr(loop, "_last_live_snapshot_h", None)
+            if _last_snapshot_h is None or sim_h - float(_last_snapshot_h) >= 1.0 or active_vpp is not None:
+                _write_live_snapshot(status="running")
+                loop._last_live_snapshot_h = float(sim_h)
 
         if not wu:
             psim = loop.prev_sim_h
@@ -5179,22 +5232,7 @@ All times are hour-of-day (0–23.9)."""
         appliance_results=appl_results_dict,
         no_dr_routine_actions=list(loop.no_dr_routine_actions),
         day_ahead_price_metrics=price_metrics,
-        daily_trace_rows=[
-            {
-                "day": int(float(row.get("sim_h", 0.0)) // 24) + 1,
-                "sim_h": round(float(row.get("sim_h", 0.0)), 4),
-                "hour": round(float(row.get("hod", 0.0)), 4),
-                "dt_h": round(float(row.get("dt_h", 0.0)), 6),
-                "power_kw": round(float(row.get("power_kw", 0.0)), 6),
-                "indoor_temperature_c": round(float(row.get("indoor_temperature_c", 0.0)), 4),
-                "outdoor_temperature_c": round(float(row.get("outdoor_temperature_c", 0.0)), 4),
-                "ac_setpoint_c": round(float(row.get("ac_setpoint_c", 0.0)), 4),
-                "occupied": bool(row.get("occupied", False)),
-                "vpp_active": bool(row.get("vpp_active", False)),
-                "vpp_event_id": str(row.get("vpp_event_id", "") or ""),
-            }
-            for row in loop.power_trace_rows
-        ],
+        daily_trace_rows=_dashboard_trace_rows(loop.power_trace_rows),
         vpp_event_log=loop.vpp_event_log,
         agent_preference_memory_path=str(getattr(loop, "agent_memory_path", "") or ""),
         agent_preference_memory_md_path=str(getattr(loop, "agent_memory_md_path", "") or ""),
