@@ -908,6 +908,22 @@
       font-size: 12px;
       line-height: 1.36;
     }
+    .agent-readonly {
+      width: 100%;
+      min-height: 0;
+      height: 100%;
+      overflow: auto;
+      border: 1px solid var(--ha-line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 10px;
+      color: var(--ha-ink);
+      font: inherit;
+      font-size: 12px;
+      line-height: 1.36;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
     .agent-editor.small { min-height: 0; height: 100%; }
     .strategy-card {
       height: 100%;
@@ -1749,7 +1765,7 @@
         || resultData?.user_pref_comment
         || humanNote
         || '';
-      const explanation = edit.explanation ?? conciseSentences(explanationBase, 3);
+      const explanation = compactText(explanationBase) || 'waiting';
       const userFeedback = edit.userFeedback ?? userFeedbackBase;
       return {appliances, setpoint, score, totalEnergy, vppEnergy: selectedVppEnergy, temperature, outdoorTemperature, target, selectedStrategy, explanation, userFeedback};
     }
@@ -2459,8 +2475,8 @@
                 <div class="strategy-line"><span>User score</span><strong>${model.score}</strong></div>
                 <div class="strategy-line"><span>VPP energy</span><strong>${model.vppEnergy}</strong></div>
               </div>
-              <label class="agent-field-label" for="agentRationaleEdit">EnergyBridge explanation</label>
-              <textarea id="agentRationaleEdit" class="agent-editor" data-edit-key="${esc(editKey)}" placeholder="Waiting for EnergyBridge explanation">${esc(model.explanation)}</textarea>
+              <label class="agent-field-label" for="agentRationaleView">EnergyBridge explanation</label>
+              <div id="agentRationaleView" class="agent-readonly" role="region" aria-label="EnergyBridge explanation">${esc(model.explanation)}</div>
               <label class="agent-field-label" for="userFeedbackEdit">User feedback</label>
               <textarea id="userFeedbackEdit" class="agent-editor small" data-edit-key="${esc(editKey)}" placeholder="Waiting for user feedback">${esc(model.userFeedback)}</textarea>
             </div>
@@ -3121,6 +3137,15 @@
             <button id="sendHumanCustom">Enter</button>
           </div>
         </div>` : '';
+      const terminalPanel = `
+        <div class="section-title"><h3>Terminal</h3></div>
+        <div class="terminal" id="runLog">Waiting for a run command...</div>`;
+      const runTail = state.userMode === 'human' ? `
+        <div id="humanChoiceSlot">${renderHumanChoicePanel([], '')}</div>
+        ${humanInputPanel}
+        ${terminalPanel}` : `
+        <div id="humanChoiceSlot"></div>
+        ${terminalPanel}`;
       return `
         <div class="grid">
           <section class="panel">
@@ -3175,12 +3200,7 @@
               <button id="startRun">Run Agent</button>
             </div>
             ${renderEntityDashboard([], null, {})}
-            <div class="section-title"><h3>Live dialogue</h3></div>
-            <div class="dialogue-feed" id="dialogueFeed"><div class="sub">Grid, Agent, user choices, role-play scores, and LLM stats will appear during the run.</div></div>
-            <div class="section-title"><h3>Terminal</h3></div>
-            <div class="terminal" id="runLog">Waiting for a run command...</div>
-            <div id="humanChoiceSlot">${renderHumanChoicePanel([], '')}</div>
-            ${humanInputPanel}
+            ${runTail}
           </section>
         </div>`;
     }
@@ -3328,14 +3348,7 @@
     }
 
     function bindAgentEditors() {
-      const rationale = $('agentRationaleEdit');
       const feedback = $('userFeedbackEdit');
-      if (rationale) {
-        rationale.oninput = (e) => {
-          const key = e.target.dataset.editKey || agentEditKey(state.data);
-          state.agentEdits[key] = {...(state.agentEdits[key] || {}), explanation: e.target.value};
-        };
-      }
       if (feedback) {
         feedback.oninput = (e) => {
           const key = e.target.dataset.editKey || agentEditKey(state.data);
@@ -3421,14 +3434,6 @@
       const hasStructuredEvents = Array.isArray(structuredResult?.vpp_event_log) && structuredResult.vpp_event_log.length > 0;
       const resultLive = hasStructuredEvents ? historyToLive(structuredResult) : null;
       const shownProgress = resultLive ? resultLive.progress : live.progress;
-      const shownDialogue = resultLive ? resultLive.dialogue : live.dialogue;
-      const feed = $('dialogueFeed');
-      if (feed) {
-        feed.innerHTML = shownDialogue.length
-          ? shownDialogue.map(item => `<div class="dialogue-item ${item.type}"><small>${item.label}</small>${item.text}</div>`).join('')
-          : '<div class="sub">Grid, Agent, user choices, and role-play scores will appear after the run starts.</div>';
-        feed.scrollTop = feed.scrollHeight;
-      }
       const entityDashboard = $('haEntityDashboard');
       if (entityDashboard) {
         entityDashboard.outerHTML = renderEntityDashboard(shownProgress, resultData, live);
