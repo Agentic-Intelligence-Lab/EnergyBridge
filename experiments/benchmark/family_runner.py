@@ -274,6 +274,7 @@ class BenchmarkResult:
     llm_call_count: int = 0; llm_call_failures: int = 0
     llm_latency_total_s: float = 0.0
     llm_tokens_prompt: int = 0; llm_tokens_completion: int = 0
+    daily_llm_usage: List[dict] = field(default_factory=list)
     # Appliance rule-based indicators
     appliance_vpp_avoidance_rate: float = 0.0   # fraction of completed shiftable tasks that ran outside VPP
     appliance_task_completion_rate: float = 1.0  # fraction of present non-AC appliance services with emitted policy actions
@@ -366,6 +367,39 @@ def _append_day_agent_decision(loop, sim_days: int, sim_h: float, decision: dict
     day_i = int(sim_h // 24)
     if 0 <= day_i < sim_days and day_i < len(loop.day_agent_decisions):
         loop.day_agent_decisions[day_i].append(decision)
+
+
+def _init_daily_llm_usage(loop, sim_days: int) -> None:
+    loop.daily_llm_usage = [
+        {
+            "day": idx + 1,
+            "llm_calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "api_latency_s": 0.0,
+        }
+        for idx in range(max(1, int(sim_days or 1)))
+    ]
+
+
+def _record_daily_llm_usage(loop, sim_days: int, sim_h: float, metrics: dict | None) -> None:
+    if not hasattr(loop, "daily_llm_usage") or not loop.daily_llm_usage:
+        _init_daily_llm_usage(loop, sim_days)
+    day_i = int(float(sim_h or 0.0) // 24)
+    if not (0 <= day_i < len(loop.daily_llm_usage)):
+        return
+    metrics = metrics or {}
+    token_usage = metrics.get("token_usage") if isinstance(metrics.get("token_usage"), dict) else metrics
+    prompt = int(token_usage.get("prompt_tokens", 0) or 0)
+    completion = int(token_usage.get("completion_tokens", 0) or 0)
+    latency = float(metrics.get("latency_seconds", 0.0) or 0.0)
+    row = loop.daily_llm_usage[day_i]
+    row["llm_calls"] = int(row.get("llm_calls", 0) or 0) + 1
+    row["prompt_tokens"] = int(row.get("prompt_tokens", 0) or 0) + prompt
+    row["completion_tokens"] = int(row.get("completion_tokens", 0) or 0) + completion
+    row["total_tokens"] = int(row.get("total_tokens", 0) or 0) + prompt + completion
+    row["api_latency_s"] = round(float(row.get("api_latency_s", 0.0) or 0.0) + latency, 3)
 
 
 def _is_weather_run_period(ex, state) -> bool:
@@ -2855,6 +2889,7 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     loop._rl_v2_daily_scheduled: dict[int, set] = {}  # v2 decision cooldown
     loop.vpp_schedule_source = vpp_schedule_source or "daily_default"
     loop.day_agent_decisions = [[] for _ in range(sim_days)]
+    _init_daily_llm_usage(loop, sim_days)
     loop.daily_plans_done = set()
     loop.next_check = planning_hour
     _init_agent_preference_memory(
@@ -2877,6 +2912,7 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
                 "live_status": status,
                 "daily_trace_rows": _dashboard_trace_rows(loop.power_trace_rows),
                 "vpp_event_log": list(loop.vpp_event_log),
+                "daily_llm_usage": list(getattr(loop, "daily_llm_usage", [])),
                 "output_dir": str(output_dir),
             }
             path = output_dir / "live_snapshot.json"
@@ -3311,6 +3347,7 @@ All times are hour-of-day (0–23.9)."""
             loop.llm_latency_s += _m.get("latency_seconds", 0.0)
             loop.llm_tokens_prompt += _tu.get("prompt_tokens", 0)
             loop.llm_tokens_comp += _tu.get("completion_tokens", 0)
+            _record_daily_llm_usage(loop, sim_days, sim_h, _m)
             return _j.loads(_llm_r["text"])
 
         def _prepare_policy_payload(raw_data: dict) -> tuple[dict, dict]:
@@ -3889,6 +3926,7 @@ All times are hour-of-day (0–23.9)."""
                 loop.llm_latency_s += m.get("latency_seconds", 0.0)
                 loop.llm_tokens_prompt += m.get("prompt_tokens", 0)
                 loop.llm_tokens_comp += m.get("completion_tokens", 0)
+                _record_daily_llm_usage(loop, sim_days, sim_h, m)
             else:
                 loop.llm_calls += 1
 
@@ -5214,6 +5252,7 @@ All times are hour-of-day (0–23.9)."""
         llm_call_count=loop.llm_calls, llm_call_failures=loop.llm_failures,
         llm_latency_total_s=round(loop.llm_latency_s, 2),
         llm_tokens_prompt=loop.llm_tokens_prompt, llm_tokens_completion=loop.llm_tokens_comp,
+        daily_llm_usage=list(getattr(loop, "daily_llm_usage", [])),
         appliance_vpp_avoidance_rate=round(appl_vpp_avoid_rate, 3),
         appliance_task_completion_rate=round(appl_task_complete_rate, 3),
         physical_appliance_task_completion_rate=round(physical_appl_task_complete_rate, 3),

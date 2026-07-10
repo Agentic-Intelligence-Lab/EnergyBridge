@@ -495,7 +495,7 @@
     .energy-stack { grid-template-rows: auto minmax(0, 1fr); }
     .device-stack { grid-template-rows: minmax(330px, .95fr) minmax(300px, 1fr); }
     .explain-stack { grid-template-rows: minmax(0, 1fr); }
-    .energy-stack .tariff-card { grid-template-rows: auto auto auto minmax(0, 1fr); }
+    .energy-stack .tariff-card { grid-template-rows: auto auto auto minmax(0, 1fr) auto; }
     .device-stack > .ha-card:first-child {
       display: grid;
       grid-template-rows: auto minmax(0, 1fr);
@@ -789,7 +789,7 @@
       overflow-wrap: anywhere;
     }
     .tariff-chart {
-      min-height: 255px;
+      min-height: 220px;
       border: 1px solid var(--ha-line);
       border-radius: 8px;
       padding: 8px;
@@ -797,8 +797,33 @@
     }
     .tariff-chart svg {
       width: 100%;
-      height: 205px;
+      height: 178px;
       display: block;
+    }
+    .planning-metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .planning-stat {
+      border: 1px solid var(--ha-line);
+      border-radius: 8px;
+      background: var(--ha-subtle);
+      padding: 6px 7px;
+      min-width: 0;
+    }
+    .planning-stat span {
+      display: block;
+      color: var(--ha-muted);
+      font-size: 10px;
+      font-weight: 850;
+    }
+    .planning-stat strong {
+      display: block;
+      color: var(--ha-ink);
+      font-size: 12px;
+      margin-top: 2px;
+      overflow-wrap: anywhere;
     }
     .chart-grid { stroke: #dfe5ec; stroke-width: 1; }
     .chart-axis { stroke: #c9d3df; stroke-width: 1.2; }
@@ -1512,6 +1537,34 @@
       return String(text || '').replace(/\s+/g, ' ').trim();
     }
 
+    function isEnergyBridgeFacingExplanation(item = {}) {
+      const speaker = compactText(item.speaker).toLowerCase();
+      const audience = compactText(item.audience).toLowerCase();
+      return speaker === 'energybridge'
+        || audience.includes('customer')
+        || audience.includes('household')
+        || audience.includes('user')
+        || Boolean(item.communication_goal)
+        || Boolean(item.score_prompt_text)
+        || Boolean(item.customer_explanation);
+    }
+
+    function customerExplanationFromItem(item = {}) {
+      if (!item || typeof item !== 'object') return '';
+      const preferred = [
+        item.score_prompt_text,
+        item.customer_explanation,
+        item.energybridge_explanation,
+        item.user_facing_explanation
+      ].map(compactText).find(Boolean);
+      if (preferred) return preferred;
+      const natural = compactText(item.natural_language);
+      if (natural && (compactText(item.speaker).toLowerCase() === 'energybridge' || /^EnergyBridge\b/i.test(natural))) {
+        return natural;
+      }
+      return '';
+    }
+
     function structuredStrategyExplanation(ev = null) {
       const candidates = [
         ev?.strategy_explanation,
@@ -1521,8 +1574,9 @@
         ev?.strategy_explanation?.llm_raw_explanation
       ].filter(item => item && typeof item === 'object' && Object.keys(item).length);
       for (const item of candidates) {
-        const natural = compactText(item.natural_language);
-        if (natural) return natural;
+        const customerText = customerExplanationFromItem(item);
+        if (customerText) return customerText;
+        if (!isEnergyBridgeFacingExplanation(item)) continue;
         const parts = [
           item.why_request,
           ...(Array.isArray(item.recommended_actions)
@@ -1548,6 +1602,7 @@
       selectedStrategy = 'EnergyBridge Agent',
       fallbackReason = ''
     } = {}) {
+      if (!ev) return '';
       const window = eventWindowText(ev ? {vpp_event_log: [ev]} : null).replace(/^D\d+\s+/, '');
       const vppWindow = window || 'the next VPP event';
       const applianceItems = Object.entries(appliances)
@@ -1604,7 +1659,7 @@
         ? `${fmt(eventEnergy, 3)} kWh`
         : resultData?.vpp_window_energy_kwh
           ? `${fmt(resultData.vpp_window_energy_kwh, 3)} kWh`
-          : (live.vpp || 'running');
+          : (live.vpp || 'waiting');
       const roomTemperature = selectedDayTemperature(resultData);
       const temperature = roomTemperature !== null ? `${fmt(roomTemperature, 1)}°C` : 'waiting';
       const outdoorTemperatureRaw = selectedDayOutdoorTemperature(resultData);
@@ -1612,7 +1667,7 @@
       const target = firstEvent ? vppTargetText(firstEvent) : (latest.target || live.demand || 'waiting');
       const selectedStrategy = briefStrategyLabel(latest.selectedStrategy || 'waiting');
       const humanNote = [...notes].reverse().find(note => /human|feedback|input|score/i.test(note));
-      const fallbackReason = firstEvent?.reason || notes.find(note => !/human|feedback|input|score/i.test(note)) || '';
+      const fallbackReason = firstEvent ? (notes.find(note => !/human|feedback|input|score/i.test(note)) || '') : '';
       const capacity = vppCapacityOptions({appliances}, resultData);
       const explanationBase = structuredStrategyExplanation(firstEvent)
         || humanStrategyExplanation({
@@ -1627,7 +1682,7 @@
       const userFeedbackBase = firstEvent?.comment
         || resultData?.user_pref_comment
         || humanNote
-        || 'waiting';
+        || '';
       const explanation = edit.explanation ?? explanationBase;
       const userFeedback = edit.userFeedback ?? userFeedbackBase;
       return {appliances, setpoint, score, totalEnergy, vppEnergy: selectedVppEnergy, temperature, outdoorTemperature, target, selectedStrategy, explanation, userFeedback};
@@ -1759,6 +1814,53 @@
     function reductionRatioText(resultData = null) {
       const ratio = reductionRatioValue(resultData);
       return ratio === null ? 'waiting' : `${fmt(ratio * 100, 0)}%`;
+    }
+
+    function selectedDayRuntimeMetrics(resultData = null) {
+      const day = normalizeDaySelection(resultData);
+      const rows = [
+        ...(Array.isArray(resultData?.daily_llm_usage) ? resultData.daily_llm_usage : []),
+        ...(Array.isArray(resultData?.day_llm_usage) ? resultData.day_llm_usage : []),
+        ...(Array.isArray(resultData?.planning_metrics_per_day) ? resultData.planning_metrics_per_day : [])
+      ];
+      const row = rows.find(item => Number(item?.day) === day);
+      if (!row) return {};
+      const prompt = numOrNull(row.prompt_tokens) ?? 0;
+      const completion = numOrNull(row.completion_tokens) ?? 0;
+      const totalTokens = numOrNull(row.total_tokens) ?? (prompt + completion);
+      const apiLatency = numOrNull(row.api_latency_s)
+        ?? numOrNull(row.llm_latency_s)
+        ?? numOrNull(row.latency_seconds);
+      const planningElapsed = numOrNull(row.planning_elapsed_s)
+        ?? numOrNull(row.planning_wall_s)
+        ?? numOrNull(row.wall_time_s);
+      const overhead = numOrNull(row.non_api_overhead_s)
+        ?? numOrNull(row.recall_overhead_s)
+        ?? numOrNull(row.retry_overhead_s)
+        ?? (planningElapsed !== null && apiLatency !== null ? Math.max(0, planningElapsed - apiLatency) : null);
+      return {totalTokens, apiLatency, planningElapsed, overhead, calls: numOrNull(row.llm_calls)};
+    }
+
+    function tokenText(value) {
+      const n = numOrNull(value);
+      return n === null || n <= 0 ? 'waiting' : `${fmt(n, 0)}`;
+    }
+
+    function secondsText(value) {
+      const n = numOrNull(value);
+      return n === null || n <= 0 ? 'waiting' : `${fmt(n, 1)}s`;
+    }
+
+    function renderPlanningMetrics(resultData = null) {
+      const metrics = selectedDayRuntimeMetrics(resultData);
+      const shownPlanTime = metrics.planningElapsed ?? metrics.apiLatency;
+      return `
+        <div class="planning-metrics">
+          <div class="planning-stat"><span>Tokens</span><strong>${tokenText(metrics.totalTokens)}</strong></div>
+          <div class="planning-stat"><span>Plan time</span><strong>${secondsText(shownPlanTime)}</strong></div>
+          <div class="planning-stat"><span>API latency</span><strong>${secondsText(metrics.apiLatency)}</strong></div>
+          <div class="planning-stat"><span>Recall / retry overhead</span><strong>${secondsText(metrics.overhead)}</strong></div>
+        </div>`;
     }
 
     function quantileSuccessProbability(key) {
@@ -2146,6 +2248,7 @@
           </div>
           ${schedule.length ? `<div class="schedule-strip">${schedule.map(item => `<span class="schedule-pill">${esc(item)}</span>`).join('')}</div>` : ''}
           ${renderTariffBars(resultData)}
+          ${renderPlanningMetrics(resultData)}
         </div>`;
     }
 
@@ -2255,9 +2358,9 @@
                 <div class="strategy-line"><span>VPP energy</span><strong>${model.vppEnergy}</strong></div>
               </div>
               <label class="agent-field-label" for="agentRationaleEdit">EnergyBridge explanation</label>
-              <textarea id="agentRationaleEdit" class="agent-editor" data-edit-key="${esc(editKey)}">${esc(model.explanation)}</textarea>
+              <textarea id="agentRationaleEdit" class="agent-editor" data-edit-key="${esc(editKey)}" placeholder="Waiting for EnergyBridge explanation">${esc(model.explanation)}</textarea>
               <label class="agent-field-label" for="userFeedbackEdit">User feedback</label>
-              <textarea id="userFeedbackEdit" class="agent-editor small" data-edit-key="${esc(editKey)}">${esc(model.userFeedback)}</textarea>
+              <textarea id="userFeedbackEdit" class="agent-editor small" data-edit-key="${esc(editKey)}" placeholder="Waiting for user feedback">${esc(model.userFeedback)}</textarea>
             </div>
           </div>
         </div>`;
