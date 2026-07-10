@@ -651,20 +651,12 @@ def _ev_candidates(
     efficiency = _float(cfg.get("efficiency"), 0.92)
     needed_kwh = _ev_needed_kwh(cfg, state)
     duration = max(GRID_H, ceil((needed_kwh / max(0.1, charger_kw * efficiency)) / GRID_H) * GRID_H)
-    arrival = _float(cfg.get("arrival_h"), 18.0)
-    departure = _float(cfg.get("departure_h"), 7.5)
-    start_min = max(day_idx * 24.0 + arrival, _ceil_to_grid(sim_h))
-    end_abs = day_idx * 24.0 + departure
-    if departure <= arrival:
-        end_abs += 24.0
-    # The EV simulator stores explicit charge windows by the current day_idx.
-    # A pure next-morning window such as 00:00-03:00 is cheap but cannot serve
-    # today's evening arrival: after midnight the simulator reads the next
-    # day's window instead.  Keep Rule+MILP's EV candidates inside the same
-    # local day so every emitted window is physically executable.
+    # EV charging is a same-day service in this benchmark.  Morning windows
+    # such as 00:00-08:00 are valid for day 1 and later days, so do not gate EV
+    # candidates on arrival_h.
+    start_min = max(day_idx * 24.0, _ceil_to_grid(sim_h))
     day_end_abs = (day_idx + 1) * 24.0
     start_max = min(
-        end_abs - duration,
         day_end_abs - duration,
         _latest_start_before_run_end(state, duration),
     )

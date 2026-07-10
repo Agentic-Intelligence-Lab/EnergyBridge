@@ -282,8 +282,13 @@ class EVCharger:
         self.departure_h: float = float(config.get("departure_h", 7.5))
         self.daily_drive_kwh: float = float(config.get("daily_drive_kwh", 8.0))
         self.efficiency: float = float(config.get("efficiency", 0.92))
-        # Start at target SOC (EV was already charged before sim begins)
-        self._soc: float = self.target_soc
+        # Treat the first simulated morning as a normal service opportunity:
+        # by default the EV starts after the previous commute and can recharge
+        # in a day-0 00:00-08:00 window.  Personas may still override this.
+        initial_soc = config.get("initial_soc", config.get("current_soc"))
+        if initial_soc is None:
+            initial_soc = self.target_soc - self.daily_drive_kwh / max(1e-6, self.capacity_kwh)
+        self._soc: float = max(self.min_soc, min(1.0, float(initial_soc)))
         self._departed: set = set()
         self.explicit_only = bool(explicit_only)
         self._day_mode: Dict[int, Optional[str]] = {d: None if self.explicit_only else "smart" for d in range(sim_days)}

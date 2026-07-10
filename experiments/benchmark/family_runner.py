@@ -1161,7 +1161,7 @@ def _present_agent_controlled_appliances(appliance_config: dict | None) -> List[
 
 
 def _ev_required_charge_hours(appliance_config: dict | None) -> float:
-    """Conservative same-evening EV charge hours needed after daily driving."""
+    """Conservative EV charge hours needed after daily driving."""
     ev_cfg = ((appliance_config or {}).get("ev", {}) or {})
     try:
         charger_kw = max(0.1, float(ev_cfg.get("charger_kw", 7.0)))
@@ -1183,30 +1183,24 @@ def _ev_service_window_guidance_text(
     if not bool(ev_cfg.get("present", False)):
         return ""
     try:
-        arrival = float(ev_cfg.get("arrival_h", 18.0)) % 24.0
         departure = float(ev_cfg.get("departure_h", 7.5)) % 24.0
         target_soc = float(ev_cfg.get("target_soc", 0.8)) * 100.0
     except (TypeError, ValueError):
-        arrival, departure, target_soc = 18.0, 7.5, 80.0
+        departure, target_soc = 7.5, 80.0
     min_hours = _ev_required_charge_hours(appliance_config)
-    safe_start = arrival
-    if vpp_event and _event_start_hod(vpp_event) <= arrival < _event_end_hod(vpp_event):
-        safe_start = _event_end_hod(vpp_event)
-    safe_start = min(23.4, max(0.0, safe_start))
-    safe_end = min(23.9, max(safe_start + 0.5, safe_start + min_hours))
-    if safe_end >= 23.9:
-        example = f"{safe_start:.1f}-23.9"
-    else:
-        example = f"{safe_start:.1f}-{safe_end:.1f}"
+    safe_start = 0.0
+    safe_end = min(max(0.5, departure), max(0.5, min_hours))
+    if safe_end < min_hours:
+        safe_end = min(8.0, min_hours)
+    example = f"{safe_start:.1f}-{safe_end:.1f}"
     return (
         "\nEV service hard rule: the EV target is a departure service target, not just a field-output target. "
-        f"The car arrives around {arrival:.1f}h and departs around {departure:.1f}h; schedule enough same-evening "
-        f"post-arrival charging to reach about {target_soc:.0f}% SOC. In this simulator, EV charge windows are "
-        "stored per simulation day, so a crossing-midnight command such as 23.0-7.5 or a pre-arrival command "
-        "such as 0.0-7.0 / 0.0-18.0 does NOT reliably recharge today's arrival. "
-        f"Use a same-day, post-arrival, non-VPP window of at least {min_hours:.1f}h; for this event a safe pattern is "
+        f"The EV should reach about {target_soc:.0f}% SOC before the daily departure around {departure:.1f}h. "
+        "Do not treat arrival time as a hard constraint: a same-day early-morning window such as 0.0-8.0 is valid "
+        "and represents charging for that day's EV use, including on day 1. "
+        f"Use a non-VPP window of at least {min_hours:.1f}h; for this event a safe pattern is "
         f"ev_charge_start_h={example.split('-')[0]}, ev_charge_end_h={example.split('-')[1]}. "
-        "If previous feedback mentioned EV SOC missed, use the longest available same-evening window ending near 23.9."
+        "If previous feedback mentioned EV SOC missed, extend the early-morning window or choose another non-VPP slot."
     )
 
 
@@ -1216,7 +1210,7 @@ def _ev_service_window_errors(
     *,
     vpp_event: dict | None = None,
 ) -> List[str]:
-    """Find EV windows that cannot serve today's post-arrival SOC target."""
+    """Find EV windows that cannot serve today's SOC target."""
     ev_cfg = ((appliance_config or {}).get("ev", {}) or {})
     if not bool(ev_cfg.get("present", False)):
         return []
@@ -1230,26 +1224,25 @@ def _ev_service_window_errors(
         # 24.0 is a valid same-day stop time in the EV simulator; do not
         # modulo it to 0.0 for service-feasibility checks.
         end = 24.0 if 23.999 <= end_raw <= 24.001 else (end_raw % 24.0)
-        arrival = float(ev_cfg.get("arrival_h", 18.0)) % 24.0
     except (TypeError, ValueError):
         return ["EV charge window is not numeric"]
     errors: List[str] = []
-    if end <= start:
-        errors.append(
-            f"EV window {start:.1f}-{end:.1f} crosses midnight; this simulator needs same-day post-arrival charging for today's target"
-        )
-    if end <= arrival:
-        errors.append(
-            f"EV window {start:.1f}-{end:.1f} ends before arrival {arrival:.1f}, so it cannot recharge after today's trip"
-        )
-    service_start = max(start, arrival)
-    if vpp_event and _event_start_hod(vpp_event) <= service_start < _event_end_hod(vpp_event):
-        service_start = _event_end_hod(vpp_event)
-    effective_hours = max(0.0, end - service_start) if end > service_start else 0.0
+    intervals = [(start, end)] if end > start else [(start, 24.0), (0.0, end)]
+    effective_hours = 0.0
+    for segment_start, segment_end in intervals:
+        if segment_end <= segment_start:
+            continue
+        if vpp_event:
+            vpp_start = _event_start_hod(vpp_event)
+            vpp_end = _event_end_hod(vpp_event)
+            overlap = max(0.0, min(segment_end, vpp_end) - max(segment_start, vpp_start))
+        else:
+            overlap = 0.0
+        effective_hours += max(0.0, segment_end - segment_start - overlap)
     min_hours = _ev_required_charge_hours(appliance_config)
     if effective_hours + 1e-6 < min_hours:
         errors.append(
-            f"EV post-arrival usable charge time is {effective_hours:.1f}h, below required ~{min_hours:.1f}h"
+            f"EV usable non-VPP charge time is {effective_hours:.1f}h, below required ~{min_hours:.1f}h"
         )
     return errors
 
@@ -3090,10 +3083,8 @@ EV CHARGER (home charger, arrival/departure shown in status)
   For EV-constrained users, start charging as soon as VPP_WINDOW ends if needed for departure SOC.
   SOC and arrival time shown in status each step.
   HARD SERVICE RULE: the EV must reach target SOC by the departure/check time. Plan for this at daily planning time.
-  The simulator stores explicit EV windows per same simulation day. Therefore a crossing-midnight window
-  like 23.0-7.5, or a morning/pre-arrival window like 0.0-7.0 or 0.0-18.0, does not reliably recharge
-  the car after today's evening arrival. Prefer a same-day post-arrival window long enough to cover the
-  daily drive energy, e.g. if arrival is about 18.5 and VPP is 18.0-19.0, use about 19.0-23.9.
+  Arrival time is not a hard charging constraint in this benchmark: a same-day early-morning window
+  such as 0.0-8.0 is valid, including on day 1, and represents charging for today's EV use.
   Parameters:
     ev_mode             : optional "smart"|"delay"|"normal" metadata only; it is not a substitute for a charging window.
     ev_charge_start_h   : float  — override: begin charging at this hour (e.g. 22.0).
@@ -3583,8 +3574,8 @@ All times are hour-of-day (0–23.9)."""
                     + "\n\n[HARD POLICY ERROR IN YOUR PREVIOUS JSON]\n"
                     + "\n".join(f"- {err}" for err in hard_errors)
                     + "\nReturn a corrected JSON only. Do not apologize. "
-                    "Keep every present appliance explicit. For EV, use a same-day post-arrival window "
-                    "long enough to reach target SOC; avoid crossing-midnight or pre-arrival windows.\n"
+                    "Keep every present appliance explicit. For EV, use a same-day non-VPP window "
+                    "long enough to reach target SOC; early-morning windows such as 0.0-8.0 are valid.\n"
                     + "[PREVIOUS JSON]\n"
                     + _j.dumps(data, ensure_ascii=False)
                 )

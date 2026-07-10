@@ -151,9 +151,8 @@ def _choose_best_ev(
     if not cfg.get("present", False):
         return action
     candidates = []
-    arrival_h = _float(cfg.get("arrival_h"), 18.0)
     departure_h = _float(cfg.get("departure_h"), 7.5)
-    for start_h in sorted({_wrap_hour(arrival_h), 20.0, 22.0}):
+    for start_h in sorted({0.0, 2.0, 4.0, 6.0, 20.0, 22.0}):
         window = _clone(action)
         window["appliances"]["ev_mode"] = None
         window["appliances"]["ev_charge_start_h"] = start_h

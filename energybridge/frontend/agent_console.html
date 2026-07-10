@@ -1537,6 +1537,21 @@
       return String(text || '').replace(/\s+/g, ' ').trim();
     }
 
+    function conciseSentences(text, maxSentences = 4, maxChars = 560) {
+      const compact = compactText(text);
+      if (!compact) return '';
+      const sentences = compact
+        .split(/(?<=[.!?。！？])\s+/)
+        .map(part => part.trim())
+        .filter(Boolean);
+      const shortened = sentences.length > maxSentences
+        ? sentences.slice(0, maxSentences).join(' ')
+        : compact;
+      if (shortened.length <= maxChars) return shortened;
+      const clipped = shortened.slice(0, maxChars).replace(/\s+\S*$/, '').trim();
+      return clipped ? `${clipped}...` : shortened.slice(0, maxChars);
+    }
+
     function isEnergyBridgeFacingExplanation(item = {}) {
       const speaker = compactText(item.speaker).toLowerCase();
       const audience = compactText(item.audience).toLowerCase();
@@ -1619,11 +1634,12 @@
       const priceSentence = priceText && priceText !== 'waiting'
         ? `The price signal is ${priceText}, so the plan avoids concentrating controllable load in the event window.`
         : 'The plan keeps the event window light while waiting for a confirmed market price signal.';
-      return compactText(
-        `For ${vppWindow}, ${selectedStrategy} keeps cooling at ${setpoint} and recommends reporting ${capacityText} to the VPP. ` +
+      return conciseSentences(
+        `EnergyBridge recommends ${selectedStrategy} for ${vppWindow} and reports ${capacityText} before the VPP event. ` +
         `${applianceSentence} ${priceSentence} ` +
-        `This is the bid I would present to the user because it preserves comfort first, protects appliance routines, and still gives the VPP a usable flexible-capacity offer.` +
-        (reason ? ` ${reason}` : '')
+        `This keeps comfort and EV readiness protected while still offering the VPP a conservative flexible-capacity bid.` +
+        (reason ? ` ${reason}` : ''),
+        4
       );
     }
 
@@ -1683,7 +1699,7 @@
         || resultData?.user_pref_comment
         || humanNote
         || '';
-      const explanation = edit.explanation ?? explanationBase;
+      const explanation = edit.explanation ?? conciseSentences(explanationBase, 4);
       const userFeedback = edit.userFeedback ?? userFeedbackBase;
       return {appliances, setpoint, score, totalEnergy, vppEnergy: selectedVppEnergy, temperature, outdoorTemperature, target, selectedStrategy, explanation, userFeedback};
     }
@@ -1798,10 +1814,11 @@
     function selectedVppReductionKwh(resultData = null) {
       const ev = selectedVppEvent(resultData) || firstVppEvent(resultData);
       return nonNegativeOrNull(ev?.actual_shed_kwh)
-        ?? nonNegativeOrNull(ev?.reference_baseline_shed_kwh)
-        ?? nonNegativeOrNull(ev?.capacity_limited_reference_shed_kwh)
+        ?? nonNegativeOrNull(ev?.actual_reduction_kwh)
+        ?? nonNegativeOrNull(ev?.measured_shed_kwh)
         ?? nonNegativeOrNull(ev?.event_baseline_estimate?.actual_shed_kwh)
-        ?? nonNegativeOrNull(ev?.event_baseline_estimate?.reference_baseline_shed_kwh);
+        ?? nonNegativeOrNull(ev?.event_baseline_estimate?.actual_reduction_kwh)
+        ?? nonNegativeOrNull(ev?.event_baseline_estimate?.measured_shed_kwh);
     }
 
     function reductionRatioValue(resultData = null) {
@@ -2184,7 +2201,7 @@
       if (!anyRealSeries) {
         return `
           <div class="tariff-chart">
-            <div class="empty-state">No hourly price, load, or VPP event reduction series</div>
+          <div class="empty-state">No hourly price, load, or actual VPP reduction series</div>
           </div>`;
       }
       const maxPos = Math.max(...positiveValues, 1);
@@ -2229,7 +2246,7 @@
           </svg>
           <div class="tariff-legend">
             <span class="legend-item"><span class="legend-dot legend-grid"></span>Grid load</span>
-            <span class="legend-item"><span class="legend-dot legend-vpp"></span>VPP event reduction</span>
+            <span class="legend-item"><span class="legend-dot legend-vpp"></span>Actual VPP reduction</span>
             <span class="legend-item"><span class="legend-dot legend-price"></span>Day-ahead price</span>
           </div>
         </div>`;
@@ -2243,8 +2260,8 @@
           <h3>Day-ahead price and load</h3>
           <div class="tariff-summary">
             <div class="tariff-stat"><span>Daily cost</span><strong>${dailyCostText(resultData)}</strong></div>
-            <div class="tariff-stat"><span>VPP reduction</span><strong>${reduction !== null ? `${fmt(reduction, 2)} kWh` : 'waiting'}</strong></div>
-            <div class="tariff-stat"><span>Reduction / report</span><strong>${reductionRatioText(resultData)}</strong></div>
+            <div class="tariff-stat"><span>Actual VPP reduction</span><strong>${reduction !== null ? `${fmt(reduction, 2)} kWh` : 'waiting'}</strong></div>
+            <div class="tariff-stat"><span>Actual / report</span><strong>${reductionRatioText(resultData)}</strong></div>
           </div>
           ${schedule.length ? `<div class="schedule-strip">${schedule.map(item => `<span class="schedule-pill">${esc(item)}</span>`).join('')}</div>` : ''}
           ${renderTariffBars(resultData)}
@@ -2263,12 +2280,12 @@
         <div class="ha-card">
           <h3>VPP forecast and market</h3>
           <div class="forecast-table">
-            <div class="forecast-row"><span>Report to VPP</span><strong>${reportText}</strong></div>
+            <div class="forecast-row"><span>Pre-VPP report</span><strong>${reportText}</strong></div>
             <div class="forecast-row"><span>Selected quantile</span><strong>${quantileText}</strong></div>
             <div class="forecast-row"><span>Event time</span><strong>${eventWindowText(resultData)}</strong></div>
             <div class="forecast-row"><span>Daily cost</span><strong>${dailyCostText(resultData)}</strong></div>
-            <div class="forecast-row"><span>VPP reduction</span><strong>${reduction !== null ? `${fmt(reduction, 2)} kWh` : 'waiting'}</strong></div>
-            <div class="forecast-row"><span>Reduction / report</span><strong>${reductionRatioText(resultData)}</strong></div>
+            <div class="forecast-row"><span>Actual VPP reduction</span><strong>${reduction !== null ? `${fmt(reduction, 2)} kWh` : 'waiting'}</strong></div>
+            <div class="forecast-row"><span>Actual / report</span><strong>${reductionRatioText(resultData)}</strong></div>
           </div>
         </div>`;
     }

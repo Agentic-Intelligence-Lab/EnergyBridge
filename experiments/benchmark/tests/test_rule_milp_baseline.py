@@ -164,7 +164,10 @@ def test_rule_milp_strictly_filters_vpp_candidates_even_when_vpp_is_cheapest() -
     appliances = action["appliances"]
     washer_start = appliances["washer_start_h"]
     assert max(washer_start, 18.0) >= min(washer_start + 1.0, 19.0)
-    assert appliances["ev_charge_start_h"] >= 19.0
+    ev_start = appliances["ev_charge_start_h"]
+    ev_end = appliances["ev_charge_end_h"]
+    ev_abs_end = ev_end if ev_end > ev_start else ev_end + 24.0
+    assert ev_abs_end <= 18.0 or ev_start >= 19.0
     for group in action["objective_terms"]["diagnostics"]["candidate_groups"].values():
         assert all(candidate["vpp_penalty"] == 0.0 for candidate in group)
 
@@ -254,7 +257,7 @@ def test_rule_milp_ev_command_uses_charge_window_without_required_mode() -> None
     assert action["appliances"]["ev_charge_end_h"] is not None
 
 
-def test_rule_milp_ev_avoids_unexecutable_next_morning_only_window() -> None:
+def test_rule_milp_ev_can_use_same_day_morning_window() -> None:
     state = _state()
     state["sim_days"] = 7
     state["run_end_abs_h"] = 168.0
@@ -282,8 +285,8 @@ def test_rule_milp_ev_avoids_unexecutable_next_morning_only_window() -> None:
     ev_start = appliances["ev_charge_start_h"]
     ev_end = appliances["ev_charge_end_h"]
     ev_abs_end = ev_end if ev_end > ev_start else ev_end + 24.0
-    assert ev_start >= 18.5
-    assert ev_abs_end <= 24.0
+    assert 0.0 <= ev_start < 8.0
+    assert ev_abs_end <= 8.0
     assert ev_abs_end - ev_start >= 3.0
 
 
@@ -350,8 +353,8 @@ def test_rule_milp_keeps_last_day_overnight_services_inside_run() -> None:
     appliances = action["appliances"]
 
     assert appliances["dishwasher_start_h"] + 1.5 <= 23.5
-    assert appliances["ev_charge_start_h"] >= 18.5
     ev_start = appliances["ev_charge_start_h"]
     ev_end = appliances["ev_charge_end_h"]
     ev_abs_end = ev_end if ev_end > ev_start else ev_end + 24.0
+    assert 0.0 <= ev_start < 24.0
     assert ev_abs_end <= 23.5
