@@ -751,7 +751,7 @@
     }
     .tariff-summary {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 8px;
     }
     .schedule-strip {
@@ -989,6 +989,32 @@
       line-height: 1.18;
       overflow-wrap: anywhere;
     }
+    .room-device.virtual-button {
+      appearance: none;
+      border-color: rgba(3, 169, 244, .3);
+      box-shadow: inset 0 0 0 1px rgba(3, 169, 244, .12);
+      cursor: default;
+      font: inherit;
+      min-height: 34px;
+      padding: 5px 10px;
+    }
+    .room-device.virtual-button::before {
+      content: '';
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--ha-success);
+      flex: 0 0 auto;
+      box-shadow: 0 0 0 3px rgba(67, 160, 71, .12);
+    }
+    .room-device.virtual-button.warning::before {
+      background: var(--ha-warning);
+      box-shadow: 0 0 0 3px rgba(245, 124, 0, .12);
+    }
+    .room-device.virtual-button.idle::before {
+      background: #b8c1cc;
+      box-shadow: 0 0 0 3px rgba(102, 112, 133, .12);
+    }
     .room-device.active { border-color: rgba(3, 169, 244, .34); color: var(--ha-primary-dark); }
     .room-device.warning { border-color: rgba(245, 124, 0, .34); color: var(--ha-warning); }
     .climate-dial {
@@ -1180,7 +1206,7 @@
       selectedMethod: 'EnergyBridge',
       selectedPersona: FULL_APPLIANCE_PERSONA_ID,
       selectedCity: 'Tianjin',
-      selectedDays: 3,
+      selectedDays: 1,
       selectedDay: 1,
       startDate: '',
       priceCsv: '',
@@ -1201,6 +1227,7 @@
       .replaceAll('"', '&quot;');
     const pct = (n) => Number.isFinite(Number(n)) ? `${(Number(n)*100).toFixed(0)}%` : 'N/A';
     const DAY_OPTIONS = [
+      {value: 1, label: '1day'},
       {value: 3, label: '3day'},
       {value: 7, label: '7day'}
     ];
@@ -1345,12 +1372,12 @@
       const prefix = state.userMode === 'human'
         ? `${slug(state.humanName) || 'human'}_human`
         : personaRunLabel(personaForRunLabel);
-      return `${todayIso()}/${prefix}_${methodRunToken(state.selectedMethod)}_${String(state.selectedCity || 'Tianjin').toLowerCase()}_${Number(state.selectedDays || 3)}days`;
+      return `${todayIso()}/${prefix}_${methodRunToken(state.selectedMethod)}_${String(state.selectedCity || 'Tianjin').toLowerCase()}_${Number(state.selectedDays || 1)}days`;
     }
 
     function normalizeScenarioSelection() {
-      const selectedDays = Number(state.selectedDays || 3);
-      state.selectedDays = DAY_OPTIONS.some(item => item.value === selectedDays) ? selectedDays : 3;
+      const selectedDays = Number(state.selectedDays || 1);
+      state.selectedDays = DAY_OPTIONS.some(item => item.value === selectedDays) ? selectedDays : 1;
       const allowedDates = START_DATE_OPTIONS.map(item => item.value);
       if (!allowedDates.includes(state.startDate)) state.startDate = '';
       normalizeDaySelection();
@@ -1745,6 +1772,12 @@
       return model.appliances?.[key] || fallback;
     }
 
+    function virtualDeviceButton(model, key, label) {
+      const value = applianceValue(model, key);
+      const stateClass = deviceStateClass(value) || 'idle';
+      return `<button class="room-device virtual-button ${stateClass}" type="button" aria-pressed="${stateClass === 'active' ? 'true' : 'false'}">${label} ${esc(value)}</button>`;
+    }
+
     function applianceScheduleItems(model) {
       const labels = {
         washer: 'Washer',
@@ -1833,18 +1866,47 @@
       return `${fmt(cost, 2)} ${unit}`.trim();
     }
 
-    function selectedVppReductionKwh(resultData = null) {
-      const ev = selectedVppEvent(resultData) || firstVppEvent(resultData);
-      const eventCount = Array.isArray(resultData?.vpp_event_log) ? resultData.vpp_event_log.length : 0;
-      return nonNegativeOrNull(ev?.actual_shed_kwh)
+    function selectedDayLivePowerText(resultData = null) {
+      const trace = selectedDayTraceRows(resultData);
+      const latest = [...trace].reverse().find(row => numOrNull(row?.power_kw) !== null);
+      if (!latest) return 'waiting';
+      const hour = numOrNull(latest._hour);
+      const suffix = hour === null ? '' : ` @ ${clockHour(hour)}`;
+      return `${fmt(latest.power_kw, 2)} kW${suffix}`;
+    }
+
+    function eventComputedReductionKwh(ev = null) {
+      if (!ev) return null;
+      const direct = nonNegativeOrNull(ev?.actual_shed_kwh)
         ?? nonNegativeOrNull(ev?.actual_reduction_kwh)
         ?? nonNegativeOrNull(ev?.measured_shed_kwh)
         ?? nonNegativeOrNull(ev?.event_baseline_estimate?.actual_shed_kwh)
         ?? nonNegativeOrNull(ev?.event_baseline_estimate?.actual_reduction_kwh)
-        ?? nonNegativeOrNull(ev?.event_baseline_estimate?.measured_shed_kwh)
-        ?? nonNegativeOrNull(ev?.reference_pbase_minus_actual_kwh)
-        ?? (eventCount <= 1 ? nonNegativeOrNull(resultData?.vpp_energy_reduction_kwh) : null)
-        ?? (eventCount <= 1 ? nonNegativeOrNull(resultData?.vpp_energy_reduction_avg_per_event_kwh) : null);
+        ?? nonNegativeOrNull(ev?.event_baseline_estimate?.measured_shed_kwh);
+      const actual = numOrNull(ev?.actual_kwh) ?? numOrNull(ev?.event_baseline_estimate?.actual_kwh);
+      const counterfactual = numOrNull(ev?.counterfactual_baseline_kwh)
+        ?? numOrNull(ev?.no_dr_baseline_kwh)
+        ?? numOrNull(ev?.event_baseline_estimate?.counterfactual_baseline_kwh)
+        ?? numOrNull(ev?.event_baseline_estimate?.no_dr_baseline_kwh);
+      if (counterfactual !== null && actual !== null) {
+        return Math.max(0, counterfactual - actual);
+      }
+      const baseline = numOrNull(ev?.baseline_kwh) ?? numOrNull(ev?.event_baseline_estimate?.baseline_kwh);
+      if ((direct === null || direct <= 0) && baseline !== null && actual !== null) {
+        return Math.max(0, baseline - actual);
+      }
+      return direct;
+    }
+
+    function selectedVppReductionKwh(resultData = null) {
+      const ev = selectedVppEvent(resultData) || firstVppEvent(resultData);
+      const eventCount = Array.isArray(resultData?.vpp_event_log) ? resultData.vpp_event_log.length : 0;
+      const singleEventTotal = eventCount <= 1
+        ? (nonNegativeOrNull(resultData?.vpp_energy_reduction_kwh)
+          ?? nonNegativeOrNull(resultData?.vpp_energy_reduction_avg_per_event_kwh)
+          ?? nonNegativeOrNull(resultData?.vpp_actual_shed_kwh))
+        : null;
+      return singleEventTotal ?? eventComputedReductionKwh(ev);
     }
 
     function reductionRatioValue(resultData = null) {
@@ -2288,6 +2350,7 @@
             <div class="tariff-stat"><span>Daily cost</span><strong>${dailyCostText(resultData)}</strong></div>
             <div class="tariff-stat"><span>Actual VPP reduction</span><strong>${reduction !== null ? `${fmt(reduction, 2)} kWh` : 'waiting'}</strong></div>
             <div class="tariff-stat"><span>Actual / report</span><strong>${reductionRatioText(resultData)}</strong></div>
+            <div class="tariff-stat"><span>Live power</span><strong>${selectedDayLivePowerText(resultData)}</strong></div>
           </div>
           ${schedule.length ? `<div class="schedule-strip">${schedule.map(item => `<span class="schedule-pill">${esc(item)}</span>`).join('')}</div>` : ''}
           ${renderTariffBars(resultData)}
@@ -2351,20 +2414,20 @@
               <div class="floorplan">
                 <div class="room kitchen">
                   <div class="room-title">Kitchen</div>
-                  <span class="room-device ${deviceStateClass(applianceValue(model, 'dishwasher'))}">Dishwasher ${applianceValue(model, 'dishwasher')}</span>
+                  ${virtualDeviceButton(model, 'dishwasher', 'Dishwasher')}
                 </div>
                 <div class="room utility-laundry">
                   <div class="room-title">Utility / laundry</div>
-                  <span class="room-device ${deviceStateClass(applianceValue(model, 'washer'))}">Washer ${applianceValue(model, 'washer')}</span>
-                  <span class="room-device ${deviceStateClass(applianceValue(model, 'dryer'))}">Dryer ${applianceValue(model, 'dryer')}</span>
+                  ${virtualDeviceButton(model, 'washer', 'Washer')}
+                  ${virtualDeviceButton(model, 'dryer', 'Dryer')}
                 </div>
                 <div class="room utility-hot-water">
                   <div class="room-title">Utility / hot water</div>
-                  <span class="room-device ${deviceStateClass(applianceValue(model, 'water_heater'))}">Water heater ${applianceValue(model, 'water_heater')}</span>
+                  ${virtualDeviceButton(model, 'water_heater', 'Water heater')}
                 </div>
                 <div class="room garage">
                   <div class="room-title">Garage</div>
-                  <span class="room-device ${deviceStateClass(applianceValue(model, 'ev'))}">EV charger ${applianceValue(model, 'ev')}</span>
+                  ${virtualDeviceButton(model, 'ev', 'EV charger')}
                 </div>
               </div>
             </div>
@@ -2634,7 +2697,7 @@
       const human = userMode === 'human'
         ? ` --user-mode human --human-name ${shellQuote(humanName || 'human')}`
         : ' --user-mode roleplay';
-      const city = ` --city ${state.selectedCity || 'Tianjin'} --days ${Number(state.selectedDays || 3)}`;
+      const city = ` --city ${state.selectedCity || 'Tianjin'} --days ${Number(state.selectedDays || 1)}`;
       const start = state.startDate ? ` --start-date ${shellQuote(state.startDate)}` : '';
       const price = state.priceCsv ? ` --price-csv ${shellQuote(state.priceCsv)}` : '';
       const vpp = ` --vpp-start-hour ${Number(state.vppStartHour || 18)} --vpp-duration-hours ${Number(state.vppDurationHours || 1)}`;
@@ -3083,7 +3146,7 @@
                 <label for="daysSelect">Days / start date</label>
                 <div class="inline-fields">
                   <select id="daysSelect">
-                    ${DAY_OPTIONS.map(item => `<option value="${item.value}" ${Number(state.selectedDays || 3) === item.value ? 'selected' : ''}>${item.label}</option>`).join('')}
+                    ${DAY_OPTIONS.map(item => `<option value="${item.value}" ${Number(state.selectedDays || 1) === item.value ? 'selected' : ''}>${item.label}</option>`).join('')}
                   </select>
                   <select id="startDateSelect">
                     ${START_DATE_OPTIONS.map(item => `<option value="${item.value}" ${state.startDate === item.value ? 'selected' : ''}>${item.label}</option>`).join('')}
@@ -3183,7 +3246,7 @@
       const daysSelect = $('daysSelect');
       if (daysSelect) {
         daysSelect.onchange = (e) => {
-          state.selectedDays = Number(e.target.value || 3);
+          state.selectedDays = Number(e.target.value || 1);
           normalizeScenarioSelection();
           syncCommandFromSelections();
         };
