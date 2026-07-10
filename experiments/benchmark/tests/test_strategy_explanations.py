@@ -94,11 +94,14 @@ def test_vpp_participation_explainer_speaks_as_energybridge_to_customer() -> Non
     assert customer_explanation["speaker"] == "EnergyBridge"
     assert text == customer_explanation["score_prompt_text"]
     assert text == customer_explanation["natural_language"]
-    assert "EnergyBridge recommends" in text
-    assert "Customer control" in text
-    assert "Expected benefit" in text
-    assert "Alternatives:" in text
+    assert "For the 18:00-19:00 event" in text
+    assert "price-aware" in text
+    assert "Comfort stays protected" in text
     assert "EV" in text
+    assert "Customer control" not in text
+    assert "Expected benefit" not in text
+    assert "Alternatives:" not in text
+    assert len(re.split(r"(?<=[.!?])\s+", text)) <= 4
     for key in (
         "comfort_guarantee",
         "task_guarantee",

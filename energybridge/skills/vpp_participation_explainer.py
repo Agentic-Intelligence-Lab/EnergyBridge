@@ -6,6 +6,7 @@ that EnergyBridge shows to, and scores with, the household customer.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -141,6 +142,158 @@ def _benefit_summary(benefit: dict[str, Any]) -> str:
     return "Expected benefit: lower event-window load with no invented monetary claim."
 
 
+def _text_blob(explanation: dict[str, Any]) -> str:
+    fields = [
+        explanation.get("persona_role"),
+        explanation.get("persona_role_label"),
+        explanation.get("why_request"),
+        explanation.get("natural_language"),
+        explanation.get("reason"),
+    ]
+    fields.extend(_coerce_list(explanation.get("personalization_notes")))
+    fields.extend(_coerce_list(explanation.get("protected_constraints")))
+    return " ".join(_as_text(item).lower() for item in fields if _as_text(item))
+
+
+def _customer_focus(explanation: dict[str, Any]) -> list[str]:
+    blob = _text_blob(explanation)
+    role = _as_text(explanation.get("persona_role")).upper()
+    focus: list[str] = []
+    if role in {"A", "F"} or any(token in blob for token in ("price", "cost", "save", "tariff", "off-peak")):
+        focus.append("price")
+    if role in {"B", "C", "E"} or any(token in blob for token in ("comfort", "temperature", "confirm", "opt out")):
+        focus.append("comfort")
+    if role == "F" or "ev" in blob or "soc" in blob:
+        focus.append("ev")
+    if role == "E" or any(token in blob for token in ("care", "elder", "vulnerable", "medication")):
+        focus.append("care")
+    focus.append("control")
+    ordered: list[str] = []
+    for item in focus:
+        if item not in ordered:
+            ordered.append(item)
+    return ordered
+
+
+def _event_window_text(explanation: dict[str, Any]) -> str:
+    structured = explanation.get("structured_control_constraints")
+    if isinstance(structured, dict):
+        window = structured.get("vpp_window")
+        if isinstance(window, dict):
+            text = _as_text(window.get("text"))
+            if text:
+                return text
+    return _first_present(explanation.get("vpp_window"), "the next VPP window")
+
+
+def _strategy_name(explanation: dict[str, Any]) -> str:
+    text = _first_present(explanation.get("selected_strategy"), explanation.get("strategy"), explanation.get("natural_language"))
+    bracket = ""
+
+    match = re.search(r"\[([A-Z])\]\s*([A-Za-z][A-Za-z -]*)", text)
+    if match:
+        bracket = f"[{match.group(1)}] {match.group(2).split('-')[0].strip().split()[0]}"
+    if bracket:
+        return bracket
+    if "balanced" in text.lower():
+        return "[B] Balanced"
+    if "conservative" in text.lower():
+        return "Conservative"
+    if "aggressive" in text.lower():
+        return "Aggressive"
+    return "balanced"
+
+
+def _device_names(actions: list[Any]) -> list[str]:
+    labels = {
+        "ac": "AC",
+        "washer": "washer",
+        "dishwasher": "dishwasher",
+        "dryer": "dryer",
+        "water_heater": "water heater",
+        "ev": "EV charger",
+    }
+    names: list[str] = []
+    for item in actions:
+        if not isinstance(item, dict):
+            continue
+        label = labels.get(_as_text(item.get("device")))
+        if label and label not in names:
+            names.append(label)
+    return names
+
+
+def _comfort_range_text(explanation: dict[str, Any]) -> str:
+    structured = explanation.get("structured_control_constraints")
+    if isinstance(structured, dict):
+        hvac = structured.get("hvac")
+        if isinstance(hvac, dict):
+            preferred = hvac.get("preferred_range_c") or hvac.get("range_c")
+            if isinstance(preferred, (list, tuple)) and len(preferred) >= 2:
+                try:
+                    return f"{float(preferred[0]):.1f}-{float(preferred[1]):.1f}°C"
+                except (TypeError, ValueError):
+                    pass
+            setpoint = hvac.get("setpoint_c")
+            try:
+                return f"near {float(setpoint):.1f}°C"
+            except (TypeError, ValueError):
+                pass
+    for item in _coerce_list(explanation.get("protected_constraints")):
+        text = _as_text(item)
+        if "°C" in text or "comfort" in text.lower():
+            return text.rstrip(".")
+    return "inside your saved comfort limits"
+
+
+def _ev_departure_text(explanation: dict[str, Any]) -> str:
+    structured = explanation.get("structured_control_constraints")
+    if isinstance(structured, dict):
+        appliances = structured.get("appliances")
+        if isinstance(appliances, dict):
+            ev = appliances.get("ev")
+            if isinstance(ev, dict) and ev.get("departure_h") is not None:
+                return f"before {_fmt_hour(ev.get('departure_h'))}"
+    return "before your next departure"
+
+
+def _friendly_customer_sentences(explanation: dict[str, Any]) -> list[str]:
+    actions = _coerce_list(explanation.get("recommended_actions"))
+    devices = [name for name in _device_names(actions) if name != "AC"]
+    device_text = _human_join(devices[:4]) if devices else "the flexible appliances"
+    window = _event_window_text(explanation)
+    strategy = _strategy_name(explanation)
+    comfort_range = _comfort_range_text(explanation)
+    sentences = [
+        f"For the {window} event, I'd use the {strategy} plan: move flexible load away from the peak and keep the VPP report tied to what similar historical events support."
+    ]
+
+    for focus in _customer_focus(explanation):
+        if focus == "price":
+            sentences.append(
+                f"Because your profile is price-aware, I schedule {device_text} in lower-cost or non-event hours first, so the benefit comes from timing rather than making the home uncomfortable."
+            )
+        elif focus == "comfort":
+            sentences.append(
+                f"Comfort stays protected: any AC change remains {comfort_range}, and normal cooling is restored after the event."
+            )
+        elif focus == "ev":
+            sentences.append(
+                f"For the EV, charging avoids the VPP window while still protecting the required charge {_ev_departure_text(explanation)}."
+            )
+        elif focus == "care":
+            sentences.append(
+                "Care routines stay off-limits; EnergyBridge only uses non-critical flexibility and keeps manual override available."
+            )
+        elif focus == "control":
+            sentences.append(
+                "If the plan feels inconvenient, you can pause it and EnergyBridge will fall back to the safer comfort-first option."
+            )
+        if len(sentences) >= 4:
+            break
+    return sentences[:4]
+
+
 def _personalization_summary(notes: list[Any]) -> str:
     texts = [_as_text(item).rstrip(".") for item in notes if _as_text(item)]
     if not texts:
@@ -202,34 +355,7 @@ def _review_dimensions(explanation: dict[str, Any]) -> dict[str, bool]:
 
 def build_customer_explanation(explanation: dict[str, Any]) -> str:
     """Build the household-facing explanation used by UI and scoring."""
-    why = _first_present(
-        explanation.get("why_request"),
-        "The VPP has requested a short demand-response action for the next event window.",
-    )
-    actions = _coerce_list(explanation.get("recommended_actions"))
-    protected = _coerce_list(explanation.get("protected_constraints"))
-    user_control = _coerce_list(explanation.get("user_control"))
-    alternatives = _coerce_list(explanation.get("alternatives"))
-    benefit = explanation.get("expected_benefit") if isinstance(explanation.get("expected_benefit"), dict) else {}
-    personalization = _coerce_list(explanation.get("personalization_notes"))
-    values = _extract_verifiable_values(explanation)
-
-    parts = [
-        f"EnergyBridge recommends this VPP participation plan because {why if why else 'the grid has requested short-term flexibility.'}",
-        _action_summary(actions),
-        _service_protection_summary(protected),
-        _control_summary(user_control),
-        _benefit_summary(benefit),
-    ]
-    personalization_text = _personalization_summary(personalization)
-    if personalization_text:
-        parts.append(personalization_text)
-    if values:
-        parts.append("Verifiable values: " + _human_join(values) + ".")
-    alternatives_text = _alternatives_summary(alternatives)
-    if alternatives_text:
-        parts.append(alternatives_text)
-    return "\n\n".join(part for part in parts if part).strip()
+    return " ".join(_friendly_customer_sentences(explanation)).strip()
 
 
 def finalize_vpp_participation_explanation(
