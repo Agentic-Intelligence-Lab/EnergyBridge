@@ -1292,6 +1292,27 @@
       return `${ev.id || `vpp${day}`} · Day ${ev.day || day} ${clockHour(start)}-${clockHour(end)}`;
     }
 
+    function eventStartHourOfDay(ev = null) {
+      const raw = numOrNull(ev?.trigger_h) ?? Number(state.vppStartHour || 18);
+      return ((raw % 24) + 24) % 24;
+    }
+
+    function eventEndHourOfDay(ev = null) {
+      const startRaw = numOrNull(ev?.trigger_h) ?? Number(state.vppStartHour || 18);
+      const duration = eventDurationHours(ev);
+      const endRaw = numOrNull(ev?.end_h) ?? (startRaw + duration);
+      return ((endRaw % 24) + 24) % 24;
+    }
+
+    function eventDurationHours(ev = null) {
+      const direct = numOrNull(ev?.duration_hours);
+      if (direct !== null && direct > 0) return direct;
+      const start = numOrNull(ev?.trigger_h);
+      const end = numOrNull(ev?.end_h);
+      if (start !== null && end !== null && end > start) return end - start;
+      return Number(state.vppDurationHours || 1);
+    }
+
     function actionsLine(actions) {
       const entries = Object.entries(actions || {}).filter(([, v]) => v !== null && v !== undefined);
       if (!entries.length) return 'keep current strategy';
@@ -1768,9 +1789,8 @@
 
     function eventWindowText(resultData = null) {
       const ev = selectedVppEvent(resultData) || firstVppEvent(resultData);
-      const start = numOrNull(ev?.trigger_h) ?? Number(state.vppStartHour || 18);
-      const duration = numOrNull(ev?.duration_hours) ?? Number(state.vppDurationHours || 1);
-      const end = numOrNull(ev?.end_h) ?? (start + duration);
+      const start = eventStartHourOfDay(ev);
+      const end = eventEndHourOfDay(ev);
       const day = ev?.day ? `D${ev.day}` : 'next event';
       return `${day} ${clockHour(start)}-${clockHour(end)}`;
     }
@@ -1815,12 +1835,16 @@
 
     function selectedVppReductionKwh(resultData = null) {
       const ev = selectedVppEvent(resultData) || firstVppEvent(resultData);
+      const eventCount = Array.isArray(resultData?.vpp_event_log) ? resultData.vpp_event_log.length : 0;
       return nonNegativeOrNull(ev?.actual_shed_kwh)
         ?? nonNegativeOrNull(ev?.actual_reduction_kwh)
         ?? nonNegativeOrNull(ev?.measured_shed_kwh)
         ?? nonNegativeOrNull(ev?.event_baseline_estimate?.actual_shed_kwh)
         ?? nonNegativeOrNull(ev?.event_baseline_estimate?.actual_reduction_kwh)
-        ?? nonNegativeOrNull(ev?.event_baseline_estimate?.measured_shed_kwh);
+        ?? nonNegativeOrNull(ev?.event_baseline_estimate?.measured_shed_kwh)
+        ?? nonNegativeOrNull(ev?.reference_pbase_minus_actual_kwh)
+        ?? (eventCount <= 1 ? nonNegativeOrNull(resultData?.vpp_energy_reduction_kwh) : null)
+        ?? (eventCount <= 1 ? nonNegativeOrNull(resultData?.vpp_energy_reduction_avg_per_event_kwh) : null);
     }
 
     function reductionRatioValue(resultData = null) {
@@ -1956,8 +1980,8 @@
 
     function dashboardEnergySeries(resultData = null) {
       const ev = selectedVppEvent(resultData) || firstVppEvent(resultData);
-      const start = Math.floor(numOrNull(ev?.trigger_h) ?? Number(state.vppStartHour || 18));
-      const duration = Math.max(1, Math.ceil(numOrNull(ev?.duration_hours) ?? Number(state.vppDurationHours || 1)));
+      const start = Math.floor(eventStartHourOfDay(ev));
+      const duration = Math.max(1, Math.ceil(eventDurationHours(ev)));
       const actualPriceProfile = priceProfileForDay(resultData);
       const actualPrices = Array.isArray(actualPriceProfile?.prices) ? actualPriceProfile.prices : [];
       const actualVppEnergy = selectedVppReductionKwh(resultData);
@@ -2082,8 +2106,8 @@
     function tariffSeries(resultData = null) {
       const traces = dashboardEnergySeries(resultData);
       const ev = selectedVppEvent(resultData) || firstVppEvent(resultData);
-      const start = Math.floor(numOrNull(ev?.trigger_h) ?? Number(state.vppStartHour || 18));
-      const duration = Math.max(1, Math.ceil(numOrNull(ev?.duration_hours) ?? Number(state.vppDurationHours || 1)));
+      const start = Math.floor(eventStartHourOfDay(ev));
+      const duration = Math.max(1, Math.ceil(eventDurationHours(ev)));
       return Array.from({length: 24}, (_, h) => {
         const event = h >= start && h < start + duration;
         const grid = numOrNull(traces.load[h]);
