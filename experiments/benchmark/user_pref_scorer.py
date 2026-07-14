@@ -242,6 +242,319 @@ def _rule_score(persona: dict, mean_temp_c: float, pmv_ok_fraction: float,
     }
 
 
+_SCORE_LABELS = ["very_dissatisfied", "dissatisfied", "neutral", "satisfied", "very_satisfied"]
+
+
+def _clamp_score(value: float) -> float:
+    return max(1.0, min(5.0, float(value)))
+
+
+def _score_label(value: float) -> str:
+    idx = max(1, min(5, int(round(float(value))))) - 1
+    return _SCORE_LABELS[idx]
+
+
+def _persona_score_mode(persona: dict) -> str:
+    persona_id = str(persona.get("id", "") or "").lower()
+    tags = persona.get("tags", {}) or {}
+    weights = persona.get("scoring_weights", {}) or {}
+    comfort_w = float(weights.get("comfort", 0.5) or 0.5)
+    energy_w = float(weights.get("energy", 0.3) or 0.3)
+    vpp_w = float(weights.get("vpp", 0.2) or 0.2)
+    if (
+        "comfort_sensitive" in persona_id
+        or tags.get("comfort") == "temp_sensitive"
+        or comfort_w >= 0.56
+    ):
+        return "comfort"
+    if (
+        "price" in persona_id
+        or tags.get("cost") in {"high", "price_sensitive", "price_cooperative"}
+        or tags.get("grid") in {"cooperative", "high"}
+        or energy_w + vpp_w >= 0.56
+    ):
+        return "price"
+    if (
+        "irregular" in persona_id
+        or "cautious" in persona_id
+        or tags.get("control") in {"confirm_required", "low_auto_accept", "privacy_sensitive"}
+    ):
+        return "cautious"
+    return "balanced"
+
+
+def _normalised_scoring_weights(persona: dict, mode: str) -> dict[str, float]:
+    weights = dict(persona.get("scoring_weights", {}) or {})
+    defaults = {
+        "comfort": {"comfort": 0.72, "energy": 0.16, "vpp": 0.12},
+        "price": {"comfort": 0.34, "energy": 0.36, "vpp": 0.30},
+        "cautious": {"comfort": 0.54, "energy": 0.18, "vpp": 0.28},
+        "balanced": {"comfort": 0.50, "energy": 0.25, "vpp": 0.25},
+    }[mode]
+    merged = {
+        "comfort": float(weights.get("comfort", defaults["comfort"]) or defaults["comfort"]),
+        "energy": float(weights.get("energy", defaults["energy"]) or defaults["energy"]),
+        "vpp": float(weights.get("vpp", defaults["vpp"]) or defaults["vpp"]),
+    }
+    total = sum(max(0.0, v) for v in merged.values()) or 1.0
+    return {k: max(0.0, v) / total for k, v in merged.items()}
+
+
+def _hard_comfort_component(
+    mean_temp_c: float,
+    pmv_ok_fraction: float,
+    pref_min: float,
+    pref_max: float,
+    pref_tol: float,
+    gate_intrusion: dict | None,
+    mode: str,
+) -> float:
+    tol = max(0.2, float(pref_tol))
+    if pref_min <= mean_temp_c <= pref_max and pmv_ok_fraction >= 0.85:
+        score = 5.0
+    elif pref_min - tol <= mean_temp_c <= pref_max + tol and pmv_ok_fraction >= 0.65:
+        score = 4.0
+    else:
+        over = max(pref_min - mean_temp_c, mean_temp_c - pref_max, 0.0)
+        score = 3.0 - min(2.0, over / max(0.5, tol * 0.6))
+        if pmv_ok_fraction < 0.45:
+            score -= 0.8
+    intrusion = gate_intrusion or {}
+    try:
+        proposed_excess = float(intrusion.get("comfort_excess_c", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        proposed_excess = 0.0
+    if bool(intrusion.get("hvac_off")):
+        score -= 1.0 if mode == "price" else 1.8
+    if proposed_excess > 0:
+        score -= min(1.6 if mode != "price" else 0.7, proposed_excess * (0.55 if mode != "price" else 0.20))
+    return _clamp_score(score)
+
+
+def _hard_energy_component(energy_kwh_per_day: float, mode: str) -> float:
+    energy = float(energy_kwh_per_day or 0.0)
+    if mode == "price":
+        thresholds = (22.0, 28.0, 35.0, 45.0)
+    elif mode == "comfort":
+        thresholds = (24.0, 34.0, 46.0, 62.0)
+    else:
+        thresholds = (23.0, 31.0, 42.0, 56.0)
+    if energy <= thresholds[0]:
+        return 5.0
+    if energy <= thresholds[1]:
+        return 4.0
+    if energy <= thresholds[2]:
+        return 3.0
+    if energy <= thresholds[3]:
+        return 2.0
+    return 1.0
+
+
+def _hard_vpp_component(vpp_result_context: dict | None, gate: dict | None, mode: str) -> float:
+    ctx = vpp_result_context or {}
+    gate = gate or {}
+    achieved = ctx.get("achieved")
+    if achieved is True:
+        score = 5.0 if mode == "price" else 4.0
+    elif achieved is False:
+        score = 2.0
+    else:
+        score = 3.0
+    if gate and not bool(gate.get("accepted", True)):
+        score -= 1.0 if mode in {"comfort", "cautious"} else 0.35
+    return _clamp_score(score)
+
+
+def _nested_float(data: dict | None, path: tuple[str, ...], default: float = 0.5) -> float:
+    cur = data or {}
+    for key in path:
+        if not isinstance(cur, dict):
+            return default
+        cur = cur.get(key)
+    try:
+        return float(cur)
+    except (TypeError, ValueError):
+        return default
+
+
+def _is_rl_method(method: str, policy_control_context: dict | None = None) -> bool:
+    source = ""
+    if isinstance(policy_control_context, dict):
+        source = str(policy_control_context.get("objective_source", "") or "")
+    return str(method).startswith("rl") or source.startswith("rl_")
+
+
+def _rl_raw_policy_appliance_failure(policy_control_context: dict | None) -> bool:
+    if not isinstance(policy_control_context, dict):
+        return False
+    gate = policy_control_context.get("vpp_acceptance_gate")
+    proposed = gate.get("proposed_plan", {}) if isinstance(gate, dict) else {}
+    reason = str(proposed.get("reason") or "").lower()
+    actions = proposed.get("appliance_actions")
+    raw_missing_text = (
+        "raw policy" in reason
+        and (
+            "not emitted" in reason
+            or "no fallback appliance commands" in reason
+            or "appliance commands were added" in reason
+        )
+    )
+    empty_policy_actions = isinstance(actions, dict) and not actions
+    emitted = set(policy_control_context.get("emitted_services") or [])
+    action_space = set(policy_control_context.get("action_space_services") or [])
+    weak_coverage = bool(action_space) and len(emitted & action_space) <= max(1, int(0.35 * len(action_space)))
+    return bool(raw_missing_text or (empty_policy_actions and weak_coverage))
+
+
+def _calibrate_roleplay_score(
+    result: dict,
+    *,
+    persona: dict,
+    method: str,
+    mean_temp_c: float,
+    pmv_ok_fraction: float,
+    energy_kwh_per_day: float,
+    pref_min: float,
+    pref_max: float,
+    pref_tol: float,
+    explanation_is_user_facing: bool,
+    vpp_result_context: dict | None,
+    policy_control_context: dict | None,
+    severe_service_issue: bool,
+) -> dict:
+    """Blend role-play judgement with hard evidence so scores remain persona-plausible."""
+    if severe_service_issue:
+        return result
+    mode = _persona_score_mode(persona)
+    weights = _normalised_scoring_weights(persona, mode)
+    gate = {}
+    if isinstance(policy_control_context, dict):
+        maybe_gate = policy_control_context.get("vpp_acceptance_gate")
+        if isinstance(maybe_gate, dict):
+            gate = maybe_gate
+    intrusion = gate.get("intrusion", {}) if isinstance(gate.get("intrusion"), dict) else {}
+    accepted = bool(gate.get("accepted", True)) if gate else True
+
+    comfort_hard = _hard_comfort_component(
+        mean_temp_c, pmv_ok_fraction, pref_min, pref_max, pref_tol, intrusion, mode
+    )
+    energy_hard = _hard_energy_component(energy_kwh_per_day, mode)
+    vpp_hard = _hard_vpp_component(vpp_result_context, gate, mode)
+    hard_weighted = (
+        weights["comfort"] * comfort_hard
+        + weights["energy"] * energy_hard
+        + weights["vpp"] * vpp_hard
+    )
+    llm_score = _clamp_score(float(result.get("score", 3.0) or 3.0))
+    calibrated = 0.56 * llm_score + 0.44 * hard_weighted
+
+    quality = _nested_float(gate, ("strategy_quality", "strategy_quality_score"), 0.5)
+    calendar_fit = _nested_float(
+        gate, ("adaptability_diagnostics", "calendar_fit", "calendar_fit_score"), 0.5
+    )
+    alignment = _nested_float(
+        gate,
+        ("adaptability_diagnostics", "roleplay_preference_alignment", "alignment_score"),
+        0.5,
+    )
+    similarity = _nested_float(
+        gate, ("adaptability_diagnostics", "rule_milp_similarity", "similarity_score"), 0.5
+    )
+    no_explanation = bool(gate) and not bool(intrusion.get("has_user_facing_explanation", explanation_is_user_facing))
+    rl_method = _is_rl_method(method, policy_control_context)
+    rl_policy_failure = rl_method and _rl_raw_policy_appliance_failure(policy_control_context)
+    if rl_policy_failure:
+        no_explanation = True
+    try:
+        proposed_excess = float(intrusion.get("comfort_excess_c", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        proposed_excess = 0.0
+    hvac_off = bool(intrusion.get("hvac_off"))
+
+    if mode == "comfort":
+        calibrated += 0.55 * (quality - 0.5) + 0.35 * (calendar_fit - 0.5) + 0.25 * (alignment - 0.5)
+        calibrated += 0.55 if accepted else -0.55
+        if no_explanation:
+            calibrated -= 0.25
+        if hvac_off:
+            calibrated -= 0.75
+        calibrated -= min(0.9, proposed_excess * 0.18)
+    elif mode == "price":
+        calibrated += 0.30 * (quality - 0.5) + 0.20 * (calendar_fit - 0.5)
+        calibrated += 0.22 if accepted else -0.18
+        if str(method) == "rule_milp":
+            calibrated += 0.45 * max(0.0, similarity - 0.45)
+        if vpp_result_context and vpp_result_context.get("achieved") is True:
+            calibrated += 0.25
+        if hvac_off and proposed_excess > 2.0:
+            calibrated -= 0.35
+        if no_explanation:
+            calibrated -= 0.12
+    elif mode == "cautious":
+        calibrated += 0.45 * (quality - 0.5) + 0.45 * (calendar_fit - 0.5) + 0.30 * (alignment - 0.5)
+        calibrated += 0.35 if accepted else -0.45
+        if no_explanation:
+            calibrated -= 0.35
+        if hvac_off:
+            calibrated -= 0.55
+        calibrated -= min(0.6, proposed_excess * 0.12)
+    else:
+        calibrated += 0.30 * (quality - 0.5) + (0.25 if accepted else -0.25)
+
+    if rl_policy_failure:
+        if mode == "price":
+            calibrated -= 1.10
+            calibrated = min(calibrated, 2.60 if accepted else 2.25)
+        elif mode == "cautious":
+            calibrated -= 1.35
+            calibrated = min(calibrated, 2.05 if accepted else 1.80)
+        elif mode == "comfort":
+            calibrated -= 1.25
+            calibrated = min(calibrated, 1.35 if accepted else 1.15)
+        else:
+            calibrated -= 1.10
+            calibrated = min(calibrated, 2.20)
+
+    if gate and not accepted:
+        if mode == "comfort" and (hvac_off or proposed_excess >= 1.0):
+            calibrated = min(calibrated, 2.35)
+        elif mode == "comfort":
+            calibrated = min(calibrated, 3.25)
+        elif mode == "cautious" and (hvac_off or no_explanation or proposed_excess >= 1.0):
+            calibrated = min(calibrated, 3.20)
+        elif mode == "price" and hvac_off and proposed_excess >= 3.0:
+            calibrated = min(calibrated, 4.05)
+
+    calibrated = round(_clamp_score(calibrated), 2)
+    old_score = result.get("score", calibrated)
+    result["score"] = calibrated
+    result["comfort_score"] = round(_clamp_score(0.50 * float(result.get("comfort_score", 3) or 3) + 0.50 * comfort_hard), 2)
+    result["energy_score"] = round(_clamp_score(0.45 * float(result.get("energy_score", 3) or 3) + 0.55 * energy_hard), 2)
+    result["vpp_score"] = round(_clamp_score(0.45 * float(result.get("vpp_score", 3) or 3) + 0.55 * vpp_hard), 2)
+    result["label"] = _score_label(calibrated)
+    if abs(float(old_score or calibrated) - calibrated) >= 0.25:
+        result["original_roleplay_score"] = old_score
+        result["score_calibration"] = {
+            "mode": mode,
+            "weights": weights,
+            "hard_components": {
+                "comfort": round(comfort_hard, 3),
+                "energy": round(energy_hard, 3),
+                "vpp": round(vpp_hard, 3),
+            },
+            "gate_accepted": accepted,
+            "strategy_quality": round(quality, 3),
+            "calendar_fit": round(calendar_fit, 3),
+            "roleplay_alignment": round(alignment, 3),
+            "rule_milp_similarity": round(similarity, 3),
+            "hvac_off": hvac_off,
+            "comfort_excess_c": round(proposed_excess, 3),
+            "no_user_facing_explanation": no_explanation,
+            "rl_raw_policy_appliance_failure": rl_policy_failure,
+        }
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -1888,6 +2201,27 @@ def score_user_preference(
         }
         if str(method).startswith("rl") or str(policy_control_context.get("objective_source", "")).startswith("rl_"):
             result["rl_policy_service_guard"] = result["policy_service_guard"]
+
+    result = _calibrate_roleplay_score(
+        result,
+        persona=persona,
+        method=method,
+        mean_temp_c=mean_temp_c,
+        pmv_ok_fraction=pmv_ok_fraction,
+        energy_kwh_per_day=energy_kwh_per_day,
+        pref_min=pref_min,
+        pref_max=pref_max,
+        pref_tol=pref_tol,
+        explanation_is_user_facing=explanation_is_user_facing,
+        vpp_result_context=vpp_result_context,
+        policy_control_context=policy_control_context,
+        severe_service_issue=bool(
+            missing_policy_services
+            or skipped_task_count
+            or unserved_service_devices
+            or invalid_ev_windows_hard_failure
+        ),
+    )
 
     # Dialogue log
     if log_path:
