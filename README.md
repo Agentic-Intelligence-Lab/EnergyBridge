@@ -1108,12 +1108,102 @@ controllers on identical VPP avoidance, comfort, and task-completion metrics.
 Native HEMA ReAct agent baseline. This baseline requires the original HEMA
 repository as an external dependency.
 
-```text
+#### Architecture Overview
+
+The HEMA baseline consists of three layers (all located in `experiments/benchmark/baselines/hema/`):
+
+```
+experiments/benchmark/baselines/hema/
+├── hema_controller.py      # HEMAControlBaseline: main controller class
+├── device_bridge.py         # EnergyBridgeToHEMA: state synchronization bridge
+└── __init__.py              # get_hema_controller() + sys.path setup
+```
+
+#### Step 1: Install HEMA
+
+```bash
+# From your project root 
 git clone https://github.com/humanbuildingsynergy/HEMA.git
+```
+
+Install HEMA dependencies:
+
+```bash
 cd HEMA
-# Install dependencies
 pip install -r requirements.txt
 ```
+
+#### Step 2: How the Adapter Works
+
+The adapter bridges EnergyBridge and HEMA through three files in `experiments/benchmark/baselines/hema/`:
+
+##### `__init__.py`
+
+Factory function that returns the HEMA controller class. Manages `sys.path` so HEMA imports resolve correctly without polluting the global namespace. If you move the HEMA clone to a different directory, update `_HEMA_ROOT` here.
+
+##### `device_bridge.py` — `EnergyBridgeToHEMA`
+
+| Function | What it does |
+|----------|-------------|
+| `ensure_device_config()` | Resets HEMA's global device state and rebuilds it from EnergyBridge's `appliance_config` + live `eplus_state`. Maps EnergyBridge devices (washer, dishwasher, etc.) to HEMA's schema (washing_machine, dishwasher, etc.) with °C→°F conversion. |
+| `build_query()` | Constructs the natural-language prompt sent to HEMA's ReAct agent. Pulls from persona schema (tags, preferences, schedule, appliances), live state (indoor/outdoor temp, setpoint), VPP context (event window, capacity target), and price data. |
+| `extract_actions()` | Parses HEMA's tool calls and converts back to EnergyBridge control JSON. Fuzzy-matches device names, maps actions (e.g., `set_temperature` → `setpoint_f`, `set_schedule` → `*_start_h`), and converts °F→°C. |
+
+##### `hema_controller.py` — `HEMAControlBaseline`
+
+| Function | What it does |
+|----------|-------------|
+| `decide()` | Entry point called by `family_runner.py` each timestep. Initializes HEMA agent on first call, then delegates to `_decide_with_retry()`. |
+| `_decide_with_retry()` | Invokes HEMA agent, checks if all present appliances received commands. If any are missing, retries up to 5 times with a strengthened mandatory-action prompt. Logs raw tool calls for debugging. Tracks token usage and latency. |
+| `_to_energybridge()` | Converts parsed HEMA actions to EnergyBridge format: °F→°C setpoint conversion, assembles `appliance_actions` dict, sets `next_check_hour` to wake controller after VPP ends. |
+
+#### Step 3: Run HEMA as a Baseline
+
+```text
+# Run full Tianjin 7-day personal-user matrix
+python experiments/benchmark/run_baseline_matrix.py \
+  --methods hema_agent \
+  --city Tianjin \
+  --days 7 \  
+  --mpc-horizon 6 \
+  --date <yyyy-mm-dd> \
+  --workers 5 \
+  --resume
+
+# Run full Germany 7-day personal-user matrix
+python experiments/benchmark/run_baseline_matrix.py \
+  --methods hema_agent \
+  --city Germany \
+  --days 7 \
+  --start-date 2025-06-01 \
+  --mpc-horizon 6 \
+  --price-csv experiments/real_data/germany_2025_price.csv \
+  --date <yyyy-mm-dd> \
+  --workers 5 \
+  --resume
+
+# Run all five households for Tianjin
+python experiments/benchmark/run_household_matrix.py \
+  --methods hema_agent \
+  --city Tianjin \
+  --days 7 \
+  --start-date 2025-06-01 \
+  --date <YYYY-MM-DD> \
+  --workers 5 \
+  --resume
+
+# Run all five households for Germany
+python experiments/benchmark/run_household_matrix.py \
+  --methods hema_agent \
+  --city Germany \
+  --days 7 \
+  --start-date 2025-06-01 \
+  --price-csv experiments/real_data/germany_2025_price.csv \
+  --date <YYYY-MM-DD> \
+  --workers 5 \
+  --resume
+```
+
 
 ```text
 experiments/benchmark/baselines/hema

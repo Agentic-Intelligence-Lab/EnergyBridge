@@ -39,7 +39,7 @@ from .device_bridge import EnergyBridgeToHEMA
 # ------------------------------------------------------------------
 # Read EnergyBridge .env config (fixes base_url and model)
 # ------------------------------------------------------------------
-_API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY") or ""
+_API_KEY = os.getenv("LLM_API_KEY") or ""
 if not _API_KEY:
     _pool = os.getenv("LLM_API_KEY_POOL", "")
     if _pool:
@@ -165,7 +165,9 @@ class HEMAControlBaseline:
             "- clothes_dryer: MUST schedule a start time today using schedule_device_action. "
             "   Choose a time outside the VPP window (18:00-19:00). Use 24-hour format like '10:00'.\n"
             "- water_heater: MUST set a preheat schedule using schedule_device_action. "
-            "   Set start time with action 'start', end time with action 'stop', and temperature with action 'set_temperature'. Must finish end time before the VPP window (18:00-19:00)\n"
+            "   ONLY provide 'value' parameter (temperature in °F as a number, e.g., '125'), DO NOT provide 'time' parameter for set_temperature. "
+            "   Set start time with action 'start', end time with action 'stop', and temperature with action 'set_temperature'. "
+            "   Must finish end time before the VPP window (18:00-19:00)\n"
             "- ev_charger: MUST set the charging schedule. "
             "   Ensure the charging window greater or equal to Minimum charging hours to reach target_soc. "
             "  EV CHARGING TIME CALCULATION GUIDE:\n"
@@ -276,7 +278,7 @@ class HEMAControlBaseline:
         if parsed.get("dryer_start_h") is not None:
             appl["dryer_start_h"] = float(parsed["dryer_start_h"])
             appl["dryer_skip"] = False
-        if parsed.get("water_heater_preheat") is not None:
+        if parsed.get("water_heater_preheat"):
             appl["water_heater_preheat"] = True
             appl["water_heater_preheat_start_h"] = float(parsed["water_heater_preheat_start_h"])
             appl["water_heater_preheat_end_h"] = float(parsed["water_heater_preheat_end_h"])
