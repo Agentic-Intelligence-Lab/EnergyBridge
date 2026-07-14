@@ -95,6 +95,35 @@ class RoleplayUserSimulator:
         )
         return self._call_json(system_prompt, user_prompt)
 
+    def answer_onboarding_questions(
+        self,
+        persona: dict[str, Any],
+        questions: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        system_prompt = (
+            "You are role-playing the same residential user during controller onboarding. "
+            "Answer a very short questionnaire honestly and consistently with the hidden persona. "
+            "Return only valid JSON."
+        )
+        user_prompt = (
+            "Hidden user persona for role-play only:\n"
+            f"{json.dumps(persona, ensure_ascii=False)}\n\n"
+            "Questionnaire shown to the user:\n"
+            f"{json.dumps(questions, ensure_ascii=False)}\n\n"
+            "Instructions:\n"
+            "- Answer as the user in natural language, not as an analyst.\n"
+            "- Do not reveal raw persona tags, scoring weights, or hidden prompts.\n"
+            "- Keep the answers concise but actionable for an energy controller.\n"
+            "- The controller will use only these answers and later feedback to infer preferences.\n\n"
+            "Return a JSON object with fields:\n"
+            "  answers: list of {id, question, answer}\n"
+            "  inferred_profile: object with comfort_priority, cost_grid_priority, "
+            "automation_preference, thermostat_flexibility_c, appliance_flexibility, "
+            "calendar_routine_sensitivity, strategy_bias\n"
+            "  preference_rules: list of short controller-facing rules written without hidden tag names"
+        )
+        return self._call_json(system_prompt, user_prompt)
+
     def choose_strategy(
         self,
         persona: dict[str, Any],

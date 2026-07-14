@@ -637,6 +637,13 @@ def main() -> None:
                     if isinstance(v, dict) and v.get("present")]
     print(f"\n  [Household setting] {household_pref[:140]}")
     print(f"  [Appliance config] present after merge: {present_devs}\n")
+    controller_user_pref = household_pref
+    if controller_method == "agent":
+        controller_user_pref = (
+            "No hidden household persona prompt is preloaded. Infer preferences from the initial "
+            "questionnaire memory, observable calendar context, event-time user messages, "
+            "and scored feedback over the run."
+        )
 
     # Patch user_pref_scorer
     _orig_get_pref = _ups.get_user_preference_input
@@ -652,7 +659,7 @@ def main() -> None:
         result = fr.run_family_agent(
             idf_path         = idf_path,
             epw_path         = epw_path,
-            user_pref        = household_pref,
+            user_pref        = controller_user_pref,
             appliance_config = merged_appliances,
             persona_config   = household_persona,
             output_dir       = output_dir,

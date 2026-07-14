@@ -915,10 +915,17 @@ def main() -> None:
         _ups.get_user_preference_input,
         _ups.score_user_preference,
     )
+    controller_user_pref = physical_persona["llm_prompts"]["agent_context"]
+    if controller_method == "agent":
+        controller_user_pref = (
+            "No hidden household persona prompt is preloaded. Infer preferences from the initial "
+            "questionnaire memory, observable calendar context, member role-play outputs, "
+            "and scored feedback over the run."
+        )
     result = fr.run_family_agent(
         idf_path=idf_path,
         epw_path=epw_path,
-        user_pref=physical_persona["llm_prompts"]["agent_context"],
+        user_pref=controller_user_pref,
         appliance_config=physical_persona.get("appliances", {}),
         persona_config=physical_persona,
         output_dir=output_dir,

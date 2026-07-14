@@ -686,10 +686,18 @@ def main() -> None:
     print(f"OUTPUT  : {output_dir}")
     print("=" * 70)
 
+    controller_user_pref = persona["llm_prompts"]["system_prompt"]
+    if controller_method == "agent":
+        controller_user_pref = (
+            "No hidden user persona prompt is preloaded. Infer preferences from the initial "
+            "questionnaire memory, observable calendar context, event-time user messages, "
+            "and scored feedback over the run."
+        )
+
     result = fr.run_family_agent(
         idf_path         = idf_path,
         epw_path         = epw_path,
-        user_pref        = persona["llm_prompts"]["system_prompt"],
+        user_pref        = controller_user_pref,
         appliance_config = persona.get("appliances", {}),
         persona_config   = persona,
         output_dir       = output_dir,
@@ -757,6 +765,9 @@ def main() -> None:
         "total_energy_kwh",
         "vpp_window_energy_kwh",
         "vpp_energy_reduction_avg_per_event_kwh",
+        "vpp_plan_acceptance_rate",
+        "vpp_plan_acceptance_probability_avg",
+        "vpp_plan_rejected_count",
         "user_pref_score",
         "user_pref_scores",
         "output_dir",

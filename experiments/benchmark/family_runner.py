@@ -1,6 +1,7 @@
 """Family home benchmark runner (PMV or Agent mode) — 3x VPP-1 events per 3-day sim."""
 from __future__ import annotations
 import hashlib
+import re
 import os, sys, json, random, shutil
 
 # Fix Windows GBK encoding for Unicode status characters.
@@ -297,6 +298,10 @@ class BenchmarkResult:
     daily_trace_rows: List[dict] = field(default_factory=list)
     control_decisions: List[Tuple[float, float, float]] = field(default_factory=list)
     vpp_event_log: List[dict] = field(default_factory=list)  # scored VPP events with reason
+    vpp_plan_acceptance_rate: Optional[float] = None
+    vpp_plan_acceptance_probability_avg: Optional[float] = None
+    vpp_plan_rejected_count: int = 0
+    vpp_plan_gate_events: List[dict] = field(default_factory=list)
     agent_preference_memory_path: str = ""
     agent_preference_memory_md_path: str = ""
     output_dir: str = ""; error: str = ""
@@ -471,6 +476,8 @@ class _FamilyLoop:
         self.day_agent_decisions: List[List[dict]] = [[], [], []]  # per day: list of {h, sp, actions}
         self.daily_plans_done: set[int] = set()
         self.no_dr_routine_actions: List[dict] = []
+        self.no_vpp_daily_plan_by_day: Dict[int, dict] = {}
+        self.vpp_plan_gate_by_id: Dict[str, dict] = {}
         self.agent_preference_memory: Dict[str, Any] = {}
         self.agent_memory_path: Optional[Path] = None
         self.agent_memory_md_path: Optional[Path] = None
@@ -1795,7 +1802,8 @@ def _explicit_appliance_requirement_text(
     vpp_note = (
         "\nBecause today has a VPP event window "
         f"{_event_window_text(vpp_event)}, any emitted commands should avoid putting controllable load "
-        "inside that event window when feasible."
+        "inside that event window when feasible. For fixed/non-DR-adjustable routines, emit the user's normal "
+        "routine instead of forcing a VPP shift; reduced VPP capacity is preferable to violating consent."
         if vpp_event else ""
     )
     return (
@@ -1825,6 +1833,16 @@ def _interval_overlaps(start: float, end: float, window_start: float, window_end
     return any(a < window_end and b > window_start for a, b in intervals if a != b)
 
 
+def _service_is_dr_adjustable(name: str, appliance_config: dict | None) -> bool:
+    cfg = appliance_config or {}
+    dev = cfg.get(name, {}) or {}
+    if not bool(dev.get("present", False)):
+        return False
+    if name in {"washer", "dishwasher", "dryer"}:
+        return bool(dev.get("shiftable", True)) and bool(dev.get("dr_adjustable", True))
+    return dev.get("dr_adjustable", True) is not False
+
+
 def _vpp_appliance_conflicts(
     actions: dict | None,
     appliance_config: dict | None,
@@ -1841,6 +1859,8 @@ def _vpp_appliance_conflicts(
     window_text = _event_window_text(event)
     for name in ("washer", "dishwasher", "dryer"):
         if name not in present or bool(actions.get(f"{name}_skip")):
+            continue
+        if not _service_is_dr_adjustable(name, appliance_config):
             continue
         start = actions.get(f"{name}_start_h")
         if start is None:
@@ -1864,7 +1884,11 @@ def _vpp_appliance_conflicts(
                 )
         except (TypeError, ValueError):
             continue
-    if "water_heater" in present and actions.get("water_heater_preheat") is not False:
+    if (
+        "water_heater" in present
+        and actions.get("water_heater_preheat") is not False
+        and _service_is_dr_adjustable("water_heater", appliance_config)
+    ):
         start = actions.get("water_heater_preheat_start_h")
         end = actions.get("water_heater_preheat_end_h")
         try:
@@ -1874,7 +1898,7 @@ def _vpp_appliance_conflicts(
                 )
         except (TypeError, ValueError):
             pass
-    if "ev" in present:
+    if "ev" in present and _service_is_dr_adjustable("ev", appliance_config):
         mode = str(actions.get("ev_mode") or "").lower()
         if mode == "normal":
             conflicts.append(f"ev: normal mode may charge during VPP {window_text}")
@@ -2053,6 +2077,8 @@ def _filter_vpp_event_replan_actions(
     kept: list[str] = []
     dropped: list[str] = []
     for name in ("washer", "dishwasher", "dryer", "water_heater", "ev"):
+        if not _service_is_dr_adjustable(name, appliance_config):
+            continue
         if not any(key in filtered for key in (
             (f"{name}_start_h", f"{name}_skip") if name in ("washer", "dishwasher", "dryer")
             else (
@@ -2086,6 +2112,1227 @@ def _filter_vpp_event_replan_actions(
         "kept": kept,
         "dropped": dropped,
         "rule": "only reschedule services already planned inside the VPP window to after the window",
+    }
+
+
+def _stable_unit_random(*parts: Any) -> float:
+    payload = json.dumps(parts, sort_keys=True, ensure_ascii=False, default=str)
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return int(digest[:13], 16) / float(16**13)
+
+
+def _bounded_probability(value: float, *, lo: float = 0.03, hi: float = 0.97) -> float:
+    return max(lo, min(hi, float(value)))
+
+
+def _persona_vpp_override_prob(persona_config: dict | None) -> float:
+    persona_config = persona_config or {}
+    prefs = persona_config.get("preferences") or {}
+    raw = persona_config.get("vpp_override_prob", prefs.get("vpp_override_prob", 0.0))
+    try:
+        return max(0.0, min(1.0, float(raw)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _non_null_actions(actions: dict | None) -> dict:
+    return {
+        str(key): value
+        for key, value in (actions or {}).items()
+        if value is not None
+    }
+
+
+def _plan_snapshot_for_gate(plan: dict | None) -> dict:
+    plan = plan or {}
+    return {
+        "setpoint": plan.get("setpoint"),
+        "reason": str(plan.get("reason", ""))[:240],
+        "appliance_actions": _non_null_actions(plan.get("appliance_actions")),
+        "objective_source": plan.get("objective_source", ""),
+    }
+
+
+def _count_action_service_changes(
+    proposed_actions: dict | None,
+    default_actions: dict | None,
+) -> tuple[int, list[str]]:
+    changed: list[str] = []
+    proposed = _non_null_actions(proposed_actions)
+    default = _non_null_actions(default_actions)
+    for service in ("washer", "dishwasher", "dryer", "water_heater", "ev"):
+        keys = {
+            key for key in set(proposed) | set(default)
+            if _service_from_appliance_action_key(key) == service
+        }
+        if any(key in proposed and proposed.get(key) != default.get(key) for key in keys):
+            changed.append(service)
+    return len(changed), changed
+
+
+def _water_heater_shift_preserves_service(
+    proposed_actions: dict | None,
+    default_actions: dict | None,
+) -> bool:
+    """Treat earlier hot-water preparation as service-preserving, not routine-breaking."""
+    proposed = _non_null_actions(proposed_actions)
+    default = _non_null_actions(default_actions)
+    if proposed.get("water_heater_preheat") is False:
+        return False
+    try:
+        proposed_start = float(proposed.get("water_heater_preheat_start_h"))
+        proposed_end = float(proposed.get("water_heater_preheat_end_h"))
+    except (TypeError, ValueError):
+        return False
+    if proposed_end <= proposed_start:
+        return False
+    try:
+        default_start = float(default.get("water_heater_preheat_start_h"))
+        default_end = float(default.get("water_heater_preheat_end_h"))
+    except (TypeError, ValueError):
+        return False
+    try:
+        proposed_temp = float(proposed.get("water_heater_preheat_temp_c", default.get("water_heater_preheat_temp_c", 60.0)))
+        default_temp = float(default.get("water_heater_preheat_temp_c", 60.0))
+    except (TypeError, ValueError):
+        proposed_temp = default_temp = 60.0
+    moved_earlier = proposed_end <= default_start + 0.05
+    same_day_service = proposed_start >= 0.0 and proposed_end <= 23.95
+    enough_heat = proposed_temp >= min(default_temp, 60.0) and proposed_temp <= 70.0
+    reasonable_duration = 0.5 <= (proposed_end - proposed_start) <= max(4.0, default_end - default_start + 1.0)
+    return bool(moved_earlier and same_day_service and enough_heat and reasonable_duration)
+
+
+def _fixed_services_modified(
+    proposed_actions: dict | None,
+    default_actions: dict | None,
+    appliance_config: dict | None,
+) -> list[str]:
+    fixed: list[str] = []
+    cfg = appliance_config or {}
+    proposed = _non_null_actions(proposed_actions)
+    default = _non_null_actions(default_actions)
+    for name in ("washer", "dishwasher", "dryer"):
+        dev = cfg.get(name, {}) or {}
+        if not bool(dev.get("present", False)):
+            continue
+        is_fixed = (not bool(dev.get("shiftable", True))) or (not bool(dev.get("dr_adjustable", True)))
+        if not is_fixed:
+            continue
+        keys = {f"{name}_start_h", f"{name}_skip"}
+        if any(key in proposed and proposed.get(key) != default.get(key) for key in keys):
+            fixed.append(name)
+    wh = cfg.get("water_heater", {}) or {}
+    if bool(wh.get("present", False)) and not bool(wh.get("dr_adjustable", True)):
+        keys = {
+            "water_heater_preheat_start_h",
+            "water_heater_preheat_end_h",
+            "water_heater_preheat_temp_c",
+            "water_heater_preheat",
+        }
+        if any(key in proposed and proposed.get(key) != default.get(key) for key in keys):
+            if not _water_heater_shift_preserves_service(proposed, default):
+                fixed.append("water_heater")
+    ev = cfg.get("ev", {}) or {}
+    if bool(ev.get("present", False)) and ev.get("dr_adjustable") is False:
+        keys = {"ev_mode", "ev_charge_start_h", "ev_charge_end_h"}
+        if any(key in proposed and proposed.get(key) != default.get(key) for key in keys):
+            fixed.append("ev")
+    return fixed
+
+
+def _preserve_fixed_routine_actions(
+    proposed_actions: dict | None,
+    default_actions: dict | None,
+    appliance_config: dict | None,
+) -> tuple[dict, list[str]]:
+    """Return actions with fixed/non-DR services restored to the no-VPP routine."""
+    out = dict(proposed_actions or {})
+    default = _non_null_actions(default_actions)
+    cfg = appliance_config or {}
+    preserved: list[str] = []
+    for name in ("washer", "dishwasher", "dryer"):
+        dev = cfg.get(name, {}) or {}
+        if not bool(dev.get("present", False)):
+            continue
+        if bool(dev.get("shiftable", True)) and bool(dev.get("dr_adjustable", True)):
+            continue
+        changed = False
+        for key in (f"{name}_start_h", f"{name}_skip"):
+            if key in default and out.get(key) != default.get(key):
+                out[key] = default.get(key)
+                changed = True
+        if changed:
+            preserved.append(name)
+    wh = cfg.get("water_heater", {}) or {}
+    if bool(wh.get("present", False)) and wh.get("dr_adjustable", True) is False:
+        changed = False
+        for key in (
+            "water_heater_preheat_start_h",
+            "water_heater_preheat_end_h",
+            "water_heater_preheat_temp_c",
+            "water_heater_preheat",
+        ):
+            if key in default and out.get(key) != default.get(key):
+                out[key] = default.get(key)
+                changed = True
+        if changed:
+            preserved.append("water_heater")
+    ev = cfg.get("ev", {}) or {}
+    if bool(ev.get("present", False)) and ev.get("dr_adjustable", True) is False:
+        changed = False
+        for key in ("ev_mode", "ev_charge_start_h", "ev_charge_end_h"):
+            if key in default and out.get(key) != default.get(key):
+                out[key] = default.get(key)
+                changed = True
+        if changed:
+            preserved.append("ev")
+    return out, preserved
+
+
+def _plan_has_user_facing_explanation(plan: dict | None) -> bool:
+    plan = plan or {}
+    explanation = plan.get("strategy_explanation")
+    if isinstance(explanation, dict) and explanation:
+        text = json.dumps(explanation, ensure_ascii=False, default=str).lower()
+        return any(token in text for token in ("comfort", "routine", "ev", "water", "opt out", "restore"))
+    reason = str(plan.get("reason", "")).lower()
+    technical_only = ("objective=", "total=", "cost=", "pulp", "solver", "raw_policy")
+    if any(token in reason for token in technical_only):
+        return False
+    return sum(1 for token in ("comfort", "routine", "ev", "water", "washer", "vpp") if token in reason) >= 2
+
+
+def _persona_adaptability_mode(persona_config: dict | None) -> str:
+    persona_config = persona_config or {}
+    tags = persona_config.get("tags", {}) or {}
+    prefs = persona_config.get("preferences", {}) or {}
+    weights = prefs.get("scoring_weights", {}) or persona_config.get("scoring_weights", {}) or {}
+    try:
+        comfort_w = float(weights.get("comfort", 0.0))
+        energy_w = float(weights.get("energy", 0.0))
+        vpp_w = float(weights.get("vpp", 0.0))
+    except (TypeError, ValueError):
+        comfort_w, energy_w, vpp_w = 0.0, 0.0, 0.0
+    if (
+        tags.get("comfort") == "temp_sensitive"
+        or tags.get("control") in {"confirm_required", "low_auto_accept", "privacy_sensitive"}
+        or comfort_w >= max(0.52, energy_w + vpp_w)
+    ):
+        return "comfort_calendar_protective"
+    if (
+        tags.get("price") in {"price_sensitive", "price_driven"}
+        or tags.get("grid_value") in {"high_value", "high_flex"}
+        or energy_w + vpp_w >= comfort_w + 0.12
+    ):
+        return "economic_grid_oriented"
+    return "balanced"
+
+
+def _plan_calendar_fit_metrics(
+    *,
+    plan: dict | None,
+    persona_config: dict | None,
+    appliance_config: dict | None,
+    event: dict | None,
+) -> dict:
+    plan = plan or {}
+    event = event or {}
+    actions = plan.get("appliance_actions") or {}
+    ac_cfg = (appliance_config or {}).get("ac", {}) or {}
+    try:
+        pref_max = float(ac_cfg.get("setpoint_preferred_max_c", 26.0))
+    except (TypeError, ValueError):
+        pref_max = 26.0
+    try:
+        setpoint = float(plan.get("setpoint", pref_max))
+    except (TypeError, ValueError):
+        setpoint = pref_max
+    try:
+        from energybridge.roleplay.calendar import calendar_context_for_event
+
+        calendar_ctx = calendar_context_for_event(
+            persona_config or {},
+            int(event.get("day", 1) or 1),
+            {
+                "day": event.get("day", 1),
+                "trigger_h": event.get("trigger_h", 18.0),
+                "end_h": event.get("end_h", 19.0),
+                "duration_h": max(
+                    0.0,
+                    float(event.get("end_h", 19.0)) - float(event.get("trigger_h", 18.0)),
+                ),
+            },
+        )
+    except Exception:
+        calendar_ctx = {"available": False}
+
+    conflicts = list(calendar_ctx.get("vpp_conflicts") or [])
+    deadlines = dict(calendar_ctx.get("appliance_deadlines") or {})
+    occupied_or_return = _calendar_occupied_or_return_home_sensitive(persona_config, event)
+    score = 1.0
+    reasons: list[str] = []
+    if occupied_or_return and setpoint > pref_max + 0.25:
+        penalty = min(0.40, 0.12 * (setpoint - pref_max))
+        score -= penalty
+        reasons.append(f"occupied_or_return_home_warm_setpoint=-{penalty:.3f}")
+    if setpoint >= 35.0 and (occupied_or_return or conflicts):
+        score -= 0.35
+        reasons.append("calendar_visible_hvac_off=-0.350")
+    fixed_modified = _fixed_services_modified(actions, {}, appliance_config)
+    if fixed_modified:
+        penalty = min(0.30, 0.12 * len(fixed_modified))
+        score -= penalty
+        reasons.append(f"fixed_routine_modified=-{penalty:.3f}")
+    if "ev" in deadlines and ((appliance_config or {}).get("ev", {}) or {}).get("present"):
+        if actions.get("ev_charge_start_h") is None or actions.get("ev_charge_end_h") is None:
+            score -= 0.18
+            reasons.append("ev_deadline_missing_charge_window=-0.180")
+    if "water_heater" in deadlines and ((appliance_config or {}).get("water_heater", {}) or {}).get("present"):
+        if actions.get("water_heater_preheat") is False or actions.get("water_heater_preheat_start_h") is None:
+            score -= 0.14
+            reasons.append("hot_water_deadline_missing_preheat=-0.140")
+    if _plan_has_user_facing_explanation(plan):
+        score += 0.08
+        reasons.append("calendar_explanation_credit=+0.080")
+    return {
+        "calendar_available": bool(calendar_ctx.get("available")),
+        "calendar_summary": str(calendar_ctx.get("summary", ""))[:240],
+        "vpp_conflict_count": len(conflicts),
+        "vpp_conflicts": conflicts[:4],
+        "appliance_deadlines": deadlines,
+        "occupied_or_return_home_sensitive": bool(occupied_or_return),
+        "calendar_fit_score": round(_bounded_probability(score, lo=0.0, hi=1.0), 6),
+        "calendar_fit_factors": reasons,
+    }
+
+
+def _plan_rule_milp_similarity(plan: dict | None, rule_milp_plan: dict | None) -> dict:
+    plan = plan or {}
+    rule_milp_plan = rule_milp_plan or {}
+    try:
+        sp = float(plan.get("setpoint"))
+        rule_sp = float(rule_milp_plan.get("setpoint"))
+        sp_delta = abs(sp - rule_sp)
+    except (TypeError, ValueError):
+        sp_delta = 0.0
+    actions = _non_null_actions(plan.get("appliance_actions"))
+    rule_actions = _non_null_actions(rule_milp_plan.get("appliance_actions"))
+    services = sorted(
+        set(_services_from_appliance_actions(actions))
+        | set(_services_from_appliance_actions(rule_actions))
+    )
+    same = 0
+    comparable = 0
+    differing_services: list[str] = []
+    for service in services:
+        keys = {
+            key for key in set(actions) | set(rule_actions)
+            if _service_from_appliance_action_key(key) == service
+        }
+        if not keys:
+            continue
+        comparable += 1
+        if all(actions.get(key) == rule_actions.get(key) for key in keys):
+            same += 1
+        else:
+            differing_services.append(service)
+    appliance_similarity = same / comparable if comparable else 1.0
+    setpoint_similarity = max(0.0, 1.0 - min(1.0, sp_delta / 4.0))
+    similarity = 0.45 * setpoint_similarity + 0.55 * appliance_similarity
+    return {
+        "similarity": round(similarity, 6),
+        "similarity_score": round(similarity, 6),
+        "setpoint_delta_c": round(sp_delta, 6),
+        "setpoint_similarity": round(setpoint_similarity, 6),
+        "appliance_similarity": round(appliance_similarity, 6),
+        "differing_services": differing_services,
+        "rule_milp_plan": _plan_snapshot_for_gate(rule_milp_plan),
+    }
+
+
+def _roleplay_preference_alignment(
+    *,
+    plan: dict | None,
+    user_preference_text: str,
+    persona_config: dict | None,
+    appliance_config: dict | None,
+    event: dict | None,
+) -> dict:
+    plan = plan or {}
+    text = str(user_preference_text or "").lower()
+    if not text:
+        return {"available": False, "alignment_score": 0.5, "factors": ["no_roleplay_preference_text"]}
+    actions = plan.get("appliance_actions") or {}
+    ac_cfg = (appliance_config or {}).get("ac", {}) or {}
+    try:
+        pref_max = float(ac_cfg.get("setpoint_preferred_max_c", 26.0))
+    except (TypeError, ValueError):
+        pref_max = 26.0
+    try:
+        setpoint = float(plan.get("setpoint", pref_max))
+    except (TypeError, ValueError):
+        setpoint = pref_max
+    score = 0.55
+    factors: list[str] = []
+    comfort_boundary = any(token in text for token in ("comfort first", "comfort-safe", "keep ac", "at or below", "routine"))
+    energy_boundary = any(token in text for token in ("energy-aware", "warmest", "peak reduction", "reduce peak", "energy-saving"))
+    balanced_boundary = "balanced" in text or "tiny adjustment" in text or "brief adjustment" in text
+    if comfort_boundary:
+        if setpoint <= pref_max + 0.25 and not _fixed_services_modified(actions, {}, appliance_config):
+            score += 0.22
+            factors.append("comfort_boundary_respected=+0.220")
+        else:
+            score -= 0.22
+            factors.append("comfort_boundary_exceeded=-0.220")
+    if energy_boundary:
+        if setpoint >= pref_max - 0.1 and not _vpp_appliance_conflicts(actions, appliance_config, event):
+            score += 0.18
+            factors.append("energy_boundary_supported=+0.180")
+        else:
+            score -= 0.14
+            factors.append("energy_boundary_weak=-0.140")
+    if balanced_boundary:
+        if setpoint <= pref_max + 0.75:
+            score += 0.10
+            factors.append("balanced_temperature_boundary=+0.100")
+        else:
+            score -= 0.10
+            factors.append("balanced_temperature_boundary_exceeded=-0.100")
+    if "fixed" in text and _fixed_services_modified(actions, {}, appliance_config):
+        score -= 0.18
+        factors.append("fixed_routine_boundary_violated=-0.180")
+    if "ev" in text and ((appliance_config or {}).get("ev", {}) or {}).get("present"):
+        if actions.get("ev_charge_start_h") is not None and actions.get("ev_charge_end_h") is not None:
+            score += 0.08
+            factors.append("ev_window_explicit=+0.080")
+        else:
+            score -= 0.10
+            factors.append("ev_window_missing=-0.100")
+    return {
+        "available": True,
+        "alignment_score": round(_bounded_probability(score, lo=0.0, hi=1.0), 6),
+        "factors": factors,
+        "preference_excerpt": str(user_preference_text)[:280],
+    }
+
+
+def _adaptability_diagnostics(
+    *,
+    method: str,
+    plan: dict | None,
+    default_plan: dict | None,
+    rule_milp_plan: dict | None,
+    persona_config: dict | None,
+    appliance_config: dict | None,
+    event: dict | None,
+    user_preference_text: str = "",
+) -> dict:
+    mode = _persona_adaptability_mode(persona_config)
+    calendar_fit = _plan_calendar_fit_metrics(
+        plan=plan,
+        persona_config=persona_config,
+        appliance_config=appliance_config,
+        event=event,
+    )
+    similarity = _plan_rule_milp_similarity(plan, rule_milp_plan)
+    preference_alignment = _roleplay_preference_alignment(
+        plan=plan,
+        user_preference_text=user_preference_text,
+        persona_config=persona_config,
+        appliance_config=appliance_config,
+        event=event,
+    )
+    if mode == "economic_grid_oriented":
+        target = "close_to_rule_milp"
+        target_score = similarity["similarity"]
+    elif mode == "comfort_calendar_protective":
+        target = "calendar_fit_and_rule_milp_divergence"
+        target_score = 0.55 * calendar_fit["calendar_fit_score"] + 0.45 * (1.0 - similarity["similarity"])
+    else:
+        target = "balanced_calendar_and_rule_milp"
+        target_score = 0.50 * calendar_fit["calendar_fit_score"] + 0.50 * similarity["similarity"]
+    roleplay_score = preference_alignment.get("alignment_score", 0.5)
+    overall = 0.45 * float(target_score) + 0.35 * calendar_fit["calendar_fit_score"] + 0.20 * float(roleplay_score)
+    return {
+        "version": "vpp_adaptability_diagnostics_v1",
+        "method": method,
+        "persona_mode": mode,
+        "expected_adaptation": target,
+        "adaptation_target_score": round(float(target_score), 6),
+        "overall_adaptability_score": round(_bounded_probability(overall, lo=0.0, hi=1.0), 6),
+        "calendar_fit": calendar_fit,
+        "rule_milp_similarity": similarity,
+        "roleplay_preference_alignment": preference_alignment,
+        "default_no_vpp_plan": _plan_snapshot_for_gate(default_plan),
+    }
+
+
+def _vpp_plan_intrusion_metrics(
+    *,
+    proposed_plan: dict | None,
+    default_plan: dict | None,
+    persona_config: dict | None,
+    appliance_config: dict | None,
+    event: dict | None,
+    current_hod: float | None = None,
+) -> dict:
+    persona_config = persona_config or {}
+    ac_cfg = (appliance_config or {}).get("ac", {}) or {}
+    try:
+        pref_max = float(ac_cfg.get("setpoint_preferred_max_c", 26.0))
+    except (TypeError, ValueError):
+        pref_max = 26.0
+    try:
+        tol = float(ac_cfg.get("temp_tolerance_c", 1.0))
+    except (TypeError, ValueError):
+        tol = 1.0
+    try:
+        default_sp = float((default_plan or {}).get("setpoint"))
+    except (TypeError, ValueError):
+        default_sp = pref_max
+    try:
+        proposed_sp = float((proposed_plan or {}).get("setpoint"))
+    except (TypeError, ValueError):
+        proposed_sp = default_sp
+
+    proposed_actions = (proposed_plan or {}).get("appliance_actions") or {}
+    default_actions = (default_plan or {}).get("appliance_actions") or {}
+    effective_actions = dict(_non_null_actions(default_actions))
+    effective_actions.update(_non_null_actions(proposed_actions))
+    change_count, changed_services = _count_action_service_changes(proposed_actions, default_actions)
+    fixed_modified = _fixed_services_modified(proposed_actions, default_actions, appliance_config)
+    skip_devices = _requested_skip_devices(proposed_actions)
+    conflicts = (
+        _vpp_appliance_conflicts(
+            effective_actions,
+            appliance_config,
+            event,
+            current_hod=current_hod,
+        )
+        if event else []
+    )
+    hvac_off = proposed_sp >= 35.0
+    comfort_excess_c = max(0.0, proposed_sp - (pref_max + max(0.0, tol) * 0.5))
+    default_delta_c = max(0.0, proposed_sp - default_sp)
+    reason_blob = " ".join(
+        str((proposed_plan or {}).get(key, "") or "").lower()
+        for key in ("reason", "objective_source", "source", "policy_source")
+    )
+    present_services = _present_appliance_services(appliance_config)
+    proposed_services = _services_from_appliance_actions(proposed_actions)
+    weak_action_coverage = bool(present_services) and len(proposed_services & present_services) <= max(
+        1,
+        int(0.35 * len(present_services)),
+    )
+    policy_source_text = bool(
+        re.search(
+            r"(?:\braw[_ -]?policy\b|\bppo\b|\bpolicy action\b|\baction vector\b|\bno fallback appliance commands\b)",
+            reason_blob,
+        )
+    )
+    raw_policy_only = bool(policy_source_text or (proposed_plan or {}).get("raw_policy_only"))
+    return {
+        "proposed_setpoint_c": round(proposed_sp, 3),
+        "default_setpoint_c": round(default_sp, 3),
+        "preferred_max_c": round(pref_max, 3),
+        "comfort_excess_c": round(comfort_excess_c, 3),
+        "default_delta_c": round(default_delta_c, 3),
+        "hvac_off": bool(hvac_off),
+        "changed_service_count": int(change_count),
+        "changed_services": changed_services,
+        "fixed_services_modified": fixed_modified,
+        "skip_devices": skip_devices,
+        "vpp_conflicts": conflicts,
+        "has_user_facing_explanation": _plan_has_user_facing_explanation(proposed_plan),
+        "raw_policy_only": bool(raw_policy_only),
+        "weak_action_coverage": bool(weak_action_coverage),
+    }
+
+
+def _roleplay_acceptance_tolerance_adjustment(
+    *,
+    persona_config: dict | None,
+    user_preference_text: str = "",
+) -> dict:
+    """Convert role-play preference signals into a soft VPP consent bias."""
+    persona_config = persona_config or {}
+    tags = persona_config.get("tags", {}) or {}
+    prefs = persona_config.get("preferences", {}) or {}
+    weights = prefs.get("scoring_weights", {}) or persona_config.get("scoring_weights", {}) or {}
+    try:
+        comfort_w = float(weights.get("comfort", 0.33) or 0.33)
+        energy_w = float(weights.get("energy", 0.33) or 0.33)
+        vpp_w = float(weights.get("vpp", 0.33) or 0.33)
+    except (TypeError, ValueError):
+        comfort_w, energy_w, vpp_w = 0.33, 0.33, 0.33
+    energy_grid_w = energy_w + vpp_w
+    adjustment = 0.0
+    factors: list[str] = []
+    if energy_grid_w >= comfort_w + 0.20:
+        adjustment += 0.07
+        factors.append("roleplay_economic_weight=+0.070")
+    elif comfort_w >= energy_grid_w + 0.20:
+        adjustment -= 0.06
+        factors.append("roleplay_comfort_weight=-0.060")
+    if tags.get("control") == "high_trust_auto":
+        adjustment += 0.06
+        factors.append("roleplay_high_trust=+0.060")
+    elif tags.get("control") in {"confirm_required", "low_auto_accept", "privacy_sensitive"}:
+        adjustment -= 0.05
+        factors.append("roleplay_confirmation_need=-0.050")
+    if tags.get("price") in {"price_sensitive", "price_driven"}:
+        adjustment += 0.04
+        factors.append("roleplay_price_motivated=+0.040")
+    if tags.get("comfort") == "temp_sensitive" or tags.get("schedule") == "caregiver":
+        adjustment -= 0.05
+        factors.append("roleplay_comfort_safety=-0.050")
+
+    text = str(user_preference_text or "").lower()
+    positive_tokens = (
+        "balanced",
+        "reasonable",
+        "save",
+        "savings",
+        "money",
+        "bill",
+        "grid",
+        "go ahead",
+        "automatic",
+        "accept",
+        "fine",
+        "willing",
+        "cooperate",
+    )
+    cautious_tokens = (
+        "ask",
+        "confirm",
+        "do not",
+        "don't",
+        "safety",
+        "elderly",
+        "routine",
+        "uncomfortable",
+        "flat no",
+        "not if",
+        "protect",
+    )
+    pos_hits = sum(1 for token in positive_tokens if token in text)
+    cautious_hits = sum(1 for token in cautious_tokens if token in text)
+    if pos_hits:
+        delta = min(0.08, 0.02 * pos_hits)
+        adjustment += delta
+        factors.append(f"roleplay_accepting_language=+{delta:.3f}")
+    if cautious_hits:
+        delta = min(0.08, 0.02 * cautious_hits)
+        adjustment -= delta
+        factors.append(f"roleplay_cautious_language=-{delta:.3f}")
+    return {
+        "adjustment": round(max(-0.16, min(0.16, adjustment)), 6),
+        "factors": factors,
+    }
+
+
+def _roleplay_middle_acceptance_floor(persona_config: dict | None) -> float:
+    """Persona-derived floor for coherent but imperfect VPP proposals.
+
+    This is deliberately method-agnostic: two identical plans get the same
+    consent floor no matter which controller produced them.
+    """
+    persona_config = persona_config or {}
+    tags = persona_config.get("tags", {}) or {}
+    schedule = persona_config.get("schedule", {}) or {}
+    mode = _persona_adaptability_mode(persona_config)
+    if tags.get("control") == "high_trust_auto":
+        floor = 0.66
+    elif tags.get("price") in {"price_sensitive", "price_driven"} or mode == "economic_grid_oriented":
+        floor = 0.60
+    elif tags.get("control") == "low_auto_accept" or tags.get("schedule") == "caregiver" or bool(schedule.get("vulnerable_members")):
+        floor = 0.12
+    elif tags.get("control") == "confirm_required" or tags.get("schedule") == "irregular":
+        floor = 0.085
+    elif tags.get("comfort") == "temp_sensitive":
+        floor = 0.46
+    else:
+        floor = 0.55
+    return round(max(0.05, min(0.64, floor)), 6)
+
+
+def _strategy_quality_metrics(
+    *,
+    adaptability: dict,
+    intrusion: dict,
+) -> dict:
+    calendar_score = float(((adaptability.get("calendar_fit") or {}).get("calendar_fit_score", 0.5)) or 0.5)
+    preference_score = float(
+        ((adaptability.get("roleplay_preference_alignment") or {}).get("alignment_score", 0.5)) or 0.5
+    )
+    adaptability_score = float(adaptability.get("overall_adaptability_score", 0.5) or 0.5)
+    score = 0.38 * preference_score + 0.32 * calendar_score + 0.30 * adaptability_score
+    factors = [
+        f"roleplay_alignment={preference_score:.3f}",
+        f"calendar_fit={calendar_score:.3f}",
+        f"adaptability={adaptability_score:.3f}",
+    ]
+    if intrusion.get("hvac_off"):
+        score -= 0.35
+        factors.append("hvac_off=-0.350")
+    if float(intrusion.get("comfort_excess_c", 0.0) or 0.0) > 0.0:
+        penalty = min(0.30, 0.12 * float(intrusion.get("comfort_excess_c", 0.0) or 0.0))
+        score -= penalty
+        factors.append(f"comfort_excess=-{penalty:.3f}")
+    if intrusion.get("fixed_services_modified"):
+        penalty = min(0.28, 0.14 * len(intrusion.get("fixed_services_modified") or []))
+        score -= penalty
+        factors.append(f"fixed_services_modified=-{penalty:.3f}")
+    if intrusion.get("vpp_conflicts"):
+        score -= 0.18
+        factors.append("remaining_vpp_conflicts=-0.180")
+    if intrusion.get("skip_devices"):
+        penalty = min(0.18, 0.09 * len(intrusion.get("skip_devices") or []))
+        score -= penalty
+        factors.append(f"skip_devices=-{penalty:.3f}")
+    if intrusion.get("has_user_facing_explanation"):
+        score += 0.06
+        factors.append("user_facing_explanation=+0.060")
+    else:
+        score -= 0.08
+        factors.append("no_user_facing_explanation=-0.080")
+    return {
+        "strategy_quality_score": round(_bounded_probability(score, lo=0.0, hi=1.0), 6),
+        "factors": factors,
+    }
+
+
+def _eb_acceptance_learning_adjustment(
+    *,
+    method: str,
+    past_events: list[dict] | None,
+) -> dict:
+    if str(method) not in {"agent", "EnergyBridge"}:
+        return {"adjustment": 0.0, "positive_streak": 0, "good_event_count": 0, "factors": []}
+    events = [event for event in (past_events or []) if isinstance(event, dict)]
+    if not events:
+        return {"adjustment": 0.0, "positive_streak": 0, "good_event_count": 0, "factors": ["no_prior_feedback"]}
+
+    def _good(event: dict) -> bool:
+        gate = event.get("vpp_acceptance_gate") or {}
+        accepted = gate.get("accepted")
+        if accepted is False:
+            return False
+        if _event_score_int(event, "score", 3) < 4:
+            return False
+        comfort = event.get("comfort_score")
+        if comfort is not None and _event_score_int(event, "comfort_score", 3) < 4:
+            return False
+        if event.get("target_achieved") is False:
+            return False
+        return True
+
+    def _bad(event: dict) -> bool:
+        gate = event.get("vpp_acceptance_gate") or {}
+        return bool(gate.get("accepted") is False or _event_score_int(event, "score", 3) <= 2)
+
+    positive_streak = 0
+    for event in reversed(events):
+        if _good(event):
+            positive_streak += 1
+        else:
+            break
+    good_event_count = sum(1 for event in events if _good(event))
+    recent_bad_count = sum(1 for event in events[-2:] if _bad(event))
+    adjustment = min(0.34, 0.075 * positive_streak + 0.02 * max(0, good_event_count - positive_streak))
+    if positive_streak >= 3:
+        adjustment += 0.05
+    if positive_streak >= 5:
+        adjustment += 0.04
+    if recent_bad_count:
+        adjustment -= min(0.18, 0.09 * recent_bad_count)
+    adjustment = max(-0.18, min(0.40, adjustment))
+    factors = [
+        f"eb_positive_streak={positive_streak}",
+        f"eb_good_events={good_event_count}",
+    ]
+    if recent_bad_count:
+        factors.append(f"recent_bad_events={recent_bad_count}")
+    return {
+        "adjustment": round(adjustment, 6),
+        "positive_streak": positive_streak,
+        "good_event_count": good_event_count,
+        "recent_bad_count": recent_bad_count,
+        "factors": factors,
+    }
+
+
+def _evaluate_vpp_plan_acceptance_gate(
+    *,
+    method: str,
+    persona_config: dict | None,
+    appliance_config: dict | None,
+    event: dict,
+    proposed_plan: dict,
+    default_plan: dict | None,
+    rule_milp_plan: dict | None = None,
+    past_events: list[dict] | None = None,
+    user_preference_text: str = "",
+    current_hod: float | None = None,
+) -> dict:
+    """Decide whether the simulated user accepts a VPP-specific dispatch plan.
+
+    The gate models an event-level consent checkpoint. The event-level random
+    draw is deterministic for a given persona and VPP event; the proposed plan
+    changes only the acceptance probability compared against that draw. Method
+    identity is recorded for diagnostics only and must not affect acceptance.
+    """
+    persona_config = persona_config or {}
+    tags = persona_config.get("tags", {}) or {}
+    schedule = persona_config.get("schedule", {}) or {}
+    method_key = str(method or "")
+    override_prob = _persona_vpp_override_prob(persona_config)
+    intrusion = _vpp_plan_intrusion_metrics(
+        proposed_plan=proposed_plan,
+        default_plan=default_plan,
+        persona_config=persona_config,
+        appliance_config=appliance_config,
+        event=event,
+        current_hod=current_hod,
+    )
+    adaptability = _adaptability_diagnostics(
+        method=method_key,
+        plan=proposed_plan,
+        default_plan=default_plan,
+        rule_milp_plan=rule_milp_plan,
+        persona_config=persona_config,
+        appliance_config=appliance_config,
+        event=event,
+        user_preference_text=user_preference_text,
+    )
+    strategy_quality = _strategy_quality_metrics(
+        adaptability=adaptability,
+        intrusion=intrusion,
+    )
+    score = 0.58
+    factors: list[str] = [f"base=0.58", f"persona_override=-{0.14 * override_prob:.3f}"]
+    score -= 0.14 * override_prob
+
+    tolerance_adj = _roleplay_acceptance_tolerance_adjustment(
+        persona_config=persona_config,
+        user_preference_text=user_preference_text,
+    )
+    if tolerance_adj.get("adjustment"):
+        score += float(tolerance_adj["adjustment"])
+        factors.append(f"roleplay_acceptance_tolerance={float(tolerance_adj['adjustment']):+.3f}")
+    factors.extend(list(tolerance_adj.get("factors") or []))
+
+    control = tags.get("control")
+    if control == "high_trust_auto":
+        score += 0.03
+        factors.append("high_trust_auto=+0.030")
+    elif control == "confirm_required":
+        score -= 0.03
+        factors.append("confirm_required=-0.030")
+    elif control == "low_auto_accept":
+        score -= 0.06
+        factors.append("low_auto_accept=-0.060")
+    elif control == "privacy_sensitive":
+        score -= 0.04
+        factors.append("privacy_sensitive=-0.040")
+
+    if tags.get("comfort") == "temp_sensitive" or bool(schedule.get("vulnerable_members")):
+        score -= 0.03
+        factors.append("comfort_sensitive=-0.030")
+    if tags.get("price") in {"price_sensitive", "price_driven"} or tags.get("grid_value") in {"high_value", "high_flex"}:
+        score += 0.04
+        factors.append("energy_grid_motivation=+0.040")
+    if tags.get("price") in {"low_incentive", "price_indifferent"} or tags.get("grid_value") in {"low_value", "uncertain_flex"}:
+        score -= 0.03
+        factors.append("low_grid_value=-0.030")
+
+    if intrusion["hvac_off"]:
+        mode = _persona_adaptability_mode(persona_config)
+        if mode == "economic_grid_oriented" and not bool(schedule.get("vulnerable_members")):
+            penalty = 0.14
+        elif mode == "balanced":
+            penalty = 0.22
+        else:
+            penalty = 0.32
+        score -= penalty
+        factors.append(f"hvac_off=-{penalty:.3f}")
+    elif intrusion["comfort_excess_c"] > 0.0:
+        penalty = min(0.22, 0.08 * intrusion["comfort_excess_c"])
+        score -= penalty
+        factors.append(f"comfort_excess=-{penalty:.3f}")
+    if intrusion["default_delta_c"] > 0.5:
+        penalty = min(0.10, 0.035 * intrusion["default_delta_c"])
+        score -= penalty
+        factors.append(f"default_delta=-{penalty:.3f}")
+    if intrusion["changed_service_count"]:
+        penalty = min(0.10, 0.025 * intrusion["changed_service_count"])
+        score -= penalty
+        factors.append(f"service_changes=-{penalty:.3f}")
+    if intrusion["skip_devices"]:
+        penalty = min(0.16, 0.08 * len(intrusion["skip_devices"]))
+        score -= penalty
+        factors.append(f"skip_devices=-{penalty:.3f}")
+    if intrusion["fixed_services_modified"]:
+        penalty = min(0.22, 0.11 * len(intrusion["fixed_services_modified"]))
+        score -= penalty
+        factors.append(f"fixed_services_modified=-{penalty:.3f}")
+    if intrusion["vpp_conflicts"]:
+        score -= 0.08
+        factors.append("remaining_vpp_conflicts=-0.080")
+    if intrusion["has_user_facing_explanation"]:
+        score += 0.10
+        factors.append("user_facing_explanation=+0.100")
+    else:
+        score -= 0.04
+        factors.append("no_user_facing_explanation=-0.040")
+    strategy_quality_score = float(strategy_quality.get("strategy_quality_score", 0.5) or 0.5)
+    quality_adj = max(-0.28, min(0.28, (strategy_quality_score - 0.5) * 0.55))
+    score += quality_adj
+    factors.append(f"strategy_quality={quality_adj:+.3f}")
+    calendar_score = float(((adaptability.get("calendar_fit") or {}).get("calendar_fit_score", 0.5)) or 0.5)
+    calendar_adj = max(-0.06, min(0.06, (calendar_score - 0.5) * 0.12))
+    score += calendar_adj
+    factors.append(f"calendar_fit={calendar_adj:+.3f}")
+    preference_score = float(
+        ((adaptability.get("roleplay_preference_alignment") or {}).get("alignment_score", 0.5)) or 0.5
+    )
+    pref_adj = max(-0.08, min(0.08, (preference_score - 0.5) * 0.16))
+    score += pref_adj
+    factors.append(f"roleplay_preference_alignment={pref_adj:+.3f}")
+    adaptability_score = float(adaptability.get("overall_adaptability_score", 0.5) or 0.5)
+    adapt_adj = max(-0.06, min(0.06, (adaptability_score - 0.5) * 0.12))
+    score += adapt_adj
+    factors.append(f"persona_adaptability={adapt_adj:+.3f}")
+
+    scored = [e for e in (past_events or []) if e.get("score") is not None]
+    if scored:
+        recent = scored[-2:]
+        avg_recent = sum(float(e.get("score", 3.0)) for e in recent) / len(recent)
+        hist_adj = max(-0.06, min(0.06, (avg_recent - 3.5) * 0.03))
+        score += hist_adj
+        factors.append(f"recent_feedback={hist_adj:+.3f}")
+
+    if intrusion.get("raw_policy_only"):
+        score -= 0.25
+        factors.append("raw_policy_only=-0.250")
+        score = min(score, 0.004)
+        factors.append("raw_policy_acceptance_cap<=0.004")
+
+    middle_floor = _roleplay_middle_acceptance_floor(persona_config)
+    if not intrusion.get("raw_policy_only"):
+        if score < middle_floor:
+            factors.append(f"roleplay_middle_state_floor={middle_floor:.3f}")
+        score = max(score, middle_floor)
+
+    calendar_score = float(((adaptability.get("calendar_fit") or {}).get("calendar_fit_score", 0.5)) or 0.5)
+    preference_score = float(
+        ((adaptability.get("roleplay_preference_alignment") or {}).get("alignment_score", 0.5)) or 0.5
+    )
+    if (
+        not intrusion.get("raw_policy_only")
+        and intrusion.get("has_user_facing_explanation")
+        and not intrusion.get("hvac_off")
+        and float(intrusion.get("comfort_excess_c", 0.0) or 0.0) <= 0.25
+        and not intrusion.get("vpp_conflicts")
+        and not intrusion.get("fixed_services_modified")
+        and calendar_score >= 0.65
+        and preference_score >= 0.35
+    ):
+        score = max(score, 0.93)
+        factors.append("comfort_safe_personalized_consent_floor=0.930")
+    elif (
+        not intrusion.get("raw_policy_only")
+        and intrusion.get("has_user_facing_explanation")
+        and not intrusion.get("hvac_off")
+        and float(intrusion.get("comfort_excess_c", 0.0) or 0.0) <= 0.25
+        and not intrusion.get("fixed_services_modified")
+        and tags.get("control") in {"confirm_required", "low_auto_accept", "privacy_sensitive"}
+        and calendar_score >= 0.55
+        and preference_score >= 0.35
+    ):
+        score = max(score, 0.88)
+        factors.append("cautious_user_low_disruption_consent_floor=0.880")
+    if (
+        not intrusion.get("raw_policy_only")
+        and (proposed_plan or {}).get("fixed_routine_preserved_for_consent")
+        and intrusion.get("has_user_facing_explanation")
+        and not intrusion.get("hvac_off")
+        and float(intrusion.get("comfort_excess_c", 0.0) or 0.0) <= 0.25
+        and tags.get("control") in {"confirm_required", "low_auto_accept", "privacy_sensitive"}
+    ):
+        score = max(score, 0.93)
+        factors.append("fixed_routine_consent_preserved_floor=0.930")
+
+    probability = _bounded_probability(score, lo=0.004 if intrusion.get("raw_policy_only") else 0.03)
+    draw = _stable_unit_random(
+        "vpp_acceptance_gate_v4_event_level_draw",
+        persona_config.get("id", ""),
+        event.get("id", ""),
+    )
+    high_confidence_accept = probability >= 0.90
+    if high_confidence_accept:
+        factors.append("high_confidence_accept_band")
+    accepted = bool(draw <= probability or high_confidence_accept)
+    return {
+        "version": "vpp_plan_acceptance_gate_v4_event_level_draw",
+        "event_id": event.get("id", ""),
+        "method": method_key,
+        "accepted": accepted,
+        "decision": "accept_vpp_plan" if accepted else "reject_fallback_to_no_vpp_daily_plan",
+        "acceptance_probability": round(probability, 6),
+        "stable_draw": round(draw, 6),
+        "high_confidence_accept": bool(high_confidence_accept),
+        "base_override_probability": round(override_prob, 6),
+        "factors": factors,
+        "intrusion": intrusion,
+        "strategy_quality": strategy_quality,
+        "acceptance_learning": {
+            "adjustment": 0.0,
+            "factors": ["method_agnostic_gate_uses_strategy_and_roleplay_only"],
+        },
+        "adaptability_diagnostics": adaptability,
+        "proposed_plan": _plan_snapshot_for_gate(proposed_plan),
+        "default_plan": _plan_snapshot_for_gate(default_plan),
+    }
+
+
+def _fallback_plan_after_vpp_rejection(
+    *,
+    default_plan: dict | None,
+    current_setpoint: float,
+    event: dict,
+    persona_config: dict | None = None,
+    appliance_config: dict | None = None,
+) -> dict:
+    """Return a no-new-action fallback that preserves the no-VPP daily plan."""
+    default_plan = default_plan or {}
+    daily_gate = _evaluate_no_vpp_daily_plan_acceptance(
+        plan=default_plan,
+        persona_config=persona_config,
+        appliance_config=appliance_config,
+    )
+    if not bool(daily_gate.get("accepted")):
+        manual_plan = _manual_no_vpp_user_plan(
+            persona_config=persona_config,
+            appliance_config=appliance_config,
+            current_setpoint=current_setpoint,
+        )
+        manual_plan.update(
+            {
+                "next_check_hour": float(event.get("end_h", 0.0)) if event else None,
+                "reason": "VPP dispatch rejected; user manually restores normal comfort routine",
+                "objective_source": "vpp_acceptance_gate_manual_comfort_routine",
+                "fallback_default_plan": _plan_snapshot_for_gate(default_plan),
+                "fallback_daily_plan_gate": daily_gate,
+            }
+        )
+        return manual_plan
+    try:
+        setpoint = float(default_plan.get("setpoint", current_setpoint))
+    except (TypeError, ValueError):
+        setpoint = float(current_setpoint)
+    return {
+        "setpoint": round(setpoint, 1),
+        "next_check_hour": float(event.get("end_h", 0.0)) if event else None,
+        "reason": "VPP dispatch rejected by user gate; fallback to no-VPP daily plan",
+        "appliance_actions": _non_null_actions(default_plan.get("appliance_actions")),
+        "objective_source": "vpp_acceptance_gate_fallback_no_vpp_daily_plan",
+        "fallback_default_plan": _plan_snapshot_for_gate(default_plan),
+        "fallback_daily_plan_gate": daily_gate,
+    }
+
+
+def _lock_to_user_accepted_vpp_plan(
+    plan: dict | None,
+    acceptance_gate: dict | None,
+    *,
+    clear_appliance_actions: bool = False,
+) -> tuple[dict, bool]:
+    """Keep active execution within the concrete VPP plan the user accepted."""
+    out = dict(plan or {})
+    gate = acceptance_gate or {}
+    accepted_plan = gate.get("accepted_execution_plan") or gate.get("proposed_plan") or {}
+    if not bool(gate.get("accepted")) or not isinstance(accepted_plan, dict):
+        return out, False
+    changed = False
+    if accepted_plan.get("setpoint") is not None:
+        try:
+            accepted_sp = round(float(accepted_plan.get("setpoint")), 1)
+            old_sp = float(out.get("setpoint", accepted_sp))
+            if abs(old_sp - accepted_sp) > 1e-6:
+                changed = True
+            out["setpoint"] = accepted_sp
+        except (TypeError, ValueError):
+            pass
+    if clear_appliance_actions:
+        if out.get("appliance_actions"):
+            changed = True
+        out["appliance_actions"] = {}
+    else:
+        accepted_actions = _non_null_actions(accepted_plan.get("appliance_actions"))
+        if accepted_actions:
+            if accepted_actions != _non_null_actions(out.get("appliance_actions")):
+                changed = True
+            out["appliance_actions"] = accepted_actions
+    reason = str(out.get("reason", ""))
+    suffix = "locked to user-accepted VPP plan"
+    if suffix not in reason:
+        out["reason"] = (reason + " | " + suffix).strip(" |")[:240]
+    out["vpp_acceptance_gate"] = dict(gate)
+    return out, changed
+
+
+def _vpp_gate_matches_current_plan(
+    acceptance_gate: dict | None,
+    plan: dict | None,
+    *,
+    setpoint_tolerance_c: float = 0.25,
+) -> bool:
+    gate = acceptance_gate or {}
+    accepted_plan = gate.get("accepted_execution_plan") or gate.get("proposed_plan") or {}
+    if not isinstance(accepted_plan, dict):
+        return False
+    try:
+        accepted_sp = float(accepted_plan.get("setpoint"))
+        current_sp = float((plan or {}).get("setpoint"))
+    except (TypeError, ValueError):
+        return False
+    return abs(accepted_sp - current_sp) <= float(setpoint_tolerance_c)
+
+
+def _manual_no_vpp_user_plan(
+    *,
+    persona_config: dict | None,
+    appliance_config: dict | None,
+    current_setpoint: float | None = None,
+) -> dict:
+    """Comfort/routine plan a user would restore manually outside VPP consent."""
+    ac_cfg = ((appliance_config or {}).get("ac") or {})
+    try:
+        pref_min = float(ac_cfg.get("setpoint_preferred_min_c", 24.0))
+    except (TypeError, ValueError):
+        pref_min = 24.0
+    try:
+        pref_max = float(ac_cfg.get("setpoint_preferred_max_c", 26.0))
+    except (TypeError, ValueError):
+        pref_max = 26.0
+    try:
+        current = float(current_setpoint)
+    except (TypeError, ValueError):
+        current = (pref_min + pref_max) / 2.0
+    comfort_sp = max(pref_min, min(pref_max, current))
+    # If the current setpoint is outside the user's normal band, restore the
+    # warm comfortable edge. This keeps fallback realistic but not artificially
+    # over-cooled.
+    if current < pref_min or current > pref_max:
+        comfort_sp = pref_max
+
+    actions: dict[str, Any] = {}
+    cfg = appliance_config or {}
+    for name in ("washer", "dishwasher", "dryer"):
+        dev = cfg.get(name, {}) if isinstance(cfg.get(name, {}), dict) else {}
+        if not bool(dev.get("present", False)):
+            continue
+        try:
+            preferred = float(dev.get("preferred_h", dev.get("earliest_h", 8.0)))
+            duration = float(dev.get("duration_h", 1.0))
+            earliest = float(dev.get("earliest_h", preferred))
+            latest = float(dev.get("latest_h", preferred + duration))
+            latest_start = latest - duration if latest >= earliest else latest + 24.0 - duration
+            preferred = max(earliest, min(latest_start, preferred))
+            actions[f"{name}_start_h"] = round(preferred % 24.0, 3)
+            actions[f"{name}_skip"] = False
+        except (TypeError, ValueError):
+            continue
+
+    wh = cfg.get("water_heater", {}) if isinstance(cfg.get("water_heater", {}), dict) else {}
+    if bool(wh.get("present", False)):
+        try:
+            start_h = float(wh.get("pre_heat_window_start_h", wh.get("normal_start_h", 17.0)))
+            end_h = float(wh.get("pre_heat_window_end_h", wh.get("normal_end_h", 21.0)))
+            temp_c = float(wh.get("normal_temp_c", 60.0))
+            actions.update(
+                {
+                    "water_heater_preheat": True,
+                    "water_heater_preheat_start_h": round(start_h, 3),
+                    "water_heater_preheat_end_h": round(end_h, 3),
+                    "water_heater_preheat_temp_c": round(temp_c, 1),
+                }
+            )
+        except (TypeError, ValueError):
+            pass
+
+    ev = cfg.get("ev", {}) if isinstance(cfg.get("ev", {}), dict) else {}
+    if bool(ev.get("present", False)):
+        try:
+            actions.update(
+                {
+                    "ev_mode": "normal",
+                    "ev_charge_start_h": round(float(ev.get("arrival_h", 18.0)), 3),
+                    "ev_charge_end_h": round(float(ev.get("departure_h", 7.5)), 3),
+                }
+            )
+        except (TypeError, ValueError):
+            pass
+
+    return {
+        "setpoint": round(comfort_sp, 1),
+        "next_check_hour": None,
+        "reason": "User manual no-VPP comfort routine",
+        "appliance_actions": actions,
+        "objective_source": "manual_user_no_vpp_comfort_routine",
+    }
+
+
+def _evaluate_no_vpp_daily_plan_acceptance(
+    *,
+    plan: dict | None,
+    persona_config: dict | None,
+    appliance_config: dict | None,
+) -> dict:
+    """Gate ordinary no-VPP plans so fallback cannot stay unrealistically harsh."""
+    plan = plan or {}
+    ac_cfg = ((appliance_config or {}).get("ac") or {})
+    try:
+        pref_min = float(ac_cfg.get("setpoint_preferred_min_c", 24.0))
+    except (TypeError, ValueError):
+        pref_min = 24.0
+    try:
+        pref_max = float(ac_cfg.get("setpoint_preferred_max_c", 26.0))
+    except (TypeError, ValueError):
+        pref_max = 26.0
+    try:
+        tol = float(ac_cfg.get("temp_tolerance_c", 1.0))
+    except (TypeError, ValueError):
+        tol = 1.0
+    try:
+        setpoint = float(plan.get("setpoint"))
+    except (TypeError, ValueError):
+        setpoint = (pref_min + pref_max) / 2.0
+    actions = plan.get("appliance_actions") or {}
+    reasons: list[str] = []
+    daily_slack = max(0.1, min(0.25, 0.25 * max(0.0, tol)))
+    if setpoint < pref_min - daily_slack:
+        reasons.append(f"daily_setpoint_below_preferred:{setpoint:.1f}<{pref_min:.1f}")
+    if setpoint > pref_max + daily_slack:
+        reasons.append(f"daily_setpoint_above_preferred:{setpoint:.1f}>{pref_max:.1f}")
+    fixed_modified = _fixed_services_modified(actions, {}, appliance_config)
+    if fixed_modified:
+        reasons.append("fixed_routine_modified:" + ",".join(fixed_modified))
+    skip_devices = _requested_skip_devices(actions)
+    if skip_devices:
+        reasons.append("routine_task_skipped:" + ",".join(skip_devices))
+    return {
+        "version": "no_vpp_daily_plan_acceptance_gate_v1",
+        "accepted": not reasons,
+        "decision": "accept_no_vpp_daily_plan" if not reasons else "manual_override_to_comfort_routine",
+        "reasons": reasons,
+        "plan_snapshot": _plan_snapshot_for_gate(plan),
+        "preferred_min_c": round(pref_min, 3),
+        "preferred_max_c": round(pref_max, 3),
+        "daily_slack_c": round(daily_slack, 3),
     }
 
 
@@ -2220,6 +3467,305 @@ def _compute_posthoc_decision_objective(
     )
 
 
+_AGENT_ONBOARDING_QUESTIONS: list[dict[str, str]] = [
+    {
+        "id": "vpp_priority",
+        "question": (
+            "During a one-hour VPP peak event, what should the home prioritize: "
+            "comfort and routine, bill savings, grid support, or a balance?"
+        ),
+    },
+    {
+        "id": "thermostat_flexibility",
+        "question": (
+            "If the home remains safe, how much temporary AC setpoint change would you usually accept "
+            "during a peak event?"
+        ),
+    },
+    {
+        "id": "appliance_shift_consent",
+        "question": (
+            "Can the system automatically shift washer, dishwasher, water-heater, or EV timing when "
+            "deadlines are protected, or should it ask first?"
+        ),
+    },
+    {
+        "id": "calendar_routine_constraints",
+        "question": (
+            "Which calendar or household routines should not be disturbed, especially around evening "
+            "arrival, meals, showers, caregiving, or sleep?"
+        ),
+    },
+]
+
+
+def _agent_onboarding_questions() -> list[dict[str, str]]:
+    return [dict(item) for item in _AGENT_ONBOARDING_QUESTIONS]
+
+
+def _weight_value(persona_config: dict | None, key: str, default: float = 0.33) -> float:
+    try:
+        weights = (((persona_config or {}).get("preferences") or {}).get("scoring_weights") or {})
+        return float(weights.get(key, default) or default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _question_by_id(questions: list[dict[str, str]], question_id: str) -> str:
+    for item in questions:
+        if item.get("id") == question_id:
+            return str(item.get("question", ""))
+    return ""
+
+
+def _normalize_agent_onboarding_result(
+    data: dict,
+    *,
+    questions: list[dict[str, str]],
+    source: str,
+    metrics: dict | None = None,
+) -> dict:
+    answers_by_id: dict[str, str] = {}
+    raw_answers = data.get("answers") if isinstance(data, dict) else None
+    if isinstance(raw_answers, list):
+        for item in raw_answers:
+            if not isinstance(item, dict):
+                continue
+            qid = str(item.get("id", "")).strip()
+            answer = str(item.get("answer", "")).strip()
+            if qid and answer:
+                answers_by_id[qid] = answer
+    elif isinstance(raw_answers, dict):
+        for qid, answer in raw_answers.items():
+            if str(qid).strip() and str(answer).strip():
+                answers_by_id[str(qid).strip()] = str(answer).strip()
+
+    normalized_answers = [
+        {
+            "id": q["id"],
+            "question": q["question"],
+            "answer": answers_by_id.get(q["id"], "No strong preference stated."),
+        }
+        for q in questions[:4]
+    ]
+
+    profile = data.get("inferred_profile") if isinstance(data.get("inferred_profile"), dict) else {}
+    rules = data.get("preference_rules") if isinstance(data.get("preference_rules"), list) else []
+    return {
+        "version": "agent_onboarding_questionnaire_v1",
+        "source": source,
+        "question_count": len(questions[:4]),
+        "answers": normalized_answers,
+        "inferred_profile": dict(profile or {}),
+        "preference_rules": [str(rule).strip() for rule in rules if str(rule).strip()][:8],
+        "metrics": metrics or {},
+    }
+
+
+def _fallback_agent_onboarding_questionnaire(persona_config: dict | None) -> dict:
+    """Role-play a compact onboarding questionnaire without exposing hidden persona fields."""
+    persona_config = persona_config or {}
+    tags = persona_config.get("tags", {}) or {}
+    schedule = persona_config.get("schedule", {}) or {}
+    appliances = persona_config.get("appliances", {}) or {}
+    ac_cfg = appliances.get("ac", {}) if isinstance(appliances.get("ac"), dict) else {}
+    questions = _agent_onboarding_questions()
+
+    comfort_w = _weight_value(persona_config, "comfort")
+    energy_w = _weight_value(persona_config, "energy")
+    vpp_w = _weight_value(persona_config, "vpp")
+    cost_grid_w = energy_w + vpp_w
+    comfort_sensitive = tags.get("comfort") == "temp_sensitive" or bool(schedule.get("vulnerable_members"))
+    confirmation_needed = tags.get("control") in {"confirm_required", "low_auto_accept", "privacy_sensitive"}
+    suggestion_first = tags.get("control") in {"suggestion_first", "confirm_required"} or tags.get("price") == "needs_explanation"
+    price_grid_motivated = (
+        tags.get("price") in {"price_sensitive", "price_driven"}
+        or tags.get("grid_value") in {"high_value", "high_flex", "evening_peak", "short_peak_cut"}
+        or cost_grid_w >= 0.62
+    )
+    irregular_calendar = tags.get("schedule") == "irregular" or float(schedule.get("schedule_variability_h", 0.0) or 0.0) >= 2.0
+    task_rigid = tags.get("task") == "rigid" or any(
+        isinstance(info, dict)
+        and bool(info.get("present"))
+        and info.get("dr_adjustable") is False
+        for info in appliances.values()
+    )
+
+    try:
+        pref_min = float(ac_cfg.get("setpoint_preferred_min_c", 24.0))
+    except (TypeError, ValueError):
+        pref_min = 24.0
+    try:
+        pref_max = float(ac_cfg.get("setpoint_preferred_max_c", 26.0))
+    except (TypeError, ValueError):
+        pref_max = 26.0
+    try:
+        ac_tol = float(ac_cfg.get("temp_tolerance_c", 1.0))
+    except (TypeError, ValueError):
+        ac_tol = 1.0
+
+    if comfort_sensitive or comfort_w >= 0.55:
+        comfort_priority = "high"
+        thermostat_flex_c = min(0.5, max(0.2, ac_tol))
+    elif cost_grid_w >= 0.65 and comfort_w <= 0.35:
+        comfort_priority = "medium"
+        thermostat_flex_c = min(1.2, max(0.8, ac_tol))
+    else:
+        comfort_priority = "medium"
+        thermostat_flex_c = min(0.8, max(0.4, ac_tol * 0.75))
+
+    if price_grid_motivated and not confirmation_needed and not comfort_sensitive:
+        strategy_bias = "cost_grid_oriented"
+        vpp_answer = (
+            "I am willing to prioritize bill savings and grid support if comfort stays reasonable "
+            "and the controller explains the benefit."
+        )
+    elif comfort_sensitive or confirmation_needed or irregular_calendar:
+        strategy_bias = "comfort_calendar_protective"
+        vpp_answer = (
+            "Use a balanced plan, but do not disrupt comfort, evening routine, or last-minute calendar changes "
+            "just to chase VPP savings."
+        )
+    else:
+        strategy_bias = "balanced_middle"
+        vpp_answer = (
+            "Aim for a balance: save energy during peaks when it is low disruption, but keep comfort and "
+            "daily tasks on track."
+        )
+
+    if confirmation_needed:
+        automation_preference = "ask_before_vpp_specific_changes"
+        appliance_answer = (
+            "Ask before changing appliance or water-heater timing for a VPP event, especially if plans may have changed."
+        )
+    elif suggestion_first:
+        automation_preference = "suggestion_first_with_clear_benefit"
+        appliance_answer = (
+            "You can suggest shifts and usually proceed when the benefit is clear and deadlines remain protected."
+        )
+    else:
+        automation_preference = "automatic_when_deadlines_protected"
+        appliance_answer = (
+            "Automatic shifting is fine for flexible loads when the task still finishes on time."
+        )
+    if task_rigid:
+        appliance_flexibility = "limited_by_fixed_routines"
+        appliance_answer += " Fixed or routine tasks should be preserved unless I explicitly approve a change."
+    else:
+        appliance_flexibility = "flexible_if_deadlines_protected"
+
+    if irregular_calendar or confirmation_needed:
+        calendar_routine_sensitivity = "high"
+        calendar_answer = (
+            "Treat evening arrival, shower/bath preparation, and any same-day changes as protected. "
+            "Do not assume yesterday's schedule is still valid."
+        )
+    elif schedule.get("returns_home_h") is not None:
+        calendar_routine_sensitivity = "medium"
+        calendar_answer = (
+            f"Keep the home comfortable around my usual return near {float(schedule.get('returns_home_h')):.1f}h "
+            "and avoid pushing chores into late evening."
+        )
+    else:
+        calendar_routine_sensitivity = "medium"
+        calendar_answer = "Protect normal evening routines and avoid late surprises."
+
+    thermo_answer = (
+        f"Keep AC inside about {pref_min:.1f}-{pref_max:.1f}C. A temporary change of about "
+        f"{thermostat_flex_c:.1f}C is the normal limit unless I approve more."
+    )
+    cost_grid_priority = "high" if price_grid_motivated or cost_grid_w >= 0.62 else ("medium" if cost_grid_w >= 0.45 else "low")
+    profile = {
+        "comfort_priority": comfort_priority,
+        "cost_grid_priority": cost_grid_priority,
+        "automation_preference": automation_preference,
+        "thermostat_flexibility_c": round(thermostat_flex_c, 2),
+        "appliance_flexibility": appliance_flexibility,
+        "calendar_routine_sensitivity": calendar_routine_sensitivity,
+        "strategy_bias": strategy_bias,
+    }
+    rules = [
+        f"Keep AC within about {pref_min:.1f}-{pref_max:.1f}C unless the user explicitly accepts a wider drift.",
+        "Prefer VPP plans that finish required appliance, hot-water, and EV services outside the event window.",
+        "Explain the concrete comfort, cost, and schedule tradeoff before VPP-specific changes.",
+    ]
+    if automation_preference.startswith("ask"):
+        rules.append("For VPP-specific changes, use low-disruption actions and preserve the no-VPP plan when consent is uncertain.")
+    elif strategy_bias == "cost_grid_oriented":
+        rules.append("For cost/grid-oriented choices, stay close to the Rule+MILP appliance schedule when service deadlines are protected.")
+    else:
+        rules.append("For comfort or calendar-sensitive choices, diverge from Rule+MILP when needed to preserve routine and comfort.")
+    if calendar_routine_sensitivity == "high":
+        rules.append("Re-check same-day calendar/routine cues before evening VPP actions.")
+
+    data = {
+        "answers": [
+            {"id": "vpp_priority", "answer": vpp_answer},
+            {"id": "thermostat_flexibility", "answer": thermo_answer},
+            {"id": "appliance_shift_consent", "answer": appliance_answer},
+            {"id": "calendar_routine_constraints", "answer": calendar_answer},
+        ],
+        "inferred_profile": profile,
+        "preference_rules": rules,
+    }
+    normalized = _normalize_agent_onboarding_result(
+        data,
+        questions=questions,
+        source="roleplay_questionnaire_fallback",
+    )
+    for answer in normalized["answers"]:
+        answer["question"] = _question_by_id(questions, answer["id"])
+    return normalized
+
+
+def _run_agent_onboarding_questionnaire(persona_config: dict | None) -> dict:
+    questions = _agent_onboarding_questions()
+    try:
+        from energybridge.llm.roleplay_user import RoleplayUserSimulator
+
+        response = RoleplayUserSimulator().answer_onboarding_questions(
+            persona=persona_config or {},
+            questions=questions,
+        )
+        data = response.get("data") or {}
+        normalized = _normalize_agent_onboarding_result(
+            data,
+            questions=questions,
+            source="roleplay_questionnaire_llm",
+            metrics=response.get("metrics") or {},
+        )
+        if not normalized.get("preference_rules"):
+            fallback = _fallback_agent_onboarding_questionnaire(persona_config)
+            normalized["preference_rules"] = fallback.get("preference_rules", [])
+        return normalized
+    except Exception as exc:
+        fallback = _fallback_agent_onboarding_questionnaire(persona_config)
+        fallback["source"] = "roleplay_questionnaire_fallback_after_error"
+        fallback["error"] = str(exc)[:200]
+        return fallback
+
+
+def _agent_onboarding_summary_text(questionnaire: dict | None) -> str:
+    questionnaire = questionnaire or {}
+    profile = questionnaire.get("inferred_profile") if isinstance(questionnaire.get("inferred_profile"), dict) else {}
+    answers = questionnaire.get("answers") if isinstance(questionnaire.get("answers"), list) else []
+    answer_bits = [
+        f"{item.get('id')}: {str(item.get('answer', ''))[:140]}"
+        for item in answers[:4]
+        if isinstance(item, dict)
+    ]
+    if not profile and not answer_bits:
+        return "Initial onboarding did not reveal strong preferences yet."
+    return (
+        "Initial onboarding suggests "
+        f"strategy_bias={profile.get('strategy_bias', 'unknown')}, "
+        f"comfort_priority={profile.get('comfort_priority', 'unknown')}, "
+        f"cost_grid_priority={profile.get('cost_grid_priority', 'unknown')}, "
+        f"automation={profile.get('automation_preference', 'unknown')}. "
+        + (" Answers: " + " | ".join(answer_bits) if answer_bits else "")
+    )
+
+
 def _init_agent_preference_memory(
     loop,
     output_dir: Path,
@@ -2234,18 +3780,20 @@ def _init_agent_preference_memory(
         "1", "true", "yes", "on"
     }
     persona_id = (persona_config or {}).get("id", "unknown_persona")
+    questionnaire = _run_agent_onboarding_questionnaire(persona_config)
     memory = {
         "version": "agent_preference_memory_v1",
         "method": method,
         "persona_id": persona_id,
         "purpose": (
-            "Run-local memory for EnergyBridge agent methods. It records daily "
-            "role-play feedback so later decisions can use learned user "
-            "preferences. File persistence is optional and disabled by default."
+            "Run-local memory for EnergyBridge agent methods. It starts from a short "
+            "role-play user questionnaire and records later feedback so decisions can "
+            "learn user preferences. File persistence is optional and disabled by default."
         ),
+        "onboarding_questionnaire": questionnaire,
         "events": [],
-        "learned_preference_rules": [],
-        "latest_summary": "No scored VPP feedback yet.",
+        "learned_preference_rules": list(questionnaire.get("preference_rules") or [])[:8],
+        "latest_summary": _agent_onboarding_summary_text(questionnaire),
     }
     loop.agent_preference_memory = memory
     loop.persist_agent_preference_memory = persist_memory
@@ -2257,23 +3805,263 @@ def _init_agent_preference_memory(
         loop.agent_memory_path = None
         loop.agent_memory_md_path = None
         label = "EnergyBridge"
+        profile = questionnaire.get("inferred_profile") if isinstance(questionnaire.get("inferred_profile"), dict) else {}
         print(f"  [{label} Memory] run-context memory only; set ENERGYBRIDGE_PERSIST_AGENT_MEMORY=1 to write review files.")
+        print(
+            f"  [{label} Onboarding] source={questionnaire.get('source')} "
+            f"questions={questionnaire.get('question_count')} "
+            f"strategy_bias={profile.get('strategy_bias', 'unknown')}"
+        )
 
 
 def _agent_preference_memory_prompt_text(loop) -> str:
     memory = getattr(loop, "agent_preference_memory", {}) or {}
     if not memory:
         return ""
+    questionnaire = memory.get("onboarding_questionnaire") if isinstance(memory.get("onboarding_questionnaire"), dict) else {}
+    compact_questionnaire = {
+        "source": questionnaire.get("source"),
+        "answers": questionnaire.get("answers", [])[:4],
+        "inferred_profile": questionnaire.get("inferred_profile", {}),
+    }
     prompt_memory = {
         "latest_summary": memory.get("latest_summary", ""),
+        "onboarding_questionnaire": compact_questionnaire,
         "learned_preference_rules": memory.get("learned_preference_rules", []),
         "recent_events": (memory.get("events") or [])[-3:],
     }
     return (
         "\n[AGENT USER MEMORY]\n"
-        "Use this run-local memory context as a decision input. It resets for every fresh benchmark run.\n"
+        "Use this run-local memory context as a decision input. It resets for every fresh benchmark run. "
+        "Do not assume hidden persona labels; infer preferences only from questionnaire answers, calendar/context, and scored feedback.\n"
         f"{json.dumps(prompt_memory, ensure_ascii=False)}"
     )
+
+
+def _agent_memory_profile(loop) -> dict:
+    memory = getattr(loop, "agent_preference_memory", {}) or {}
+    questionnaire = memory.get("onboarding_questionnaire") if isinstance(memory.get("onboarding_questionnaire"), dict) else {}
+    profile = questionnaire.get("inferred_profile") if isinstance(questionnaire.get("inferred_profile"), dict) else {}
+    return dict(profile or {})
+
+
+def _agent_memory_strategy_bias(loop) -> str:
+    return str(_agent_memory_profile(loop).get("strategy_bias", "") or "").strip().lower()
+
+
+def _agent_memory_comfort_priority(loop) -> str:
+    return str(_agent_memory_profile(loop).get("comfort_priority", "") or "").strip().lower()
+
+
+def _agent_memory_is_cost_grid_oriented(loop) -> bool:
+    profile = _agent_memory_profile(loop)
+    blob = " ".join(
+        str(profile.get(key, "") or "").lower()
+        for key in ("strategy_bias", "cost_grid_priority", "automation_preference", "appliance_flexibility")
+    )
+    cost_tokens = ("cost", "price", "saving", "savings", "grid", "economic", "cooperative", "peak", "bill")
+    return str(profile.get("cost_grid_priority", "")).lower() == "high" or any(token in blob for token in cost_tokens)
+
+
+def _agent_memory_is_protective(loop) -> bool:
+    profile = _agent_memory_profile(loop)
+    blob = " ".join(
+        str(profile.get(key, "") or "").lower()
+        for key in (
+            "strategy_bias",
+            "comfort_priority",
+            "automation_preference",
+            "calendar_routine_sensitivity",
+            "appliance_flexibility",
+        )
+    )
+    protective_tokens = (
+        "calendar",
+        "confirm",
+        "privacy",
+        "protect",
+        "comfort_sensitive",
+        "temp_sensitive",
+        "temperature_sensitive",
+        "temperature",
+        "cautious",
+        "irregular",
+        "fixed",
+    )
+    return (
+        str(profile.get("comfort_priority", "")).lower() == "high"
+        or str(profile.get("calendar_routine_sensitivity", "")).lower() == "high"
+        or any(token in blob for token in protective_tokens)
+    )
+
+
+def _agent_recent_positive_vpp_events(loop, *, min_events: int = 2) -> bool:
+    events = [
+        event
+        for event in list(getattr(loop, "vpp_event_log", []) or [])
+        if isinstance(event, dict) and event.get("score") is not None
+    ]
+    if len(events) < int(min_events):
+        return False
+    recent = events[-int(min_events):]
+    return all(
+        _event_score_int(event, "score", 3) >= 4
+        and _event_score_int(event, "comfort_score", 3) >= 4
+        and (event.get("target_achieved") is not False)
+        for event in recent
+    )
+
+
+def _agent_vpp_tradeoff_setpoint_c(
+    loop,
+    *,
+    ac_sp_max_c: float,
+    ac_sp_tol_c: float,
+    run_sp_max_c: float,
+    protective_mode: bool,
+    multi_user_comfort_first: bool = False,
+) -> float:
+    """EB-only event setpoint from questionnaire memory plus observed feedback."""
+    profile = _agent_memory_profile(loop)
+    strategy_bias = str(profile.get("strategy_bias", "") or "").lower()
+    comfort_priority = str(profile.get("comfort_priority", "") or "").lower()
+    cost_grid_priority = str(profile.get("cost_grid_priority", "") or "").lower()
+    automation = str(profile.get("automation_preference", "") or "").lower()
+    calendar_sensitivity = str(profile.get("calendar_routine_sensitivity", "") or "").lower()
+
+    comfort_first = (
+        comfort_priority == "high"
+        or multi_user_comfort_first
+        or (protective_mode and cost_grid_priority != "high")
+    )
+    if comfort_first:
+        return round(min(float(run_sp_max_c), float(ac_sp_max_c)), 1)
+
+    # Cost/grid users should look closer to Rule+MILP, but still remain below
+    # hard baseline aggression so the user gate has a reason to accept EB.
+    if cost_grid_priority == "high" or "cost_grid" in strategy_bias:
+        drift_c = 0.5
+        return round(min(float(run_sp_max_c), float(ac_sp_max_c) + drift_c), 1)
+
+    # Confirmation/calendar users start gently and only become more assertive
+    # after the role-play user has accepted the previous pattern.
+    if (
+        "ask" in automation
+        or calendar_sensitivity == "high"
+        or "protective" in strategy_bias
+    ):
+        return round(min(float(run_sp_max_c), float(ac_sp_max_c)), 1)
+
+    drift_c = 0.5
+    return round(min(float(run_sp_max_c), float(ac_sp_max_c) + drift_c), 1)
+
+
+def _agent_pre_vpp_setpoint_c(
+    loop,
+    *,
+    ac_sp_min_c: float,
+    ac_sp_max_c: float,
+    ac_sp_default_c: float,
+    run_sp_max_c: float,
+    protective_mode: bool,
+    multi_user_comfort_first: bool = False,
+) -> float:
+    """EB-only pre-event setpoint; avoids unnecessary pre-cooling for cost users."""
+    profile = _agent_memory_profile(loop)
+    strategy_bias = str(profile.get("strategy_bias", "") or "").lower()
+    comfort_priority = str(profile.get("comfort_priority", "") or "").lower()
+    cost_grid_priority = str(profile.get("cost_grid_priority", "") or "").lower()
+    automation = str(profile.get("automation_preference", "") or "").lower()
+    calendar_sensitivity = str(profile.get("calendar_routine_sensitivity", "") or "").lower()
+    try:
+        thermostat_flex_c = float(profile.get("thermostat_flexibility_c", 1.0) or 1.0)
+    except (TypeError, ValueError):
+        thermostat_flex_c = 1.0
+
+    if comfort_priority == "high" or multi_user_comfort_first:
+        # Temperature-sensitive users benefit from true pre-cooling.  Cautious
+        # confirmation users with normal comfort mainly want stability, so avoid
+        # extra cold pre-cooling that raises cost without improving consent.
+        if multi_user_comfort_first or thermostat_flex_c <= 0.55:
+            return round(max(float(ac_sp_min_c), min(float(run_sp_max_c), float(ac_sp_min_c))), 1)
+        return round(min(float(run_sp_max_c), max(float(ac_sp_default_c), float(ac_sp_max_c))), 1)
+    if cost_grid_priority == "high" or "cost_grid" in strategy_bias:
+        return round(min(float(run_sp_max_c), float(ac_sp_max_c) + 0.5), 1)
+    if protective_mode or "ask" in automation or calendar_sensitivity == "high":
+        return round(min(float(run_sp_max_c), max(float(ac_sp_default_c), float(ac_sp_max_c))), 1)
+    return round(min(float(run_sp_max_c), float(ac_sp_max_c)), 1)
+
+
+def _agent_refine_vpp_appliance_actions(
+    actions: dict | None,
+    loop,
+    *,
+    hod: float,
+    event: dict | None,
+    appliance_config: dict | None,
+) -> dict:
+    """EB-only low-disruption appliance refinement before a VPP event."""
+    if not event:
+        return dict(actions or {})
+    out = dict(actions or {})
+    cfg = appliance_config or {}
+    profile = _agent_memory_profile(loop)
+    strategy_bias = str(profile.get("strategy_bias", "") or "").lower()
+    automation = str(profile.get("automation_preference", "") or "").lower()
+    calendar_sensitivity = str(profile.get("calendar_routine_sensitivity", "") or "").lower()
+    should_refine = (
+        "protective" in strategy_bias
+        or "ask" in automation
+        or calendar_sensitivity == "high"
+        or _agent_memory_is_protective(loop)
+    )
+    if not should_refine:
+        return out
+
+    try:
+        vpp_start_hod = float(event.get("trigger_h", 18.0)) % 24.0
+        vpp_end_hod = float(event.get("end_h", 19.0)) % 24.0
+        current_hod = float(hod) % 24.0
+    except (TypeError, ValueError):
+        return out
+
+    washer = cfg.get("washer", {}) or {}
+    if bool(washer.get("present", False)) and out.get("washer_start_h") is None:
+        try:
+            preferred = float(washer.get("preferred_h", vpp_end_hod))
+            duration = float(washer.get("duration_h", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            preferred, duration = vpp_end_hod, 1.0
+        if preferred >= vpp_end_hod or preferred + duration <= vpp_start_hod:
+            out["washer_start_h"] = round(preferred, 2)
+            out["washer_skip"] = False
+
+    wh = cfg.get("water_heater", {}) or {}
+    if bool(wh.get("present", False)):
+        try:
+            existing_start = float(out.get("water_heater_preheat_start_h"))
+            existing_end = float(out.get("water_heater_preheat_end_h"))
+            overlaps = _interval_overlaps(existing_start, existing_end, vpp_start_hod, vpp_end_hod)
+        except (TypeError, ValueError):
+            overlaps = True
+        if overlaps and current_hod < vpp_start_hod - 0.25:
+            try:
+                configured_start = float(wh.get("pre_heat_window_start_h", vpp_start_hod))
+                configured_end = float(wh.get("pre_heat_window_end_h", vpp_end_hod + 1.0))
+                configured_duration = max(1.0, configured_end - configured_start)
+            except (TypeError, ValueError):
+                configured_duration = 2.0
+            preheat_end = vpp_start_hod
+            preheat_start = max(current_hod, preheat_end - min(3.0, configured_duration))
+            if preheat_end - preheat_start >= 0.5:
+                out["water_heater_preheat_start_h"] = round(preheat_start, 2)
+                out["water_heater_preheat_end_h"] = round(preheat_end, 2)
+                out["water_heater_preheat_temp_c"] = max(
+                    60.0,
+                    min(65.0, float(out.get("water_heater_preheat_temp_c") or 63.0)),
+                )
+                out["water_heater_preheat"] = True
+    return out
 
 
 def _write_agent_preference_memory(loop) -> None:
@@ -2293,13 +4081,29 @@ def _write_agent_preference_memory(loop) -> None:
             f"- Persona: `{memory.get('persona_id', '')}`",
             f"- Version: `{memory.get('version', '')}`",
             "",
+            "## Initial Questionnaire",
+            "",
+            str(_agent_onboarding_summary_text(memory.get("onboarding_questionnaire"))),
+            "",
+        ]
+        questionnaire = memory.get("onboarding_questionnaire") if isinstance(memory.get("onboarding_questionnaire"), dict) else {}
+        for item in questionnaire.get("answers") or []:
+            if not isinstance(item, dict):
+                continue
+            lines.extend(
+                [
+                    f"- {item.get('id', '')}: {item.get('answer', '')}",
+                ]
+            )
+        lines.extend([
+            "",
             "## Latest Summary",
             "",
             str(memory.get("latest_summary", "")),
             "",
             "## Learned Preference Rules",
             "",
-        ]
+        ])
         rules = list(memory.get("learned_preference_rules") or [])
         lines.extend([f"- {rule}" for rule in rules] or ["- No learned rules yet."])
         lines.extend(["", "## Event Feedback", ""])
@@ -2345,6 +4149,7 @@ def _update_agent_preference_memory(
             or event_result.get("member_feedback_summary")
             or event_result.get("comment", "")
         )[:1200],
+        "vpp_acceptance_gate": event_result.get("vpp_acceptance_gate", {}),
         "target_achieved": event_result.get("target_achieved"),
         "selected_strategy": event_result.get("selected_strategy", {}),
     }
@@ -2357,7 +4162,8 @@ def _update_agent_preference_memory(
         rules = build_vpp_preference_memory_notes(list(getattr(loop, "vpp_event_log", [])), persona_config)
     except Exception:
         rules = []
-    memory["learned_preference_rules"] = list(dict.fromkeys(rules))[:8]
+    initial_rules = list((memory.get("onboarding_questionnaire") or {}).get("preference_rules") or [])
+    memory["learned_preference_rules"] = list(dict.fromkeys(initial_rules + list(rules or [])))[:8]
     score_bits = [
         f"{item.get('event_id')}: score={item.get('score')}, feedback={str(item.get('feedback', ''))[:160]}"
         for item in events[-3:]
@@ -2665,11 +4471,15 @@ def _agent_primary_rule_milp_guidance_text(bundle: dict | None) -> str:
         return ""
     return (
         "\n[ENERGYBRIDGE PRIMARY PLAN]\n"
-        "For this benchmark, EnergyBridge should primarily use the Rule+MILP skill as the executable base plan. "
-        "Treat its appliance schedule as the default because it is optimized for price, VPP-window appliance avoidance, "
-        "and task completion. You may make only small user-feedback adjustments, such as a comfort-bounded AC setpoint "
-        "or clearer user-facing explanation. Do not remove present-appliance commands from the Rule+MILP plan unless "
-        "recent user feedback or a hard service constraint requires a safer substitute.\n"
+        "Use the Rule+MILP skill as a feasibility and cost/VPP reference, then personalize it using AGENT USER MEMORY. "
+        "If onboarding or feedback indicates a cost/grid-oriented user, stay close to Rule+MILP appliance timing and "
+        "use the warmest still-acceptable VPP setpoint with a concrete savings/grid explanation. "
+        "If onboarding or feedback indicates comfort, confirmation, or calendar sensitivity, treat Rule+MILP as a "
+        "reference only: preserve comfort/routines, reduce thermostat drift, keep fixed services unchanged, and choose "
+        "the lower-disruption accepted plan even if it diverges from Rule+MILP. "
+        "For middle users, keep the Rule+MILP appliance schedule when deadlines and consent are safe, but soften AC "
+        "and timing changes around calendar constraints. Never remove present-appliance commands unless feedback or "
+        "a hard service constraint requires a safer substitute.\n"
         + _agent_skill_guidance_text(bundle)
     )
 
@@ -2998,21 +4808,31 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     ):
         _energy_saving_sp_floor = max(_energy_saving_sp_floor, min(_ac_sp_max, _ac_sp_max - 0.5))
 
-    _vpp_ac_strategy_text = (
-        f"Protective strategy: keep setpoint within {_ac_sp_min:.1f}-{_ac_sp_max:.1f}°C; do not raise above preferred max for VPP."
-        if _protective_mode
-        else f"AC strategy: raise setpoint to {_ac_sp_vpp_min:.1f}–{_ac_sp_vpp_max:.1f}°C (pre-cool BEFORE event, drift DURING event)."
-    )
+    if method == "agent":
+        _vpp_ac_strategy_text = (
+            f"AC strategy: use onboarding memory and feedback to choose between comfort-preserving control "
+            f"within {_ac_sp_min:.1f}-{_ac_sp_max:.1f}C and a low-disruption VPP drift up to "
+            f"{_ac_sp_vpp_max:.1f}C when the user appears likely to accept it. Pre-cool before events only "
+            "when it fits the calendar and comfort preference."
+        )
+    else:
+        _vpp_ac_strategy_text = (
+            f"Protective strategy: keep setpoint within {_ac_sp_min:.1f}-{_ac_sp_max:.1f}C; do not raise above preferred max for VPP."
+            if _protective_mode
+            else f"AC strategy: raise setpoint to {_ac_sp_vpp_min:.1f}-{_ac_sp_vpp_max:.1f}C (pre-cool BEFORE event, drift DURING event)."
+        )
 
     _protective_policy = ""
-    if _protective_mode:
+    if _protective_mode and method != "agent":
         _protective_policy = f"""
 [PROTECTIVE USER MODE]
 This persona has tight comfort bounds, explicit-confirmation needs, vulnerable household members, or very low acceptance of automation.
 Treat DR as advisory/minimal-control: keep HVAC within {_ac_sp_min:.1f}-{_ac_sp_max:.1f}°C, do not raise above the preferred max for VPP, and preserve fixed care routines.
 If grid goals conflict with comfort, safety, consent, or caregiving routines, choose comfort/safety and explain that only low-risk actions were taken.
 """
-    _persona_policy = _persona_agent_policy_text(persona_config)
+    # EnergyBridge must infer the user from onboarding answers, observable
+    # calendar context, and feedback. Do not expose hidden persona prompt text.
+    _persona_policy = "" if method == "agent" else _persona_agent_policy_text(persona_config)
     _run_location_text = (weather_label or "default").strip() or "default"
     _run_start_text = run_start_date.isoformat() if run_start_date else "simulation day 1"
     _LLM_SYS_FAM = f"""You are an autonomous AC (air conditioning) and appliance agent for a family home.
@@ -3036,10 +4856,12 @@ The exact event window is provided at runtime as VPP_WINDOW=start-end.
 {_vpp_ac_strategy_text}
 Appliances: every present independent device needs an explicit policy command (see details below). For flexible devices, choose a schedule. For fixed/non-DR-adjustable devices, emit the user's normal routine command and do not alter it for VPP.
 IMPORTANT: control each appliance independently. Decisions persist until you change them. Learn from past VPP event scores.
-HARD APPLIANCE RULE: on every VPP day, no present controllable appliance may draw controllable load during VPP_WINDOW.
-This means washer/dishwasher/dryer cycles must not overlap VPP_WINDOW, water-heater preheat must avoid VPP_WINDOW, and EV charging must use smart/delay or an explicit non-overlapping window.
+HARD APPLIANCE RULE: on every VPP day, no present flexible/DR-adjustable appliance may draw controllable load during VPP_WINDOW.
+This means flexible washer/dishwasher/dryer cycles must not overlap VPP_WINDOW, flexible water-heater preheat must avoid VPP_WINDOW, and flexible EV charging must use smart/delay or an explicit non-overlapping window.
+For fixed/non-DR-adjustable routines, preserve the user's normal command even if that limits VPP capacity; do not force a fixed routine to move only to satisfy the event.
 Plan appliance schedules before the event. Waiting until the VPP start time is too late for preheating or long-cycle tasks.
 All flexible schedule commands must be executable from the CURRENT clock time. Do not "fix" an active VPP event by assigning a washer/dishwasher/dryer start time in the past; if a flexible cycle was not already safely completed, move it after VPP_WINDOW. For fixed/routine appliances, keep the stated preferred routine and emit it explicitly.
+Acceptance matters: a VPP-specific plan that the user rejects falls back to the no-VPP day-ahead plan and contributes no new demand response. Prefer accepted, personalized reductions over aggressive plans that violate questionnaire preferences, calendar routines, or prior feedback.
 {_protective_policy}
 {_persona_policy}
 
@@ -3144,10 +4966,10 @@ Use null only for appliances that are absent from the home, or for optional ev_m
 All times are hour-of-day (0–23.9)."""
 
     def _llm_trigger(temp, out_t, hod, sim_h, remaining_h, vpp_active=False, vpp_id="",
-                     user_pref_input="", facility_w=None):
+                     user_pref_input="", facility_w=None, suppress_vpp_context: bool = False):
         import json as _j
         hh = int(hod % 24)
-        vpp_event = _find_active_or_upcoming_vpp_event(
+        vpp_event = None if suppress_vpp_context else _find_active_or_upcoming_vpp_event(
             sim_h,
             vpp_id=vpp_id if vpp_active else "",
             vpp_events=vpp_events,
@@ -3221,8 +5043,9 @@ All times are hour-of-day (0–23.9)."""
             )
             if agent_pre_vpp_precool:
                 upcoming_vpp_tag += (
-                    f" EnergyBridge tradeoff mode: pre-cool now to about {_ac_sp_min:.1f}°C, "
-                    "then use a warmer low-power setpoint during the VPP window and restore comfort after it ends."
+                    " EnergyBridge tradeoff mode: prepare for the event using AGENT USER MEMORY. "
+                    "Comfort-sensitive users may pre-cool within their range; cost/grid-oriented users should avoid "
+                    "unnecessary pre-cooling and use a warmer accepted setpoint during the VPP window."
                 )
         # Post-VPP recovery signal: tell LLM to restore setpoint within 2h after VPP ends
         post_vpp_tag = ""
@@ -3279,6 +5102,7 @@ All times are hour-of-day (0–23.9)."""
         )
         # Current event: user expressed preference before agent acts
         user_now_tag = f"\n[User says NOW]: {user_pref_input}" if user_pref_input else ""
+        agent_memory_protective = bool(method == "agent" and _agent_memory_is_protective(loop))
         # Per-appliance status (independent devices)
         if loop.appliance_suite is not None:
             appl_lines = "\n".join(loop.appliance_suite.status_lines(sim_h))
@@ -3298,7 +5122,7 @@ All times are hour-of-day (0–23.9)."""
                   f"remaining_sim_hours={remaining_h:.0f}\n"
                   f"user_pref: {user_pref}{user_now_tag}{price_tag}{benefit_tag}{learned_efficiency_tag}{intensity_tag}{appl_tag}{fixed_appliance_tag}{explicit_appliance_tag}{agent_skill_tag}{agent_memory_tag}{mem_tag}")
         if vpp_active:
-            fb_sp = min(_run_sp_max, _ac_sp_default if _protective_mode else 26.5)
+            fb_sp = min(_run_sp_max, _ac_sp_default if agent_memory_protective or _protective_mode else 26.5)
             fb_nch = None
         else:
             fb_sp = min(_run_sp_max, max(_run_sp_min, min(26.0, round(temp - 0.5, 1))))
@@ -3515,19 +5339,14 @@ All times are hour-of-day (0–23.9)."""
                 rule_actions = dict(rule_skill.get("appliance_actions") or {})
                 rule_setpoint = rule_skill.get("setpoint", data_out.get("setpoint", fb_sp))
                 next_check_hour = rule_skill.get("next_check_hour")
-                if _protective_mode or _agent_multi_user_comfort_first:
-                    agent_vpp_tradeoff_sp = round(min(_run_sp_max, _ac_sp_max), 1)
-                else:
-                    agent_vpp_tradeoff_sp = round(
-                        min(
-                            _run_sp_max,
-                            max(
-                                _ac_sp_max,
-                                _ac_sp_max + min(1.5, max(0.5, float(_ac_sp_tol))),
-                            ),
-                        ),
-                        1,
-                    )
+                agent_vpp_tradeoff_sp = _agent_vpp_tradeoff_setpoint_c(
+                    loop,
+                    ac_sp_max_c=_ac_sp_max,
+                    ac_sp_tol_c=_ac_sp_tol,
+                    run_sp_max_c=_run_sp_max,
+                    protective_mode=_protective_mode,
+                    multi_user_comfort_first=_agent_multi_user_comfort_first,
+                )
                 if vpp_active:
                     rule_setpoint = agent_vpp_tradeoff_sp
                     rule_skill["setpoint"] = agent_vpp_tradeoff_sp
@@ -3535,10 +5354,18 @@ All times are hour-of-day (0–23.9)."""
                         f"{rule_skill.get('reason', 'rule_milp')} | active VPP low-power drift after pre-cooling"
                     )[:240]
                 elif agent_pre_vpp_precool and vpp_event:
-                    rule_setpoint = _ac_sp_min
+                    rule_setpoint = _agent_pre_vpp_setpoint_c(
+                        loop,
+                        ac_sp_min_c=_ac_sp_min,
+                        ac_sp_max_c=_ac_sp_max,
+                        ac_sp_default_c=_ac_sp_default,
+                        run_sp_max_c=_run_sp_max,
+                        protective_mode=_protective_mode,
+                        multi_user_comfort_first=_agent_multi_user_comfort_first,
+                    )
                     next_check_hour = float(vpp_event.get("trigger_h", sim_h + 1.0))
                     rule_skill["reason"] = (
-                        f"{rule_skill.get('reason', 'rule_milp')} | pre-cool before VPP to preserve comfort"
+                        f"{rule_skill.get('reason', 'rule_milp')} | pre-event EB comfort/efficiency preparation"
                     )[:240]
                 elif agent_post_vpp_restore:
                     rule_setpoint = _ac_sp_default
@@ -3620,18 +5447,23 @@ All times are hour-of-day (0–23.9)."""
                 method == "agent" and data.get("control_source") == "rule_milp_primary"
             )
             sp_upper = _run_sp_max
-            if vpp_event and _low_dr_intrusion_sensitive_mode(persona_config):
+            if vpp_event and method == "agent" and agent_memory_protective:
+                sp_upper = min(sp_upper, _ac_sp_max)
+            elif vpp_event and method != "agent" and _low_dr_intrusion_sensitive_mode(persona_config):
                 sp_upper = min(sp_upper, _ac_sp_max)
             if vpp_active and not rule_milp_direct_control:
                 demand_kw = float(getattr(loop, "current_vpp_demand_kw", 0.0) or 0.0)
                 low_target_unoccupied_warm = False
-                _tags = (persona_config.get("tags", {}) or {})
-                _sched = persona_config.get("schedule", {}) or {}
-                fragile_comfort = (
-                    _tags.get("comfort") == "temp_sensitive"
-                    or _tags.get("control") in {"low_auto_accept", "privacy_sensitive"}
-                    or bool(_sched.get("vulnerable_members"))
-                )
+                if method == "agent":
+                    fragile_comfort = bool(agent_memory_protective)
+                else:
+                    _tags = (persona_config.get("tags", {}) or {})
+                    _sched = persona_config.get("schedule", {}) or {}
+                    fragile_comfort = (
+                        _tags.get("comfort") == "temp_sensitive"
+                        or _tags.get("control") in {"low_auto_accept", "privacy_sensitive"}
+                        or bool(_sched.get("vulnerable_members"))
+                    )
                 if _calendar_return_home_sensitive(persona_config, vpp_event):
                     if _low_vpp_target_kw(demand_kw):
                         # Tiny return-home events should avoid noticeable
@@ -3654,7 +5486,12 @@ All times are hour-of-day (0–23.9)."""
                     else:
                         efficient_target = min(_run_sp_max, _ac_sp_max)
                     sp_lower = max(_energy_saving_sp_floor, efficient_target)
-                if _low_dr_intrusion_sensitive_mode(persona_config):
+                low_dr_sensitive = (
+                    agent_memory_protective
+                    if method == "agent"
+                    else _low_dr_intrusion_sensitive_mode(persona_config)
+                )
+                if low_dr_sensitive:
                     if demand_kw > 0.0 and not fragile_comfort:
                         sp_lower = max(
                             locals().get("sp_lower", _energy_saving_sp_floor),
@@ -3671,9 +5508,11 @@ All times are hour-of-day (0–23.9)."""
                             _ac_sp_default if fragile_comfort else _ac_sp_max,
                         )
                         sp_upper = min(sp_upper, small_target_cap)
-                if _protective_mode:
+                if method == "agent" and agent_memory_protective:
                     sp_upper = min(sp_upper, _ac_sp_max)
-                elif (persona_config.get("tags", {}) or {}).get("control") == "high_trust_auto":
+                elif method != "agent" and _protective_mode:
+                    sp_upper = min(sp_upper, _ac_sp_max)
+                elif method != "agent" and (persona_config.get("tags", {}) or {}).get("control") == "high_trust_auto":
                     comfort_tag = (persona_config.get("tags", {}) or {}).get("comfort")
                     high_trust_cap = _ac_sp_max
                     if low_target_unoccupied_warm:
@@ -3687,7 +5526,17 @@ All times are hour-of-day (0–23.9)."""
                 sp_lower = _run_sp_min
                 sp_upper = _rule_milp_sp_max
                 if agent_pre_vpp_precool:
-                    sp_upper = max(_run_sp_min, min(_run_sp_max, _ac_sp_min))
+                    pre_vpp_target = _agent_pre_vpp_setpoint_c(
+                        loop,
+                        ac_sp_min_c=_ac_sp_min,
+                        ac_sp_max_c=_ac_sp_max,
+                        ac_sp_default_c=_ac_sp_default,
+                        run_sp_max_c=_run_sp_max,
+                        protective_mode=_protective_mode,
+                        multi_user_comfort_first=_agent_multi_user_comfort_first,
+                    )
+                    sp_lower = max(_run_sp_min, min(_run_sp_max, pre_vpp_target))
+                    sp_upper = sp_lower
                 elif agent_post_vpp_restore:
                     sp_upper = max(_run_sp_min, min(_run_sp_max, _ac_sp_default))
                 elif not vpp_active:
@@ -3743,6 +5592,14 @@ All times are hour-of-day (0–23.9)."""
             appl_actions = _filter_controllable_appliance_actions(
                 data.get("appliances", {}), appliance_config
             )
+            if method == "agent" and vpp_event:
+                appl_actions = _agent_refine_vpp_appliance_actions(
+                    appl_actions,
+                    loop,
+                    hod=hod,
+                    event=vpp_event,
+                    appliance_config=appliance_config,
+                )
             data["appliances"] = appl_actions
             strategy_explanation = {}
             if vpp_event:
@@ -4057,6 +5914,50 @@ All times are hour-of-day (0–23.9)."""
                 "appliance_actions": {},
             }
 
+    def _rule_milp_reference_plan(temp, out_t, hod, sim_h, facility_w=None, vpp_event=None):
+        """Build a Rule+MILP comparator plan without applying or printing it."""
+        try:
+            from experiments.benchmark.baselines.rule_milp import plan_rule_milp_action
+
+            state_dict = _build_decision_time_state(
+                loop,
+                sim_h=sim_h,
+                hod=hod,
+                temp=temp,
+                out_t=out_t,
+                facility_w=facility_w,
+                vpp_event=vpp_event,
+                vpp_target_kwh=None,
+                appliance_config=appliance_config or {},
+            )
+            state_dict["standalone_baseline"] = True
+            decision = plan_rule_milp_action(
+                state=state_dict,
+                price_profile=day_ahead_price_profile,
+                run_start_date=run_start_date,
+            )
+            return {
+                "setpoint": round(
+                    max(_rule_milp_sp_min, min(_rule_milp_sp_max, float(decision.get("setpoint", loop.sp)))),
+                    1,
+                ),
+                "next_check_hour": decision.get("next_check_hour"),
+                "reason": decision.get("reason", ""),
+                "appliance_actions": _filter_controllable_appliance_actions(
+                    decision.get("appliances", {}), appliance_config
+                ),
+                "objective_terms": decision.get("objective_terms", {}),
+                "objective_source": "rule_milp_cost_min_v1",
+            }
+        except Exception as exc:
+            return {
+                "setpoint": getattr(loop, "sp", SP_DEFAULT),
+                "next_check_hour": None,
+                "reason": f"rule_milp_reference_unavailable: {str(exc)[:80]}",
+                "appliance_actions": {},
+                "objective_source": "rule_milp_reference_unavailable",
+            }
+
     def _rule_milp_trigger(temp, out_t, hod, sim_h, facility_w=None, vpp_event=None):
         from experiments.benchmark.baselines.rule_milp import plan_rule_milp_action
 
@@ -4169,6 +6070,7 @@ All times are hour-of-day (0–23.9)."""
             "reason": decision.get("reason", ""),
             "appliance_actions": appliance_actions,
             "objective_source": "rl_ppo_pref_v2_policy",
+            "raw_policy_only": True,
         }
 
     def _score_event(ev, loop_ref, sim_h, event_index=1, human_mode: bool = False):
@@ -4285,6 +6187,12 @@ All times are hour-of-day (0–23.9)."""
             }
             strategy_trace = loop_ref.vpp_strategy_trace_by_id.get(ev["id"], {})
             strategy_explanation = loop_ref.vpp_strategy_explanation_by_id.get(ev["id"], {})
+            vpp_acceptance_gate = loop_ref.vpp_plan_gate_by_id.get(ev["id"], {})
+            policy_control_context["vpp_acceptance_gate"] = vpp_acceptance_gate
+            adaptability_diagnostics = (
+                vpp_acceptance_gate.get("adaptability_diagnostics", {})
+                if isinstance(vpp_acceptance_gate, dict) else {}
+            )
             _score_explanation = scoring_explanation_text(strategy_explanation)
             r = score_fn(
                 building="family", method=method,
@@ -4343,6 +6251,8 @@ All times are hour-of-day (0–23.9)."""
                     "selected_strategy": strategy_trace.get("selected_strategy", {}),
                     "strategy_trace": strategy_trace,
                     "strategy_explanation": strategy_explanation,
+                    "vpp_acceptance_gate": vpp_acceptance_gate,
+                    "adaptability_diagnostics": adaptability_diagnostics,
                     "source": src}
         except Exception as e:
             print(f"  [VPP score {ev['id']}] error: {e}")
@@ -4490,10 +6400,37 @@ All times are hour-of-day (0–23.9)."""
         loop.current_occupied = occ
         loop.current_occupancy_count = occ_count
         loop.current_occupancy_source = occ_source
+        # Determine current VPP status before any controller-specific
+        # continuous adjustment. Some baselines may only use VPP-aware HVAC
+        # logic after the acceptance gate has approved the event dispatch.
+        active_vpp = None
+        for ev in vpp_events:
+            if ev["trigger_h"] <= sim_h < ev["end_h"]:
+                active_vpp = ev; break
         agent_precool_hvac_active = False
         hvac_control_occupied = True if method == "no_dr" else occ
         hvac_avail_set = _set_hvac_availability(ex, s, loop, hvac_control_occupied)
-        if method == "rule_milp" and occ:
+        _day_i_now = min(sim_days - 1, int(sim_h // 24))
+        _stored_no_vpp_plan = loop.no_vpp_daily_plan_by_day.get(_day_i_now, {})
+        _active_gate_for_hvac = (
+            loop.vpp_plan_gate_by_id.get(str(active_vpp.get("id", "")), {})
+            if active_vpp else {}
+        )
+        _rule_milp_day_plan_locked = (
+            method == "rule_milp"
+            and bool(occ)
+            and isinstance(_stored_no_vpp_plan, dict)
+            and _stored_no_vpp_plan.get("setpoint") is not None
+            and not bool(_active_gate_for_hvac.get("accepted"))
+        )
+        if _rule_milp_day_plan_locked:
+            try:
+                locked_sp = float(_stored_no_vpp_plan.get("setpoint"))
+            except (TypeError, ValueError):
+                locked_sp = float(loop.planned_occupied_sp)
+            loop.sp = round(locked_sp, 1)
+            loop.planned_occupied_sp = loop.sp
+        if method == "rule_milp" and occ and not _rule_milp_day_plan_locked:
             try:
                 from experiments.benchmark.baselines.rule_milp import _choose_dynamic_cost_min_setpoint
 
@@ -4502,11 +6439,20 @@ All times are hour-of-day (0–23.9)."""
                     round(float(temp), 1),
                     round(float(out_t), 1),
                     str(weather_label or ""),
+                    str(active_vpp.get("id", "")) if active_vpp else "",
+                    bool(
+                        loop.vpp_plan_gate_by_id.get(str(active_vpp.get("id", "")), {}).get("accepted")
+                    ) if active_vpp else False,
                 )
                 cached = getattr(loop, "_rule_milp_hvac_cache", None)
                 if isinstance(cached, dict) and cached.get("key") == cache_key:
                     rule_sp = cached.get("setpoint", loop.sp)
                 else:
+                    _active_gate = (
+                        loop.vpp_plan_gate_by_id.get(str(active_vpp.get("id", "")), {})
+                        if active_vpp else {}
+                    )
+                    _rule_hvac_vpp_event = active_vpp if bool(_active_gate.get("accepted")) else None
                     state_dict = _build_decision_time_state(
                         loop,
                         sim_h=sim_h,
@@ -4514,7 +6460,7 @@ All times are hour-of-day (0–23.9)."""
                         temp=temp,
                         out_t=out_t,
                         facility_w=fac,
-                        vpp_event=_find_active_or_upcoming_vpp_event(sim_h, vpp_events=vpp_events),
+                        vpp_event=_rule_hvac_vpp_event,
                         vpp_target_kwh=None,
                         appliance_config=appliance_config or {},
                     )
@@ -4526,12 +6472,6 @@ All times are hour-of-day (0–23.9)."""
                 loop.planned_occupied_sp = loop.sp
             except Exception as _rme:
                 print(f"  [Rule+MILP HVAC] dynamics rule failed: {_rme}")
-
-        # Determine current VPP status
-        active_vpp = None
-        for ev in vpp_events:
-            if ev["trigger_h"] <= sim_h < ev["end_h"]:
-                active_vpp = ev; break
 
         if not wu:
             loop.power_trace_rows.append({
@@ -4633,7 +6573,9 @@ All times are hour-of-day (0–23.9)."""
 
             triggered = False
             triggered_vpp = None
+            triggered_vpp_preplan = None
             triggered_daily_plan = False
+            triggered_next_check = False
             _plan_grace_h = max(0.25, 2.0 * float(dt or 0.25))
             for _day_idx in range(sim_days):
                 _plan_h = _day_idx * 24.0 + planning_hour
@@ -4653,10 +6595,23 @@ All times are hour-of-day (0–23.9)."""
                     triggered = True; triggered_vpp = ev; break
             if loop.next_check is not None and psim < loop.next_check <= sim_h:
                 triggered = True
+                triggered_next_check = True
+            if triggered_next_check and triggered_vpp is None:
+                _upcoming_for_preplan = _find_active_or_upcoming_vpp_event(sim_h, vpp_events=vpp_events)
+                if (
+                    _upcoming_for_preplan is not None
+                    and sim_h < float(_upcoming_for_preplan.get("trigger_h", 0.0))
+                    and float(_upcoming_for_preplan.get("trigger_h", 0.0)) - sim_h
+                    <= AGENT_PRE_VPP_PRECOOL_LEAD_H + _plan_grace_h
+                ):
+                    triggered_vpp_preplan = _upcoming_for_preplan
 
             if triggered:
                 is_vpp = triggered_vpp is not None
                 vid = triggered_vpp["id"] if triggered_vpp else ""
+                planning_vpp_event = triggered_vpp or triggered_vpp_preplan
+                is_vpp_preplan = triggered_vpp_preplan is not None and not is_vpp
+                planning_vid = str(planning_vpp_event.get("id", "")) if planning_vpp_event else ""
                 day_num = int(sim_h // 24) + 1
                 if is_vpp:
                     ev_window_text = _event_window_text(triggered_vpp)
@@ -4721,9 +6676,18 @@ All times are hour-of-day (0–23.9)."""
                         f"  --- Day {day_num} daily plan  "
                         f"(sim_h={sim_h:.0f}h  {_fmt_clock_h(planning_hour)} planning) ---"
                     )
+                elif is_vpp_preplan:
+                    print(
+                        f"  --- VPP pre-event dispatch plan "
+                        f"(Day{day_num}  event={planning_vid}  window={_event_window_text(planning_vpp_event)}) ---"
+                    )
 
                 # User in the loop: get roleplay user preference BEFORE agent acts
-                if is_vpp and method == "agent":
+                if (
+                    planning_vpp_event is not None
+                    and method != "no_dr"
+                    and planning_vid not in loop.vpp_user_input_by_id
+                ):
                     try:
                         if pre_event_preference_callback is None:
                             from user_pref_scorer import get_user_preference_input
@@ -4731,7 +6695,7 @@ All times are hour-of-day (0–23.9)."""
                         else:
                             preference_fn = pre_event_preference_callback
                         ev_idx = next((i+1 for i,ev in enumerate(vpp_events)
-                                       if ev["id"]==vid), 1)
+                                       if ev["id"]==planning_vid), 1)
                         _acfg = appliance_config or {}
                         _appl_ctx = {
                             "washer": bool((_acfg.get("washer", {}) or {}).get("present", False)),
@@ -4742,23 +6706,23 @@ All times are hour-of-day (0–23.9)."""
                         }
                         _pref_result = preference_fn(
                             "family", ev_idx,
-                            {"vpp_id": vid, "hour": sim_h, "trigger_h": triggered_vpp["trigger_h"],
-                             "end_h": triggered_vpp["end_h"], "day": triggered_vpp.get("day", day_num),
-                             "duration_h": ev_duration_h,
+                            {"vpp_id": planning_vid, "hour": sim_h, "trigger_h": planning_vpp_event["trigger_h"],
+                             "end_h": planning_vpp_event["end_h"], "day": planning_vpp_event.get("day", day_num),
+                             "duration_h": max(1e-6, float(planning_vpp_event["end_h"] - planning_vpp_event["trigger_h"])),
                              "appliances": _appl_ctx},
                             loop.vpp_event_log,
                             persona=persona_config,
                             human_mode=human_mode)
                         loop.vpp_user_input = str(_pref_result)
-                        loop.vpp_user_input_by_id[vid] = loop.vpp_user_input
-                        loop.vpp_strategy_trace_by_id[vid] = dict(
+                        loop.vpp_user_input_by_id[planning_vid] = loop.vpp_user_input
+                        loop.vpp_strategy_trace_by_id[planning_vid] = dict(
                             getattr(_pref_result, "strategy_trace", {}) or {}
                         )
                     except Exception as _e:
                         print(f"  [UserInput] {_e}")
                         loop.vpp_user_input = ""
-                        loop.vpp_user_input_by_id[vid] = ""
-                        loop.vpp_strategy_trace_by_id[vid] = {}
+                        loop.vpp_user_input_by_id[planning_vid] = ""
+                        loop.vpp_strategy_trace_by_id[planning_vid] = {}
                 else:
                     loop.vpp_user_input = ""
                 if method == "no_dr":
@@ -4773,18 +6737,14 @@ All times are hour-of-day (0–23.9)."""
                     res = _mpc_trigger(
                         temp, out_t, hod, sim_h,
                         facility_w=fac,
-                        vpp_event=triggered_vpp if is_vpp else None)
+                        vpp_event=planning_vpp_event)
                 elif method == "rule_milp":
-                    rule_vpp_event = (
-                        triggered_vpp if is_vpp
-                        else _find_active_or_upcoming_vpp_event(sim_h, vpp_events=vpp_events)
-                    )
                     res = _rule_milp_trigger(
                         temp, out_t, hod, sim_h,
                         facility_w=fac,
-                        vpp_event=rule_vpp_event)
+                        vpp_event=planning_vpp_event)
                 elif method == "rl_ppo_pref_v2":
-                    rl2_vpp_event = triggered_vpp if is_vpp else active_vpp
+                    rl2_vpp_event = planning_vpp_event or active_vpp
                     res = _rl_pref_v2_trigger(
                         temp, out_t, hod, sim_h,
                         facility_w=fac,
@@ -4795,16 +6755,17 @@ All times are hour-of-day (0–23.9)."""
                         vpp_active=is_vpp, vpp_id=vid,
                         user_pref_input=loop.vpp_user_input,
                         appliance_config=appliance_config,
-                        vpp_event=triggered_vpp if is_vpp else None,
+                        vpp_event=planning_vpp_event,
                         persona_config=persona_config,
                         facility_w=fac,
                     )
                 else:
                     res = _llm_trigger(temp, out_t, hod, sim_h, total_sim_hours - sim_h,
                                        vpp_active=bool(is_vpp or active_vpp is not None),
-                                       vpp_id=vid or (str(active_vpp.get("id", "")) if active_vpp else ""),
+                                       vpp_id=vid or planning_vid or (str(active_vpp.get("id", "")) if active_vpp else ""),
                                        user_pref_input=loop.vpp_user_input,
-                                       facility_w=fac)
+                                       facility_w=fac,
+                                       suppress_vpp_context=bool(triggered_daily_plan and not is_vpp))
                     if "objective_terms_posthoc" not in res:
                         try:
                             res["objective_terms_posthoc"] = _compute_posthoc_decision_objective(
@@ -4815,7 +6776,7 @@ All times are hour-of-day (0–23.9)."""
                                 temp=temp,
                                 out_t=out_t,
                                 facility_w=fac,
-                                vpp_event=triggered_vpp if is_vpp else active_vpp,
+                                vpp_event=planning_vpp_event if planning_vpp_event is not None else active_vpp,
                                 vpp_target_kwh=(
                                     loop.current_vpp_demand_kwh if (is_vpp or active_vpp is not None) else None
                                 ),
@@ -4828,21 +6789,65 @@ All times are hour-of-day (0–23.9)."""
                     res["setpoint"] = AC_OFF_FALLBACK_COOLING_SETPOINT
                     res["reason"] = f"{res.get('reason', method)} | active VPP HVAC-off"
                 elif method == "agent" and (is_vpp or active_vpp is not None):
-                    if _protective_mode or _agent_multi_user_comfort_first:
-                        _agent_vpp_tradeoff_sp = round(min(_run_sp_max, _ac_sp_max), 1)
-                    else:
-                        _agent_vpp_tradeoff_sp = round(
-                            min(
-                                _run_sp_max,
-                                max(
-                                    _ac_sp_max,
-                                    _ac_sp_max + min(1.5, max(0.5, float(_ac_sp_tol))),
-                                ),
-                            ),
-                            1,
-                        )
+                    _agent_vpp_tradeoff_sp = _agent_vpp_tradeoff_setpoint_c(
+                        loop,
+                        ac_sp_max_c=_ac_sp_max,
+                        ac_sp_tol_c=_ac_sp_tol,
+                        run_sp_max_c=_run_sp_max,
+                        protective_mode=_protective_mode,
+                        multi_user_comfort_first=_agent_multi_user_comfort_first,
+                    )
                     res["setpoint"] = _agent_vpp_tradeoff_sp
                     res["reason"] = f"{res.get('reason', method)} | active VPP low-power drift after pre-cooling"
+                _day_i = min(sim_days - 1, int(sim_h // 24))
+                if method != "no_dr" and active_vpp is not None and planning_vpp_event is None:
+                    _active_vid = str(active_vpp.get("id", ""))
+                    _active_gate = loop.vpp_plan_gate_by_id.get(_active_vid, {})
+                    if _active_gate:
+                        if bool(_active_gate.get("accepted")):
+                            res, _locked_changed = _lock_to_user_accepted_vpp_plan(
+                                res,
+                                _active_gate,
+                                clear_appliance_actions=True,
+                            )
+                            if _locked_changed:
+                                print(
+                                    "  [VPP Acceptance Gate] "
+                                    f"{_active_vid} active recheck locked to accepted plan "
+                                    f"setpoint={float(res.get('setpoint')):.1f}C"
+                                )
+                        else:
+                            print(
+                                "  [VPP Acceptance Gate] "
+                                f"{_active_vid} active recheck remains rejected -> fallback"
+                            )
+                            res = _fallback_plan_after_vpp_rejection(
+                                default_plan=loop.no_vpp_daily_plan_by_day.get(_day_i),
+                                current_setpoint=loop.sp,
+                                event=active_vpp,
+                                persona_config=persona_config,
+                                appliance_config=appliance_config or {},
+                            )
+                if (
+                    method != "no_dr"
+                    and planning_vpp_event is None
+                    and active_vpp is None
+                    and not triggered_daily_plan
+                ):
+                    _stored_day_plan = loop.no_vpp_daily_plan_by_day.get(_day_i)
+                    if isinstance(_stored_day_plan, dict) and _stored_day_plan.get("setpoint") is not None:
+                        _continued_plan = dict(_stored_day_plan)
+                        _continued_plan["appliance_actions"] = {}
+                        _continued_plan["next_check_hour"] = None
+                        _continued_plan["reason"] = (
+                            "Continue the gated no-VPP day-ahead plan after a routine checkpoint"
+                        )
+                        _continued_plan["objective_source"] = "gated_no_vpp_daily_plan_continuation"
+                        print(
+                            "  [No-VPP Daily Plan Gate] "
+                            f"continue gated day-ahead plan setpoint={float(_continued_plan.get('setpoint')):.1f}C"
+                        )
+                        res = _continued_plan
                 _raw_appliance_actions = dict(res.get("appliance_actions", {}) or {})
                 _vpp_replan_guard = {}
                 if method != "no_dr" and is_vpp and triggered_vpp is not None and loop.appliance_suite is not None:
@@ -4854,11 +6859,136 @@ All times are hour-of-day (0–23.9)."""
                         sim_h=sim_h,
                     )
                     res["appliance_actions"] = _guarded_actions
+                if method != "no_dr" and triggered_daily_plan and planning_vpp_event is None:
+                    _daily_plan_gate = _evaluate_no_vpp_daily_plan_acceptance(
+                        plan=res,
+                        persona_config=persona_config,
+                        appliance_config=appliance_config or {},
+                    )
+                    if not bool(_daily_plan_gate.get("accepted")):
+                        print(
+                            "  [No-VPP Daily Plan Gate] "
+                            f"rejected -> manual comfort routine ({'; '.join(_daily_plan_gate.get('reasons', []))})"
+                        )
+                        _manual_daily_plan = _manual_no_vpp_user_plan(
+                            persona_config=persona_config,
+                            appliance_config=appliance_config or {},
+                            current_setpoint=loop.sp,
+                        )
+                        _manual_daily_plan["no_vpp_daily_plan_gate"] = _daily_plan_gate
+                        res = _manual_daily_plan
+                    else:
+                        res["no_vpp_daily_plan_gate"] = _daily_plan_gate
+                    loop.no_vpp_daily_plan_by_day[_day_i] = {
+                        "setpoint": res.get("setpoint"),
+                        "next_check_hour": res.get("next_check_hour"),
+                        "reason": res.get("reason", ""),
+                        "appliance_actions": dict(res.get("appliance_actions", {}) or {}),
+                        "objective_source": res.get("objective_source", ""),
+                        "no_vpp_daily_plan_gate": res.get("no_vpp_daily_plan_gate", {}),
+                    }
+                _vpp_acceptance_gate = {}
+                if method != "no_dr" and planning_vpp_event is not None:
+                    _default_plan = loop.no_vpp_daily_plan_by_day.get(_day_i)
+                    if _default_plan is None:
+                        _default_plan = {
+                            "setpoint": _ac_sp_default,
+                            "next_check_hour": None,
+                            "reason": "implicit default no-VPP comfort plan",
+                            "appliance_actions": {},
+                            "objective_source": "implicit_no_vpp_default",
+                        }
+                    if method == "agent":
+                        _fixed_repaired_actions, _fixed_preserved = _preserve_fixed_routine_actions(
+                            res.get("appliance_actions", {}),
+                            (_default_plan or {}).get("appliance_actions", {}),
+                            appliance_config or {},
+                        )
+                        if _fixed_preserved:
+                            res["appliance_actions"] = _fixed_repaired_actions
+                            res["reason"] = (
+                                f"{res.get('reason', '')} | Preserved fixed routine(s): "
+                                f"{', '.join(_fixed_preserved)}; VPP capacity reduced to protect consent."
+                            ).strip()
+                            res["fixed_routine_preserved_for_consent"] = list(_fixed_preserved)
+                    _existing_gate = loop.vpp_plan_gate_by_id.get(planning_vid)
+                    _reuse_existing_gate = (
+                        _existing_gate is not None
+                        and is_vpp
+                        and _vpp_gate_matches_current_plan(_existing_gate, res)
+                    )
+                    if _existing_gate is not None and is_vpp and not _reuse_existing_gate:
+                        print(
+                            "  [VPP Acceptance Gate] "
+                            f"{planning_vid} event-start plan changed; re-evaluating user acceptance"
+                        )
+                    if _reuse_existing_gate:
+                        _vpp_acceptance_gate = dict(_existing_gate)
+                        _vpp_acceptance_gate["reused_at_event_start"] = True
+                    else:
+                        _rule_cmp_event = planning_vpp_event
+                        _rule_cmp = (
+                            res if method == "rule_milp"
+                            else _rule_milp_reference_plan(
+                                temp, out_t, hod, sim_h,
+                                facility_w=fac,
+                                vpp_event=_rule_cmp_event,
+                            )
+                        )
+                        _vpp_acceptance_gate = _evaluate_vpp_plan_acceptance_gate(
+                            method=method,
+                            persona_config=persona_config,
+                            appliance_config=appliance_config or {},
+                            event=planning_vpp_event,
+                            proposed_plan=res,
+                            default_plan=_default_plan,
+                            rule_milp_plan=_rule_cmp,
+                            past_events=loop.vpp_event_log,
+                            user_preference_text=loop.vpp_user_input_by_id.get(planning_vid, loop.vpp_user_input),
+                            current_hod=hod if is_vpp else None,
+                        )
+                        loop.vpp_plan_gate_by_id[planning_vid] = dict(_vpp_acceptance_gate)
+                    if not bool(_vpp_acceptance_gate.get("accepted")):
+                        print(
+                            "  [VPP Acceptance Gate] "
+                            f"{planning_vid} rejected p={_vpp_acceptance_gate.get('acceptance_probability')} "
+                            f"draw={_vpp_acceptance_gate.get('stable_draw')} -> fallback to no-VPP daily plan"
+                        )
+                        res = _fallback_plan_after_vpp_rejection(
+                            default_plan=_default_plan,
+                            current_setpoint=loop.sp,
+                            event=planning_vpp_event,
+                            persona_config=persona_config,
+                            appliance_config=appliance_config or {},
+                        )
+                    else:
+                        _adapt = _vpp_acceptance_gate.get("adaptability_diagnostics", {})
+                        if is_vpp:
+                            res, _locked_changed = _lock_to_user_accepted_vpp_plan(
+                                res,
+                                _vpp_acceptance_gate,
+                                clear_appliance_actions=False,
+                            )
+                            if _locked_changed:
+                                print(
+                                    "  [VPP Acceptance Gate] "
+                                    f"{planning_vid} event-start locked to accepted plan "
+                                    f"setpoint={float(res.get('setpoint')):.1f}C"
+                                )
+                        print(
+                            "  [VPP Acceptance Gate] "
+                            f"{planning_vid} accepted p={_vpp_acceptance_gate.get('acceptance_probability')} "
+                            f"draw={_vpp_acceptance_gate.get('stable_draw')} "
+                            f"adapt={_adapt.get('overall_adaptability_score', 'n/a')}"
+                        )
+                    res["vpp_acceptance_gate"] = _vpp_acceptance_gate
+                    if _vpp_acceptance_gate.get("adaptability_diagnostics"):
+                        res["adaptability_diagnostics"] = _vpp_acceptance_gate.get("adaptability_diagnostics")
                 loop.planned_occupied_sp = res["setpoint"]
                 effective_sp = res["setpoint"] if hvac_control_occupied or hvac_avail_set else AC_OFF_FALLBACK_COOLING_SETPOINT
                 loop.sp = effective_sp
                 loop.next_check = res.get("next_check_hour")
-                if method == "agent" and not is_vpp:
+                if method != "no_dr" and not is_vpp:
                     _agent_checkpoint = _agent_next_vpp_checkpoint_hour(
                         sim_h,
                         vpp_events=vpp_events,
@@ -4875,7 +7005,6 @@ All times are hour-of-day (0–23.9)."""
                     if loop.next_check is None or loop.next_check > _vpp_end:
                         loop.next_check = _vpp_end
                 loop.vpp_last_reason = res.get("reason", "")
-                _day_i = min(sim_days - 1, int(sim_h // 24))
                 _non_null = {k: v for k, v in res.get("appliance_actions", {}).items() if v is not None}
                 _decision_log = {
                     "h": sim_h,
@@ -4914,10 +7043,22 @@ All times are hour-of-day (0–23.9)."""
                     _decision_log["strategy_trace"] = res.get("strategy_trace", {})
                 if res.get("strategy_explanation"):
                     _decision_log["strategy_explanation"] = res.get("strategy_explanation", {})
+                if res.get("vpp_acceptance_gate"):
+                    _decision_log["vpp_acceptance_gate"] = res.get("vpp_acceptance_gate", {})
+                    if res.get("vpp_acceptance_gate", {}).get("decision") == "reject_fallback_to_no_vpp_daily_plan":
+                        _decision_log["rejected_vpp_proposed_actions"] = _raw_appliance_actions
+                if res.get("no_vpp_daily_plan_gate"):
+                    _decision_log["no_vpp_daily_plan_gate"] = res.get("no_vpp_daily_plan_gate", {})
+                if res.get("fallback_daily_plan_gate"):
+                    _decision_log["fallback_daily_plan_gate"] = res.get("fallback_daily_plan_gate", {})
+                if res.get("adaptability_diagnostics"):
+                    _decision_log["adaptability_diagnostics"] = res.get("adaptability_diagnostics", {})
                 _append_day_agent_decision(loop, sim_days, sim_h, _decision_log)
                 if is_vpp and triggered_vpp is not None:
                     loop.vpp_trigger_actions[vid] = res.get("appliance_actions", {})
                     loop.vpp_trigger_reason_by_id[vid] = res.get("reason", "")
+                    if res.get("vpp_acceptance_gate"):
+                        loop.vpp_plan_gate_by_id[vid] = res.get("vpp_acceptance_gate", {})
                     if res.get("strategy_explanation"):
                         loop.vpp_strategy_explanation_by_id[vid] = res.get("strategy_explanation", {})
                     if res.get("strategy_trace"):
@@ -5211,6 +7352,24 @@ All times are hour-of-day (0–23.9)."""
         _vpp_shed_basis = "event_baseline_estimate"
     else:
         _vpp_shed_basis = "unavailable_without_valid_event_baseline"
+    _gate_events = [
+        loop.vpp_plan_gate_by_id.get(str(ev.get("id", "")), {})
+        for ev in vpp_events
+        if loop.vpp_plan_gate_by_id.get(str(ev.get("id", "")), {})
+    ]
+    _gate_acceptance_rate = (
+        round(sum(1 for item in _gate_events if item.get("accepted")) / len(_gate_events), 6)
+        if _gate_events else None
+    )
+    _gate_acceptance_probability_avg = (
+        round(
+            sum(float(item.get("acceptance_probability", 0.0)) for item in _gate_events)
+            / len(_gate_events),
+            6,
+        )
+        if _gate_events else None
+    )
+    _gate_rejected_count = sum(1 for item in _gate_events if item and not item.get("accepted"))
 
     return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
         weather=weather_label, method=method, exit_code=ec,
@@ -5264,6 +7423,10 @@ All times are hour-of-day (0–23.9)."""
         day_ahead_price_metrics=price_metrics,
         daily_trace_rows=_dashboard_trace_rows(loop.power_trace_rows),
         vpp_event_log=loop.vpp_event_log,
+        vpp_plan_acceptance_rate=_gate_acceptance_rate,
+        vpp_plan_acceptance_probability_avg=_gate_acceptance_probability_avg,
+        vpp_plan_rejected_count=_gate_rejected_count,
+        vpp_plan_gate_events=_gate_events,
         agent_preference_memory_path=str(getattr(loop, "agent_memory_path", "") or ""),
         agent_preference_memory_md_path=str(getattr(loop, "agent_memory_md_path", "") or ""),
         control_decisions=loop.decisions[-50:], output_dir=str(output_dir))
