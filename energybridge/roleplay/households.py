@@ -113,6 +113,21 @@ def build_household_persona(
             }
             for p in member_personas
         ],
+        "acceptance_profiles": [
+            {
+                "member_id": p.get("household_member", {}).get("member_id", p.get("id")),
+                "household_role": p.get("household_member", {}).get("household_role", ""),
+                "persona_id": p.get("id"),
+                "display_name": p.get("display_name", p.get("id")),
+                "decision_weight": float(p.get("household_member", {}).get("decision_weight", 1.0) or 1.0),
+                "tags": dict(p.get("tags") or {}),
+                "preferences": dict(p.get("preferences") or {}),
+                "schedule": dict(p.get("schedule") or {}),
+                "calendar": dict(p.get("calendar") or {}),
+                "appliances": {"ac": dict(((p.get("appliances") or {}).get("ac") or {}))},
+            }
+            for p in member_personas
+        ],
         "llm_prompts": {
             "system_prompt": prompt,
             "agent_context": household.get("agent_context", prompt),

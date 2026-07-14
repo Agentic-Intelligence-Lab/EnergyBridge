@@ -2758,6 +2758,277 @@ def _roleplay_middle_acceptance_floor(persona_config: dict | None) -> float:
     return round(max(0.05, min(0.64, floor)), 6)
 
 
+def _household_acceptance_profiles(persona_config: dict | None) -> list[dict]:
+    persona_config = persona_config or {}
+    profiles = persona_config.get("acceptance_profiles")
+    if not isinstance(profiles, list) or len(profiles) < 2:
+        return []
+    meta = persona_config.get("meta", {}) or {}
+    persona_type = str(meta.get("persona_type", ""))
+    if "multi_user_household" not in persona_type and not persona_config.get("members"):
+        return []
+    return [profile for profile in profiles if isinstance(profile, dict)]
+
+
+def _member_acceptance_persona(
+    *,
+    household_id: str,
+    profile: dict,
+) -> dict:
+    member_id = str(profile.get("member_id") or profile.get("persona_id") or "member")
+    persona_id = str(profile.get("persona_id") or member_id)
+    return {
+        "id": f"{household_id}:{member_id}:{persona_id}",
+        "display_name": profile.get("display_name", persona_id),
+        "tags": dict(profile.get("tags") or {}),
+        "preferences": dict(profile.get("preferences") or {}),
+        "schedule": dict(profile.get("schedule") or {}),
+        "calendar": dict(profile.get("calendar") or {}),
+        "household_member": {
+            "member_id": member_id,
+            "persona_id": persona_id,
+            "household_role": profile.get("household_role", ""),
+            "decision_weight": float(profile.get("decision_weight", 1.0) or 1.0),
+        },
+    }
+
+
+def _member_appliance_config_for_acceptance(
+    *,
+    household_appliance_config: dict | None,
+    profile: dict,
+) -> dict:
+    cfg = {
+        str(name): dict(value or {})
+        for name, value in (household_appliance_config or {}).items()
+        if isinstance(value, dict)
+    }
+    member_ac = ((profile.get("appliances") or {}).get("ac") or {})
+    if isinstance(member_ac, dict) and member_ac:
+        cfg["ac"] = dict(member_ac)
+    return cfg
+
+
+def _member_event_impact(
+    *,
+    member_persona: dict,
+    event: dict,
+    profile: dict,
+) -> dict:
+    try:
+        from energybridge.roleplay.calendar import calendar_context_for_event
+
+        ctx = calendar_context_for_event(
+            member_persona,
+            int(event.get("day", 1) or 1),
+            {
+                "day": event.get("day", 1),
+                "trigger_h": event.get("trigger_h", 18.0),
+                "end_h": event.get("end_h", 19.0),
+                "duration_h": max(
+                    0.0,
+                    float(event.get("end_h", 19.0)) - float(event.get("trigger_h", 18.0)),
+                ),
+            },
+        )
+    except Exception:
+        ctx = {"available": False}
+    tags = member_persona.get("tags", {}) or {}
+    schedule = member_persona.get("schedule", {}) or {}
+    role = str(profile.get("household_role", "")).lower()
+    occupied_or_return = _calendar_occupied_or_return_home_sensitive(member_persona, event)
+    conflicts = list(ctx.get("vpp_conflicts") or [])
+    deadlines = dict(ctx.get("appliance_deadlines") or {})
+    vulnerable = bool(schedule.get("vulnerable_members")) or any(
+        token in role for token in ("elder", "caregiver", "child", "student", "patient")
+    )
+    protective = (
+        tags.get("comfort") == "temp_sensitive"
+        or tags.get("control") in {"confirm_required", "low_auto_accept", "privacy_sensitive"}
+        or tags.get("schedule") == "caregiver"
+        or vulnerable
+    )
+    impact = 0.45
+    reasons: list[str] = []
+    if occupied_or_return:
+        impact += 0.30
+        reasons.append("occupied_or_return")
+    if conflicts:
+        impact += 0.20
+        reasons.append("vpp_calendar_conflict")
+    if deadlines:
+        impact += 0.15
+        reasons.append("appliance_deadline")
+    if protective:
+        impact += 0.20
+        reasons.append("protective_member")
+    if tags.get("price") in {"price_sensitive", "price_driven"} or tags.get("grid_value") in {"high_value", "high_flex"}:
+        impact += 0.05
+        reasons.append("energy_grid_stake")
+    impact = max(0.25, min(1.35, impact))
+    is_key = bool(impact >= 0.90 or protective or conflicts or deadlines)
+    return {
+        "impact_weight": round(impact, 6),
+        "is_key_affected_member": is_key,
+        "occupied_or_return_home_sensitive": bool(occupied_or_return),
+        "vpp_conflict_count": len(conflicts),
+        "appliance_deadline_count": len(deadlines),
+        "factors": reasons,
+    }
+
+
+def _evaluate_household_vpp_plan_acceptance_gate(
+    *,
+    method: str,
+    persona_config: dict,
+    appliance_config: dict | None,
+    event: dict,
+    proposed_plan: dict,
+    default_plan: dict | None,
+    rule_milp_plan: dict | None,
+    past_events: list[dict] | None,
+    user_preference_text: str,
+    current_hod: float | None,
+) -> dict | None:
+    profiles = _household_acceptance_profiles(persona_config)
+    if not profiles:
+        return None
+    household_id = str(persona_config.get("id", "household"))
+    member_items: list[dict] = []
+    weighted_total = 0.0
+    weight_total = 0.0
+    key_probs: list[float] = []
+    for profile in profiles:
+        member_persona = _member_acceptance_persona(household_id=household_id, profile=profile)
+        member_appliances = _member_appliance_config_for_acceptance(
+            household_appliance_config=appliance_config,
+            profile=profile,
+        )
+        role = str(profile.get("household_role", "") or "")
+        member_pref_text = (
+            f"{user_preference_text}\n"
+            f"Household acceptance member={profile.get('member_id', profile.get('persona_id', 'member'))}; "
+            f"role={role}."
+        ).strip()
+        gate = _evaluate_vpp_plan_acceptance_gate(
+            method=method,
+            persona_config=member_persona,
+            appliance_config=member_appliances,
+            event=event,
+            proposed_plan=proposed_plan,
+            default_plan=default_plan,
+            rule_milp_plan=rule_milp_plan,
+            past_events=past_events,
+            user_preference_text=member_pref_text,
+            current_hod=current_hod,
+        )
+        impact = _member_event_impact(member_persona=member_persona, event=event, profile=profile)
+        decision_weight = max(0.1, float(profile.get("decision_weight", 1.0) or 1.0))
+        combined_weight = decision_weight * float(impact["impact_weight"])
+        prob = float(gate.get("acceptance_probability", 0.0) or 0.0)
+        weighted_total += combined_weight * prob
+        weight_total += combined_weight
+        if impact["is_key_affected_member"]:
+            key_probs.append(prob)
+        member_items.append({
+            "member_id": profile.get("member_id", profile.get("persona_id", "member")),
+            "persona_id": profile.get("persona_id", ""),
+            "household_role": role,
+            "decision_weight": round(decision_weight, 6),
+            "impact": impact,
+            "combined_weight": round(combined_weight, 6),
+            "acceptance_probability": round(prob, 6),
+            "stable_draw": gate.get("stable_draw"),
+            "accepted_if_individual": gate.get("accepted"),
+            "factors": list(gate.get("factors") or [])[:12],
+        })
+    if weight_total <= 0.0:
+        return None
+    weighted_mean = weighted_total / weight_total
+    key_min = min(key_probs) if key_probs else min(float(item["acceptance_probability"]) for item in member_items)
+    household_score = 0.65 * weighted_mean + 0.35 * key_min
+    factors = [
+        "household_veto_aware_weighted_consent",
+        f"member_weighted_mean={weighted_mean:.3f}",
+        f"key_member_min={key_min:.3f}",
+    ]
+
+    household_intrusion = _vpp_plan_intrusion_metrics(
+        proposed_plan=proposed_plan,
+        default_plan=default_plan,
+        persona_config=persona_config,
+        appliance_config=appliance_config,
+        event=event,
+        current_hod=current_hod,
+    )
+    if household_intrusion.get("skip_devices"):
+        household_score = min(household_score, 0.18)
+        factors.append("household_skip_service_veto_cap<=0.180")
+    if household_intrusion.get("fixed_services_modified") and key_min < 0.40:
+        household_score = min(household_score, 0.25)
+        factors.append("household_key_member_fixed_routine_cap<=0.250")
+    if not household_intrusion.get("raw_policy_only") and not household_intrusion.get("has_user_facing_explanation"):
+        household_score = min(household_score, 0.25)
+        factors.append("household_no_user_facing_explanation_cap<=0.250")
+    if household_intrusion.get("raw_policy_only"):
+        household_score = min(household_score, 0.004)
+        factors.append("household_raw_policy_cap<=0.004")
+    if household_intrusion.get("comfort_excess_c", 0.0) > 0.75 and key_min < 0.35:
+        household_score = min(household_score, 0.16)
+        factors.append("household_key_comfort_veto_cap<=0.160")
+
+    probability = _bounded_probability(
+        household_score,
+        lo=0.004 if household_intrusion.get("raw_policy_only") else 0.03,
+    )
+    draw = _stable_unit_random(
+        "household_vpp_acceptance_gate_v1_event_level_draw",
+        household_id,
+        event.get("id", ""),
+    )
+    high_confidence_accept = probability >= 0.90
+    if high_confidence_accept:
+        factors.append("household_high_confidence_accept_band")
+    accepted = bool(draw <= probability or high_confidence_accept)
+    adaptability = _adaptability_diagnostics(
+        method=str(method or ""),
+        plan=proposed_plan,
+        default_plan=default_plan,
+        rule_milp_plan=rule_milp_plan,
+        persona_config=persona_config,
+        appliance_config=appliance_config,
+        event=event,
+        user_preference_text=user_preference_text,
+    )
+    return {
+        "version": "household_vpp_plan_acceptance_gate_v1_veto_weighted",
+        "event_id": event.get("id", ""),
+        "method": str(method or ""),
+        "accepted": accepted,
+        "decision": "accept_vpp_plan" if accepted else "reject_fallback_to_no_vpp_daily_plan",
+        "acceptance_probability": round(probability, 6),
+        "stable_draw": round(draw, 6),
+        "high_confidence_accept": bool(high_confidence_accept),
+        "base_override_probability": round(_persona_vpp_override_prob(persona_config), 6),
+        "factors": factors,
+        "intrusion": household_intrusion,
+        "strategy_quality": _strategy_quality_metrics(adaptability=adaptability, intrusion=household_intrusion),
+        "acceptance_learning": {
+            "adjustment": 0.0,
+            "factors": ["household_gate_uses_member_roles_calendars_and_strategy_only"],
+        },
+        "adaptability_diagnostics": adaptability,
+        "household_consent": {
+            "aggregation": "0.65*weighted_mean_member_probability + 0.35*min_key_affected_member_probability",
+            "member_weighted_mean": round(weighted_mean, 6),
+            "key_member_min_probability": round(key_min, 6),
+            "members": member_items,
+        },
+        "proposed_plan": _plan_snapshot_for_gate(proposed_plan),
+        "default_plan": _plan_snapshot_for_gate(default_plan),
+    }
+
+
 def _strategy_quality_metrics(
     *,
     adaptability: dict,
@@ -2888,6 +3159,20 @@ def _evaluate_vpp_plan_acceptance_gate(
     tags = persona_config.get("tags", {}) or {}
     schedule = persona_config.get("schedule", {}) or {}
     method_key = str(method or "")
+    household_gate = _evaluate_household_vpp_plan_acceptance_gate(
+        method=method_key,
+        persona_config=persona_config,
+        appliance_config=appliance_config,
+        event=event,
+        proposed_plan=proposed_plan,
+        default_plan=default_plan,
+        rule_milp_plan=rule_milp_plan,
+        past_events=past_events,
+        user_preference_text=user_preference_text,
+        current_hod=current_hod,
+    )
+    if household_gate is not None:
+        return household_gate
     override_prob = _persona_vpp_override_prob(persona_config)
     intrusion = _vpp_plan_intrusion_metrics(
         proposed_plan=proposed_plan,

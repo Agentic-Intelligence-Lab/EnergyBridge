@@ -473,6 +473,130 @@ def test_vpp_acceptance_gate_caps_unexplained_strategy_without_method_bias() -> 
     )
 
 
+def test_household_vpp_acceptance_uses_veto_aware_member_aggregation() -> None:
+    event, appliances, default_plan, rule_plan = _gate_fixture()
+    household = {
+        "id": "household_gate_check",
+        "tags": {"price": "mixed_price_sensitive", "control": "household_consensus"},
+        "preferences": {"scoring_weights": {"comfort": 0.45, "energy": 0.30, "vpp": 0.25}},
+        "meta": {"persona_type": "multi_user_household_independent_roleplay"},
+        "members": [{"member_id": "bill_payer"}, {"member_id": "elder"}],
+        "acceptance_profiles": [
+            {
+                "member_id": "bill_payer",
+                "persona_id": "price_member",
+                "household_role": "bill payer",
+                "decision_weight": 1.0,
+                "tags": {"price": "price_sensitive", "control": "high_trust_auto", "grid_value": "high_flex"},
+                "preferences": {"scoring_weights": {"comfort": 0.25, "energy": 0.45, "vpp": 0.30}},
+                "schedule": {"occupancy_pattern": "commuter"},
+                "calendar": {"days": [{"day": 1, "events": [], "constraints": {}}]},
+                "appliances": {"ac": {"setpoint_preferred_max_c": 27.5, "temp_tolerance_c": 1.0}},
+            },
+            {
+                "member_id": "elder",
+                "persona_id": "comfort_member",
+                "household_role": "comfort-sensitive elder at home",
+                "decision_weight": 1.3,
+                "tags": {"comfort": "temp_sensitive", "control": "confirm_required", "price": "low_incentive"},
+                "preferences": {"scoring_weights": {"comfort": 0.70, "energy": 0.15, "vpp": 0.15}},
+                "schedule": {"vulnerable_members": ["elder"]},
+                "calendar": {
+                    "days": [
+                        {
+                            "day": 1,
+                            "events": [{"title": "Dinner at home", "start_h": 18.0, "end_h": 19.0, "location": "home"}],
+                            "constraints": {"vulnerable_member_home": True, "bath_shower_h": 20.5},
+                        }
+                    ]
+                },
+                "appliances": {"ac": {"setpoint_preferred_max_c": 25.5, "temp_tolerance_c": 0.5}},
+            },
+        ],
+    }
+    warm_plan = {
+        "setpoint": 27.2,
+        "appliance_actions": dict(rule_plan["appliance_actions"]),
+        "reason": "Balanced VPP plan: shift washer and water heater, keep comfort reasonable, and restore after event.",
+        "strategy_explanation": {"natural_language": "Explains comfort, washer, water heater, and VPP tradeoff."},
+    }
+
+    gate = _evaluate_vpp_plan_acceptance_gate(
+        method="agent",
+        persona_config=household,
+        appliance_config=appliances,
+        event=event,
+        proposed_plan=warm_plan,
+        default_plan=default_plan,
+        rule_milp_plan=rule_plan,
+        user_preference_text="The household wants savings, but elder comfort has veto priority.",
+    )
+
+    consent = gate["household_consent"]
+    elder = next(item for item in consent["members"] if item["member_id"] == "elder")
+    payer = next(item for item in consent["members"] if item["member_id"] == "bill_payer")
+
+    assert gate["version"] == "household_vpp_plan_acceptance_gate_v1_veto_weighted"
+    assert elder["impact"]["is_key_affected_member"] is True
+    assert elder["acceptance_probability"] < payer["acceptance_probability"]
+    assert gate["acceptance_probability"] <= consent["member_weighted_mean"]
+    assert "household_veto_aware_weighted_consent" in gate["factors"]
+
+
+def test_household_vpp_acceptance_remains_method_agnostic_for_same_strategy() -> None:
+    event, appliances, default_plan, rule_plan = _gate_fixture()
+    household = {
+        "id": "household_method_blind",
+        "tags": {"control": "household_consensus"},
+        "preferences": {"scoring_weights": {"comfort": 0.4, "energy": 0.3, "vpp": 0.3}},
+        "meta": {"persona_type": "multi_user_household"},
+        "members": [{"member_id": "a"}, {"member_id": "b"}],
+        "acceptance_profiles": [
+            {
+                "member_id": "a",
+                "persona_id": "a",
+                "decision_weight": 1.0,
+                "tags": {"price": "price_sensitive", "control": "suggestion_first"},
+                "preferences": {"scoring_weights": {"comfort": 0.35, "energy": 0.35, "vpp": 0.30}},
+                "calendar": {"days": [{"day": 1, "events": [], "constraints": {}}]},
+                "appliances": {"ac": {"setpoint_preferred_max_c": 26.0, "temp_tolerance_c": 1.0}},
+            },
+            {
+                "member_id": "b",
+                "persona_id": "b",
+                "decision_weight": 1.0,
+                "tags": {"comfort": "normal_comfort", "control": "suggestion_first"},
+                "preferences": {"scoring_weights": {"comfort": 0.40, "energy": 0.30, "vpp": 0.30}},
+                "calendar": {"days": [{"day": 1, "events": [], "constraints": {}}]},
+                "appliances": {"ac": {"setpoint_preferred_max_c": 26.0, "temp_tolerance_c": 1.0}},
+            },
+        ],
+    }
+    plan = {
+        "setpoint": 26.0,
+        "appliance_actions": dict(rule_plan["appliance_actions"]),
+        "reason": "Comfort-safe VPP plan: washer and water heater avoid the VPP window.",
+        "strategy_explanation": {"natural_language": "Comfort, washer, water heater, and VPP impact are explained."},
+    }
+
+    gates = [
+        _evaluate_vpp_plan_acceptance_gate(
+            method=method,
+            persona_config=household,
+            appliance_config=appliances,
+            event=event,
+            proposed_plan=plan,
+            default_plan=default_plan,
+            rule_milp_plan=rule_plan,
+            user_preference_text="Balanced household plan.",
+        )
+        for method in ("EnergyBridge", "mpc_dynamic", "rule_milp")
+    ]
+
+    assert len({gate["acceptance_probability"] for gate in gates}) == 1
+    assert len({gate["stable_draw"] for gate in gates}) == 1
+
+
 def test_cautious_middle_floor_is_lower_than_price_cooperative_floor() -> None:
     cautious = {
         "tags": {"control": "confirm_required", "schedule": "irregular"},

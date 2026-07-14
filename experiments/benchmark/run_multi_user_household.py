@@ -264,6 +264,21 @@ def _build_physical_household_persona(
             }
             for p in member_personas
         ],
+        "acceptance_profiles": [
+            {
+                "member_id": p.get("household_member", {}).get("member_id", p.get("id")),
+                "persona_id": p.get("id"),
+                "display_name": p.get("display_name", p.get("id")),
+                "household_role": p.get("household_member", {}).get("household_role", ""),
+                "decision_weight": float(p.get("household_member", {}).get("decision_weight", 1.0) or 1.0),
+                "tags": copy.deepcopy(p.get("tags") or {}),
+                "preferences": copy.deepcopy(p.get("preferences") or {}),
+                "schedule": copy.deepcopy(p.get("schedule") or {}),
+                "calendar": copy.deepcopy(p.get("calendar") or {}),
+                "appliances": {"ac": copy.deepcopy((p.get("appliances") or {}).get("ac", {}))},
+            }
+            for p in member_personas
+        ],
         "llm_prompts": {
             "system_prompt": prompt,
             "agent_context": agent_context,

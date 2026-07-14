@@ -32,7 +32,15 @@ def test_fixed_households_are_reproducible_large_users():
 
         assert aggregate["id"] == household_id
         assert len(aggregate["members"]) == len(members)
+        assert len(aggregate["acceptance_profiles"]) == len(members)
         assert aggregate["meta"]["calendar_merge_policy"] == "union_home_occupancy_max"
+        for profile in aggregate["acceptance_profiles"]:
+            assert profile["member_id"]
+            assert profile["persona_id"]
+            assert "tags" in profile
+            assert "preferences" in profile
+            assert "calendar" in profile
+            assert "ac" in profile["appliances"]
 
         for appliance in REQUIRED_SHARED_APPLIANCES:
             assert aggregate["appliances"][appliance]["present"] is True
@@ -111,6 +119,8 @@ def test_household_agent_context_exposes_members_calendars_and_service_contract(
         assert token in agent_context
     for token in ("washer", "dryer", "dishwasher", "water_heater", "EV"):
         assert token in agent_context
+    assert len(physical["acceptance_profiles"]) == len(members)
+    assert {p["member_id"] for p in physical["acceptance_profiles"]} == {"father", "mother", "child", "elder"}
     assert "skip=true is allowed only" in agent_context
     assert "All household member calendars visible to the controller" in agent_context
     assert "Day 1" in agent_context
