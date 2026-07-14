@@ -3065,6 +3065,10 @@ def _evaluate_vpp_plan_acceptance_gate(
         score = max(score, 0.93)
         factors.append("fixed_routine_consent_preserved_floor=0.930")
 
+    if not intrusion.get("raw_policy_only") and not intrusion.get("has_user_facing_explanation"):
+        score = min(score, 0.25)
+        factors.append("no_user_facing_explanation_acceptance_cap<=0.250")
+
     probability = _bounded_probability(score, lo=0.004 if intrusion.get("raw_policy_only") else 0.03)
     draw = _stable_unit_random(
         "vpp_acceptance_gate_v4_event_level_draw",

@@ -438,6 +438,41 @@ def test_vpp_acceptance_gate_caps_raw_policy_strategy_without_method_bias() -> N
     assert all(gate["intrusion"]["raw_policy_only"] for gate in gates)
 
 
+def test_vpp_acceptance_gate_caps_unexplained_strategy_without_method_bias() -> None:
+    event, appliances, default_plan, rule_plan = _gate_fixture()
+    persona = {
+        "id": "unexplained_check",
+        "tags": {"price": "price_sensitive", "control": "high_trust_auto", "grid_value": "high_flex"},
+        "preferences": {"scoring_weights": {"comfort": 0.25, "energy": 0.40, "vpp": 0.35}},
+    }
+    unexplained_plan = {
+        "setpoint": 26.0,
+        "appliance_actions": dict(rule_plan["appliance_actions"]),
+        "reason": "objective=0.42 solver dispatch",
+        "objective_source": "technical_optimizer",
+    }
+
+    gates = [
+        _evaluate_vpp_plan_acceptance_gate(
+            method=method,
+            persona_config=persona,
+            appliance_config=appliances,
+            event=event,
+            proposed_plan=unexplained_plan,
+            default_plan=default_plan,
+            rule_milp_plan=rule_plan,
+            user_preference_text="I can cooperate if the plan is clear and still comfortable.",
+        )
+        for method in ("rule_milp", "mpc_dynamic", "EnergyBridge")
+    ]
+
+    assert {gate["acceptance_probability"] for gate in gates} == {0.25}
+    assert all(
+        "no_user_facing_explanation_acceptance_cap<=0.250" in gate["factors"]
+        for gate in gates
+    )
+
+
 def test_cautious_middle_floor_is_lower_than_price_cooperative_floor() -> None:
     cautious = {
         "tags": {"control": "confirm_required", "schedule": "irregular"},
