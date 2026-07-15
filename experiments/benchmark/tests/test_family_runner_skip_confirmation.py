@@ -4,18 +4,23 @@ import experiments.benchmark.family_runner as fr
 from experiments.benchmark.family_runner import (
     _FamilyLoop,
     _adaptability_diagnostics,
+    _accepted_effective_vpp_penalty,
     _agent_memory_is_cost_grid_oriented,
     _agent_memory_is_protective,
     _agent_onboarding_questions,
     _agent_preference_memory_prompt_text,
+    _agent_repair_ev_service_actions,
     _count_action_service_changes,
     _eb_acceptance_learning_adjustment,
     _evaluate_vpp_plan_acceptance_gate,
     _fallback_agent_onboarding_questionnaire,
+    _fallback_plan_after_vpp_rejection,
     _fixed_services_modified,
+    _household_member_min_preferred_max_c,
     _ensure_price_sensitive_reason_estimate,
     _init_agent_preference_memory,
     _learned_efficiency_floor_c,
+    _manual_no_vpp_user_plan,
     _preserve_fixed_routine_actions,
     _requested_skip_devices,
     _roleplay_middle_acceptance_floor,
@@ -104,6 +109,153 @@ def test_agent_memory_classifies_roleplay_llm_natural_strategy_bias() -> None:
         "automation_preference": "ask_before_vpp_specific_changes",
     }
     assert _agent_memory_is_protective(loop)
+
+
+def test_agent_ev_service_repair_fills_non_vpp_window() -> None:
+    appliances = {
+        "ev": {
+            "present": True,
+            "charger_kw": 7.4,
+            "efficiency": 0.92,
+            "daily_drive_kwh": 18.0,
+            "arrival_h": 18.0,
+            "departure_h": 7.5,
+        }
+    }
+    event = {"id": "vpp1", "trigger_h": 18.0, "end_h": 19.0}
+
+    repaired, changed = _agent_repair_ev_service_actions(
+        {},
+        appliance_config=appliances,
+        event=event,
+        hod=16.5,
+    )
+
+    assert changed
+    assert repaired["ev_mode"] == "smart"
+    assert repaired["ev_charge_start_h"] >= 19.0
+    assert fr._ev_service_window_errors(repaired, appliances, vpp_event=event) == []
+    assert not any(
+        str(item).startswith("ev:")
+        for item in fr._vpp_appliance_conflicts(repaired, appliances, event)
+    )
+
+
+def test_household_member_min_preferred_max_uses_strictest_member() -> None:
+    household_persona = {
+        "meta": {"persona_type": "multi_user_household"},
+        "acceptance_profiles": [
+            {"appliances": {"ac": {"setpoint_preferred_max_c": 26.0}}},
+            {"appliances": {"ac": {"setpoint_preferred_max_c": 25.0}}},
+            {"appliances": {"ac": {"setpoint_preferred_max_c": 25.5}}},
+        ],
+    }
+
+    assert _household_member_min_preferred_max_c(household_persona) == 25.0
+
+
+def test_vpp_rejection_fallback_restores_ordinary_routine_not_default_vpp_avoidance() -> None:
+    event = {"id": "vpp1", "trigger_h": 18.0, "end_h": 19.0, "day": 1}
+    appliances = {
+        "ac": {"setpoint_preferred_min_c": 24.0, "setpoint_preferred_max_c": 26.0},
+        "washer": {
+            "present": True,
+            "preferred_h": 18.0,
+            "earliest_h": 8.0,
+            "latest_h": 22.0,
+            "duration_h": 1.0,
+        },
+        "water_heater": {
+            "present": True,
+            "normal_start_h": 18.0,
+            "normal_end_h": 20.0,
+            "normal_temp_c": 60.0,
+        },
+        "ev": {"present": True, "arrival_h": 18.0, "departure_h": 7.5},
+    }
+    default_plan = {
+        "setpoint": 27.5,
+        "appliance_actions": {
+            "washer_start_h": 20.0,
+            "water_heater_preheat": True,
+            "water_heater_preheat_start_h": 16.0,
+            "water_heater_preheat_end_h": 17.0,
+            "ev_mode": "smart",
+            "ev_charge_start_h": 19.0,
+            "ev_charge_end_h": 7.5,
+        },
+    }
+
+    fallback = _fallback_plan_after_vpp_rejection(
+        default_plan=default_plan,
+        current_setpoint=28.0,
+        event=event,
+        persona_config={"tags": {"comfort": "normal_comfort"}},
+        appliance_config=appliances,
+        current_hod=18.0,
+    )
+    actions = fallback["appliance_actions"]
+
+    assert fallback["fallback_after_vpp_rejection"] is True
+    assert fallback["fallback_is_vpp_aware"] is False
+    assert fallback["objective_source"] == "vpp_acceptance_gate_user_rejected_ordinary_routine"
+    assert actions["washer_start_h"] == 18.0
+    assert actions["water_heater_preheat_start_h"] == 18.0
+    assert actions["ev_mode"] == "normal"
+    assert actions["ev_charge_start_h"] == 18.0
+
+
+def test_manual_rejection_override_uses_strict_household_comfort_for_caregiving() -> None:
+    persona = {
+        "meta": {"persona_type": "multi_user_household"},
+        "tags": {"comfort": "temp_sensitive", "role": "caregiver"},
+        "acceptance_profiles": [
+            {"appliances": {"ac": {"setpoint_preferred_max_c": 26.0}}},
+            {"appliances": {"ac": {"setpoint_preferred_max_c": 25.0}}},
+        ],
+    }
+    appliances = {
+        "ac": {"setpoint_preferred_min_c": 24.0, "setpoint_preferred_max_c": 27.0},
+        "water_heater": {"present": True, "normal_start_h": 18.0, "normal_end_h": 20.0},
+    }
+
+    plan = _manual_no_vpp_user_plan(
+        persona_config=persona,
+        appliance_config=appliances,
+        current_setpoint=29.0,
+        vpp_rejection_event={"id": "vpp1", "trigger_h": 18.0, "end_h": 19.0, "day": 1},
+        current_hod=18.0,
+    )
+
+    assert plan["setpoint"] == 24.0
+    assert plan["appliance_actions"]["water_heater_preheat_start_h"] == 18.0
+
+
+def test_accepted_effective_vpp_penalty_counts_service_misses() -> None:
+    appliances = {
+        "washer": {"present": True, "power_kw": 1.5, "duration_h": 1.0},
+        "water_heater": {"present": True, "rated_kw": 2.0, "normal_start_h": 18.0, "normal_end_h": 20.0},
+        "ev": {"present": True, "daily_drive_kwh": 8.0},
+    }
+    event_log = [
+        {
+            "day": 1,
+            "appliance_summary": {
+                "washer": {"present": True, "completed": False, "skipped": False},
+                "water_heater": {"present": True, "ready_at_bath": False},
+                "ev": {"present": True, "target_reached": True},
+            },
+        }
+    ]
+
+    penalty = _accepted_effective_vpp_penalty(
+        appliance_config=appliances,
+        event_log=event_log,
+        sim_days=1,
+    )
+
+    assert penalty["miss_count"] == 2
+    assert penalty["penalty_kwh"] == 5.5
 
 
 def test_missing_fixed_actions_mean_keep_daily_plan_for_vpp_gate() -> None:

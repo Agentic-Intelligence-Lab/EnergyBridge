@@ -184,6 +184,16 @@ def _summarize_job(job: HouseholdJob, status: str, return_code: int | None, elap
         "day_ahead_price_source": _price_metric(data, "source"),
         "vpp_window_energy_kwh": _metric(data, "vpp_window_energy_kwh"),
         "vpp_window_energy_avg_per_hour_kwh": _metric(data, "vpp_window_energy_avg_per_hour_kwh"),
+        "accepted_effective_vpp_window_energy_kwh": _metric(data, "accepted_effective_vpp_window_energy_kwh"),
+        "accepted_effective_vpp_window_energy_avg_per_hour_kwh": _metric(
+            data, "accepted_effective_vpp_window_energy_avg_per_hour_kwh"
+        ),
+        "accepted_effective_service_miss_penalty_kwh": _metric(
+            data, "accepted_effective_service_miss_penalty_kwh"
+        ),
+        "accepted_effective_service_miss_count": _metric(data, "accepted_effective_service_miss_count"),
+        "accepted_effective_vpp_success_rate": _metric(data, "accepted_effective_vpp_success_rate"),
+        "accepted_effective_vpp_basis": _metric(data, "accepted_effective_vpp_basis"),
         "vpp_actual_shed_kwh": _metric(data, "vpp_actual_shed_kwh"),
         "vpp_energy_reduction_kwh": _metric(data, "vpp_energy_reduction_kwh"),
         "vpp_energy_reduction_total_kwh": _metric(data, "vpp_energy_reduction_total_kwh"),

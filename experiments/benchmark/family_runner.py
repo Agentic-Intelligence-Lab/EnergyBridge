@@ -256,6 +256,12 @@ class BenchmarkResult:
     # VPP energy: actual kWh consumed during demand windows.
     vpp_window_energy_kwh: float = 0.0
     vpp_window_energy_avg_per_hour_kwh: float = 0.0
+    accepted_effective_vpp_window_energy_kwh: float = 0.0
+    accepted_effective_vpp_window_energy_avg_per_hour_kwh: float = 0.0
+    accepted_effective_service_miss_penalty_kwh: float = 0.0
+    accepted_effective_service_miss_count: int = 0
+    accepted_effective_vpp_success_rate: Optional[float] = None
+    accepted_effective_vpp_basis: str = ""
     vpp_energy_reduction_kwh: float = 0.0  # true reduction requires a same-run no-DR counterfactual
     vpp_actual_shed_kwh: float = 0.0       # legacy alias; do not use as actual shed for family runs
     vpp_energy_reduction_total_kwh: float = 0.0
@@ -1660,6 +1666,22 @@ def _multi_user_household_comfort_first_mode(persona_config: dict | None) -> boo
         "multi_user_household",
         "multi_user_household_independent_roleplay",
     }
+
+
+def _household_member_min_preferred_max_c(persona_config: dict | None) -> float | None:
+    """Strictest member comfort ceiling for EB household control."""
+    if not _multi_user_household_comfort_first_mode(persona_config):
+        return None
+    values: list[float] = []
+    for profile in (persona_config or {}).get("acceptance_profiles") or []:
+        if not isinstance(profile, dict):
+            continue
+        ac_cfg = (((profile.get("appliances") or {}).get("ac") or {}))
+        try:
+            values.append(float(ac_cfg.get("setpoint_preferred_max_c")))
+        except (TypeError, ValueError):
+            continue
+    return min(values) if values else None
 
 
 def _learned_efficiency_prompt_text(
@@ -3394,43 +3416,43 @@ def _fallback_plan_after_vpp_rejection(
     event: dict,
     persona_config: dict | None = None,
     appliance_config: dict | None = None,
+    current_hod: float | None = None,
 ) -> dict:
-    """Return a no-new-action fallback that preserves the no-VPP daily plan."""
+    """Return the user's ordinary routine after rejecting a VPP dispatch.
+
+    Rejection means the user did not consent to the event-level VPP behavior.
+    The executed fallback must therefore be a normal household override, not
+    the VPP-aware action set produced by a controller.
+    """
     default_plan = default_plan or {}
     daily_gate = _evaluate_no_vpp_daily_plan_acceptance(
         plan=default_plan,
         persona_config=persona_config,
         appliance_config=appliance_config,
     )
-    if not bool(daily_gate.get("accepted")):
-        manual_plan = _manual_no_vpp_user_plan(
-            persona_config=persona_config,
-            appliance_config=appliance_config,
-            current_setpoint=current_setpoint,
-        )
-        manual_plan.update(
-            {
-                "next_check_hour": float(event.get("end_h", 0.0)) if event else None,
-                "reason": "VPP dispatch rejected; user manually restores normal comfort routine",
-                "objective_source": "vpp_acceptance_gate_manual_comfort_routine",
-                "fallback_default_plan": _plan_snapshot_for_gate(default_plan),
-                "fallback_daily_plan_gate": daily_gate,
-            }
-        )
-        return manual_plan
-    try:
-        setpoint = float(default_plan.get("setpoint", current_setpoint))
-    except (TypeError, ValueError):
-        setpoint = float(current_setpoint)
-    return {
-        "setpoint": round(setpoint, 1),
-        "next_check_hour": float(event.get("end_h", 0.0)) if event else None,
-        "reason": "VPP dispatch rejected by user gate; fallback to no-VPP daily plan",
-        "appliance_actions": _non_null_actions(default_plan.get("appliance_actions")),
-        "objective_source": "vpp_acceptance_gate_fallback_no_vpp_daily_plan",
-        "fallback_default_plan": _plan_snapshot_for_gate(default_plan),
-        "fallback_daily_plan_gate": daily_gate,
-    }
+    manual_plan = _manual_no_vpp_user_plan(
+        persona_config=persona_config,
+        appliance_config=appliance_config,
+        current_setpoint=current_setpoint,
+        vpp_rejection_event=event,
+        current_hod=current_hod,
+    )
+    manual_plan.update(
+        {
+            "next_check_hour": float(event.get("end_h", 0.0)) if event else None,
+            "reason": (
+                "VPP dispatch rejected; household restores ordinary comfort and service routine "
+                "without grid-optimized avoidance"
+            ),
+            "objective_source": "vpp_acceptance_gate_user_rejected_ordinary_routine",
+            "fallback_after_vpp_rejection": True,
+            "fallback_is_vpp_aware": False,
+            "fallback_mode": "ordinary_user_override",
+            "fallback_default_plan": _plan_snapshot_for_gate(default_plan),
+            "fallback_daily_plan_gate": daily_gate,
+        }
+    )
+    return manual_plan
 
 
 def _lock_to_user_accepted_vpp_plan(
@@ -3496,6 +3518,8 @@ def _manual_no_vpp_user_plan(
     persona_config: dict | None,
     appliance_config: dict | None,
     current_setpoint: float | None = None,
+    vpp_rejection_event: dict | None = None,
+    current_hod: float | None = None,
 ) -> dict:
     """Comfort/routine plan a user would restore manually outside VPP consent."""
     ac_cfg = ((appliance_config or {}).get("ac") or {})
@@ -3507,19 +3531,58 @@ def _manual_no_vpp_user_plan(
         pref_max = float(ac_cfg.get("setpoint_preferred_max_c", 26.0))
     except (TypeError, ValueError):
         pref_max = 26.0
+    household_pref_max = _household_member_min_preferred_max_c(persona_config)
+    if household_pref_max is not None:
+        pref_max = min(pref_max, float(household_pref_max))
     try:
         current = float(current_setpoint)
     except (TypeError, ValueError):
         current = (pref_min + pref_max) / 2.0
     comfort_sp = max(pref_min, min(pref_max, current))
+    persona_text = json.dumps(persona_config or {}, ensure_ascii=False).lower()
+    protective_manual = any(
+        token in persona_text
+        for token in (
+            "caregiver",
+            "caregiving",
+            "照护",
+            "elder",
+            "child",
+            "infant",
+            "medical",
+            "vulnerable",
+            "temp_sensitive",
+            "comfort_calendar_protective",
+        )
+    )
     # If the current setpoint is outside the user's normal band, restore the
     # warm comfortable edge. This keeps fallback realistic but not artificially
     # over-cooled.
     if current < pref_min or current > pref_max:
         comfort_sp = pref_max
+    if vpp_rejection_event is not None and protective_manual and current > pref_max:
+        comfort_sp = pref_min
 
     actions: dict[str, Any] = {}
     cfg = appliance_config or {}
+    event_start = _event_start_hod(vpp_rejection_event)
+    event_end = _event_end_hod(vpp_rejection_event)
+    try:
+        now_hod = float(current_hod) % 24.0 if current_hod is not None else None
+    except (TypeError, ValueError):
+        now_hod = None
+
+    def _ordinary_start(preferred: float, duration: float) -> float:
+        start = float(preferred)
+        if vpp_rejection_event is None or now_hod is None:
+            return start
+        event_active_or_near = (event_start - 1.0) % 24.0 <= now_hod <= event_end or event_start <= now_hod <= event_end
+        if start < now_hod and event_active_or_near:
+            return now_hod
+        if _interval_overlaps(start, start + duration, event_start, event_end):
+            return start
+        return start
+
     for name in ("washer", "dishwasher", "dryer"):
         dev = cfg.get(name, {}) if isinstance(cfg.get(name, {}), dict) else {}
         if not bool(dev.get("present", False)):
@@ -3531,7 +3594,7 @@ def _manual_no_vpp_user_plan(
             latest = float(dev.get("latest_h", preferred + duration))
             latest_start = latest - duration if latest >= earliest else latest + 24.0 - duration
             preferred = max(earliest, min(latest_start, preferred))
-            actions[f"{name}_start_h"] = round(preferred % 24.0, 3)
+            actions[f"{name}_start_h"] = round(_ordinary_start(preferred, duration) % 24.0, 3)
             actions[f"{name}_skip"] = False
         except (TypeError, ValueError):
             continue
@@ -3539,8 +3602,16 @@ def _manual_no_vpp_user_plan(
     wh = cfg.get("water_heater", {}) if isinstance(cfg.get("water_heater", {}), dict) else {}
     if bool(wh.get("present", False)):
         try:
-            start_h = float(wh.get("pre_heat_window_start_h", wh.get("normal_start_h", 17.0)))
-            end_h = float(wh.get("pre_heat_window_end_h", wh.get("normal_end_h", 21.0)))
+            start_h = float(wh.get("normal_start_h", wh.get("pre_heat_window_start_h", 17.0)))
+            end_h = float(wh.get("normal_end_h", wh.get("pre_heat_window_end_h", 21.0)))
+            if vpp_rejection_event is not None and now_hod is not None:
+                active_normal = _interval_overlaps(start_h, end_h, now_hod, (now_hod + 0.01) % 24.0)
+                if protective_manual or active_normal or _interval_overlaps(start_h, end_h, event_start, event_end):
+                    start_h = max(now_hod, start_h) if start_h <= now_hod else start_h
+                    if protective_manual and event_start <= now_hod <= event_end:
+                        start_h = now_hod
+                    if end_h <= start_h:
+                        end_h = min(24.0, start_h + 2.0)
             temp_c = float(wh.get("normal_temp_c", 60.0))
             actions.update(
                 {
@@ -3569,9 +3640,17 @@ def _manual_no_vpp_user_plan(
     return {
         "setpoint": round(comfort_sp, 1),
         "next_check_hour": None,
-        "reason": "User manual no-VPP comfort routine",
+        "reason": (
+            "User manual no-VPP comfort routine"
+            if vpp_rejection_event is None
+            else "User rejected VPP and resumed ordinary household routine"
+        ),
         "appliance_actions": actions,
-        "objective_source": "manual_user_no_vpp_comfort_routine",
+        "objective_source": (
+            "manual_user_no_vpp_comfort_routine"
+            if vpp_rejection_event is None
+            else "manual_user_vpp_rejection_ordinary_routine"
+        ),
     }
 
 
@@ -3632,6 +3711,72 @@ def _service_completed(name: str, info: dict) -> bool:
     if name == "ev":
         return bool(info.get("target_reached", False))
     return bool(info.get("completed", False)) and not bool(info.get("skipped", False))
+
+
+def _service_miss_penalty_kwh(name: str, appliance_config: dict | None) -> float:
+    """Equivalent kWh penalty for counting an unmet service as ineffective VPP delivery."""
+    cfg = appliance_config or {}
+    dev = cfg.get(name, {}) if isinstance(cfg.get(name, {}), dict) else {}
+    try:
+        if name in {"washer", "dishwasher", "dryer"}:
+            return max(0.0, float(dev.get("power_kw", 1.2)) * float(dev.get("duration_h", 1.0)))
+        if name == "water_heater":
+            rated_kw = float(dev.get("rated_kw", dev.get("power_kw", 2.0)))
+            duration_h = float(dev.get("duration_h", 1.0))
+            if "normal_start_h" in dev and "normal_end_h" in dev:
+                start = float(dev.get("normal_start_h", 17.0))
+                end = float(dev.get("normal_end_h", 21.0))
+                duration_h = end - start if end >= start else end + 24.0 - start
+            return max(0.0, rated_kw * min(2.0, max(0.5, duration_h)))
+        if name == "ev":
+            if dev.get("daily_drive_kwh") is not None:
+                return max(0.0, float(dev.get("daily_drive_kwh", 8.0)))
+            charger_kw = float(dev.get("charger_kw", dev.get("power_kw", 7.0)))
+            return max(0.0, charger_kw * 2.0)
+    except (TypeError, ValueError):
+        pass
+    return 1.0
+
+
+def _accepted_effective_vpp_penalty(
+    *,
+    appliance_config: dict | None,
+    event_log: list[dict],
+    sim_days: int,
+) -> dict:
+    """Penalty for VPP outcomes that avoided load by missing household service."""
+    missed: list[dict] = []
+    seen: set[tuple[int, str]] = set()
+    for idx, event in enumerate(event_log):
+        try:
+            day_idx = max(0, min(sim_days - 1, int(event.get("day", idx + 1)) - 1))
+        except (TypeError, ValueError):
+            day_idx = idx
+        summary = event.get("appliance_summary") or {}
+        if not isinstance(summary, dict):
+            continue
+        for name, info in summary.items():
+            if not isinstance(info, dict) or not bool(info.get("present")):
+                continue
+            key = (day_idx, str(name))
+            if key in seen or _service_completed(str(name), info):
+                continue
+            seen.add(key)
+            penalty = _service_miss_penalty_kwh(str(name), appliance_config)
+            missed.append(
+                {
+                    "day": day_idx + 1,
+                    "service": str(name),
+                    "penalty_kwh": round(penalty, 4),
+                    "reason": "service_goal_missed",
+                }
+            )
+    total = round(sum(float(item["penalty_kwh"]) for item in missed), 4)
+    return {
+        "penalty_kwh": total,
+        "miss_count": len(missed),
+        "missed_services": missed,
+    }
 
 
 def _capacity_hvac_context(loop, *, temp: float, out_t: float, facility_w: float) -> dict:
@@ -4353,6 +4498,69 @@ def _agent_refine_vpp_appliance_actions(
     return out
 
 
+def _agent_repair_ev_service_actions(
+    actions: dict | None,
+    *,
+    appliance_config: dict | None,
+    event: dict | None,
+    hod: float,
+) -> tuple[dict, bool]:
+    """EB-only repair for missing or infeasible EV service windows."""
+    out = dict(actions or {})
+    ev_cfg = ((appliance_config or {}).get("ev", {}) or {})
+    if not bool(ev_cfg.get("present", False)):
+        return out, False
+
+    ev_errors = _ev_service_window_errors(out, appliance_config, vpp_event=event)
+    ev_conflicts = [
+        item for item in _vpp_appliance_conflicts(out, appliance_config, event)
+        if str(item).startswith("ev:")
+    ] if event else []
+    if not ev_errors and not ev_conflicts:
+        return out, False
+
+    try:
+        current_hod = float(hod) % 24.0
+    except (TypeError, ValueError):
+        current_hod = 0.0
+    try:
+        departure = float(ev_cfg.get("departure_h", 7.5)) % 24.0
+    except (TypeError, ValueError):
+        departure = 7.5
+
+    min_hours = min(8.0, max(0.75, _ev_required_charge_hours(appliance_config) + 0.25))
+    candidates: list[tuple[float, float]] = []
+    if current_hod <= 0.25:
+        candidates.append((0.0, min(24.0, max(departure, min_hours))))
+    if event:
+        vpp_end = _event_end_hod(event)
+        after_vpp_start = max(vpp_end, current_hod)
+        candidates.append((after_vpp_start, (after_vpp_start + min_hours) % 24.0))
+    if current_hod < departure and departure - current_hod >= min_hours:
+        candidates.append((current_hod, departure))
+    try:
+        arrival = float(ev_cfg.get("arrival_h", 18.0)) % 24.0
+    except (TypeError, ValueError):
+        arrival = 18.0
+    candidates.append((arrival, departure))
+
+    for start_h, end_h in candidates:
+        candidate = dict(out)
+        candidate["ev_mode"] = "smart"
+        candidate["ev_charge_start_h"] = round(start_h, 3)
+        candidate["ev_charge_end_h"] = round(end_h, 3)
+        if _ev_service_window_errors(candidate, appliance_config, vpp_event=event):
+            continue
+        if event and any(
+            str(item).startswith("ev:")
+            for item in _vpp_appliance_conflicts(candidate, appliance_config, event)
+        ):
+            continue
+        return candidate, True
+
+    return out, False
+
+
 def _write_agent_preference_memory(loop) -> None:
     memory_path = getattr(loop, "agent_memory_path", None)
     md_path = getattr(loop, "agent_memory_md_path", None)
@@ -5069,6 +5277,11 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     _agent_multi_user_comfort_first = (
         method == "agent" and _multi_user_household_comfort_first_mode(persona_config)
     )
+    if method == "agent":
+        _member_strict_max = _household_member_min_preferred_max_c(persona_config)
+        if _member_strict_max is not None:
+            _ac_sp_max = min(_ac_sp_max, float(_member_strict_max))
+            _ac_sp_default = round(min(_ac_sp_default, _ac_sp_max), 1)
     _auto_saving_mode = _price_sensitive_auto_saving_mode(persona_config)
     _ac_sp_vpp_min = round(_ac_sp_max + 0.5, 1)   # minimum raise during VPP
     _ac_sp_vpp_max = round(_ac_sp_max + 1.5, 1)   # typical VPP raise ceiling
@@ -5889,6 +6102,15 @@ All times are hour-of-day (0–23.9)."""
                     event=vpp_event,
                     appliance_config=appliance_config,
                 )
+            if method == "agent":
+                appl_actions, _ev_repaired = _agent_repair_ev_service_actions(
+                    appl_actions,
+                    appliance_config=appliance_config,
+                    event=vpp_event,
+                    hod=hod,
+                )
+                if _ev_repaired:
+                    print("  [EB Service Repair] filled feasible non-VPP EV charge window")
             data["appliances"] = appl_actions
             strategy_explanation = {}
             if vpp_event:
@@ -7116,6 +7338,7 @@ All times are hour-of-day (0–23.9)."""
                                 event=active_vpp,
                                 persona_config=persona_config,
                                 appliance_config=appliance_config or {},
+                                current_hod=hod,
                             )
                 if (
                     method != "no_dr"
@@ -7139,7 +7362,13 @@ All times are hour-of-day (0–23.9)."""
                         res = _continued_plan
                 _raw_appliance_actions = dict(res.get("appliance_actions", {}) or {})
                 _vpp_replan_guard = {}
-                if method != "no_dr" and is_vpp and triggered_vpp is not None and loop.appliance_suite is not None:
+                if (
+                    method != "no_dr"
+                    and is_vpp
+                    and triggered_vpp is not None
+                    and loop.appliance_suite is not None
+                    and not bool(res.get("fallback_after_vpp_rejection"))
+                ):
                     _guarded_actions, _vpp_replan_guard = _filter_vpp_event_replan_actions(
                         actions=_raw_appliance_actions,
                         suite=loop.appliance_suite,
@@ -7249,6 +7478,7 @@ All times are hour-of-day (0–23.9)."""
                             event=planning_vpp_event,
                             persona_config=persona_config,
                             appliance_config=appliance_config or {},
+                            current_hod=hod,
                         )
                     else:
                         _adapt = _vpp_acceptance_gate.get("adaptability_diagnostics", {})
@@ -7659,6 +7889,26 @@ All times are hour-of-day (0–23.9)."""
         if _gate_events else None
     )
     _gate_rejected_count = sum(1 for item in _gate_events if item and not item.get("accepted"))
+    _effective_penalty = _accepted_effective_vpp_penalty(
+        appliance_config=appliance_config or {},
+        event_log=loop.vpp_event_log,
+        sim_days=sim_days,
+    )
+    _effective_penalty_kwh = float(_effective_penalty.get("penalty_kwh", 0.0) or 0.0)
+    _accepted_effective_vpp_kwh = round(_vpp_window_energy_kwh + _effective_penalty_kwh, 4)
+    _accepted_effective_vpp_avg_hour = (
+        round(_accepted_effective_vpp_kwh / _vpp_total_duration_h, 4)
+        if _vpp_total_duration_h > 0.0 else 0.0
+    )
+    _accepted_effective_success_rate = None
+    if _gate_acceptance_rate is not None:
+        _achievement = _vpp_achieve_ratio if _vpp_achieve_ratio is not None else 1.0
+        _accepted_effective_success_rate = round(
+            float(_gate_acceptance_rate)
+            * float(physical_appl_task_complete_rate)
+            * float(_achievement),
+            6,
+        )
 
     return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
         weather=weather_label, method=method, exit_code=ec,
@@ -7675,6 +7925,14 @@ All times are hour-of-day (0–23.9)."""
         mean_temp_c=loop.temp_s/occ, unmet_cooling_h=loop.unmet_h,
         vpp_window_energy_kwh=_vpp_window_energy_kwh,
         vpp_window_energy_avg_per_hour_kwh=_vpp_window_energy_avg_hour_kwh,
+        accepted_effective_vpp_window_energy_kwh=_accepted_effective_vpp_kwh,
+        accepted_effective_vpp_window_energy_avg_per_hour_kwh=_accepted_effective_vpp_avg_hour,
+        accepted_effective_service_miss_penalty_kwh=round(_effective_penalty_kwh, 4),
+        accepted_effective_service_miss_count=int(_effective_penalty.get("miss_count", 0) or 0),
+        accepted_effective_vpp_success_rate=_accepted_effective_success_rate,
+        accepted_effective_vpp_basis=(
+            "actual_executed_vpp_window_kwh_plus_service_miss_equivalent_kwh_penalty"
+        ),
         vpp_energy_reduction_kwh=_vpp_shed_avg_hour_kwh,
         vpp_actual_shed_kwh=_vpp_shed_avg_hour_kwh,
         vpp_energy_reduction_total_kwh=_vpp_shed_total_kwh,
