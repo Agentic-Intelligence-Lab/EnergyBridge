@@ -154,7 +154,8 @@ def test_household_member_min_preferred_max_uses_strictest_member() -> None:
     assert _household_member_min_preferred_max_c(household_persona) == 25.0
 
 
-def test_vpp_rejection_fallback_restores_ordinary_routine_not_default_vpp_avoidance() -> None:
+def test_vpp_rejection_fallback_restores_ordinary_routine_not_default_vpp_avoidance(monkeypatch) -> None:
+    monkeypatch.setenv("ENERGYBRIDGE_ROLEPLAY_MANUAL_OVERRIDE", "0")
     event = {"id": "vpp1", "trigger_h": 18.0, "end_h": 19.0, "day": 1}
     appliances = {
         "ac": {"setpoint_preferred_min_c": 24.0, "setpoint_preferred_max_c": 26.0},
@@ -203,6 +204,62 @@ def test_vpp_rejection_fallback_restores_ordinary_routine_not_default_vpp_avoida
     assert actions["water_heater_preheat_start_h"] == 18.0
     assert actions["ev_mode"] == "normal"
     assert actions["ev_charge_start_h"] == 18.0
+
+
+def test_vpp_rejection_can_use_roleplay_manual_override(monkeypatch) -> None:
+    captured = {}
+
+    def fake_manual_override_llm(system_prompt, user_prompt):
+        captured["system_prompt"] = system_prompt
+        captured["user_prompt"] = user_prompt
+        return (
+            {
+                "manual_override": {
+                    "setpoint": 24.0,
+                    "appliance_actions": {
+                        "water_heater_preheat": True,
+                        "water_heater_preheat_start_h": 18.0,
+                        "water_heater_preheat_end_h": 20.0,
+                        "water_heater_preheat_temp_c": 60.0,
+                        "ev_mode": "normal",
+                        "ev_charge_start_h": 18.5,
+                        "ev_charge_end_h": 7.5,
+                    },
+                    "reason": "I rejected the event and restored comfort, hot water, and normal EV charging.",
+                },
+                "override_type": "mixed",
+                "user_comment": "I want the house cool, hot water ready, and the car charged as usual.",
+            },
+            {"latency_seconds": 0.1, "token_usage": {"prompt_tokens": 10, "completion_tokens": 5}},
+        )
+
+    monkeypatch.setattr(fr, "_call_roleplay_manual_override_llm", fake_manual_override_llm)
+    event = {"id": "vpp1", "trigger_h": 18.0, "end_h": 19.0, "day": 1}
+    appliances = {
+        "ac": {"setpoint_preferred_min_c": 24.0, "setpoint_preferred_max_c": 26.0},
+        "water_heater": {"present": True, "normal_start_h": 18.0, "normal_end_h": 20.0},
+        "ev": {"present": True, "arrival_h": 18.5, "departure_h": 7.5},
+    }
+    fallback = _fallback_plan_after_vpp_rejection(
+        default_plan={
+            "setpoint": 28.0,
+            "appliance_actions": {"ev_mode": "smart", "ev_charge_start_h": 21.0, "ev_charge_end_h": 7.5},
+            "objective_source": "rule_milp",
+        },
+        current_setpoint=28.0,
+        event=event,
+        persona_config={"id": "manual_user", "tags": {"comfort": "temp_sensitive"}},
+        appliance_config=appliances,
+        current_hod=18.0,
+    )
+
+    assert fallback["fallback_mode"] == "roleplay_manual_override"
+    assert fallback["fallback_is_vpp_aware"] is False
+    assert fallback["setpoint"] == 24.0
+    assert fallback["appliance_actions"]["water_heater_preheat_start_h"] == 18.0
+    assert fallback["appliance_actions"]["ev_mode"] == "normal"
+    assert fallback["manual_override_source"] == "roleplay_llm"
+    assert "rule_milp" not in captured["user_prompt"]
 
 
 def test_manual_rejection_override_uses_strict_household_comfort_for_caregiving() -> None:

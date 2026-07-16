@@ -3443,22 +3443,233 @@ def _fallback_plan_after_vpp_rejection(
         vpp_rejection_event=event,
         current_hod=current_hod,
     )
+    roleplay_override = _roleplay_manual_vpp_rejection_override(
+        persona_config=persona_config,
+        appliance_config=appliance_config,
+        event=event,
+        rejected_plan=default_plan,
+        deterministic_manual_plan=manual_plan,
+        current_setpoint=current_setpoint,
+        current_hod=current_hod,
+    )
+    if roleplay_override is not None:
+        manual_plan = roleplay_override
+    roleplay_override_used = str(manual_plan.get("manual_override_source", "")) == "roleplay_llm"
     manual_plan.update(
         {
             "next_check_hour": float(event.get("end_h", 0.0)) if event else None,
             "reason": (
                 "VPP dispatch rejected; household restores ordinary comfort and service routine "
                 "without grid-optimized avoidance"
-            ),
+            ) if not roleplay_override_used else str(manual_plan.get("reason", ""))[:240],
             "objective_source": "vpp_acceptance_gate_user_rejected_ordinary_routine",
             "fallback_after_vpp_rejection": True,
             "fallback_is_vpp_aware": False,
-            "fallback_mode": "ordinary_user_override",
+            "fallback_mode": (
+                "roleplay_manual_override" if roleplay_override_used else "ordinary_user_override"
+            ),
             "fallback_default_plan": _plan_snapshot_for_gate(default_plan),
             "fallback_daily_plan_gate": daily_gate,
         }
     )
     return manual_plan
+
+
+def _extract_json_object(text: str) -> dict:
+    stripped = str(text or "").strip()
+    if stripped.startswith("```"):
+        stripped = "\n".join(
+            line for line in stripped.splitlines()
+            if not line.strip().startswith("```")
+        ).strip()
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("LLM response did not contain a JSON object")
+    data = json.loads(stripped[start : end + 1])
+    if not isinstance(data, dict):
+        raise ValueError("manual override JSON must be an object")
+    return data
+
+
+def _call_roleplay_manual_override_llm(system_prompt: str, user_prompt: str) -> tuple[dict, dict]:
+    from energybridge.llm.client import LLMClient
+
+    result = LLMClient(
+        config_prefix="ROLEPLAY_LLM",
+        use_key="ROLEPLAY_USE_LLM",
+        fallback_prefix="LLM",
+    ).chat_with_metrics(system_prompt, user_prompt, max_retries=3, retry_base_delay=1.5)
+    return _extract_json_object(result.get("text", "")), dict(result.get("metrics") or {})
+
+
+def _plan_for_roleplay_manual_prompt(plan: dict | None) -> dict:
+    snap = _plan_snapshot_for_gate(plan)
+    # Keep the override role-play fair: the user sees the plan content, not the
+    # controller/method identity that produced it.
+    snap.pop("objective_source", None)
+    return snap
+
+
+def _normalise_roleplay_manual_override(
+    data: dict,
+    *,
+    base_plan: dict,
+    appliance_config: dict | None,
+) -> dict | None:
+    payload = data.get("manual_override") if isinstance(data.get("manual_override"), dict) else data
+    if not isinstance(payload, dict):
+        return None
+    out = dict(base_plan or {})
+    try:
+        if payload.get("setpoint") is not None:
+            out["setpoint"] = round(float(payload.get("setpoint")), 1)
+    except (TypeError, ValueError):
+        return None
+
+    base_actions = dict((base_plan or {}).get("appliance_actions") or {})
+    raw_actions = payload.get("appliance_actions") if isinstance(payload.get("appliance_actions"), dict) else {}
+    actions = dict(base_actions)
+    cfg = appliance_config or {}
+    float_keys = {
+        "washer_start_h",
+        "dishwasher_start_h",
+        "dryer_start_h",
+        "water_heater_preheat_start_h",
+        "water_heater_preheat_end_h",
+        "water_heater_preheat_temp_c",
+        "ev_charge_start_h",
+        "ev_charge_end_h",
+    }
+    bool_keys = {"washer_skip", "dishwasher_skip", "dryer_skip", "water_heater_preheat"}
+    allowed_keys = float_keys | bool_keys | {"ev_mode"}
+    for key, value in raw_actions.items():
+        if key not in allowed_keys or value is None:
+            continue
+        service = _service_from_appliance_action_key(key)
+        if service and service != "ac":
+            dev = cfg.get(service, {}) if isinstance(cfg.get(service, {}), dict) else {}
+            if service != "water_heater" and not bool(dev.get("present", False)):
+                continue
+            if service == "water_heater" and not bool(dev.get("present", False)):
+                continue
+        try:
+            if key in float_keys:
+                actions[key] = round(float(value), 3)
+            elif key in bool_keys:
+                if not isinstance(value, bool):
+                    return None
+                actions[key] = value
+            elif key == "ev_mode":
+                mode = str(value).strip().lower()
+                if mode not in {"normal", "smart", "off"}:
+                    return None
+                actions[key] = mode
+        except (TypeError, ValueError):
+            return None
+    out["appliance_actions"] = actions
+    user_comment = str(data.get("user_comment") or payload.get("user_comment") or "").strip()
+    reason = str(payload.get("reason") or data.get("reason") or user_comment or "Role-play user manual override").strip()
+    out["reason"] = reason[:240]
+    out["manual_override_user_comment"] = user_comment[:300]
+    out["manual_override_source"] = "roleplay_llm"
+    out["manual_override_raw"] = {
+        "override_type": str(data.get("override_type") or payload.get("override_type") or "")[:80],
+        "reason": reason[:240],
+    }
+    return out
+
+
+def _roleplay_manual_vpp_rejection_override(
+    *,
+    persona_config: dict | None,
+    appliance_config: dict | None,
+    event: dict,
+    rejected_plan: dict | None,
+    deterministic_manual_plan: dict,
+    current_setpoint: float | None,
+    current_hod: float | None,
+) -> dict | None:
+    """Ask the role-play user how they would manually override after rejecting VPP.
+
+    The prompt deliberately excludes method/controller labels. It exposes only
+    the rejected strategy content, the user's ordinary routine fallback, and the
+    household/persona context. If the role-play response is invalid, the caller
+    keeps the deterministic ordinary routine.
+    """
+    if str(os.getenv("ENERGYBRIDGE_ROLEPLAY_MANUAL_OVERRIDE", "1")).strip().lower() in {"0", "false", "no", "off"}:
+        return None
+    system_prompt = (
+        "You are role-playing the residential user or household after refusing a VPP event dispatch. "
+        "Respond as the user deciding what they manually set at home. Do not optimize for the grid. "
+        "Return only valid JSON. Do not mention or infer which algorithm produced the rejected plan."
+    )
+    scenario = {
+        "event": {
+            "id": event.get("id"),
+            "day": event.get("day"),
+            "window": _event_window_text(event),
+            "current_hod": current_hod,
+        },
+        "current_setpoint": current_setpoint,
+        "rejected_vpp_plan": _plan_for_roleplay_manual_prompt(rejected_plan),
+        "ordinary_routine_baseline": _plan_for_roleplay_manual_prompt(deterministic_manual_plan),
+        "available_appliances": {
+            name: {
+                key: value
+                for key, value in (cfg or {}).items()
+                if key in {
+                    "present",
+                    "preferred_h",
+                    "normal_start_h",
+                    "normal_end_h",
+                    "arrival_h",
+                    "departure_h",
+                    "setpoint_preferred_min_c",
+                    "setpoint_preferred_max_c",
+                }
+            }
+            for name, cfg in (appliance_config or {}).items()
+            if isinstance(cfg, dict)
+        },
+    }
+    user_prompt = (
+        "Hidden role-play persona / household JSON:\n"
+        f"{json.dumps(persona_config or {}, ensure_ascii=False)[:9000]}\n\n"
+        "Situation:\n"
+        f"{json.dumps(scenario, ensure_ascii=False)}\n\n"
+        "Instructions:\n"
+        "- You already rejected the VPP-specific dispatch. Choose the manual home setting you would realistically use now.\n"
+        "- You may simply restore the ordinary routine, immediately cool for comfort, start hot water, or charge the EV as usual.\n"
+        "- Do not intentionally preserve VPP-window avoidance unless that is also your ordinary routine.\n"
+        "- Keep required appliance services realistic; do not skip washer/dishwasher/dryer unless the user would truly cancel it.\n"
+        "- Use only these appliance action keys when needed: washer_start_h, washer_skip, dishwasher_start_h, dishwasher_skip, dryer_start_h, dryer_skip, water_heater_preheat, water_heater_preheat_start_h, water_heater_preheat_end_h, water_heater_preheat_temp_c, ev_mode, ev_charge_start_h, ev_charge_end_h.\n\n"
+        "Return JSON with fields:\n"
+        "{\n"
+        '  "manual_override": {"setpoint": number, "appliance_actions": {...}, "reason": "..."},\n'
+        '  "override_type": "restore_routine|comfort_intervention|service_intervention|mixed",\n'
+        '  "user_comment": "one sentence in first person"\n'
+        "}"
+    )
+    try:
+        data, metrics = _call_roleplay_manual_override_llm(system_prompt, user_prompt)
+        plan = _normalise_roleplay_manual_override(
+            data,
+            base_plan=deterministic_manual_plan,
+            appliance_config=appliance_config,
+        )
+        if plan is None:
+            return None
+        plan["manual_override_metrics"] = {
+            "latency_seconds": (metrics or {}).get("latency_seconds"),
+            "token_usage": (metrics or {}).get("token_usage", {}),
+        }
+        return plan
+    except Exception as exc:
+        fallback = dict(deterministic_manual_plan or {})
+        fallback["manual_override_source"] = "deterministic_after_roleplay_error"
+        fallback["manual_override_error"] = str(exc)[:200]
+        return fallback
 
 
 def _lock_to_user_accepted_vpp_plan(
