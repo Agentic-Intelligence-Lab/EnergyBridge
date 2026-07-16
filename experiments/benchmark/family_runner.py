@@ -80,6 +80,58 @@ def _event_end_hod(event: dict | None) -> float:
     return float((event or {}).get("end_h", 19.0)) % 24.0
 
 
+def _price_at_hod(
+    price_profile: Any,
+    hod: float,
+    *,
+    current_day: _date | None = None,
+) -> float:
+    """Return a local-hour price multiplier; unknown prices are neutral."""
+    if price_profile is None:
+        return 1.0
+    try:
+        hour = float(hod)
+    except (TypeError, ValueError):
+        return 1.0
+    try:
+        if getattr(price_profile, "is_recurring", False):
+            dt = _datetime(2000, 1, 1) + _timedelta(hours=hour)
+        elif current_day is not None:
+            dt = _datetime.combine(current_day, _datetime.min.time()) + _timedelta(hours=hour)
+        else:
+            dt = _datetime(2000, 1, 1) + _timedelta(hours=hour)
+        price = price_profile.price_at(dt)
+        return 1.0 if price is None else float(price)
+    except Exception:
+        return 1.0
+
+
+def _interval_price_cost(
+    start_abs_h: float,
+    end_abs_h: float,
+    *,
+    price_profile: Any,
+    current_day: _date | None = None,
+    step_h: float = 0.25,
+) -> float:
+    """Approximate price-weighted cost for an absolute local-hour interval."""
+    try:
+        start = float(start_abs_h)
+        end = float(end_abs_h)
+    except (TypeError, ValueError):
+        return 0.0
+    if end <= start:
+        return 0.0
+    total = 0.0
+    t = start
+    step = max(0.05, float(step_h))
+    while t < end - 1e-9:
+        dt = min(step, end - t)
+        total += dt * _price_at_hod(price_profile, t, current_day=current_day)
+        t += dt
+    return total
+
+
 def _event_window_text(event: dict | None) -> str:
     return f"{_fmt_clock_h(_event_start_hod(event))}-{_fmt_clock_h(_event_end_hod(event))}"
 
@@ -484,6 +536,7 @@ class _FamilyLoop:
         self.daily_plans_done: set[int] = set()
         self.no_dr_routine_actions: List[dict] = []
         self.no_vpp_daily_plan_by_day: Dict[int, dict] = {}
+        self.no_vpp_controller_plan_by_day: Dict[int, dict] = {}
         self.vpp_plan_gate_by_id: Dict[str, dict] = {}
         self.agent_preference_memory: Dict[str, Any] = {}
         self.agent_memory_path: Optional[Path] = None
@@ -1188,6 +1241,143 @@ def _ev_required_charge_hours(appliance_config: dict | None) -> float:
     return min(6.0, max(0.5, daily_drive / (charger_kw * efficiency) + 0.35))
 
 
+def _ev_window_absolute_intervals(
+    start_h: float,
+    end_h: float,
+    *,
+    arrival_h: float,
+    departure_h: float,
+) -> list[tuple[float, float]]:
+    """Map an EV local-hour charge window onto the arrival-to-departure service axis."""
+    start = float(start_h) % 24.0
+    end = 24.0 if 23.999 <= float(end_h) <= 24.001 else (float(end_h) % 24.0)
+    arrival = float(arrival_h) % 24.0
+    departure = float(departure_h) % 24.0
+    if arrival > departure:
+        if end > start:
+            if end <= departure:
+                return [(24.0 + start, 24.0 + end)]
+            if start >= arrival:
+                return [(start, end)]
+            return []
+        return [(start, 24.0), (24.0, 24.0 + end)]
+    if end > start:
+        return [(start, end)]
+    return [(start, 24.0), (24.0, 24.0 + end)]
+
+
+def _interval_abs_overlaps(start_a: float, end_a: float, start_b: float, end_b: float) -> bool:
+    return float(start_a) < float(end_b) and float(end_a) > float(start_b)
+
+
+def _best_ev_charge_window(
+    appliance_config: dict | None,
+    *,
+    event: dict | None,
+    hod: float | None,
+    price_profile: Any = None,
+    current_day: _date | None = None,
+    extra_margin_h: float = 0.25,
+) -> tuple[float, float] | None:
+    """Choose the cheapest feasible post-arrival EV window before departure."""
+    ev_cfg = ((appliance_config or {}).get("ev", {}) or {})
+    if not bool(ev_cfg.get("present", False)):
+        return None
+    try:
+        arrival = float(ev_cfg.get("arrival_h", 18.0)) % 24.0
+        departure = float(ev_cfg.get("departure_h", 7.5)) % 24.0
+        current = float(hod) % 24.0 if hod is not None else 0.0
+    except (TypeError, ValueError):
+        arrival, departure, current = 18.0, 7.5, 0.0
+    duration = min(8.0, max(0.75, _ev_required_charge_hours(appliance_config) + extra_margin_h))
+    service_start = arrival
+    service_end = (24.0 + departure) if arrival > departure else departure
+    if current >= arrival:
+        service_start = max(service_start, current)
+    if service_end - service_start < duration - 1e-6:
+        return None
+    avoid_windows: list[tuple[float, float]] = []
+    if event:
+        vpp_start = _event_start_hod(event)
+        vpp_end = _event_end_hod(event)
+        avoid_windows.append((vpp_start, vpp_end))
+    best: tuple[float, float, float] | None = None
+    step = 0.5
+    n_steps = int(max(0.0, service_end - service_start - duration) / step) + 1
+    for i in range(n_steps + 1):
+        start_abs = min(service_end - duration, service_start + i * step)
+        end_abs = start_abs + duration
+        if any(_interval_abs_overlaps(start_abs, end_abs, a, b) for a, b in avoid_windows):
+            continue
+        # Prefer cheap windows. Without a price profile, keep the old
+        # conservative behavior of charging soon after the VPP window; with
+        # prices, ties go to later overnight hours closer to departure.
+        cost = _interval_price_cost(
+            start_abs,
+            end_abs,
+            price_profile=price_profile,
+            current_day=current_day,
+        )
+        tie_break = (0.001 * start_abs) if price_profile is None else (-0.001 * start_abs)
+        score = cost + tie_break
+        if best is None or score < best[0]:
+            best = (score, start_abs, end_abs)
+    if best is None:
+        return None
+    _, start_abs, end_abs = best
+    return round(start_abs % 24.0, 3), round(end_abs % 24.0, 3)
+
+
+def _best_pre_vpp_water_heater_window(
+    appliance_config: dict | None,
+    *,
+    event: dict | None,
+    hod: float | None,
+    price_profile: Any = None,
+    current_day: _date | None = None,
+) -> tuple[float, float] | None:
+    """Choose a low-price water-heater preheat window ending before the VPP event."""
+    wh_cfg = ((appliance_config or {}).get("water_heater", {}) or {})
+    if not bool(wh_cfg.get("present", False)) or event is None:
+        return None
+    try:
+        current = float(hod) % 24.0 if hod is not None else 0.0
+        event_start = _event_start_hod(event)
+        configured_start = float(wh_cfg.get("pre_heat_window_start_h", max(0.0, event_start - 5.0)))
+        configured_end = float(wh_cfg.get("pre_heat_window_end_h", event_start))
+        configured_duration = max(1.0, configured_end - configured_start)
+    except (TypeError, ValueError):
+        current, event_start, configured_start, configured_duration = 0.0, _event_start_hod(event), 10.0, 2.0
+    duration = min(3.0, max(1.0, configured_duration))
+    latest_end = max(current + duration, event_start)
+    latest_start = min(event_start - duration, latest_end - duration)
+    earliest_start = max(current, min(configured_start, max(0.0, event_start - 8.0)))
+    if latest_start < earliest_start - 1e-6:
+        return None
+    best: tuple[float, float, float] | None = None
+    step = 0.5
+    n_steps = int(max(0.0, latest_start - earliest_start) / step) + 1
+    for i in range(n_steps + 1):
+        start = min(latest_start, earliest_start + i * step)
+        end = start + duration
+        if end > event_start + 1e-6:
+            continue
+        cost = _interval_price_cost(
+            start,
+            end,
+            price_profile=price_profile,
+            current_day=current_day,
+        )
+        # When prices tie, keep the preheat reasonably close to the event.
+        score = cost - 0.0005 * start
+        if best is None or score < best[0]:
+            best = (score, start, end)
+    if best is None:
+        return None
+    _, start, end = best
+    return round(start % 24.0, 3), round(end % 24.0, 3)
+
+
 def _ev_service_window_guidance_text(
     appliance_config: dict | None,
     *,
@@ -1212,11 +1402,12 @@ def _ev_service_window_guidance_text(
         "\nEV service hard rule: the EV target is a departure service target, not just a field-output target. "
         f"The EV arrives around {arrival:.1f}h and should reach about {target_soc:.0f}% SOC before "
         f"the next departure around {departure:.1f}h. "
-        "For an evening-arrival EV, do not use a same-day early-morning window such as 0.0-8.0 as the "
-        "main charge plan; that happens before the car returns and cannot refill the commute energy. "
+        "For an evening-arrival EV, an early-morning hour is valid only as the overnight segment after "
+        "the previous evening arrival; do not treat it as a current-day pre-arrival refill. "
         f"Use a post-arrival, non-VPP window of at least {min_hours:.1f}h; for this event a safe pattern is "
         f"ev_charge_start_h={example.split('-')[0]}, ev_charge_end_h={example.split('-')[1]}. "
-        "If previous feedback mentioned EV SOC missed, start soon after the VPP window ends and extend overnight."
+        "When prices are known, prefer the cheapest overnight hours that still reach the departure target. "
+        "If previous feedback mentioned EV SOC missed, use a longer window extending overnight."
     )
 
 
@@ -1248,24 +1439,27 @@ def _ev_service_window_errors(
         departure_h = float(ev_cfg.get("departure_h", 7.5)) % 24.0
     except (TypeError, ValueError):
         arrival_h, departure_h = 18.0, 7.5
-    if arrival_h > departure_h and start < departure_h and end <= max(departure_h, start):
+    intervals = _ev_window_absolute_intervals(
+        start,
+        end,
+        arrival_h=arrival_h,
+        departure_h=departure_h,
+    )
+    if not intervals:
         errors.append(
-            "EV charge window is before evening arrival; use a post-arrival overnight window"
+            "EV charge window is outside the arrival-to-departure service interval"
         )
         return errors
-    intervals = [(start, end)] if end > start else [(start, 24.0), (0.0, end)]
     effective_hours = 0.0
+    vpp_abs: tuple[float, float] | None = None
+    if vpp_event:
+        vpp_abs = (_event_start_hod(vpp_event), _event_end_hod(vpp_event))
     for segment_start, segment_end in intervals:
         if segment_end <= segment_start:
             continue
-        if arrival_h > departure_h and end > start and segment_end <= arrival_h:
-            continue
-        if vpp_event:
-            vpp_start = _event_start_hod(vpp_event)
-            vpp_end = _event_end_hod(vpp_event)
-            overlap = max(0.0, min(segment_end, vpp_end) - max(segment_start, vpp_start))
-        else:
-            overlap = 0.0
+        overlap = 0.0
+        if vpp_abs is not None:
+            overlap = max(0.0, min(segment_end, vpp_abs[1]) - max(segment_start, vpp_abs[0]))
         effective_hours += max(0.0, segment_end - segment_start - overlap)
     min_hours = _ev_required_charge_hours(appliance_config)
     if effective_hours + 1e-6 < min_hours:
@@ -3593,67 +3787,75 @@ def _fallback_plan_after_vpp_rejection(
     default_plan: dict | None,
     current_setpoint: float,
     event: dict,
+    rejected_vpp_plan: dict | None = None,
+    controller_plan: dict | None = None,
     persona_config: dict | None = None,
     appliance_config: dict | None = None,
     current_hod: float | None = None,
 ) -> dict:
-    """Return the user's ordinary routine after rejecting a VPP dispatch.
+    """Return the method-agnostic execution after rejecting a VPP dispatch.
 
     Rejection means the user did not consent to the event-level VPP behavior.
-    The executed fallback must therefore be a normal household override, not
-    the VPP-aware action set produced by a controller.
+    The executed fallback is the already-gated no-VPP day-ahead plan for the
+    same method. If that day-ahead plan is itself unacceptable, the user falls
+    back to a normal manual routine. Any role-play manual override sees only
+    strategy content and persona context, never the controller/method label.
     """
     default_plan = default_plan or {}
+    controller_plan = controller_plan or {}
     daily_gate = _evaluate_no_vpp_daily_plan_acceptance(
         plan=default_plan,
         persona_config=persona_config,
         appliance_config=appliance_config,
     )
-    manual_plan = _manual_no_vpp_user_plan(
-        persona_config=persona_config,
-        appliance_config=appliance_config,
-        current_setpoint=current_setpoint,
-        vpp_rejection_event=event,
-        current_hod=current_hod,
-    )
+    day_ahead_plan_usable = bool(default_plan) and bool(daily_gate.get("accepted"))
+    if day_ahead_plan_usable:
+        manual_plan = dict(default_plan)
+        manual_plan["appliance_actions"] = dict(default_plan.get("appliance_actions") or {})
+        fallback_mode = "day_ahead_plan"
+    else:
+        manual_plan = _manual_no_vpp_user_plan(
+            persona_config=persona_config,
+            appliance_config=appliance_config,
+            current_setpoint=current_setpoint,
+            vpp_rejection_event=event,
+            current_hod=current_hod,
+        )
+        fallback_mode = "manual_override_unaccepted_day_ahead"
+
     roleplay_override = _roleplay_manual_vpp_rejection_override(
         persona_config=persona_config,
         appliance_config=appliance_config,
         event=event,
-        rejected_plan=default_plan,
+        rejected_plan=rejected_vpp_plan or {},
         deterministic_manual_plan=manual_plan,
         current_setpoint=current_setpoint,
         current_hod=current_hod,
     )
     if roleplay_override is not None:
         manual_plan = roleplay_override
-    manual_plan = _manual_rejection_rebound_plan(
-        manual_plan,
-        persona_config=persona_config,
-        appliance_config=appliance_config,
-        event=event,
-        current_hod=current_hod,
-    )
+        fallback_mode = "roleplay_manual_override"
     roleplay_override_used = str(manual_plan.get("manual_override_source", "")) == "roleplay_llm"
     manual_plan.update(
         {
             "next_check_hour": float(event.get("end_h", 0.0)) if event else None,
             "reason": (
-                "VPP dispatch rejected; household restores ordinary comfort and service routine "
-                "without grid-optimized avoidance"
+                "VPP dispatch rejected; reverting to the method's gated no-VPP day-ahead plan "
+                "or a user manual routine if that day-ahead plan was unacceptable"
             ) if not roleplay_override_used else str(manual_plan.get("reason", ""))[:240],
-            "objective_source": "vpp_acceptance_gate_user_rejected_ordinary_routine",
+            "objective_source": "vpp_acceptance_gate_method_agnostic_day_ahead_or_manual_fallback",
             "fallback_after_vpp_rejection": True,
             "fallback_is_vpp_aware": False,
-            "fallback_mode": (
-                "roleplay_manual_override" if roleplay_override_used else "ordinary_user_override"
-            ),
+            "fallback_manual_rebound": fallback_mode != "day_ahead_plan",
+            "fallback_mode": fallback_mode,
+            "fallback_style": "method_agnostic_day_ahead_or_manual_override",
             "fallback_default_plan": _plan_snapshot_for_gate(default_plan),
+            "fallback_controller_plan": _plan_snapshot_for_gate(controller_plan),
+            "fallback_rejected_vpp_plan": _plan_snapshot_for_gate(rejected_vpp_plan or {}),
             "fallback_daily_plan_gate": daily_gate,
         }
     )
     return manual_plan
-
 
 def _extract_json_object(text: str) -> dict:
     stripped = str(text or "").strip()
@@ -4830,6 +5032,8 @@ def _agent_refine_vpp_appliance_actions(
     hod: float,
     event: dict | None,
     appliance_config: dict | None,
+    price_profile: Any = None,
+    current_day: _date | None = None,
 ) -> dict:
     """EB-only low-disruption appliance refinement before a VPP event."""
     if not event:
@@ -4845,6 +5049,7 @@ def _agent_refine_vpp_appliance_actions(
         or "ask" in automation
         or calendar_sensitivity == "high"
         or _agent_memory_is_protective(loop)
+        or price_profile is not None
     )
     if not should_refine:
         return out
@@ -4875,15 +5080,25 @@ def _agent_refine_vpp_appliance_actions(
             overlaps = _interval_overlaps(existing_start, existing_end, vpp_start_hod, vpp_end_hod)
         except (TypeError, ValueError):
             overlaps = True
-        if overlaps and current_hod < vpp_start_hod - 0.25:
+        if (overlaps or price_profile is not None) and current_hod < vpp_start_hod - 0.25:
             try:
                 configured_start = float(wh.get("pre_heat_window_start_h", vpp_start_hod))
                 configured_end = float(wh.get("pre_heat_window_end_h", vpp_end_hod + 1.0))
                 configured_duration = max(1.0, configured_end - configured_start)
             except (TypeError, ValueError):
                 configured_duration = 2.0
-            preheat_end = vpp_start_hod
-            preheat_start = max(current_hod, preheat_end - min(3.0, configured_duration))
+            price_window = _best_pre_vpp_water_heater_window(
+                appliance_config,
+                event=event,
+                hod=current_hod,
+                price_profile=price_profile,
+                current_day=current_day,
+            )
+            if price_window is not None:
+                preheat_start, preheat_end = price_window
+            else:
+                preheat_end = vpp_start_hod
+                preheat_start = max(current_hod, preheat_end - min(3.0, configured_duration))
             if preheat_end - preheat_start >= 0.5:
                 out["water_heater_preheat_start_h"] = round(preheat_start, 2)
                 out["water_heater_preheat_end_h"] = round(preheat_end, 2)
@@ -4901,6 +5116,8 @@ def _agent_repair_ev_service_actions(
     appliance_config: dict | None,
     event: dict | None,
     hod: float,
+    price_profile: Any = None,
+    current_day: _date | None = None,
 ) -> tuple[dict, bool]:
     """EB-only repair for missing or infeasible EV service windows."""
     out = dict(actions or {})
@@ -4920,6 +5137,27 @@ def _agent_repair_ev_service_actions(
         current_hod = float(hod) % 24.0
     except (TypeError, ValueError):
         current_hod = 0.0
+    price_window = _best_ev_charge_window(
+        appliance_config,
+        event=event,
+        hod=current_hod,
+        price_profile=price_profile,
+        current_day=current_day,
+        extra_margin_h=0.25,
+    )
+    if price_window is not None:
+        candidate = dict(out)
+        candidate["ev_mode"] = "smart"
+        candidate["ev_charge_start_h"] = price_window[0]
+        candidate["ev_charge_end_h"] = price_window[1]
+        if not _ev_service_window_errors(candidate, appliance_config, vpp_event=event) and not (
+            event and any(
+                str(item).startswith("ev:")
+                for item in _vpp_appliance_conflicts(candidate, appliance_config, event)
+            )
+        ):
+            return candidate, True
+
     try:
         departure = float(ev_cfg.get("departure_h", 7.5)) % 24.0
     except (TypeError, ValueError):
@@ -5998,10 +6236,11 @@ All times are hour-of-day (0–23.9)."""
             )
         mem_tag = loop.vpp_mem_ctx  # contains past event scores + user feedback
         price_tag = "\nDAY_AHEAD_PRICE: unavailable."
+        current_day_for_price: _date | None = None
         if run_start_date is not None and day_ahead_price_profile is not None:
             try:
-                current_day = run_start_date + _timedelta(days=int(sim_h // 24))
-                price_tag = "\n" + day_ahead_price_profile.prompt_context_for_day(current_day)
+                current_day_for_price = run_start_date + _timedelta(days=int(sim_h // 24))
+                price_tag = "\n" + day_ahead_price_profile.prompt_context_for_day(current_day_for_price)
             except Exception as _pe:
                 price_tag = f"\nDAY_AHEAD_PRICE: unavailable ({str(_pe)[:80]})."
         agent_skill_bundle: dict | None = None
@@ -6268,6 +6507,24 @@ All times are hour-of-day (0–23.9)."""
                     return data_in
                 data_out = dict(data_in or {})
                 mpc_actions = dict(mpc_skill.get("appliance_actions") or {})
+                if vpp_event:
+                    mpc_actions = _agent_refine_vpp_appliance_actions(
+                        mpc_actions,
+                        loop,
+                        hod=hod,
+                        event=vpp_event,
+                        appliance_config=appliance_config,
+                        price_profile=day_ahead_price_profile,
+                        current_day=current_day_for_price,
+                    )
+                mpc_actions, _ = _agent_repair_ev_service_actions(
+                    mpc_actions,
+                    appliance_config=appliance_config,
+                    event=vpp_event,
+                    hod=hod,
+                    price_profile=day_ahead_price_profile,
+                    current_day=current_day_for_price,
+                )
                 mpc_setpoint = mpc_skill.get("setpoint", data_out.get("setpoint", fb_sp))
                 next_check_hour = mpc_skill.get("next_check_hour")
                 agent_vpp_tradeoff_sp = _agent_vpp_tradeoff_setpoint_c(
@@ -6530,6 +6787,8 @@ All times are hour-of-day (0–23.9)."""
                     hod=hod,
                     event=vpp_event,
                     appliance_config=appliance_config,
+                    price_profile=day_ahead_price_profile,
+                    current_day=current_day_for_price,
                 )
             if method == "agent":
                 appl_actions, _ev_repaired = _agent_repair_ev_service_actions(
@@ -6537,6 +6796,8 @@ All times are hour-of-day (0–23.9)."""
                     appliance_config=appliance_config,
                     event=vpp_event,
                     hod=hod,
+                    price_profile=day_ahead_price_profile,
+                    current_day=current_day_for_price,
                 )
                 if _ev_repaired:
                     print("  [EB Service Repair] filled feasible non-VPP EV charge window")
@@ -6643,13 +6904,38 @@ All times are hour-of-day (0–23.9)."""
             if item.get("h", 10**9) < sim_h
         ]
         decision = plan_mpc_action(state=state_dict)
+        appliance_actions = _filter_controllable_appliance_actions(
+            decision.get("appliances", {}), appliance_config
+        )
+        current_day_for_plan: _date | None = None
+        if run_start_date is not None:
+            try:
+                current_day_for_plan = run_start_date + _timedelta(days=int(sim_h // 24))
+            except Exception:
+                current_day_for_plan = None
+        if vpp_event:
+            appliance_actions = _agent_refine_vpp_appliance_actions(
+                appliance_actions,
+                loop,
+                hod=hod,
+                event=vpp_event,
+                appliance_config=appliance_config,
+                price_profile=day_ahead_price_profile,
+                current_day=current_day_for_plan,
+            )
+        appliance_actions, _ = _agent_repair_ev_service_actions(
+            appliance_actions,
+            appliance_config=appliance_config,
+            event=vpp_event,
+            hod=hod,
+            price_profile=day_ahead_price_profile,
+            current_day=current_day_for_plan,
+        )
         return {
             "setpoint": round(max(SP_MIN, min(28.0, float(decision.get("setpoint", loop.sp)))), 1),
             "next_check_hour": decision.get("next_check_hour"),
             "reason": decision.get("reason", ""),
-            "appliance_actions": _filter_controllable_appliance_actions(
-                decision.get("appliances", {}), appliance_config
-            ),
+            "appliance_actions": appliance_actions,
             "objective_terms": decision.get("objective_terms", {}),
             "objective_source": "mpc_candidate_scoring_pdf_v15",
         }
@@ -7786,6 +8072,8 @@ All times are hour-of-day (0–23.9)."""
                                 default_plan=loop.no_vpp_daily_plan_by_day.get(_day_i),
                                 current_setpoint=loop.sp,
                                 event=active_vpp,
+                                rejected_vpp_plan=res,
+                                controller_plan=loop.no_vpp_controller_plan_by_day.get(_day_i),
                                 persona_config=persona_config,
                                 appliance_config=appliance_config or {},
                                 current_hod=hod,
@@ -7828,6 +8116,14 @@ All times are hour-of-day (0–23.9)."""
                     )
                     res["appliance_actions"] = _guarded_actions
                 if method != "no_dr" and triggered_daily_plan and planning_vpp_event is None:
+                    loop.no_vpp_controller_plan_by_day[_day_i] = {
+                        "setpoint": res.get("setpoint"),
+                        "next_check_hour": res.get("next_check_hour"),
+                        "reason": res.get("reason", ""),
+                        "appliance_actions": dict(res.get("appliance_actions", {}) or {}),
+                        "objective_source": res.get("objective_source", ""),
+                        "controller_no_vpp_plan_raw": True,
+                    }
                     _daily_plan_gate = _evaluate_no_vpp_daily_plan_acceptance(
                         plan=res,
                         persona_config=persona_config,
@@ -7926,6 +8222,8 @@ All times are hour-of-day (0–23.9)."""
                             default_plan=_default_plan,
                             current_setpoint=loop.sp,
                             event=planning_vpp_event,
+                            rejected_vpp_plan=res,
+                            controller_plan=loop.no_vpp_controller_plan_by_day.get(_day_i),
                             persona_config=persona_config,
                             appliance_config=appliance_config or {},
                             current_hod=hod,
