@@ -1,0 +1,101 @@
+{
+  "schema_version": "2.0",
+  "id": "paper_adapt_b_comfort_gated",
+  "archetype": true,
+  "display_name": "Paper Controlled - Stay-at-Home – Comfort-Gated",
+  "description": "Home all day, possibly working remotely or caring for a family member. Sensitive to temperature changes; unwilling to sacrifice comfort for small savings. Can tolerate very short and very small thermostat adjustments, but only with prior confirmation. Agent challenge: protect comfort while finding minimal flexibility. Controlled paper variant: non-AC appliances are held constant across personas.",
+  "tags": {
+    "schedule": "stay_at_home",
+    "comfort": "temp_sensitive",
+    "task": "semi_rigid",
+    "price": "low_incentive",
+    "control": "confirm_required",
+    "grid_value": "short_peak_cut"
+  },
+  "preferences": {
+    "scoring_weights": {
+      "comfort": 0.65,
+      "energy": 0.2,
+      "vpp": 0.15
+    },
+    "vpp_override_prob": 0.75
+  },
+  "schedule": {
+    "wake_h": 7.0,
+    "leaves_home_h": 21.5,
+    "returns_home_h": 22.0,
+    "bath_shower_h": 21.0,
+    "sleep_h": 23.0,
+    "occupancy_pattern": "stay_at_home",
+    "weekend_leaves_h": 10.0,
+    "weekend_returns_h": 12.0,
+    "schedule_variability_h": 0.3,
+    "work_from_home_days_per_week": 5,
+    "travel_days_per_month": 0,
+    "vulnerable_members": []
+  },
+  "appliances": {
+    "ac": {
+      "present": true,
+      "setpoint_preferred_min_c": 24.5,
+      "setpoint_preferred_max_c": 25.5,
+      "temp_tolerance_c": 0.5,
+      "mode": "cooling"
+    },
+    "washer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 22.0,
+      "preferred_h": 19.0,
+      "duration_h": 2.0,
+      "power_kw": 1.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dishwasher": {
+      "present": true,
+      "earliest_h": 9.0,
+      "latest_h": 23.0,
+      "preferred_h": 21.0,
+      "duration_h": 1.5,
+      "power_kw": 1.2,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dryer": {
+      "present": false
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 21.0,
+      "dr_adjustable": true,
+      "pre_heat_window_start_h": 14.0,
+      "pre_heat_window_end_h": 18.0
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "llm_prompts": {
+    "system_prompt": "You are home all day, possibly working remotely. You are highly sensitive to temperature changes—you notice even a 0.5°C shift. You will not sacrifice comfort for small savings. If the system wants to adjust the AC, it must ask you first, and only very short, very small adjustments are acceptable. The agreed limits must not be breached.",
+    "agent_context": "[basic_B] stay_at_home + temp_sensitive + low_incentive: confirm_required, minimal DR headroom, explicit authorisation needed first [paper_controlled_adapt] Same non-AC appliance suite as other controlled personas; adapt only to this user's calendar, consent, comfort, and price preferences.",
+    "example_responses": [
+      "I'm home all day. Don't adjust the AC without asking.",
+      "If it's only half an hour and the temperature change is tiny, you can let me know first.",
+      "Saving a few yuan doesn't matter. Being comfortable is what I care about."
+    ]
+  },
+  "meta": {
+    "persona_type": "paper_controlled_adaptability",
+    "approved": false,
+    "created_at": "2026-05-27",
+    "design_rationale": "Doc §6.2: stay_at_home + temp_sensitive + low_incentive archetype; tests agent conservative strategy and micro-flexibility negotiation.",
+    "paper_references": [
+      "Kaspar2024EB",
+      "Kharazi2023IAS"
+    ],
+    "source_persona_id": "basic_role_b_home_comfort_gated",
+    "controlled_non_ac_appliance_suite": true
+  }
+}

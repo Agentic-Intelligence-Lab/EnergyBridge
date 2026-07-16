@@ -1,0 +1,102 @@
+{
+  "schema_version": "2.0",
+  "id": "paper_adapt_d_ideal_dr",
+  "archetype": true,
+  "display_name": "Paper Controlled - Regular Commuter – Ideal DR Candidate",
+  "description": "Regular schedule with moderate temperature tolerance; willing to let the agent schedule automatically within preset bounds. Household tasks can be freely rescheduled. Price-sensitive and eager to earn demand-response rewards. The most reliable DR resource type; ideal for aggregator recruitment. Controlled paper variant: non-AC appliances are held constant across personas.",
+  "tags": {
+    "schedule": "regular_commuter",
+    "comfort": "temp_tolerant",
+    "task": "flexible",
+    "price": "price_sensitive",
+    "control": "high_trust_auto",
+    "grid_value": "stable_flex"
+  },
+  "preferences": {
+    "scoring_weights": {
+      "comfort": 0.2,
+      "energy": 0.4,
+      "vpp": 0.4
+    },
+    "vpp_override_prob": 0.05
+  },
+  "schedule": {
+    "wake_h": 7.0,
+    "leaves_home_h": 8.5,
+    "returns_home_h": 18.0,
+    "bath_shower_h": 21.0,
+    "sleep_h": 23.0,
+    "occupancy_pattern": "commuter",
+    "weekend_leaves_h": 10.0,
+    "weekend_returns_h": 17.0,
+    "schedule_variability_h": 0.3,
+    "work_from_home_days_per_week": 1,
+    "travel_days_per_month": 1,
+    "vulnerable_members": []
+  },
+  "appliances": {
+    "ac": {
+      "present": true,
+      "setpoint_preferred_min_c": 23.0,
+      "setpoint_preferred_max_c": 27.0,
+      "temp_tolerance_c": 2.0,
+      "mode": "cooling"
+    },
+    "washer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 22.0,
+      "preferred_h": 19.0,
+      "duration_h": 2.0,
+      "power_kw": 1.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dishwasher": {
+      "present": true,
+      "earliest_h": 9.0,
+      "latest_h": 23.0,
+      "preferred_h": 21.0,
+      "duration_h": 1.5,
+      "power_kw": 1.2,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dryer": {
+      "present": false
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 21.0,
+      "dr_adjustable": true,
+      "pre_heat_window_start_h": 14.0,
+      "pre_heat_window_end_h": 18.0
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "llm_prompts": {
+    "system_prompt": "You are a highly cooperative user. As long as the system stays within your temperature bounds, it can schedule automatically—no need to ask each time. You'd like a weekly energy-saving report. If a demand-response reward programme is available, enrol you first. You treat the agent as a trusted automated home manager.",
+    "agent_context": "[basic_D] ideal DR candidate: temp_tolerant + full_auto + schedulable, stable flexible resource, suitable for VPP aggregation, tests end-to-end autonomous scheduling [paper_controlled_adapt] Same non-AC appliance suite as other controlled personas; adapt only to this user's calendar, consent, comfort, and price preferences.",
+    "example_responses": [
+      "As long as you stay within my preset bounds, you can schedule automatically.",
+      "I'd like a weekly energy-saving report showing how much was saved.",
+      "If there's a DR reward programme, make sure I'm enrolled first."
+    ]
+  },
+  "meta": {
+    "persona_type": "paper_controlled_adaptability",
+    "approved": false,
+    "created_at": "2026-05-27",
+    "design_rationale": "Doc §6.4: ideal DR candidate archetype; stable flexible resource; tests full autonomous scheduling and VPP participation flow.",
+    "paper_references": [
+      "Lee2023TSG",
+      "Vahedi2024TIA",
+      "Michalakopoulos2024AE"
+    ],
+    "source_persona_id": "basic_role_d_commuter_ideal_dr",
+    "controlled_non_ac_appliance_suite": true
+  }
+}

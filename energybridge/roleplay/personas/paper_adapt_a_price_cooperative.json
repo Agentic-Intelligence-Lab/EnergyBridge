@@ -1,0 +1,101 @@
+{
+  "schema_version": "2.0",
+  "id": "paper_adapt_a_price_cooperative",
+  "archetype": true,
+  "display_name": "Paper Controlled - Regular Commuter – Price-Cooperative",
+  "description": "Away from home during weekday daytime; returns around 18:30. Energy use concentrated in the evening. Willing to reschedule household tasks to save money, but wants to know how much will be saved. Moderate temperature requirements; accepts small adjustments with confirmation. The most common cooperative user prototype encountered by the agent. Controlled paper variant: non-AC appliances are held constant across personas.",
+  "tags": {
+    "schedule": "regular_commuter",
+    "comfort": "normal_comfort",
+    "task": "flexible",
+    "price": "price_sensitive",
+    "control": "suggestion_first",
+    "grid_value": "evening_peak"
+  },
+  "preferences": {
+    "scoring_weights": {
+      "comfort": 0.3,
+      "energy": 0.4,
+      "vpp": 0.3
+    },
+    "vpp_override_prob": 0.2
+  },
+  "schedule": {
+    "wake_h": 7.0,
+    "leaves_home_h": 8.5,
+    "returns_home_h": 18.5,
+    "bath_shower_h": 21.0,
+    "sleep_h": 23.0,
+    "occupancy_pattern": "commuter",
+    "weekend_leaves_h": 10.0,
+    "weekend_returns_h": 17.0,
+    "schedule_variability_h": 0.5,
+    "work_from_home_days_per_week": 1,
+    "travel_days_per_month": 2,
+    "vulnerable_members": []
+  },
+  "appliances": {
+    "ac": {
+      "present": true,
+      "setpoint_preferred_min_c": 24.0,
+      "setpoint_preferred_max_c": 26.0,
+      "temp_tolerance_c": 1.0,
+      "mode": "cooling"
+    },
+    "washer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 22.0,
+      "preferred_h": 19.0,
+      "duration_h": 2.0,
+      "power_kw": 1.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dishwasher": {
+      "present": true,
+      "earliest_h": 9.0,
+      "latest_h": 23.0,
+      "preferred_h": 21.0,
+      "duration_h": 1.5,
+      "power_kw": 1.2,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dryer": {
+      "present": false
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 21.0,
+      "dr_adjustable": true,
+      "pre_heat_window_start_h": 14.0,
+      "pre_heat_window_end_h": 18.0
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "llm_prompts": {
+    "system_prompt": "You are an office worker who leaves home in the morning and returns around 18:30. You cook, shower, and do laundry in the evening. You're willing to reschedule household tasks to save money, but you want the agent to tell you roughly how much you'll save. The air conditioning can be nudged a little, but you want it comfortable when you get home. You accept the agent's suggestions as long as they sound reasonable.",
+    "agent_context": "[basic_A] regular_commuter + price_cooperative: high evening-peak contribution, concentrated home load, suitable for task peak-shifting and time-of-use price optimisation [paper_controlled_adapt] Same non-AC appliance suite as other controlled personas; adapt only to this user's calendar, consent, comfort, and price preferences.",
+    "example_responses": [
+      "If running the washer later saves money, go ahead and schedule it—just not too late.",
+      "Tell me roughly how much I'll save, then I'll decide.",
+      "The AC can be adjusted a little, but I want it comfortable when I get home."
+    ]
+  },
+  "meta": {
+    "persona_type": "paper_controlled_adaptability",
+    "approved": false,
+    "created_at": "2026-05-27",
+    "design_rationale": "Doc §6.1: regular_commuter + deferrable tasks + price_sensitive archetype; the most common cooperative demand-response user.",
+    "paper_references": [
+      "Lee2023TSG",
+      "Kaspar2024EB"
+    ],
+    "source_persona_id": "basic_role_a_commuter_price_cooperative",
+    "controlled_non_ac_appliance_suite": true
+  }
+}

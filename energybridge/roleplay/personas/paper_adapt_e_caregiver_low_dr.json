@@ -1,0 +1,103 @@
+{
+  "schema_version": "2.0",
+  "id": "paper_adapt_e_caregiver_low_dr",
+  "archetype": true,
+  "display_name": "Paper Controlled - Family Caregiver – Low DR Value",
+  "description": "Elderly or young children at home; comfort, safety, and stability have the highest priority. Not suitable as a demand-response target. The agent should focus on energy-saving tips and anomaly alerts, not proactively push DR or make adjustments. A key role for testing the agent's safety fallback strategy. Controlled paper variant: non-AC appliances are held constant across personas.",
+  "tags": {
+    "schedule": "caregiver",
+    "comfort": "temp_sensitive",
+    "task": "rigid",
+    "price": "low_incentive",
+    "control": "low_auto_accept",
+    "grid_value": "low_value"
+  },
+  "preferences": {
+    "scoring_weights": {
+      "comfort": 0.7,
+      "energy": 0.2,
+      "vpp": 0.1
+    },
+    "vpp_override_prob": 0.9
+  },
+  "schedule": {
+    "wake_h": 6.5,
+    "leaves_home_h": 20.0,
+    "returns_home_h": 20.5,
+    "bath_shower_h": 20.0,
+    "sleep_h": 22.0,
+    "occupancy_pattern": "stay_at_home",
+    "weekend_leaves_h": 14.0,
+    "weekend_returns_h": 16.0,
+    "schedule_variability_h": 0.5,
+    "work_from_home_days_per_week": 5,
+    "travel_days_per_month": 0,
+    "vulnerable_members": [
+      "elderly"
+    ]
+  },
+  "appliances": {
+    "ac": {
+      "present": true,
+      "setpoint_preferred_min_c": 22.0,
+      "setpoint_preferred_max_c": 25.0,
+      "temp_tolerance_c": 0.5,
+      "mode": "cooling"
+    },
+    "washer": {
+      "present": true,
+      "earliest_h": 8.0,
+      "latest_h": 22.0,
+      "preferred_h": 19.0,
+      "duration_h": 2.0,
+      "power_kw": 1.5,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dishwasher": {
+      "present": true,
+      "earliest_h": 9.0,
+      "latest_h": 23.0,
+      "preferred_h": 21.0,
+      "duration_h": 1.5,
+      "power_kw": 1.2,
+      "shiftable": true,
+      "dr_adjustable": true
+    },
+    "dryer": {
+      "present": false
+    },
+    "water_heater": {
+      "present": true,
+      "rated_kw": 2.0,
+      "bath_required_h": 21.0,
+      "dr_adjustable": true,
+      "pre_heat_window_start_h": 14.0,
+      "pre_heat_window_end_h": 18.0
+    },
+    "ev": {
+      "present": false
+    }
+  },
+  "llm_prompts": {
+    "system_prompt": "There are elderly people at home who are sensitive to temperature changes and disruptions to their daily routine. Safety and comfort come first; saving energy is secondary. You don't want the system controlling anything automatically—just send you reminders. Any adjustment that could affect the elderly person's comfort or safety is a flat no.",
+    "agent_context": "[basic_E] caregiver + temp_sensitive + rigid + low_incentive: vulnerable_members=elderly, tests protective fallback and non-DR advisory mode [paper_controlled_adapt] Same non-AC appliance suite as other controlled personas; adapt only to this user's calendar, consent, comfort, and price preferences.",
+    "example_responses": [
+      "There are elderly people here. The temperature must not change without warning.",
+      "You can send me reminders, but don't control anything automatically.",
+      "Comfort and safety matter more than saving energy."
+    ]
+  },
+  "meta": {
+    "persona_type": "paper_controlled_adaptability",
+    "approved": false,
+    "created_at": "2026-05-27",
+    "design_rationale": "Doc §6.5: family caregiver archetype; high protection constraints; tests agent conservative fallback and non-DR advisory mode.",
+    "paper_references": [
+      "Osman2024AE",
+      "Chen2024EB"
+    ],
+    "source_persona_id": "basic_role_e_caregiver_low_dr",
+    "controlled_non_ac_appliance_suite": true
+  }
+}
