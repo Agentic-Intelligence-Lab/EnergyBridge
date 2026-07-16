@@ -36,6 +36,7 @@ from experiments.benchmark.strategy_explanations import english_only_text, norma
 _EXPERIMENTS_DIR = BENCHMARK_DIR.parent
 DEFAULT_FAMILY_IDF = _EXPERIMENTS_DIR / "models" / "family_home" / "family_simple_3day.idf"
 DEFAULT_FAMILY_EPW = _EXPERIMENTS_DIR / "weather" / "epw" / "CHN_TJ_Tianjin.545270_CSWD.epw"
+ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP = 0.88
 
 OCCUPIED_START = 8.0; OCCUPIED_END = 22.0
 PMV_MET = 1.1; PMV_CLO = 0.5; PMV_V = 0.1; PMV_RH = 55.0
@@ -3002,16 +3003,17 @@ def _evaluate_household_vpp_plan_acceptance_gate(
     probability = _bounded_probability(
         household_score,
         lo=0.004 if household_intrusion.get("raw_policy_only") else 0.03,
+        hi=ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP if not household_intrusion.get("raw_policy_only") else 1.0,
     )
+    if not household_intrusion.get("raw_policy_only") and probability >= ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP:
+        factors.append(f"roleplay_residual_refusal_cap<={ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP:.3f}")
     draw = _stable_unit_random(
         "household_vpp_acceptance_gate_v1_event_level_draw",
         household_id,
         event.get("id", ""),
     )
-    high_confidence_accept = probability >= 0.90
-    if high_confidence_accept:
-        factors.append("household_high_confidence_accept_band")
-    accepted = bool(draw <= probability or high_confidence_accept)
+    high_confidence_accept = False
+    accepted = bool(draw <= probability)
     adaptability = _adaptability_diagnostics(
         method=str(method or ""),
         plan=proposed_plan,
@@ -3347,8 +3349,8 @@ def _evaluate_vpp_plan_acceptance_gate(
         and calendar_score >= 0.65
         and preference_score >= 0.35
     ):
-        score = max(score, 0.93)
-        factors.append("comfort_safe_personalized_consent_floor=0.930")
+        score = max(score, ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP)
+        factors.append(f"comfort_safe_personalized_consent_floor={ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP:.3f}")
     elif (
         not intrusion.get("raw_policy_only")
         and intrusion.get("has_user_facing_explanation")
@@ -3369,23 +3371,27 @@ def _evaluate_vpp_plan_acceptance_gate(
         and float(intrusion.get("comfort_excess_c", 0.0) or 0.0) <= 0.25
         and tags.get("control") in {"confirm_required", "low_auto_accept", "privacy_sensitive"}
     ):
-        score = max(score, 0.93)
-        factors.append("fixed_routine_consent_preserved_floor=0.930")
+        score = max(score, ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP)
+        factors.append(f"fixed_routine_consent_preserved_floor={ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP:.3f}")
 
     if not intrusion.get("raw_policy_only") and not intrusion.get("has_user_facing_explanation"):
         score = min(score, 0.25)
         factors.append("no_user_facing_explanation_acceptance_cap<=0.250")
 
-    probability = _bounded_probability(score, lo=0.004 if intrusion.get("raw_policy_only") else 0.03)
+    probability = _bounded_probability(
+        score,
+        lo=0.004 if intrusion.get("raw_policy_only") else 0.03,
+        hi=ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP if not intrusion.get("raw_policy_only") else 1.0,
+    )
+    if not intrusion.get("raw_policy_only") and probability >= ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP:
+        factors.append(f"roleplay_residual_refusal_cap<={ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP:.3f}")
     draw = _stable_unit_random(
         "vpp_acceptance_gate_v4_event_level_draw",
         persona_config.get("id", ""),
         event.get("id", ""),
     )
-    high_confidence_accept = probability >= 0.90
-    if high_confidence_accept:
-        factors.append("high_confidence_accept_band")
-    accepted = bool(draw <= probability or high_confidence_accept)
+    high_confidence_accept = False
+    accepted = bool(draw <= probability)
     return {
         "version": "vpp_plan_acceptance_gate_v4_event_level_draw",
         "event_id": event.get("id", ""),

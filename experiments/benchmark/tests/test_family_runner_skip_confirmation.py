@@ -805,8 +805,47 @@ def test_cautious_gate_rewards_explicit_fixed_routine_preservation() -> None:
         user_preference_text="Keep comfort and fixed routines protected; ask before changes.",
     )
 
-    assert gate["acceptance_probability"] >= 0.93
-    assert "fixed_routine_consent_preserved_floor=0.930" in gate["factors"]
+    assert gate["acceptance_probability"] >= 0.88
+    assert "fixed_routine_consent_preserved_floor=0.880" in gate["factors"]
+    assert "roleplay_residual_refusal_cap<=0.880" in gate["factors"]
+
+
+def test_high_quality_explained_gate_still_uses_probability_draw() -> None:
+    event, appliances, default_plan, rule_plan = _gate_fixture()
+    persona = {
+        "id": "draw_above_cap",
+        "tags": {"price": "price_sensitive", "control": "high_trust_auto", "grid_value": "high_flex"},
+        "preferences": {"scoring_weights": {"comfort": 0.25, "energy": 0.40, "vpp": 0.35}},
+    }
+    plan = {
+        "setpoint": 25.8,
+        "appliance_actions": dict(rule_plan["appliance_actions"]),
+        "reason": (
+            "Comfort-safe personalized VPP plan: washer and water heater avoid the VPP window, "
+            "EV readiness and hot water are protected, and the household gets a clear price benefit."
+        ),
+        "strategy_explanation": {
+            "natural_language": (
+                "This keeps comfort protected, moves required services outside 18:00-19:00, "
+                "preserves hot-water readiness, and explains the price benefit."
+            )
+        },
+    }
+
+    gate = _evaluate_vpp_plan_acceptance_gate(
+        method="EnergyBridge",
+        persona_config=persona,
+        appliance_config=appliances,
+        event=event,
+        proposed_plan=plan,
+        default_plan=default_plan,
+        rule_milp_plan=rule_plan,
+        user_preference_text="I usually cooperate when the plan is clear and service-safe.",
+    )
+
+    assert gate["acceptance_probability"] <= 0.88
+    assert gate["high_confidence_accept"] is False
+    assert gate["accepted"] == (gate["stable_draw"] <= gate["acceptance_probability"])
 
 
 def test_adaptability_diagnostics_reward_comfort_divergence_from_rule_milp() -> None:
