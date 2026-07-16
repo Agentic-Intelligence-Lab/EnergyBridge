@@ -525,6 +525,56 @@ def _calibrate_roleplay_score(
         elif mode == "price" and hvac_off and proposed_excess >= 3.0:
             calibrated = min(calibrated, 4.05)
 
+    ctx = vpp_result_context or {}
+    non_ac_during_vpp = list(ctx.get("non_ac_appliances_during_vpp") or [])
+    nonfatal_rejected_rebound = bool(
+        gate
+        and not accepted
+        and non_ac_during_vpp
+        and not severe_service_issue
+        and not rl_policy_failure
+        and not bool(intrusion.get("raw_policy_only"))
+    )
+    if nonfatal_rejected_rebound:
+        rebound_floor = 2.15
+        if comfort_hard >= 4.0:
+            rebound_floor += 0.25
+        if vpp_hard >= 2.0:
+            rebound_floor += 0.10
+        if mode == "price":
+            rebound_floor += 0.15
+        elif mode == "comfort":
+            rebound_floor -= 0.05
+        if not hvac_off and proposed_excess <= 0.5:
+            rebound_floor += 0.45
+        elif hvac_off or proposed_excess >= 2.0:
+            rebound_floor -= 0.20
+        if no_explanation:
+            rebound_floor -= 0.05
+        if len(non_ac_during_vpp) >= 3:
+            rebound_floor -= 0.10
+        calibrated = max(calibrated, rebound_floor)
+        rebound_cap = 3.10 if not no_explanation else 2.95
+        if hvac_off or proposed_excess >= 2.0:
+            rebound_cap = min(rebound_cap, 2.45)
+        calibrated = min(calibrated, rebound_cap)
+
+    clean_accepted_event = bool(
+        gate
+        and accepted
+        and ctx.get("achieved") is True
+        and not severe_service_issue
+        and not non_ac_during_vpp
+        and not rl_policy_failure
+    )
+    if clean_accepted_event and explanation_is_user_facing:
+        accepted_floor = 3.75
+        if comfort_hard >= 4.0:
+            accepted_floor += 0.15
+        if calendar_fit >= 0.65 or alignment >= 0.65:
+            accepted_floor += 0.10
+        calibrated = max(calibrated, min(4.25, accepted_floor))
+
     calibrated = round(_clamp_score(calibrated), 2)
     old_score = result.get("score", calibrated)
     result["score"] = calibrated

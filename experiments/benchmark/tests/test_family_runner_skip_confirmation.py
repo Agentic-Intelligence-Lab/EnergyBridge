@@ -199,9 +199,12 @@ def test_vpp_rejection_fallback_restores_ordinary_routine_not_default_vpp_avoida
 
     assert fallback["fallback_after_vpp_rejection"] is True
     assert fallback["fallback_is_vpp_aware"] is False
+    assert fallback["fallback_manual_rebound"] is True
     assert fallback["objective_source"] == "vpp_acceptance_gate_user_rejected_ordinary_routine"
+    assert fallback["setpoint"] == 24.0
     assert actions["washer_start_h"] == 18.0
     assert actions["water_heater_preheat_start_h"] == 18.0
+    assert actions["water_heater_preheat_temp_c"] >= 62.0
     assert actions["ev_mode"] == "normal"
     assert actions["ev_charge_start_h"] == 18.0
 
@@ -255,6 +258,7 @@ def test_vpp_rejection_can_use_roleplay_manual_override(monkeypatch) -> None:
 
     assert fallback["fallback_mode"] == "roleplay_manual_override"
     assert fallback["fallback_is_vpp_aware"] is False
+    assert fallback["fallback_manual_rebound"] is True
     assert fallback["setpoint"] == 24.0
     assert fallback["appliance_actions"]["water_heater_preheat_start_h"] == 18.0
     assert fallback["appliance_actions"]["ev_mode"] == "normal"

@@ -243,7 +243,18 @@ def _report_energy_metric(
     energy_kwh_per_day: float | None,
     electricity_cost_eur: float | None,
     days: float | None = None,
+    mode: str = "auto",
 ) -> tuple[float | None, str]:
+    if mode == "energy":
+        if energy_kwh_per_day is not None:
+            return energy_kwh_per_day, "energy_kwh_per_day"
+        return energy_kwh_total, "energy_kwh_total"
+    if mode == "cost":
+        if electricity_cost_eur is not None and not pd.isna(electricity_cost_eur):
+            if days and days > 0:
+                return electricity_cost_eur / days, "electricity_cost_eur_per_day"
+            return electricity_cost_eur, "electricity_cost_eur"
+        return None, "electricity_cost_unavailable"
     if electricity_cost_eur is not None and not pd.isna(electricity_cost_eur):
         if days and days > 0:
             return electricity_cost_eur / days, "electricity_cost_eur_per_day"
@@ -310,7 +321,7 @@ def _df_to_markdown(df: pd.DataFrame, index: bool = True) -> str:
     return "\n".join([header, sep, *body])
 
 
-def _build_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
+def _build_dataframe(rows: list[dict[str, Any]], *, energy_panel: str = "auto") -> pd.DataFrame:
     records: list[dict[str, Any]] = []
     for row in rows:
         result_path = Path(row.get("output_dir") or "") / "benchmark_result.json"
@@ -333,6 +344,7 @@ def _build_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
             energy_kwh_per_day=energy_kwh_per_day,
             electricity_cost_eur=electricity_cost_eur,
             days=days,
+            mode=energy_panel,
         )
         shift_success = result.get(
             "appliance_shift_success_rate",
@@ -438,6 +450,18 @@ def _build_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
                 ),
                 "appliance_vpp_avoidance_rate": _as_float(
                     result.get("appliance_vpp_avoidance_rate", row.get("appliance_vpp_avoidance_rate", shift_success))
+                ),
+                "vpp_plan_acceptance_rate": _as_float(
+                    result.get("vpp_plan_acceptance_rate", row.get("vpp_plan_acceptance_rate"))
+                ),
+                "vpp_plan_acceptance_probability_avg": _as_float(
+                    result.get(
+                        "vpp_plan_acceptance_probability_avg",
+                        row.get("vpp_plan_acceptance_probability_avg"),
+                    )
+                ),
+                "vpp_plan_rejected_count": _as_float(
+                    result.get("vpp_plan_rejected_count", row.get("vpp_plan_rejected_count"))
                 ),
                 "appliance_task_completion_rate": _as_float(policy_task_completion),
                 "physical_appliance_task_completion_rate": _as_float(
@@ -691,6 +715,10 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
                 "vpp_reduction_kwh",
                 "vpp_window_energy_kwh",
                 "appliance_shift_success_rate",
+                "appliance_vpp_avoidance_rate",
+                "vpp_plan_acceptance_rate",
+                "vpp_plan_acceptance_probability_avg",
+                "vpp_plan_rejected_count",
                 "appliance_task_completion_rate",
                 "physical_appliance_task_completion_rate",
                 "policy_appliance_control_coverage_rate",
@@ -750,6 +778,9 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
                     "vpp_window_energy_kwh",
                     "appliance_shift_success_rate",
                     "appliance_vpp_avoidance_rate",
+                    "vpp_plan_acceptance_rate",
+                    "vpp_plan_acceptance_probability_avg",
+                    "vpp_plan_rejected_count",
                     "appliance_task_completion_rate",
                     "physical_appliance_task_completion_rate",
                     "policy_appliance_control_coverage_rate",
@@ -778,17 +809,17 @@ def _write_markdown(df: pd.DataFrame, report_dir: Path, summary_json: Path, pref
     best = summary["user_pref_score"].idxmax()
     lowest_energy = summary["report_energy_metric"].idxmin()
     best_vpp = summary["vpp_window_energy_per_hour_kwh"].idxmin()
-    best_shift = summary["appliance_task_completion_rate"].idxmax()
+    best_acceptance = summary["vpp_plan_acceptance_rate"].idxmax()
     cleanest_raw_actions = summary["raw_absent_appliance_action_count"].idxmin()
     lines.append(f"- Best average user score: **{best}**")
     lines.append(f"- {_report_energy_quick_read_label(df)}: **{lowest_energy}**")
     lines.append(f"- Lowest average VPP-window energy per hour: **{best_vpp}**")
-    lines.append(f"- Best average policy appliance output completion: **{best_shift}**")
+    lines.append(f"- Highest realized VPP plan acceptance rate: **{best_acceptance}**")
     lines.append(f"- Fewest actions targeting absent appliances: **{cleanest_raw_actions}**")
     lines.append("")
     lines.append(
-        "Appliance task completion means emitted present-appliance policy services divided by present "
-        "non-AC appliances. Physical simulator completion is reported separately as a diagnostic."
+        "VPP acceptance rate is the realized share of VPP events where the role-play user or household "
+        "accepted the proposed event-level dispatch. Appliance completion diagnostics remain in the CSV."
     )
     lines.append("")
     lines.append(f"The matrix is calendar-aware and uses the {_window_label(df)}.")
@@ -810,7 +841,7 @@ def _plot_report(
         "score": axes_arr[0, 0],
         "energy": axes_arr[0, 1],
         "vpp_energy": axes_arr[1, 0],
-        "coverage": axes_arr[1, 1],
+        "acceptance": axes_arr[1, 1],
     }
 
     def _metric_matrix(metric: str) -> pd.DataFrame:
@@ -901,14 +932,9 @@ def _plot_report(
     vpp_cbar = "Actual kWh per VPP hour (lower is better)"
     vpp_lower_is_better = True
     vpp_energy_matrix = _metric_matrix(vpp_metric_col)
-    if completion_metric == "physical":
-        coverage_matrix = _metric_matrix("physical_appliance_task_completion_rate")
-        coverage_title = f"{row_label} x Method Appliance Service Completion"
-        coverage_cbar = "Present appliance services completed in simulator"
-    else:
-        coverage_matrix = _metric_matrix("appliance_task_completion_rate")
-        coverage_title = f"{row_label} x Method Policy Appliance Output"
-        coverage_cbar = "Present appliances with emitted policy action"
+    acceptance_matrix = _metric_matrix("vpp_plan_acceptance_rate")
+    acceptance_title = f"{row_label} x Method VPP Plan Acceptance Rate"
+    acceptance_cbar = "Realized accepted VPP events"
     energy_title, energy_cbar_label, energy_fmt, energy_lower_is_better = _report_energy_label(df, row_label)
 
     def _city_short(city: str) -> str:
@@ -971,13 +997,13 @@ def _plot_report(
         lower_is_better=vpp_lower_is_better,
     )
     _draw_metric_table(
-        axes["coverage"],
-        coverage_matrix,
-        title=coverage_title,
+        axes["acceptance"],
+        acceptance_matrix,
+        title=acceptance_title,
         cmap="PuBuGn",
         fmt=".0%",
         mean_fmt=".1%",
-        cbar_label=coverage_cbar,
+        cbar_label=acceptance_cbar,
         vmin=0,
         vmax=1,
     )
@@ -1048,6 +1074,15 @@ def parse_args() -> argparse.Namespace:
         help="Metric shown in the bottom-right heatmap. Defaults to policy output coverage.",
     )
     parser.add_argument(
+        "--energy-panel",
+        choices=["auto", "energy", "cost"],
+        default="auto",
+        help=(
+            "Metric for the top-right heatmap: auto prefers available cost, "
+            "energy forces kWh/day, cost forces electricity cost."
+        ),
+    )
+    parser.add_argument(
         "--horizon",
         type=int,
         default=6,
@@ -1082,7 +1117,7 @@ def main() -> None:
     rows: list[dict[str, Any]] = []
     for summary_json in summary_paths:
         rows.extend(_load_matrix_rows(summary_json))
-    df = _build_dataframe(rows)
+    df = _build_dataframe(rows, energy_panel=args.energy_panel)
     df = df.copy()
     city_values = {str(city) for city in df["city"].dropna().astype(str)}
     if args.append_city_label or len(city_values) > 1:
