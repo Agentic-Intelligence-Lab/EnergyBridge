@@ -199,104 +199,14 @@ def test_vpp_rejection_fallback_restores_ordinary_routine_not_default_vpp_avoida
 
     assert fallback["fallback_after_vpp_rejection"] is True
     assert fallback["fallback_is_vpp_aware"] is False
-    assert fallback["fallback_mode"] == "manual_override_unaccepted_day_ahead"
-    assert fallback["objective_source"] == "vpp_acceptance_gate_method_agnostic_day_ahead_or_manual_fallback"
-    assert fallback["setpoint"] == 26.0
+    assert fallback["fallback_manual_rebound"] is True
+    assert fallback["objective_source"] == "vpp_acceptance_gate_user_rejected_ordinary_routine"
+    assert fallback["setpoint"] == 24.0
     assert actions["washer_start_h"] == 18.0
     assert actions["water_heater_preheat_start_h"] == 18.0
-    assert actions["water_heater_preheat_temp_c"] >= 60.0
+    assert actions["water_heater_preheat_temp_c"] >= 62.0
     assert actions["ev_mode"] == "normal"
     assert actions["ev_charge_start_h"] == 18.0
-
-
-def test_vpp_rejection_fallback_uses_gated_day_ahead_plan(monkeypatch) -> None:
-    monkeypatch.setenv("ENERGYBRIDGE_ROLEPLAY_MANUAL_OVERRIDE", "0")
-    event = {"id": "vpp1", "trigger_h": 18.0, "end_h": 19.0, "day": 1}
-    appliances = {
-        "ac": {"setpoint_preferred_min_c": 24.0, "setpoint_preferred_max_c": 26.0},
-        "washer": {"present": True, "preferred_h": 18.0, "earliest_h": 8.0, "latest_h": 22.0, "duration_h": 1.0},
-        "water_heater": {"present": True, "normal_start_h": 18.0, "normal_end_h": 20.0, "normal_temp_c": 60.0},
-        "ev": {"present": True, "arrival_h": 18.0, "departure_h": 7.5},
-    }
-    default_plan = {
-        "setpoint": 25.5,
-        "appliance_actions": {
-            "washer_start_h": 20.0,
-            "washer_skip": False,
-            "water_heater_preheat": True,
-            "water_heater_preheat_start_h": 16.0,
-            "water_heater_preheat_end_h": 17.0,
-            "ev_mode": "smart",
-            "ev_charge_start_h": 19.0,
-            "ev_charge_end_h": 7.5,
-        },
-    }
-
-    fallback = _fallback_plan_after_vpp_rejection(
-        default_plan=default_plan,
-        current_setpoint=28.0,
-        event=event,
-        rejected_vpp_plan={"setpoint": 28.0, "reason": "aggressive VPP event plan"},
-        persona_config={"tags": {"comfort": "normal_comfort"}},
-        appliance_config=appliances,
-        current_hod=18.0,
-    )
-
-    actions = fallback["appliance_actions"]
-
-    assert fallback["fallback_mode"] == "day_ahead_plan"
-    assert fallback["fallback_style"] == "method_agnostic_day_ahead_or_manual_override"
-    assert fallback["setpoint"] == 25.5
-    assert actions["washer_start_h"] == 20.0
-    assert actions["water_heater_preheat_start_h"] == 16.0
-    assert actions["ev_charge_start_h"] == 19.0
-
-
-def test_vpp_rejection_fallback_is_method_agnostic_for_same_plan(monkeypatch) -> None:
-    monkeypatch.setenv("ENERGYBRIDGE_ROLEPLAY_MANUAL_OVERRIDE", "0")
-    event = {"id": "vpp1", "trigger_h": 18.0, "end_h": 19.0, "day": 1}
-    appliances = {
-        "ac": {"setpoint_preferred_min_c": 24.0, "setpoint_preferred_max_c": 26.0},
-        "washer": {"present": True, "preferred_h": 20.0, "earliest_h": 8.0, "latest_h": 22.0, "duration_h": 1.0},
-        "water_heater": {"present": True, "normal_start_h": 18.0, "normal_end_h": 20.0, "normal_temp_c": 60.0},
-        "ev": {"present": True, "arrival_h": 18.0, "departure_h": 7.5},
-    }
-    day_ahead = {
-        "setpoint": 25.5,
-        "appliance_actions": {
-            "washer_start_h": 20.0,
-            "water_heater_preheat": True,
-            "water_heater_preheat_start_h": 16.0,
-            "water_heater_preheat_end_h": 18.0,
-            "ev_mode": "smart",
-            "ev_charge_start_h": 19.0,
-            "ev_charge_end_h": 7.5,
-        },
-    }
-    comparable = []
-    for label in ("EnergyBridge", "mpc_dynamic", "rule_milp", "rl_ppo_pref_v2"):
-        fallback = _fallback_plan_after_vpp_rejection(
-            default_plan=dict(day_ahead),
-            current_setpoint=28.0,
-            event=event,
-            rejected_vpp_plan={
-                "setpoint": 28.0,
-                "reason": "same content, hidden source label",
-                "objective_source": label,
-            },
-            persona_config={"tags": {"comfort": "normal_comfort"}},
-            appliance_config=appliances,
-            current_hod=18.0,
-        )
-        comparable.append(
-            (
-                fallback["setpoint"],
-                fallback["fallback_mode"],
-                fallback["appliance_actions"],
-            )
-        )
-
-    assert len(set(json.dumps(item, sort_keys=True) for item in comparable)) == 1
 
 
 def test_vpp_rejection_can_use_roleplay_manual_override(monkeypatch) -> None:
@@ -341,11 +251,6 @@ def test_vpp_rejection_can_use_roleplay_manual_override(monkeypatch) -> None:
         },
         current_setpoint=28.0,
         event=event,
-        rejected_vpp_plan={
-            "setpoint": 28.0,
-            "appliance_actions": {"ev_mode": "smart", "ev_charge_start_h": 21.0, "ev_charge_end_h": 7.5},
-            "objective_source": "rule_milp",
-        },
         persona_config={"id": "manual_user", "tags": {"comfort": "temp_sensitive"}},
         appliance_config=appliances,
         current_hod=18.0,

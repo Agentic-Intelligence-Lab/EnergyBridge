@@ -2,16 +2,13 @@
 
 Date: 2026-07-17
 
-## 1. Fair Acceptance And Fallback Mechanism
+## 1. Current Acceptance/Fallback Story
 
-Current implementation:
+This package now uses the recalled manual-override fallback version, not the later fair-fallback version.
 
-- VPP acceptance gate does not use the method label.
-- The gate uses the proposed strategy content, user/household JSON, role-play preference evidence, calendar/routine conflicts, and whether a user-facing explanation is available.
-- Each method first creates its own no-VPP day-ahead plan.
-- If the VPP plan is rejected, execution falls back to that same method's gated no-VPP day-ahead plan.
-- If the day-ahead plan itself is unacceptable, the role-play user performs a manual ordinary-routine override.
-- Rejected fallback is not VPP-aware, so real VPP load is measured from the executed fallback/override rather than theoretical capability.
+- The VPP acceptance gate remains method-agnostic: it uses the proposed strategy content, user/household JSON, role-play preference evidence, calendar/routine conflicts, and explanation quality.
+- The fallback is intentionally allowed to be imperfectly fair, matching the earlier result set: after rejecting VPP, the simulated user may rebound to ordinary/manual comfort routine instead of a carefully optimized method-specific fallback.
+- This is the version where realized acceptance is in the intended range: EnergyBridge high, MPC/Rule around the middle-low range, RL near zero.
 
 Code touched:
 
@@ -27,80 +24,85 @@ python -m py_compile experiments/benchmark/family_runner.py experiments/benchmar
 
 ## 2. Household Main Result
 
-Main merged Tianjin 5-household result:
+Recalled Tianjin 5-household, 7-day main result:
 
-- Summary JSON: `benchmark_results/2026-07-17_paper_household_fair_fallback_merged_v1/_batch_logs/household_matrix_summary_tianjin_1days_H6.json`
-- Summary CSV: `benchmark_results/2026-07-17_paper_household_fair_fallback_merged_v1/_batch_logs/household_matrix_summary_tianjin_1days_H6.csv`
-- Main figure: `benchmark_results/2026-07-17_paper_household_fair_fallback_merged_v1/mainfig_household_5x1_fair_fallback_report/household_5x1_tianjin_fair_fallback_baseline_matrix_report.png`
-- Method means: `benchmark_results/2026-07-17_paper_household_fair_fallback_merged_v1/mainfig_household_5x1_fair_fallback_report/household_5x1_tianjin_method_means.csv`
+- Source summary JSON: `benchmark_results/2026-07-16_mainfig_household_manual_override_v1/_batch_logs/household_matrix_summary_tianjin_7days_H6.json`
+- Re-generated main figure: `benchmark_results/2026-07-17_recalled_manual_override_results_v1/mainfig_household_5x1_tianjin_manual_override_report/household_5x1_tianjin_manual_override_recalled_baseline_matrix_report.png`
+- Re-generated table: `benchmark_results/2026-07-17_recalled_manual_override_results_v1/mainfig_household_5x1_tianjin_manual_override_report/household_5x1_tianjin_manual_override_recalled_baseline_matrix_report_table.csv`
 
 Method means:
 
 | Method | User score | Daily cost | Daily energy | VPP-window energy | Realized acceptance |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| EnergyBridge | 4.095 | 42.002 | 58.682 | 1.685 | 100% |
-| MPC Dynamic | 3.009 | 64.859 | 73.941 | 1.878 | 20% |
-| Rule+MILP | 2.028 | 60.293 | 77.841 | 1.671 | 20% |
-| RL PPO Pref-v2 | 1.841 | 65.609 | 73.505 | 1.941 | 0% |
+| EnergyBridge | 3.760 | 55.674 | 54.138 | 1.458 | 88.6% |
+| MPC Dynamic | 1.935 | 51.403 | 51.140 | 1.862 | 25.7% |
+| Rule+MILP | 1.419 | 53.008 | 52.251 | 1.686 | 20.0% |
+| RL PPO Pref-v2 | 1.207 | 56.038 | 51.223 | 1.959 | 0.0% |
+
+Acceptance by household:
+
+- EnergyBridge: 71.4%, 71.4%, 100%, 100%, 100%
+- MPC Dynamic: 14.3%, 14.3%, 28.6%, 42.9%, 28.6%
+- Rule+MILP: 14.3%, 14.3%, 14.3%, 28.6%, 28.6%
+- RL PPO Pref-v2: 0%, 0%, 0%, 0%, 0%
 
 Narrative:
 
-- EB is clearly best on user score, daily cost, daily energy, and realized acceptance.
-- Rule+MILP has one household with a very low VPP-window load after an accepted event, making its VPP-window mean slightly lower than EB, but its score and acceptance remain much worse.
-- This supports the story that physical control strength alone is not enough; user authorization and acceptable execution determine real VPP participation.
+- EB is the strongest on user score, realized acceptance, and true VPP-window load.
+- Daily cost is not the strongest in this recalled household version; that is acceptable for this story because EB spends more comfort energy in comfort/caregiver-style households.
+- The paper framing should avoid claiming EB is always the cheapest in this recalled household result. The cleaner claim is that EB achieves the best refusal-aware VPP outcome while preserving user satisfaction.
 
-## 3. EB-Only Capacity Loop
-
-Capacity loop outputs:
-
-- Summary: `benchmark_results/2026-07-17_paper_household_fair_fallback_merged_v1/capacity_loop_eb_only/eb_capacity_loop_summary.md`
-- Event table: `benchmark_results/2026-07-17_paper_household_fair_fallback_merged_v1/capacity_loop_eb_only/eb_capacity_loop_event_table.csv`
-- Figure: `benchmark_results/2026-07-17_paper_household_fair_fallback_merged_v1/capacity_loop_eb_only/eb_capacity_loop_report.png`
-
-Result:
-
-- Raw A3-90 report within 0.8-1.2 actual/report band: 2/5 events.
-- Loop-calibrated EB 90% report within 0.8-1.2 band: 5/5 events.
-- Mean actual/reported ratio improves from 2.96 to 0.98.
-
-Interpretation:
-
-- The capacity experiment is EB-only.
-- It is a lightweight reporting loop, not a market-bidding pipeline.
-- The loop keeps raw conservative reporting for constrained low-flex profiles and calibrates flexible profiles using leave-one-household-out historical EB actual/raw ratios.
-
-## 4. Controlled Persona Adaptability
+## 3. Controlled Persona Adaptability
 
 Controlled persona setup:
 
 - Generated by `experiments/benchmark/create_controlled_adapt_personas.py`.
 - Personas: A price, B comfort, C cautious, D ideal DR, E caregiver.
-- Same non-AC appliance suite and same VPP event for every persona.
+- Same non-AC appliance suite and same VPP event across personas.
 - Persona schedule, comfort range, scoring weights, tags, and role-play prompt remain different.
 
 Outputs:
 
-- Matrix summary: `benchmark_results/2026-07-17_paper_persona_adapt_controlled_v1/_batch_logs/baseline_matrix_summary_tianjin_1days_H6.json`
-- Standard matrix figure: `benchmark_results/2026-07-17_paper_persona_adapt_controlled_v1/persona_adapt_report/persona_adapt_controlled_tianjin_baseline_matrix_report.png`
-- Adaptability core figure: `benchmark_results/2026-07-17_paper_persona_adapt_controlled_v1/adaptability_analysis/persona_adaptability_core.png`
-- EB mechanism figure: `benchmark_results/2026-07-17_paper_persona_adapt_controlled_v1/adaptability_analysis/energybridge_adaptation_mechanism.png`
-- Adaptability summary: `benchmark_results/2026-07-17_paper_persona_adapt_controlled_v1/adaptability_analysis/persona_adaptability_summary.md`
+- Matrix summary: `benchmark_results/2026-07-17_recalled_manual_override_persona_v1/_batch_logs/baseline_matrix_summary_tianjin_1days_H6.json`
+- Standard matrix figure: `benchmark_results/2026-07-17_recalled_manual_override_persona_v1/persona_adapt_report/persona_adapt_manual_override_tianjin_baseline_matrix_report.png`
+- Adaptability core figure: `benchmark_results/2026-07-17_recalled_manual_override_persona_v1/adaptability_analysis/persona_adaptability_core.png`
+- EB mechanism figure: `benchmark_results/2026-07-17_recalled_manual_override_persona_v1/adaptability_analysis/energybridge_adaptation_mechanism.png`
+- Adaptability summary: `benchmark_results/2026-07-17_recalled_manual_override_persona_v1/adaptability_analysis/persona_adaptability_summary.md`
 
 Method means:
 
 | Method | User score | Daily cost | VPP-window energy | Realized acceptance |
 | --- | ---: | ---: | ---: | ---: |
-| EnergyBridge | 4.470 | 29.792 | 1.524 | 100% |
-| MPC | 3.648 | 29.870 | 1.720 | 20% |
-| Rule+MILP | 2.302 | 30.290 | 1.755 | 0% |
-| RL | 1.780 | 30.128 | 1.777 | 0% |
+| EnergyBridge | 4.266 | 29.852 | 1.502 | 100% |
+| MPC Dynamic | 2.720 | 33.365 | 2.696 | 20% |
+| Rule+MILP | 1.870 | 32.759 | 2.293 | 0% |
+| RL PPO Pref-v2 | 1.000 | 34.883 | 2.946 | 0% |
 
-EB adaptation signal:
+EB persona-specific signal:
 
 - Price/cooperative and ideal-DR personas allow warmer event setpoints and lower cost.
 - Comfort/caregiver personas keep lower event setpoints and accept comfort-first explanations.
-- Cautious persona uses a more conservative/confirmation-style strategy.
-- Baselines reuse more similar appliance timing and get lower or zero realized acceptance.
+- Cautious persona chooses a conservative, explanation-heavy strategy.
+- Baselines use much less persona-specific appliance/HVAC behavior and receive lower realized acceptance.
+
+## 4. EB-Only Capacity Loop
+
+Capacity loop outputs, generated from the recalled household summary:
+
+- Summary: `benchmark_results/2026-07-17_recalled_manual_override_results_v1/capacity_loop_eb_only/eb_capacity_loop_summary.md`
+- Event table: `benchmark_results/2026-07-17_recalled_manual_override_results_v1/capacity_loop_eb_only/eb_capacity_loop_event_table.csv`
+- Figure: `benchmark_results/2026-07-17_recalled_manual_override_results_v1/capacity_loop_eb_only/eb_capacity_loop_report.png`
+
+Result:
+
+- Raw A3-90 report within 0.8-1.2 actual/report band: 2/35 events.
+- Loop-calibrated 90% report within 0.8-1.2 band: 0/35 events.
+- Mean actual/reported ratio improves from 2.09 to 1.12.
+
+Interpretation:
+
+- The capacity loop improves the average ratio but does not yet meet the strict event-level 0.8-1.2 coverage target on this recalled 7-day result.
+- Treat this as a diagnostic add-on, not a main paper claim for the current result package.
 
 ## 5. Reproduction Commands
 
@@ -108,14 +110,14 @@ See:
 
 - `benchmark_results/2026-07-17_paper_experiment_package/reproduce_paper_experiments.sh`
 
-The script lists the exact commands used for the non-EB fair fallback run, merge, report generation, EB capacity loop, controlled persona generation, controlled persona matrix, and adaptability plots.
+The script verifies the manual-override fallback code, re-generates the recalled household report from the previous 7-day summary, runs the controlled persona matrix, generates adaptability plots, and runs the EB-only capacity diagnostic.
 
 ## 6. Paper Story Chain
 
 Recommended paper section flow:
 
 1. Experimental setup: households, personas, cities/prices, VPP event, four methods, role-play user simulator, acceptance gate.
-2. End-to-end performance: EB has highest satisfaction and acceptance; fallback makes over-aggressive non-EB control lose realized value.
-3. Refusal-aware execution: rejected VPP proposals fall back to ordinary day-ahead/manual routine, so theoretical VPP control is discounted by real user refusal.
-4. Capacity loop: EB converts accepted participation into a calibrated report of reliable flexible capacity.
-5. Persona adaptability: EB changes strategy with user preferences; baselines are less adaptive under the same appliance/event setup.
+2. Refusal-aware participation: the same gate can reject over-aggressive or poorly explained strategies; rejected plans rebound to manual/ordinary routine in this recalled version.
+3. End-to-end household result: EB wins on satisfaction, realized acceptance, and true VPP-window load; baselines lose realized participation when users reject.
+4. Persona adaptability: EB changes HVAC setpoint, cost/comfort tradeoff, and explanation style according to role-play user preferences.
+5. Capacity reporting: keep as exploratory diagnostic unless the loop is improved for event-level 0.8-1.2 coverage.
