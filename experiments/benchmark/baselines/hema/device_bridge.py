@@ -666,7 +666,7 @@ class EnergyBridgeToHEMA:
                             washer_start = _parse_hod(time_str)
                         elif dev in ("dishwasher", "Dishwasher"):
                             dishwasher_start = _parse_hod(time_str)
-                        elif dev in ("clothes_dryer", "dryer"):
+                        elif dev in ("clothes_dryer", "dryer", "Clothes Dryer"):
                             dryer_start = _parse_hod(time_str)
 
 
@@ -679,9 +679,17 @@ class EnergyBridgeToHEMA:
                                 wh_end = _parse_hod(time_str)
                                 wh_preheat = True
                             elif action_str in ("set_temperature", "set_temp", "temperature"):
-                                wh_temp_f = float(value)
+                                try:
+                                    if value is None:
+                                        wh_temp_f = float(time_str)
+                                    else:
+                                        temp_str = str(value).replace("°", "").replace("F", "").replace("f","").replace("C","").replace("c", "").strip()
+                                        wh_temp_f = float(temp_str)
+                                    wh_preheat = True
+                                except (ValueError, TypeError):
+                                    pass
 
-                        elif dev in ("ev_charger", "electric_vehicle", "ev", "tesla_charger", "car_charger"):
+                        elif dev in ("ev_charger", "electric_vehicle", "ev", "tesla_charger", "car_charger", "EV Charger"):
                             action_str = str(action).lower().replace(" ", "_")
                             if action_str in ("start", "start_charging", "begin_charging"):
                                 ev_charge_start = _parse_hod(time_str)
