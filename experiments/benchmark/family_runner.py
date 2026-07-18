@@ -6862,6 +6862,10 @@ All times are hour-of-day (0–23.9)."""
             )
             raw_sp = float(control_intent.get("setpoint", getattr(loop, "sp", SP_DEFAULT)))
             sp_lower = locals().get("sp_lower", _energy_saving_sp_floor)
+            # HEMA is a generic controller without persona/questionnaire memory.
+            # Keep its HVAC behavior comfort-conservative instead of letting the
+            # shared baseline guardrail drift to the warm energy-saving edge.
+            raw_sp = min(raw_sp, 24.0)
             if learned_floor is not None:
                 sp_lower = max(sp_lower, learned_floor)
             if sp_lower > sp_upper:

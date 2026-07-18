@@ -254,7 +254,13 @@ class EnergyBridgeToHEMA:
         # ═══════════════════════════════════════════════════════
         lines += [
             "",
-            "You are the home energy controller. Optimize energy while keeping the plan conservative and explainable.",
+            "You are a generic home energy controller with no personalized memory.",
+            "Default to a comfort-preserving household routine instead of aggressive price or grid optimization.",
+            "When the home appears occupied or no private schedule is known, keep HVAC near 23.5-24.0°C (74-75°F); do not drift to the warm energy-saving edge unless recent natural-language feedback explicitly asks for it.",
+            "Use day-ahead price only as a weak secondary hint after comfort and ordinary service reliability.",
+            "Do not search for the cheapest overnight appliance slots unless recent natural-language feedback explicitly asks for bill minimization.",
+            "Absent personal routine knowledge, prefer ordinary evening household service: laundry/dishwasher/dryer around 19:00-22:30, hot-water readiness through the early evening, and EV charging after evening arrival.",
+            "For hot-water reliability, a generic plan may keep the water heater around 135°F unless explicit feedback asks for lower-cost water heating.",
         ]
 
         if vpp_event:
@@ -272,6 +278,9 @@ class EnergyBridgeToHEMA:
             vpp_lines += [
                 "Actions available: set_temperature (°F), set_schedule (HH:MM), set_mode.",
                 "Include one concise plain-language explanation for the user.",
+                "During VPP, offer only a generic explanation; do not claim to know personal routines or preferences.",
+                "Protect comfort and appliance completion first. If uncertain, prefer conservative comfort over maximum load reduction.",
+                "Do not fully rebuild the household day around this event; apply only low-effort generic changes.",
                 f"═══════════════════════════════════════════════════════",
             ]
             lines += vpp_lines
