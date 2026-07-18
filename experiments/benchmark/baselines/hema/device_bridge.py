@@ -1,23 +1,10 @@
 """Bridge EnergyPlus state to HEMA device config and back."""
 import math
-import os
-import sys
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-_HEMA_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent / "HEMA"
-_HEMA_STR = str(_HEMA_ROOT)
+from .path_utils import ensure_hema_imports
 
-if _HEMA_STR not in sys.path:
-    sys.path.insert(0, _HEMA_STR)
-
-
-if 'agents' in sys.modules:
-    _agents_file = str(getattr(sys.modules['agents'], '__file__', ''))
-    if 'HEMA' not in _agents_file.replace('\\', '/'):
-        for _k in list(sys.modules.keys()):
-            if _k == 'agents' or _k.startswith('agents.'):
-                del sys.modules[_k]
+ensure_hema_imports()
 
 from agents.tools.control_tools.device_state import (
     reset_device_state,
@@ -78,8 +65,7 @@ class EnergyBridgeToHEMA:
 
         devices: Dict[str, Any] = {}
 
-        if ac_mode_from_persona == "cooling":
-            hvac_mode = "cool"
+        hvac_mode = "cool" if ac_mode_from_persona == "cooling" else "auto"
 
         devices["hvac"] = {
             "display_name": "HVAC Thermostat",
@@ -239,8 +225,7 @@ class EnergyBridgeToHEMA:
     ) -> str:
         """
         Construct a natural-language prompt for the HEMA Control Agent.
-        Fully utilizes persona schema: tags, preferences, schedule, appliances,
-        and llm_prompts (system_prompt, agent_context, example_responses).
+        Uses only observable structured persona fields, not role-play prompts.
         """
         temp_c = eplus_state.get("zone_air_temp_c", 24.0)
         out_t_c = eplus_state.get("outdoor_temp_c", 30.0)
@@ -255,8 +240,6 @@ class EnergyBridgeToHEMA:
         preferences = persona_config.get("preferences", {}) or {}
         schedule = persona_config.get("schedule", {}) or {}
         appliances = persona_config.get("appliances", {}) or {}
-        llm_prompts = persona_config.get("llm_prompts", {}) or {}
-
         # Scoring weights
         scoring_weights = preferences.get("scoring_weights", {})
 
@@ -266,27 +249,10 @@ class EnergyBridgeToHEMA:
         lines: List[str] = []
 
         # ═══════════════════════════════════════════════════════
-        # SECTION 1: User Profile
-        # ═══════════════════════════════════════════════════════
-        system_prompt = llm_prompts.get("system_prompt", "")
-        if system_prompt:
-            lines += [
-                "[USER PROFILE — CORE IDENTITY]",
-                system_prompt,
-                "",
-            ]
-
-        agent_context = llm_prompts.get("agent_context", "")
-        if agent_context:
-            lines += [
-                f"[Persona Design Context] {agent_context}",
-                "",
-            ]
-
-        # ═══════════════════════════════════════════════════════
         # SECTION 2: Quantitative Preferences & Weights
         # ═══════════════════════════════════════════════════════
         lines += [
+            "[Observable User Context]",
             f"Simulation time: Day {day}, {int(hod):02d}:00 (sim_h={sim_h:.1f}).",
             f"Indoor temperature: {temp_c:.1f}°C ({_c_to_f(temp_c):.1f}°F).",
             f"Outdoor temperature: {out_t_c:.1f}°C ({_c_to_f(out_t_c):.1f}°F).",

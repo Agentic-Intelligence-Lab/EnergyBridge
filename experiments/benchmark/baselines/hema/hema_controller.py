@@ -1,22 +1,11 @@
 """HEMA Control Agent baseline for EnergyBridge — Native HEMA ReAct."""
 import math
 import os
-import sys
-from pathlib import Path
 from typing import Any, Dict, Optional
 
-_HEMA_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent / "HEMA"
-_HEMA_STR = str(_HEMA_ROOT)
+from .path_utils import ensure_hema_imports
 
-if _HEMA_STR not in sys.path:
-    sys.path.insert(0, _HEMA_STR)
-
-if 'agents' in sys.modules:
-    _agents_file = str(getattr(sys.modules['agents'], '__file__', ''))
-    if 'HEMA' not in _agents_file.replace('\\', '/'):
-        for _k in list(sys.modules.keys()):
-            if _k == 'agents' or _k.startswith('agents.'):
-                del sys.modules[_k]
+ensure_hema_imports()
 
 from langgraph.prebuilt import create_react_agent
 from langchain_core.messages import HumanMessage
@@ -72,12 +61,7 @@ class HEMAControlBaseline:
             return
 
         # Re-verify agents cache points to HEMA
-        if 'agents' in sys.modules:
-            _af = str(getattr(sys.modules['agents'], '__file__', ''))
-            if 'HEMA' not in _af.replace('\\', '/'):
-                for _k in list(sys.modules.keys()):
-                    if _k == 'agents' or _k.startswith('agents.'):
-                        del sys.modules[_k]
+        ensure_hema_imports()
 
         llm = ChatOpenAI(
             api_key=_API_KEY,

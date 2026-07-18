@@ -6860,10 +6860,31 @@ All times are hour-of-day (0–23.9)."""
                     f"{', '.join(missing_explicit)}"
                 )
 
+            reason = str(control_intent.get("reason", "") or "").strip()
+            if not reason or reason.lower() == "hema agent":
+                reason_bits = ["keeps comfort within the stated range"]
+                if appl_actions:
+                    services = [
+                        label
+                        for label, keys in (
+                            ("washer", ("washer_start_h", "washer_skip")),
+                            ("dishwasher", ("dishwasher_start_h", "dishwasher_skip")),
+                            ("dryer", ("dryer_start_h", "dryer_skip")),
+                            ("water", ("water_heater_preheat_start_h", "water_heater_preheat_end_h")),
+                            ("EV", ("ev_charge_start_h", "ev_charge_end_h")),
+                        )
+                        if any(key in appl_actions for key in keys)
+                    ]
+                    if services:
+                        reason_bits.append("coordinates " + ", ".join(services[:3]) + " around the VPP window")
+                if vpp_event:
+                    reason_bits.append("restores routine after the event")
+                reason = "; ".join(reason_bits)
+
             res = {
                 "setpoint": sp,
                 "next_check_hour": control_intent.get("next_check_hour"),
-                "reason": "",
+                "reason": reason[:240],
                 "appliance_actions": appl_actions,
             }
 

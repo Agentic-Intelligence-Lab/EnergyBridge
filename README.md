@@ -1116,22 +1116,27 @@ The HEMA baseline consists of three layers (all located in `experiments/benchmar
 experiments/benchmark/baselines/hema/
 ├── hema_controller.py      # HEMAControlBaseline: main controller class
 ├── device_bridge.py         # EnergyBridgeToHEMA: state synchronization bridge
+├── path_utils.py            # resolves the external HEMA checkout
 └── __init__.py              # get_hema_controller() + sys.path setup
 ```
 
 #### Step 1: Install HEMA
 
 ```bash
-# From your project root 
-git clone https://github.com/humanbuildingsynergy/HEMA.git
+# Keep the third-party checkout outside the EnergyBridge repository.
+mkdir -p ../reference
+git clone https://github.com/humanbuildingsynergy/HEMA.git ../reference/HEMA
 ```
 
 Install HEMA dependencies:
 
 ```bash
-cd HEMA
+cd ../reference/HEMA
 pip install -r requirements.txt
 ```
+
+If HEMA lives somewhere else, set `ENERGYBRIDGE_HEMA_ROOT=/absolute/path/to/HEMA`
+before running the benchmark.
 
 #### Step 2: How the Adapter Works
 
@@ -1139,7 +1144,7 @@ The adapter bridges EnergyBridge and HEMA through three files in `experiments/be
 
 ##### `__init__.py`
 
-Factory function that returns the HEMA controller class. Manages `sys.path` so HEMA imports resolve correctly without polluting the global namespace. If you move the HEMA clone to a different directory, update `_HEMA_ROOT` here.
+Factory function that returns the HEMA controller class. It resolves the external HEMA checkout through `ENERGYBRIDGE_HEMA_ROOT`, `HEMA_ROOT`, or the default sibling `../reference/HEMA` path.
 
 ##### `device_bridge.py` — `EnergyBridgeToHEMA`
 
