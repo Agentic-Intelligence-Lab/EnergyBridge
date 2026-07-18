@@ -1,0 +1,247 @@
+{
+  "description": "Generated historical DR events for capacity-reporting memory. Use this schedule for both no_dr and EnergyBridge runs.",
+  "seed": 20260630,
+  "days": 30,
+  "events": [
+    {
+      "id": "hist_d01_1",
+      "day": 1,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 1",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d02_1_patched",
+      "day": 2,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 2 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    },
+    {
+      "id": "hist_d03_1_patched",
+      "day": 3,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 3 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    },
+    {
+      "id": "hist_d04_1_patched",
+      "day": 4,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 4 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    },
+    {
+      "id": "hist_d05_1_patched",
+      "day": 5,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 5 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    },
+    {
+      "id": "hist_d06_1",
+      "day": 6,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 6",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d07_1_patched",
+      "day": 7,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 7 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    },
+    {
+      "id": "hist_d08_1_patched",
+      "day": 8,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 8 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    },
+    {
+      "id": "hist_d09_1_patched",
+      "day": 9,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 9 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    },
+    {
+      "id": "hist_d10_1",
+      "day": 10,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 10",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d11_1",
+      "day": 11,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 11",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d12_1_patched",
+      "day": 12,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 12 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    },
+    {
+      "id": "hist_d13_1_patched",
+      "day": 13,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 13 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    },
+    {
+      "id": "hist_d14_1_patched",
+      "day": 14,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 14 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    },
+    {
+      "id": "hist_d15_1_patched",
+      "day": 15,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 15 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    },
+    {
+      "id": "hist_d16_1_patched",
+      "day": 16,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 16 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    },
+    {
+      "id": "hist_d17_1",
+      "day": 17,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 17",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d18_1_patched",
+      "day": 18,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 18 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    },
+    {
+      "id": "hist_d19_1",
+      "day": 19,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 19",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d20_1",
+      "day": 20,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 20",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d21_1_patched",
+      "day": 21,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 21 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    },
+    {
+      "id": "hist_d22_1_patched",
+      "day": 22,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 22 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    },
+    {
+      "id": "hist_d23_1",
+      "day": 23,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 23",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d24_1",
+      "day": 24,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 24",
+      "source": "generated_historical_dr_memory"
+    },
+    {
+      "id": "hist_d25_1_patched",
+      "day": 25,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 25 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    },
+    {
+      "id": "hist_d26_1_patched",
+      "day": 26,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 26 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    },
+    {
+      "id": "hist_d27_1_patched",
+      "day": 27,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 27 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    },
+    {
+      "id": "hist_d28_1_patched",
+      "day": 28,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 28 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    },
+    {
+      "id": "hist_d29_1_patched",
+      "day": 29,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 29 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    },
+    {
+      "id": "hist_d30_1_patched",
+      "day": 30,
+      "start_h": 18.0,
+      "duration_h": 1.0,
+      "label": "historical memory event day 30 (VPP window patched to 18-19)",
+      "source": "patched_fixed_window"
+    }
+  ]
+}
