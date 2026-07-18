@@ -38,6 +38,16 @@ DEFAULT_FAMILY_IDF = _EXPERIMENTS_DIR / "models" / "family_home" / "family_simpl
 DEFAULT_FAMILY_EPW = _EXPERIMENTS_DIR / "weather" / "epw" / "CHN_TJ_Tianjin.545270_CSWD.epw"
 ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP = 0.88
 
+
+def _env_flag(name: str, default: str = "0") -> bool:
+    return str(os.getenv(name, default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _acceptance_fallback_disabled() -> bool:
+    """Experiment-only switch for strategy-adaptability runs."""
+    return _env_flag("ENERGYBRIDGE_DISABLE_ACCEPTANCE_FALLBACK")
+
+
 OCCUPIED_START = 8.0; OCCUPIED_END = 22.0
 PMV_MET = 1.1; PMV_CLO = 0.5; PMV_V = 0.1; PMV_RH = 55.0
 PMV_DEADBAND = 0.5; SP_MIN = 22.0; SP_MAX = 28.0; SP_STEP = 0.5
@@ -4768,10 +4778,10 @@ def _agent_vpp_tradeoff_setpoint_c(
     if comfort_first:
         return round(min(float(run_sp_max_c), float(ac_sp_max_c)), 1)
 
-    # Cost/grid users should look closer to MPC, but still remain below
-    # hard baseline aggression so the user gate has a reason to accept EB.
+    # Cost/grid users should visibly move toward the optimization baselines,
+    # while still avoiding the HVAC-off behavior that comfort users reject.
     if cost_grid_priority == "high" or "cost_grid" in strategy_bias:
-        drift_c = 0.5
+        drift_c = min(1.5, max(0.8, float(ac_sp_tol_c) + 0.5))
         return round(min(float(run_sp_max_c), float(ac_sp_max_c) + drift_c), 1)
 
     # Confirmation/calendar users start gently and only become more assertive
@@ -4817,7 +4827,7 @@ def _agent_pre_vpp_setpoint_c(
             return round(max(float(ac_sp_min_c), min(float(run_sp_max_c), float(ac_sp_min_c))), 1)
         return round(min(float(run_sp_max_c), max(float(ac_sp_default_c), float(ac_sp_max_c))), 1)
     if cost_grid_priority == "high" or "cost_grid" in strategy_bias:
-        return round(min(float(run_sp_max_c), float(ac_sp_max_c) + 0.5), 1)
+        return round(min(float(run_sp_max_c), float(ac_sp_max_c) + 1.0), 1)
     if protective_mode or "ask" in automation or calendar_sensitivity == "high":
         return round(min(float(run_sp_max_c), max(float(ac_sp_default_c), float(ac_sp_max_c))), 1)
     return round(min(float(run_sp_max_c), float(ac_sp_max_c)), 1)
@@ -5606,6 +5616,7 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     import math as _math
     from pyenergyplus.api import EnergyPlusAPI
     loop = _FamilyLoop(); api = EnergyPlusAPI(); state = api.state_manager.new_state()
+    disable_acceptance_fallback = _acceptance_fallback_disabled()
     loop.sim_days = sim_days
     loop.weather_label = weather_label
     loop.daily_e_wh = [0.0 for _ in range(sim_days)]
@@ -5690,6 +5701,8 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
         print(f"  [Total Quantification] failed: {_tqe}")
         loop.total_quantification_by_id = {}
     print(f"  [VPP Schedule] {describe_vpp_events(vpp_events)}  source={loop.vpp_schedule_source}")
+    if disable_acceptance_fallback:
+        print("  [Acceptance/Fallback] disabled for strategy-adaptability experiment")
 
     # ── Read persona AC config (from appliances.ac field in persona JSON) ──────
     _ac_cfg   = (appliance_config or {}).get("ac", {})
@@ -6471,7 +6484,13 @@ All times are hour-of-day (0–23.9)."""
                 elif agent_post_vpp_restore:
                     sp_upper = max(_run_sp_min, min(_run_sp_max, _ac_sp_default))
                 elif not vpp_active:
-                    sp_upper = min(sp_upper, _ac_sp_max)
+                    economic_grid_mode = (
+                        method == "agent"
+                        and _agent_memory_is_cost_grid_oriented(loop)
+                        and not agent_memory_protective
+                    )
+                    economic_cap = min(_run_sp_max, _ac_sp_max + 1.0)
+                    sp_upper = min(sp_upper, economic_cap if economic_grid_mode else _ac_sp_max)
                     feedback_floor = _agent_rule_milp_hvac_feedback_adjustment_c(
                         loop.vpp_event_log,
                         preferred_max_c=_ac_sp_max,
@@ -6480,6 +6499,8 @@ All times are hour-of-day (0–23.9)."""
                     )
                     if feedback_floor is not None:
                         efficient_floor = feedback_floor
+                    elif economic_grid_mode:
+                        efficient_floor = economic_cap
                     else:
                         efficient_floor = min(_run_sp_max, _ac_sp_max)
                     sp_lower = max(sp_lower, efficient_floor)
@@ -7761,7 +7782,12 @@ All times are hour-of-day (0–23.9)."""
                     res["setpoint"] = _agent_vpp_tradeoff_sp
                     res["reason"] = f"{res.get('reason', method)} | active VPP low-power drift after pre-cooling"
                 _day_i = min(sim_days - 1, int(sim_h // 24))
-                if method != "no_dr" and active_vpp is not None and planning_vpp_event is None:
+                if (
+                    method != "no_dr"
+                    and active_vpp is not None
+                    and planning_vpp_event is None
+                    and not disable_acceptance_fallback
+                ):
                     _active_vid = str(active_vpp.get("id", ""))
                     _active_gate = loop.vpp_plan_gate_by_id.get(_active_vid, {})
                     if _active_gate:
@@ -7802,9 +7828,15 @@ All times are hour-of-day (0–23.9)."""
                         _continued_plan["appliance_actions"] = {}
                         _continued_plan["next_check_hour"] = None
                         _continued_plan["reason"] = (
-                            "Continue the gated no-VPP day-ahead plan after a routine checkpoint"
+                            "Continue the no-VPP day-ahead plan after a routine checkpoint"
+                            if disable_acceptance_fallback
+                            else "Continue the gated no-VPP day-ahead plan after a routine checkpoint"
                         )
-                        _continued_plan["objective_source"] = "gated_no_vpp_daily_plan_continuation"
+                        _continued_plan["objective_source"] = (
+                            "raw_no_vpp_daily_plan_continuation"
+                            if disable_acceptance_fallback
+                            else "gated_no_vpp_daily_plan_continuation"
+                        )
                         print(
                             "  [No-VPP Daily Plan Gate] "
                             f"continue gated day-ahead plan setpoint={float(_continued_plan.get('setpoint')):.1f}C"
@@ -7828,33 +7860,43 @@ All times are hour-of-day (0–23.9)."""
                     )
                     res["appliance_actions"] = _guarded_actions
                 if method != "no_dr" and triggered_daily_plan and planning_vpp_event is None:
-                    _daily_plan_gate = _evaluate_no_vpp_daily_plan_acceptance(
-                        plan=res,
-                        persona_config=persona_config,
-                        appliance_config=appliance_config or {},
-                    )
-                    if not bool(_daily_plan_gate.get("accepted")):
-                        print(
-                            "  [No-VPP Daily Plan Gate] "
-                            f"rejected -> manual comfort routine ({'; '.join(_daily_plan_gate.get('reasons', []))})"
-                        )
-                        _manual_daily_plan = _manual_no_vpp_user_plan(
+                    if disable_acceptance_fallback:
+                        res["acceptance_fallback_disabled"] = True
+                        loop.no_vpp_daily_plan_by_day[_day_i] = {
+                            "setpoint": res.get("setpoint"),
+                            "next_check_hour": res.get("next_check_hour"),
+                            "reason": res.get("reason", ""),
+                            "appliance_actions": dict(res.get("appliance_actions", {}) or {}),
+                            "objective_source": res.get("objective_source", ""),
+                        }
+                    else:
+                        _daily_plan_gate = _evaluate_no_vpp_daily_plan_acceptance(
+                            plan=res,
                             persona_config=persona_config,
                             appliance_config=appliance_config or {},
-                            current_setpoint=loop.sp,
                         )
-                        _manual_daily_plan["no_vpp_daily_plan_gate"] = _daily_plan_gate
-                        res = _manual_daily_plan
-                    else:
-                        res["no_vpp_daily_plan_gate"] = _daily_plan_gate
-                    loop.no_vpp_daily_plan_by_day[_day_i] = {
-                        "setpoint": res.get("setpoint"),
-                        "next_check_hour": res.get("next_check_hour"),
-                        "reason": res.get("reason", ""),
-                        "appliance_actions": dict(res.get("appliance_actions", {}) or {}),
-                        "objective_source": res.get("objective_source", ""),
-                        "no_vpp_daily_plan_gate": res.get("no_vpp_daily_plan_gate", {}),
-                    }
+                        if not bool(_daily_plan_gate.get("accepted")):
+                            print(
+                                "  [No-VPP Daily Plan Gate] "
+                                f"rejected -> manual comfort routine ({'; '.join(_daily_plan_gate.get('reasons', []))})"
+                            )
+                            _manual_daily_plan = _manual_no_vpp_user_plan(
+                                persona_config=persona_config,
+                                appliance_config=appliance_config or {},
+                                current_setpoint=loop.sp,
+                            )
+                            _manual_daily_plan["no_vpp_daily_plan_gate"] = _daily_plan_gate
+                            res = _manual_daily_plan
+                        else:
+                            res["no_vpp_daily_plan_gate"] = _daily_plan_gate
+                        loop.no_vpp_daily_plan_by_day[_day_i] = {
+                            "setpoint": res.get("setpoint"),
+                            "next_check_hour": res.get("next_check_hour"),
+                            "reason": res.get("reason", ""),
+                            "appliance_actions": dict(res.get("appliance_actions", {}) or {}),
+                            "objective_source": res.get("objective_source", ""),
+                            "no_vpp_daily_plan_gate": res.get("no_vpp_daily_plan_gate", {}),
+                        }
                 _vpp_acceptance_gate = {}
                 if method != "no_dr" and planning_vpp_event is not None:
                     _default_plan = loop.no_vpp_daily_plan_by_day.get(_day_i)
@@ -7879,13 +7921,22 @@ All times are hour-of-day (0–23.9)."""
                                 f"{', '.join(_fixed_preserved)}; VPP capacity reduced to protect consent."
                             ).strip()
                             res["fixed_routine_preserved_for_consent"] = list(_fixed_preserved)
-                    _existing_gate = loop.vpp_plan_gate_by_id.get(planning_vid)
+                    _existing_gate = (
+                        None if disable_acceptance_fallback
+                        else loop.vpp_plan_gate_by_id.get(planning_vid)
+                    )
                     _reuse_existing_gate = (
                         _existing_gate is not None
                         and is_vpp
+                        and not disable_acceptance_fallback
                         and _vpp_gate_matches_current_plan(_existing_gate, res)
                     )
-                    if _existing_gate is not None and is_vpp and not _reuse_existing_gate:
+                    if (
+                        _existing_gate is not None
+                        and is_vpp
+                        and not _reuse_existing_gate
+                        and not disable_acceptance_fallback
+                    ):
                         print(
                             "  [VPP Acceptance Gate] "
                             f"{planning_vid} event-start plan changed; re-evaluating user acceptance"
@@ -7903,20 +7954,36 @@ All times are hour-of-day (0–23.9)."""
                                 vpp_event=_mpc_cmp_event,
                             )
                         )
-                        _vpp_acceptance_gate = _evaluate_vpp_plan_acceptance_gate(
-                            method=method,
-                            persona_config=persona_config,
-                            appliance_config=appliance_config or {},
-                            event=planning_vpp_event,
-                            proposed_plan=res,
-                            default_plan=_default_plan,
-                            rule_milp_plan=_mpc_cmp,
-                            past_events=loop.vpp_event_log,
-                            user_preference_text=loop.vpp_user_input_by_id.get(planning_vid, loop.vpp_user_input),
-                            current_hod=hod if is_vpp else None,
-                        )
-                        loop.vpp_plan_gate_by_id[planning_vid] = dict(_vpp_acceptance_gate)
-                    if not bool(_vpp_acceptance_gate.get("accepted")):
+                        if disable_acceptance_fallback:
+                            res["acceptance_fallback_disabled"] = True
+                            res["adaptability_diagnostics"] = _adaptability_diagnostics(
+                                method=method,
+                                plan=res,
+                                default_plan=_default_plan,
+                                reference_plan=_mpc_cmp,
+                                reference_label="mpc",
+                                persona_config=persona_config,
+                                appliance_config=appliance_config or {},
+                                event=planning_vpp_event,
+                                user_preference_text=loop.vpp_user_input_by_id.get(planning_vid, loop.vpp_user_input),
+                            )
+                        else:
+                            _vpp_acceptance_gate = _evaluate_vpp_plan_acceptance_gate(
+                                method=method,
+                                persona_config=persona_config,
+                                appliance_config=appliance_config or {},
+                                event=planning_vpp_event,
+                                proposed_plan=res,
+                                default_plan=_default_plan,
+                                rule_milp_plan=_mpc_cmp,
+                                past_events=loop.vpp_event_log,
+                                user_preference_text=loop.vpp_user_input_by_id.get(planning_vid, loop.vpp_user_input),
+                                current_hod=hod if is_vpp else None,
+                            )
+                            loop.vpp_plan_gate_by_id[planning_vid] = dict(_vpp_acceptance_gate)
+                    if disable_acceptance_fallback:
+                        pass
+                    elif not bool(_vpp_acceptance_gate.get("accepted")):
                         print(
                             "  [VPP Acceptance Gate] "
                             f"{planning_vid} rejected p={_vpp_acceptance_gate.get('acceptance_probability')} "
@@ -7950,9 +8017,10 @@ All times are hour-of-day (0–23.9)."""
                             f"draw={_vpp_acceptance_gate.get('stable_draw')} "
                             f"adapt={_adapt.get('overall_adaptability_score', 'n/a')}"
                         )
-                    res["vpp_acceptance_gate"] = _vpp_acceptance_gate
-                    if _vpp_acceptance_gate.get("adaptability_diagnostics"):
-                        res["adaptability_diagnostics"] = _vpp_acceptance_gate.get("adaptability_diagnostics")
+                    if not disable_acceptance_fallback:
+                        res["vpp_acceptance_gate"] = _vpp_acceptance_gate
+                        if _vpp_acceptance_gate.get("adaptability_diagnostics"):
+                            res["adaptability_diagnostics"] = _vpp_acceptance_gate.get("adaptability_diagnostics")
                 if method == "agent" and not bool(res.get("fallback_after_vpp_rejection")):
                     res = _agent_cap_hot_water_preheat_for_energy(res)
                 loop.planned_occupied_sp = res["setpoint"]

@@ -36,6 +36,14 @@ experiments/benchmark/metrics_table.csv
 experiments/benchmark/*.bak
 experiments/benchmark/api_keys.txt
 
+# Local paper analysis helpers and generated personas
+energybridge/roleplay/personas/paper_fullapp_*.json
+experiments/benchmark/analyze_calendar_adaptation_*.py
+experiments/benchmark/analyze_rule_adjusted_eb_calendar.py
+experiments/benchmark/create_full_appliance_calendar_personas.py
+experiments/benchmark/analyze_persona_adaptability_no_gate.py
+experiments/benchmark/analyze_capacity_loop_pre_event_timeseries.py
+
 # Office baseline test run outputs
 experiments/models/medium_office/baseline_uniform26/
 experiments/models/medium_office/run_15zone_control_example/

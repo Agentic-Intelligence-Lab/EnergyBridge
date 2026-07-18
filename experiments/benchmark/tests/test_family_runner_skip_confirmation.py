@@ -3,12 +3,14 @@ import json
 import experiments.benchmark.family_runner as fr
 from experiments.benchmark.family_runner import (
     _FamilyLoop,
+    _acceptance_fallback_disabled,
     _adaptability_diagnostics,
     _accepted_effective_vpp_penalty,
     _agent_memory_is_cost_grid_oriented,
     _agent_memory_is_protective,
     _agent_onboarding_questions,
     _agent_preference_memory_prompt_text,
+    _agent_vpp_tradeoff_setpoint_c,
     _agent_repair_ev_service_actions,
     _count_action_service_changes,
     _eb_acceptance_learning_adjustment,
@@ -26,6 +28,17 @@ from experiments.benchmark.family_runner import (
     _roleplay_middle_acceptance_floor,
     _vpp_plan_intrusion_metrics,
 )
+
+
+def test_acceptance_fallback_disable_switch_is_env_scoped(monkeypatch) -> None:
+    monkeypatch.delenv("ENERGYBRIDGE_DISABLE_ACCEPTANCE_FALLBACK", raising=False)
+    assert not _acceptance_fallback_disabled()
+
+    monkeypatch.setenv("ENERGYBRIDGE_DISABLE_ACCEPTANCE_FALLBACK", "1")
+    assert _acceptance_fallback_disabled()
+
+    monkeypatch.setenv("ENERGYBRIDGE_DISABLE_ACCEPTANCE_FALLBACK", "false")
+    assert not _acceptance_fallback_disabled()
 
 
 def test_requested_skip_devices_returns_only_explicit_true_flags() -> None:
@@ -109,6 +122,52 @@ def test_agent_memory_classifies_roleplay_llm_natural_strategy_bias() -> None:
         "automation_preference": "ask_before_vpp_specific_changes",
     }
     assert _agent_memory_is_protective(loop)
+
+
+def test_agent_vpp_tradeoff_raises_more_for_cost_grid_memory() -> None:
+    loop = _FamilyLoop()
+    loop.agent_preference_memory = {
+        "onboarding_questionnaire": {
+            "inferred_profile": {
+                "strategy_bias": "evening_peak_shift",
+                "cost_grid_priority": "high",
+                "comfort_priority": "medium",
+            }
+        }
+    }
+
+    setpoint = _agent_vpp_tradeoff_setpoint_c(
+        loop,
+        ac_sp_max_c=26.0,
+        ac_sp_tol_c=1.0,
+        run_sp_max_c=28.0,
+        protective_mode=False,
+    )
+
+    assert setpoint == 27.5
+
+
+def test_agent_vpp_tradeoff_protects_comfort_memory() -> None:
+    loop = _FamilyLoop()
+    loop.agent_preference_memory = {
+        "onboarding_questionnaire": {
+            "inferred_profile": {
+                "strategy_bias": "protect_comfort_first",
+                "cost_grid_priority": "low",
+                "comfort_priority": "high",
+            }
+        }
+    }
+
+    setpoint = _agent_vpp_tradeoff_setpoint_c(
+        loop,
+        ac_sp_max_c=25.5,
+        ac_sp_tol_c=0.5,
+        run_sp_max_c=27.5,
+        protective_mode=True,
+    )
+
+    assert setpoint == 25.5
 
 
 def test_agent_ev_service_repair_fills_non_vpp_window() -> None:
