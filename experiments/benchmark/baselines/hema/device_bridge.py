@@ -225,7 +225,7 @@ class EnergyBridgeToHEMA:
     ) -> str:
         """
         Construct a natural-language prompt for the HEMA Control Agent.
-        Uses only observable structured persona fields, not role-play prompts.
+        Uses only anonymous live context and natural-language feedback.
         """
         temp_c = eplus_state.get("zone_air_temp_c", 24.0)
         out_t_c = eplus_state.get("outdoor_temp_c", 30.0)
@@ -233,18 +233,6 @@ class EnergyBridgeToHEMA:
         sim_h = current_time.get("sim_h", 0.0)
         hod = current_time.get("hod", 0.0)
         day = int(sim_h // 24) + 1
-
-        # ── Parse persona config with full schema ──
-        persona_config = persona_config or {}
-        tags = persona_config.get("tags", {}) or {}
-        preferences = persona_config.get("preferences", {}) or {}
-        schedule = persona_config.get("schedule", {}) or {}
-        appliances = persona_config.get("appliances", {}) or {}
-        # Scoring weights
-        scoring_weights = preferences.get("scoring_weights", {})
-
-        # AC config from persona
-        ac_cfg = appliances.get("ac", {}) or {}
 
         lines: List[str] = []
 
@@ -257,172 +245,22 @@ class EnergyBridgeToHEMA:
             f"Indoor temperature: {temp_c:.1f}°C ({_c_to_f(temp_c):.1f}°F).",
             f"Outdoor temperature: {out_t_c:.1f}°C ({_c_to_f(out_t_c):.1f}°F).",
             f"Current AC setpoint: {sp_c:.1f}°C ({_c_to_f(sp_c):.1f}°F).",
+            "No private persona, questionnaire, or role-play prompt is available.",
+            "Infer user preferences only from explicit natural-language feedback.",
         ]
-
-        if scoring_weights:
-            comfort_w = float(scoring_weights.get("comfort", 0.33))
-            energy_w = float(scoring_weights.get("energy", 0.33))
-            vpp_w = float(scoring_weights.get("vpp", 0.34))
-            lines += [
-                f"Comfort priority: {comfort_w:.2f} (higher = never sacrifice comfort)",
-                f"Energy saving priority: {energy_w:.2f} (higher = actively seek savings)",
-                f"VPP / grid support priority: {vpp_w:.2f} (higher = willing to curtail for grid)",
-            ]
-        else:
-            lines += ["(No explicit weights provided; use moderate balanced approach.)"]
-
-        # ═══════════════════════════════════════════════════════
-        # SECTION 3: Behavioral Tags (structured with descriptions)
-        # ═══════════════════════════════════════════════════════
-        lines += ["[User Behavioral Tags]"]
-        tag_descriptions = {
-            "schedule": {
-                "regular_commuter": "Regular weekday schedule; away during day, home evenings",
-                "stay_at_home": "Home most of the day; occupancy is high",
-                "irregular": "Highly variable routine; do not rely on historical patterns",
-                "caregiver": "Caregiving responsibilities; stability and safety critical",
-            },
-            "comfort": {
-                "temp_sensitive": "Highly sensitive to temperature changes (±0.5°C noticeable)",
-                "normal_comfort": "Standard comfort expectations",
-                "temp_tolerant": "Willing to accept wider temperature ranges for savings",
-            },
-            "task": {
-                "rigid": "Task timing is fixed; do NOT reschedule household tasks",
-                "semi_rigid": "Some flexibility but prefer to keep routine",
-                "flexible": "Tasks can be freely rescheduled within bounds",
-                "ev_constrained": "EV charging has hard SOC/departure deadlines",
-            },
-            "price": {
-                "price_sensitive": "Motivated by cost savings; quantify benefits",
-                "low_incentive": "Small savings do NOT motivate behavior change",
-                "price_indifferent": "Cost is not a decision factor",
-                "needs_explanation": "Wants clear justification before any action",
-            },
-            "control": {
-                "high_trust_auto": "Fully delegates to automation; do NOT ask for confirmation",
-                "suggestion_first": "Present suggestion but let user decide",
-                "confirm_required": "MUST ask before every adjustment",
-                "low_auto_accept": "Minimal automation; prefers manual control",
-                "privacy_sensitive": "Avoids data sharing; minimal intrusion",
-            },
-            "grid_value": {
-                "stable_flex": "Reliable DR resource; good for aggregation",
-                "evening_peak": "High evening peak contribution; good shift target",
-                "short_peak_cut": "Only brief peak cuts are acceptable",
-                "low_value": "Not suitable as DR target; focus on comfort",
-                "uncertain_flex": "Flexibility is unpredictable; plan conservatively",
-            },
-        }
-
-        for tag_key in ("schedule", "comfort", "task", "price", "control", "grid_value"):
-            tag_val = tags.get(tag_key)
-            if tag_val:
-                desc = tag_descriptions.get(tag_key, {}).get(tag_val, "")
-                lines.append(f"{tag_key}: {tag_val}" + (f" — {desc}" if desc else ""))
-        lines.append("")
-
-        # ═══════════════════════════════════════════════════════
-        # SECTION 4: Detailed Schedule Context
-        # ═══════════════════════════════════════════════════════
-        lines += ["[Daily Schedule Context]"]
-        sched_parts = []
-        wake_h = schedule.get("wake_h")
-        leaves_h = schedule.get("leaves_home_h")
-        returns_h = schedule.get("returns_home_h")
-        bath_h = schedule.get("bath_shower_h")
-        sleep_h = schedule.get("sleep_h")
-
-        if wake_h is not None:
-            sched_parts.append(f"wake {_fmt_clock_h(wake_h)}")
-        if leaves_h is not None:
-            sched_parts.append(f"leaves home {_fmt_clock_h(leaves_h)}")
-        if returns_h is not None:
-            sched_parts.append(f"returns home {_fmt_clock_h(returns_h)}")
-        if bath_h is not None:
-            sched_parts.append(f"bath/shower {_fmt_clock_h(bath_h)}")
-        if sleep_h is not None:
-            sched_parts.append(f"sleep {_fmt_clock_h(sleep_h)}")
-
-        if sched_parts:
-            lines.append("  " + ", ".join(sched_parts))
-
-        # Extended schedule info
-        occ_pattern = schedule.get("occupancy_pattern")
-        if occ_pattern:
-            lines.append(f"  Occupancy pattern: {occ_pattern}")
-
-        variability = schedule.get("schedule_variability_h")
-        if variability is not None:
-            lines.append(f"  Schedule variability: ±{float(variability):.1f}h (higher = less predictable)")
-
-        wfh_days = schedule.get("work_from_home_days_per_week")
-        if wfh_days is not None:
-            lines.append(f"  Work-from-home days: {int(wfh_days)}/week")
-
-        travel_days = schedule.get("travel_days_per_month")
-        if travel_days is not None:
-            lines.append(f"  Travel days: {int(travel_days)}/month (may be away unexpectedly)")
-
-        weekend_leaves = schedule.get("weekend_leaves_h")
-        weekend_returns = schedule.get("weekend_returns_h")
-        if weekend_leaves is not None and weekend_returns is not None:
-            lines.append(f"  Weekend: leaves {_fmt_clock_h(weekend_leaves)}, returns {_fmt_clock_h(weekend_returns)}")
-
-        lines.append("")
-
-        # Vulnerable members
-        vulnerable = schedule.get("vulnerable_members", [])
-        if vulnerable:
-            lines += [
-                f"[Vulnerable Members] {', '.join(vulnerable)}.",
-                "SAFETY AND COMFORT TAKE ABSOLUTE PRIORITY over energy savings.",
-                "Any action that could affect vulnerable members requires explicit user confirmation.",
-                "",
-            ]
-
-        # ═══════════════════════════════════════════════════════
-        # SECTION 5: AC Comfort Bounds (from persona appliances.ac)
-        # ═══════════════════════════════════════════════════════
-        if ac_cfg:
-            min_c = float(ac_cfg.get("setpoint_preferred_min_c", 24.0))
-            max_c = float(ac_cfg.get("setpoint_preferred_max_c", 26.0))
-            tol_c = float(ac_cfg.get("temp_tolerance_c", 1.0))
-            ac_mode = ac_cfg.get("mode", "cooling")
-
-            lines += [
-                "[AC Comfort Configuration]",
-                f"  Mode: {ac_mode}",
-                f"  STRICT comfort bounds: {min_c:.1f}°C – {max_c:.1f}°C",
-                f"  Temperature tolerance: ±{tol_c:.1f}°C",
-                f"  NEVER set thermostat below {min_c:.1f}°C or above {max_c:.1f}°C.",
-            ]
-
-            # Mode-specific guidance
-            if ac_mode == "cooling":
-                lines.append("  Current season: COOLING. Setpoint adjustments should RAISE temperature to save energy.")
-
-            lines.append("")
 
         # ═══════════════════════════════════════════════════════
         # SECTION 6: VPP Event Context
         # ═══════════════════════════════════════════════════════
         lines += [
             "",
-            "You are the home energy controller. Optimize energy while respecting the user profile above.",
+            "You are the home energy controller. Optimize energy while keeping the plan conservative and explainable.",
         ]
 
         if vpp_event:
             vpp_start = float(vpp_event.get("trigger_h", 18.0)) % 24.0
             vpp_end = float(vpp_event.get("end_h", 19.0)) % 24.0
             demand_kw = eplus_state.get("vpp_demand_kw", 0.0)
-
-            # Check if VPP overlaps with return-home or occupancy
-            return_home_sensitive = False
-            if returns_h is not None:
-                ret_h = float(returns_h) % 24.0
-                if (vpp_start - 0.5) <= ret_h <= (vpp_end + 0.5):
-                    return_home_sensitive = True
 
             vpp_lines = [
                 "",
@@ -431,15 +269,9 @@ class EnergyBridgeToHEMA:
                 f"Grid target: reduce load by ~{demand_kw:.2f} kW during this window.",
             ]
 
-            if return_home_sensitive:
-                vpp_lines += [
-                    "⚠️  CRITICAL: This VPP window overlaps with user return-home time.",
-                    "   → PRIORITIZE comfort restoration immediately after VPP ends.",
-                    "   → Do NOT let indoor temperature drift uncomfortably high before arrival.",
-                ]
-
             vpp_lines += [
                 "Actions available: set_temperature (°F), set_schedule (HH:MM), set_mode.",
+                "Include one concise plain-language explanation for the user.",
                 f"═══════════════════════════════════════════════════════",
             ]
             lines += vpp_lines
@@ -452,60 +284,12 @@ class EnergyBridgeToHEMA:
         # ═══════════════════════════════════════════════════════
         # SECTION 7: Appliances — Full Detail with Controllability
         # ═══════════════════════════════════════════════════════
-        lines += ["", "[Appliances — Present and Controllable]"]
-
-        for name in ("washer", "dishwasher", "dryer", "water_heater", "ev"):
-            dev = appliances.get(name, {}) or {}
-            if not dev.get("present"):
-                continue
-
-            shift = dev.get("shiftable", True)
-            dr = dev.get("dr_adjustable", True)
-            power_kw = dev.get("power_kw", dev.get("rated_kw", dev.get("charger_kw", 0.0)))
-
-            if name in ("washer", "dishwasher", "dryer"):
-                earliest = dev.get("earliest_h")
-                latest = dev.get("latest_h")
-                preferred = dev.get("preferred_h")
-                duration = dev.get("duration_h")
-                time_info = f" preferred={_fmt_clock_h(preferred)}, duration={duration}h" if preferred else ""
-                bounds = f" [{_fmt_clock_h(earliest)}–{_fmt_clock_h(latest)}]" if earliest is not None and latest is not None else ""
-
-                if not shift and not dr:
-                    lines += [f"- {name}: {power_kw}kW, FIXED schedule (do not reschedule){time_info}{bounds}"]
-                elif not dr:
-                    lines += [f"- {name}: {power_kw}kW, not DR-adjustable (do not reschedule){time_info}{bounds}"]
-                else:
-                    lines += [f"- {name}: {power_kw}kW, CONTROLLABLE — can shift to avoid VPP{time_info}{bounds}"]
-
-            elif name == "water_heater":
-                bath_req = dev.get("bath_required_h")
-                ph_start = dev.get("pre_heat_window_start_h")
-                ph_end = dev.get("pre_heat_window_end_h")
-                bath_info = f", must be ready by {_fmt_clock_h(bath_req)}" if bath_req else ""
-                ph_info = f", preheat window [{_fmt_clock_h(ph_start)}–{_fmt_clock_h(ph_end)}]" if ph_start and ph_end else ""
-
-                if not dr:
-                    lines += [f"- {name}: {power_kw}kW, FIXED preheat schedule{bath_info}{ph_info}"]
-                else:
-                    lines += [f"- {name}: {power_kw}kW, CONTROLLABLE — can adjust preheat timing{bath_info}{ph_info}"]
-
-            elif name == "ev":
-                charger_kw = dev.get("charger_kw", 7.0)
-                capacity = dev.get("capacity_kwh", 60.0)
-                target_soc = dev.get("target_soc", 0.8)
-                min_soc = dev.get("min_soc", 0.2)
-                arrival = dev.get("arrival_h")
-                departure = dev.get("departure_h")
-                daily_drive = dev.get("daily_drive_kwh", 0.0)
-
-                lines += [
-                    f"- {name}: {charger_kw}kW charger, {capacity}kWh battery",
-                    f"  Target SOC: {target_soc:.0%}, minimum: {min_soc:.0%}, daily consumption: {daily_drive}kWh",
-                ]
-                if arrival is not None and departure is not None:
-                    lines += [f"  Arrival: {_fmt_clock_h(arrival)}, Departure: {_fmt_clock_h(departure)}"]
-                lines += [f"  CONTROLLABLE — smart/delay/normal modes available"]
+        lines += [
+            "",
+            "[Appliance Discovery]",
+            "Use the HEMA tools to discover present devices, available actions, energy, and live status.",
+            "Do not assume private schedules, deadlines, or user preferences unless they appear in natural-language feedback.",
+        ]
 
         lines.append("")
 
@@ -513,7 +297,7 @@ class EnergyBridgeToHEMA:
         # SECTION 8: User Real-Time Input
         # ═══════════════════════════════════════════════════════
         if user_pref:
-            lines += ["", f"[User says NOW] {user_pref}", ""]
+            lines += ["", f"[Natural-language user feedback] {user_pref}", ""]
 
         # ═══════════════════════════════════════════════════════
         # SECTION 9: Price Context

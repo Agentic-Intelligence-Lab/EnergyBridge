@@ -1151,7 +1151,7 @@ Factory function that returns the HEMA controller class. It resolves the externa
 | Function | What it does |
 |----------|-------------|
 | `ensure_device_config()` | Resets HEMA's global device state and rebuilds it from EnergyBridge's `appliance_config` + live `eplus_state`. Maps EnergyBridge devices (washer, dishwasher, etc.) to HEMA's schema (washing_machine, dishwasher, etc.) with °C→°F conversion. |
-| `build_query()` | Constructs the natural-language prompt sent to HEMA's ReAct agent. Pulls from persona schema (tags, preferences, schedule, appliances), live state (indoor/outdoor temp, setpoint), VPP context (event window, capacity target), and price data. |
+| `build_query()` | Constructs the natural-language prompt sent to HEMA's ReAct agent. Uses anonymous live state, VPP context, price data, tool-discovered devices, and natural-language feedback; it does not expose role-play prompts or questionnaire/persona fields. |
 | `extract_actions()` | Parses HEMA's tool calls and converts back to EnergyBridge control JSON. Fuzzy-matches device names, maps actions (e.g., `set_temperature` → `setpoint_f`, `set_schedule` → `*_start_h`), and converts °F→°C. |
 
 ##### `hema_controller.py` — `HEMAControlBaseline`

@@ -3268,6 +3268,7 @@ def _evaluate_vpp_plan_acceptance_gate(
         adaptability=adaptability,
         intrusion=intrusion,
     )
+    generic_user_explanation = bool((proposed_plan or {}).get("generic_user_explanation"))
     score = 0.58
     factors: list[str] = [f"base=0.58", f"persona_override=-{0.14 * override_prob:.3f}"]
     score -= 0.14 * override_prob
@@ -3339,8 +3340,12 @@ def _evaluate_vpp_plan_acceptance_gate(
         score -= 0.08
         factors.append("remaining_vpp_conflicts=-0.080")
     if intrusion["has_user_facing_explanation"]:
-        score += 0.10
-        factors.append("user_facing_explanation=+0.100")
+        if generic_user_explanation:
+            score += 0.04
+            factors.append("generic_user_explanation=+0.040")
+        else:
+            score += 0.10
+            factors.append("user_facing_explanation=+0.100")
     else:
         score -= 0.04
         factors.append("no_user_facing_explanation=-0.040")
@@ -3389,6 +3394,7 @@ def _evaluate_vpp_plan_acceptance_gate(
     )
     if (
         not intrusion.get("raw_policy_only")
+        and not generic_user_explanation
         and intrusion.get("has_user_facing_explanation")
         and not intrusion.get("hvac_off")
         and float(intrusion.get("comfort_excess_c", 0.0) or 0.0) <= 0.25
@@ -3401,6 +3407,7 @@ def _evaluate_vpp_plan_acceptance_gate(
         factors.append(f"comfort_safe_personalized_consent_floor={ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP:.3f}")
     elif (
         not intrusion.get("raw_policy_only")
+        and not generic_user_explanation
         and intrusion.get("has_user_facing_explanation")
         and not intrusion.get("hvac_off")
         and float(intrusion.get("comfort_excess_c", 0.0) or 0.0) <= 0.25
@@ -3413,6 +3420,7 @@ def _evaluate_vpp_plan_acceptance_gate(
         factors.append("cautious_user_low_disruption_consent_floor=0.880")
     if (
         not intrusion.get("raw_policy_only")
+        and not generic_user_explanation
         and (proposed_plan or {}).get("fixed_routine_preserved_for_consent")
         and intrusion.get("has_user_facing_explanation")
         and not intrusion.get("hvac_off")
@@ -3425,6 +3433,9 @@ def _evaluate_vpp_plan_acceptance_gate(
     if not intrusion.get("raw_policy_only") and not intrusion.get("has_user_facing_explanation"):
         score = min(score, 0.25)
         factors.append("no_user_facing_explanation_acceptance_cap<=0.250")
+    if not intrusion.get("raw_policy_only") and generic_user_explanation:
+        score = min(score, 0.42)
+        factors.append("generic_user_explanation_acceptance_cap<=0.420")
 
     probability = _bounded_probability(
         score,
@@ -6715,8 +6726,8 @@ All times are hour-of-day (0–23.9)."""
             HEMAControlBaseline = get_hema_controller()
             loop._hema_controller = HEMAControlBaseline(
                 city=weather_label,
-                persona_id=(persona_config or {}).get("id", "unknown"),
-                persona_config=persona_config,
+                persona_id="anonymous_home",
+                persona_config={},
             )
 
         eplus_state = {
@@ -6741,13 +6752,30 @@ All times are hour-of-day (0–23.9)."""
 
         current_time = {"sim_h": sim_h, "hod": hod}
         try:
+            feedback_bits = []
+            if user_pref_input:
+                feedback_bits.append(str(user_pref_input)[:240])
+            for item in list(getattr(loop, "vpp_event_log", []) or [])[-3:]:
+                feedback = (
+                    item.get("controller_feedback")
+                    or item.get("member_feedback_summary")
+                    or item.get("comment")
+                    or ""
+                )
+                score = item.get("score")
+                if feedback or score is not None:
+                    feedback_bits.append(
+                        f"Previous VPP score {score}/5; user feedback: {str(feedback)[:300]}"
+                    )
+            hema_feedback_context = " | ".join(bit for bit in feedback_bits if bit)
+
             control_intent = loop._hema_controller.decide(
                 current_time=current_time,
                 eplus_state=eplus_state,
                 vpp_event=vpp_event,
                 price_context=price_ctx,
                 appliance_config=appliance_config,
-                user_pref=user_pref_input,
+                user_pref=hema_feedback_context,
             )
 
             if "llm_metrics" in control_intent:
@@ -6862,7 +6890,7 @@ All times are hour-of-day (0–23.9)."""
 
             reason = str(control_intent.get("reason", "") or "").strip()
             if not reason or reason.lower() == "hema agent":
-                reason_bits = ["keeps comfort within the stated range"]
+                reason_bits = ["explains the VPP change and keeps comfort reasonable"]
                 if appl_actions:
                     services = [
                         label
@@ -6876,9 +6904,9 @@ All times are hour-of-day (0–23.9)."""
                         if any(key in appl_actions for key in keys)
                     ]
                     if services:
-                        reason_bits.append("coordinates " + ", ".join(services[:3]) + " around the VPP window")
+                        reason_bits.append("moves controllable devices out of the VPP window where possible")
                 if vpp_event:
-                    reason_bits.append("restores routine after the event")
+                    reason_bits.append("returns to normal operation after the event")
                 reason = "; ".join(reason_bits)
 
             res = {
@@ -6886,6 +6914,7 @@ All times are hour-of-day (0–23.9)."""
                 "next_check_hour": control_intent.get("next_check_hour"),
                 "reason": reason[:240],
                 "appliance_actions": appl_actions,
+                "generic_user_explanation": True,
             }
 
             try:
