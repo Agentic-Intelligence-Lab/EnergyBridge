@@ -1,0 +1,18 @@
+{
+  "best_scheme": "hourly_temp",
+  "best_scheme_label": "Scheme 5: Pre-event load + pre-1h temp + VPP-window temp (3D, hourly)",
+  "results": {
+    "hourly_temp": {
+      "label": "Scheme 5: Pre-event load + pre-1h temp + VPP-window temp (3D, hourly)",
+      "ess": 0.9634746521264324,
+      "mae_is": 0.4538910520163785,
+      "mae_baseline": 0.48717921245828666,
+      "mae_improvement_pct": 6.8328367858590315,
+      "feature_names": [
+        "pre_event_load_kw",
+        "temp_pre_1h",
+        "temp_vpp"
+      ]
+    }
+  }
+}
