@@ -51,6 +51,11 @@ def _acceptance_fallback_disabled() -> bool:
     return _env_flag("ENERGYBRIDGE_DISABLE_ACCEPTANCE_FALLBACK")
 
 
+def _vpp_acceptance_gate_mode() -> str:
+    """Select the VPP consent gate implementation without changing defaults."""
+    return str(os.getenv("ENERGYBRIDGE_VPP_ACCEPTANCE_GATE", "heuristic_v4")).strip().lower()
+
+
 OCCUPIED_START = 8.0; OCCUPIED_END = 22.0
 PMV_MET = 1.1; PMV_CLO = 0.5; PMV_V = 0.1; PMV_RH = 55.0
 PMV_DEADBAND = 0.5; SP_MIN = 22.0; SP_MAX = 28.0; SP_STEP = 0.5
@@ -3013,6 +3018,9 @@ def _evaluate_household_vpp_plan_acceptance_gate(
             "stable_draw": gate.get("stable_draw"),
             "accepted_if_individual": gate.get("accepted"),
             "factors": list(gate.get("factors") or [])[:12],
+            "roleplay_acceptance_reasoning": str(gate.get("roleplay_acceptance_reasoning", ""))[:500],
+            "primary_complaint": str(gate.get("primary_complaint", ""))[:240],
+            "energybridge_feedback": str(gate.get("energybridge_feedback", ""))[:300],
         })
     if weight_total <= 0.0:
         return None
@@ -3049,6 +3057,7 @@ def _evaluate_household_vpp_plan_acceptance_gate(
         household_score = min(household_score, 0.16)
         factors.append("household_key_comfort_veto_cap<=0.160")
 
+    gate_mode = _vpp_acceptance_gate_mode()
     probability = _bounded_probability(
         household_score,
         lo=0.004 if household_intrusion.get("raw_policy_only") else 0.03,
@@ -3075,7 +3084,11 @@ def _evaluate_household_vpp_plan_acceptance_gate(
         user_preference_text=user_preference_text,
     )
     return {
-        "version": "household_vpp_plan_acceptance_gate_v1_veto_weighted",
+        "version": (
+            "household_vpp_plan_acceptance_gate_roleplay_prompt_v1_veto_weighted"
+            if gate_mode == "roleplay_prompt_v1"
+            else "household_vpp_plan_acceptance_gate_v1_veto_weighted"
+        ),
         "event_id": event.get("id", ""),
         "method": str(method or ""),
         "accepted": accepted,
@@ -3089,7 +3102,13 @@ def _evaluate_household_vpp_plan_acceptance_gate(
         "strategy_quality": _strategy_quality_metrics(adaptability=adaptability, intrusion=household_intrusion),
         "acceptance_learning": {
             "adjustment": 0.0,
-            "factors": ["household_gate_uses_member_roles_calendars_and_strategy_only"],
+            "factors": [
+                (
+                    "household_prompt_gate_uses_member_roleplay_probabilities"
+                    if gate_mode == "roleplay_prompt_v1"
+                    else "household_gate_uses_member_roles_calendars_and_strategy_only"
+                )
+            ],
         },
         "adaptability_diagnostics": adaptability,
         "household_consent": {
@@ -3147,6 +3166,394 @@ def _strategy_quality_metrics(
         "strategy_quality_score": round(_bounded_probability(score, lo=0.0, hi=1.0), 6),
         "factors": factors,
     }
+
+
+def _persona_baseline_acceptance_probability(persona_config: dict | None) -> float:
+    """Low prior consent rate before the user reacts to a concrete strategy."""
+    persona_config = persona_config or {}
+    try:
+        override_prob = float(_persona_vpp_override_prob(persona_config))
+    except Exception:
+        override_prob = 0.20
+    tags = persona_config.get("tags", {}) or {}
+    prefs = persona_config.get("preferences", {}) or {}
+    weights = prefs.get("scoring_weights", {}) or persona_config.get("scoring_weights", {}) or {}
+    try:
+        comfort_w = float(weights.get("comfort", 0.35) or 0.35)
+        energy_w = float(weights.get("energy", 0.30) or 0.30)
+        vpp_w = float(weights.get("vpp", 0.25) or 0.25)
+    except (TypeError, ValueError):
+        comfort_w, energy_w, vpp_w = 0.35, 0.30, 0.25
+    probability = 0.15 + (0.20 - override_prob) * 0.55
+    if energy_w + vpp_w >= comfort_w + 0.25:
+        probability += 0.025
+    if tags.get("control") == "high_trust_auto":
+        probability += 0.025
+    if tags.get("price") in {"price_sensitive", "price_driven"}:
+        probability += 0.015
+    if (
+        tags.get("control") in {"confirm_required", "low_auto_accept", "privacy_sensitive"}
+        or tags.get("comfort") == "temp_sensitive"
+        or tags.get("schedule") == "caregiver"
+    ):
+        probability -= 0.025
+    return round(max(0.06, min(0.24, probability)), 6)
+
+
+def _is_generic_vpp_explanation(plan: dict | None) -> bool:
+    reason = str((plan or {}).get("reason", "") or "").lower()
+    if bool((plan or {}).get("generic_user_explanation")):
+        return True
+    generic_tokens = (
+        "explains the vpp change",
+        "where possible",
+        "returns to normal operation",
+        "keeps comfort reasonable",
+        "brief explanation",
+    )
+    return any(token in reason for token in generic_tokens)
+
+
+def _deterministic_roleplay_prompt_gate_estimate(
+    *,
+    persona_config: dict | None,
+    proposed_plan: dict | None,
+    intrusion: dict,
+    strategy_quality: dict,
+    adaptability: dict,
+) -> dict:
+    """Fallback that mirrors the prompt contract when the role-play LLM is off."""
+    baseline = _persona_baseline_acceptance_probability(persona_config)
+    q = max(0.0, min(1.0, float(strategy_quality.get("strategy_quality_score", 0.5) or 0.5)))
+    calendar_score = max(
+        0.0,
+        min(1.0, float(((adaptability.get("calendar_fit") or {}).get("calendar_fit_score", 0.5)) or 0.5)),
+    )
+    preference_score = max(
+        0.0,
+        min(1.0, float(((adaptability.get("roleplay_preference_alignment") or {}).get("alignment_score", 0.5)) or 0.5)),
+    )
+    overall = max(0.0, min(1.0, float(adaptability.get("overall_adaptability_score", 0.5) or 0.5)))
+    adjustments: list[dict] = []
+    probability = baseline
+
+    def add(delta: float, reason: str) -> None:
+        nonlocal probability
+        probability += delta
+        adjustments.append({"delta": round(delta, 6), "reason": reason})
+
+    add((q - 0.5) * 0.38, "strategy quality felt better/worse than an ordinary plan")
+    add((calendar_score - 0.5) * 0.06, "calendar fit changed willingness")
+    add((preference_score - 0.5) * 0.06, "preference alignment changed willingness")
+    add((overall - 0.5) * 0.08, "overall personalization changed willingness")
+
+    has_explanation = bool(intrusion.get("has_user_facing_explanation"))
+    generic = _is_generic_vpp_explanation(proposed_plan) or overall < 0.60
+    if intrusion.get("raw_policy_only"):
+        probability = 0.004
+        adjustments.append({"delta": "cap", "reason": "raw policy without usable user-facing consent"})
+    elif not has_explanation:
+        add(-0.04, "no user-facing explanation")
+        probability = min(probability, 0.30)
+        adjustments.append({"delta": "cap", "reason": "unexplained plan acceptance cap"})
+    elif generic:
+        add(0.10, "generic but understandable explanation")
+        probability = min(probability, 0.42)
+        adjustments.append({"delta": "cap", "reason": "generic explanation cap"})
+    else:
+        add(0.18, "specific explanation made the plan easier to trust")
+
+    if intrusion.get("hvac_off"):
+        add(-0.10, "HVAC-off felt too aggressive")
+    comfort_excess = float(intrusion.get("comfort_excess_c", 0.0) or 0.0)
+    if comfort_excess > 0.0:
+        add(-min(0.20, 0.033 * comfort_excess), "temperature moved beyond comfort tolerance")
+    conflict_count = len(intrusion.get("vpp_conflicts") or [])
+    if conflict_count:
+        add(-min(0.18, 0.075 * conflict_count), "some appliance timing still conflicted with the VPP window")
+    fixed_count = len(intrusion.get("fixed_services_modified") or [])
+    if fixed_count:
+        add(-min(0.22, 0.10 * fixed_count), "fixed routine or service expectation was modified")
+    skip_count = len(intrusion.get("skip_devices") or [])
+    if skip_count:
+        add(-min(0.18, 0.09 * skip_count), "required service was skipped")
+
+    if not intrusion.get("raw_policy_only") and has_explanation and not generic:
+        if (
+            q >= 0.70
+            and calendar_score >= 0.60
+            and not conflict_count
+            and not intrusion.get("hvac_off")
+            and comfort_excess <= 0.25
+            and not intrusion.get("fixed_services_modified")
+            and not intrusion.get("skip_devices")
+        ):
+            probability = max(probability, 0.72)
+            adjustments.append({"delta": "floor", "reason": "high-quality personalized consent floor"})
+        probability = min(probability, 0.82)
+        adjustments.append({"delta": "cap", "reason": "personalized residual refusal cap"})
+    probability = max(0.004, min(0.82, probability))
+    final_probability = round(probability, 6)
+    reasons = [str(item.get("reason", "")) for item in adjustments if item.get("reason")]
+    return {
+        "baseline_acceptance_probability": baseline,
+        "adjustments": adjustments,
+        "final_acceptance_probability": final_probability,
+        "confidence": 0.72,
+        "acceptance_reasoning": (
+            "I started from my normal willingness to join a VPP event and adjusted it for comfort, "
+            "calendar fit, service reliability, and whether the explanation felt personal."
+        ),
+        "primary_complaint": "; ".join(reasons[-2:])[:240] if reasons else "",
+        "energybridge_feedback": (
+            "Please keep future VPP requests comfort-safe, explicit about appliance timing, and tied to my routine."
+        ),
+        "source": "deterministic_prompt_gate_fallback",
+    }
+
+
+def _normalise_roleplay_prompt_acceptance_response(
+    data: dict,
+    *,
+    fallback: dict,
+) -> dict:
+    out = dict(fallback)
+    try:
+        baseline = float(data.get("baseline_acceptance_probability", fallback["baseline_acceptance_probability"]))
+    except (TypeError, ValueError):
+        baseline = float(fallback["baseline_acceptance_probability"])
+    try:
+        final_probability = float(data.get("final_acceptance_probability", fallback["final_acceptance_probability"]))
+    except (TypeError, ValueError):
+        final_probability = float(fallback["final_acceptance_probability"])
+    out["baseline_acceptance_probability"] = round(max(0.0, min(1.0, baseline)), 6)
+    out["final_acceptance_probability"] = round(max(0.004, min(0.95, final_probability)), 6)
+    adjustments = data.get("adjustments")
+    if isinstance(adjustments, list):
+        cleaned = []
+        for item in adjustments[:8]:
+            if not isinstance(item, dict):
+                continue
+            try:
+                delta = round(float(item.get("delta", 0.0) or 0.0), 6)
+            except (TypeError, ValueError):
+                delta = 0.0
+            cleaned.append({
+                "delta": delta,
+                "reason": str(item.get("reason", ""))[:180],
+            })
+        out["adjustments"] = cleaned
+    out["acceptance_reasoning"] = str(data.get("acceptance_reasoning", out.get("acceptance_reasoning", "")))[:700]
+    out["primary_complaint"] = str(data.get("primary_complaint", out.get("primary_complaint", "")))[:300]
+    out["energybridge_feedback"] = str(data.get("energybridge_feedback", out.get("energybridge_feedback", "")))[:500]
+    try:
+        out["confidence"] = round(max(0.0, min(1.0, float(data.get("confidence", out.get("confidence", 0.7))))), 6)
+    except (TypeError, ValueError):
+        out["confidence"] = float(out.get("confidence", 0.7) or 0.7)
+    out["source"] = "roleplay_prompt_llm"
+    return out
+
+
+def _call_roleplay_acceptance_gate_llm(system_prompt: str, user_prompt: str) -> tuple[dict, dict]:
+    from energybridge.llm.client import LLMClient
+
+    def _validate_json(text: str) -> str:
+        data = _extract_json_object(text)
+        if "final_acceptance_probability" not in data:
+            raise ValueError("missing final_acceptance_probability")
+        return json.dumps(data, ensure_ascii=False)
+
+    result = LLMClient(
+        config_prefix="ROLEPLAY_LLM",
+        use_key="ROLEPLAY_USE_LLM",
+        fallback_prefix="LLM",
+    ).chat_with_metrics(
+        system_prompt,
+        user_prompt,
+        max_retries=3,
+        retry_base_delay=1.0,
+        validate_fn=_validate_json,
+    )
+    return json.loads(result.get("text", "{}")), dict(result.get("metrics") or {})
+
+
+def _evaluate_roleplay_prompt_vpp_plan_acceptance_gate(
+    *,
+    method: str,
+    persona_config: dict | None,
+    appliance_config: dict | None,
+    event: dict,
+    proposed_plan: dict,
+    default_plan: dict | None,
+    rule_milp_plan: dict | None,
+    past_events: list[dict] | None,
+    user_preference_text: str,
+    current_hod: float | None,
+    intrusion: dict,
+    adaptability: dict,
+    strategy_quality: dict,
+) -> dict:
+    """Prompt-based role-play acceptance gate.
+
+    The prompt deliberately excludes method identity.  The method value is kept
+    only in returned diagnostics and for deciding whether EB may consume the
+    user's short natural-language complaint as memory.
+    """
+    baseline = _persona_baseline_acceptance_probability(persona_config)
+    fallback = _deterministic_roleplay_prompt_gate_estimate(
+        persona_config=persona_config,
+        proposed_plan=proposed_plan,
+        intrusion=intrusion,
+        strategy_quality=strategy_quality,
+        adaptability=adaptability,
+    )
+    prompt_payload = {
+        "event": {
+            "id": event.get("id"),
+            "day": event.get("day"),
+            "window": _event_window_text(event),
+            "current_hod": current_hod,
+        },
+        "persona_or_household_json": persona_config or {},
+        "suggested_baseline_acceptance_probability": baseline,
+        "ordinary_no_vpp_plan": _plan_for_roleplay_manual_prompt(default_plan),
+        "vpp_dispatch_plan": _plan_for_roleplay_manual_prompt(proposed_plan),
+        "strategy_experience_diagnostics": {
+            "intrusion": intrusion,
+            "strategy_quality": strategy_quality,
+            "calendar_fit": (adaptability.get("calendar_fit") or {}),
+            "roleplay_preference_alignment": (adaptability.get("roleplay_preference_alignment") or {}),
+            "overall_adaptability_score": adaptability.get("overall_adaptability_score"),
+        },
+        "recent_natural_language_feedback": [
+            {
+                "event_id": item.get("id"),
+                "score": item.get("score"),
+                "feedback": str(
+                    item.get("controller_feedback")
+                    or item.get("member_feedback_summary")
+                    or item.get("comment")
+                    or ""
+                )[:300],
+            }
+            for item in (past_events or [])[-3:]
+            if isinstance(item, dict)
+        ],
+        "live_preference_statement": str(user_preference_text or "")[:1200],
+    }
+    system_prompt = (
+        "You are the role-play residential user deciding whether to accept one VPP dispatch plan. "
+        "You can see the hidden user/persona JSON because you are simulating that user, but you must not infer or mention the controller/method. "
+        "Start from the suggested baseline acceptance probability, then adjust it only based on what the plan would feel like: comfort, schedule/calendar fit, appliance service reliability, VPP-window intrusion, and explanation clarity. "
+        "The ordinary no-VPP plan remains the fallback for services that are not changed by the VPP dispatch, so do not penalize a VPP plan merely because it lists only the changed actions when diagnostics show no skipped service, no fixed-routine modification, and no VPP conflict. "
+        "The baseline should usually stay low: it is just the user's prior willingness before seeing the concrete plan. "
+        "A raw technical policy or unexplained plan should remain unlikely to be accepted. "
+        "A specific, comfort-safe, service-safe, calendar-aware explanation can raise acceptance substantially, but keep some residual refusal probability. "
+        "Return only valid JSON."
+    )
+    user_prompt = (
+        "Evaluate this VPP dispatch plan from the user's first-person perspective.\n"
+        "Do not mention algorithm names or method identity. Do not optimize for the grid; judge whether this user would accept.\n"
+        "Use probabilities from 0.0 to 1.0. Keep the final probability calibrated, not just binary.\n\n"
+        f"{json.dumps(prompt_payload, ensure_ascii=False, default=str)[:14000]}\n\n"
+        "Return JSON with exactly these fields:\n"
+        "{\n"
+        '  "baseline_acceptance_probability": number,\n'
+        '  "adjustments": [{"delta": number, "reason": "short user-feeling reason"}],\n'
+        '  "final_acceptance_probability": number,\n'
+        '  "confidence": number,\n'
+        '  "acceptance_reasoning": "first-person explanation of accept/reject likelihood",\n'
+        '  "primary_complaint": "short first-person complaint if probability is reduced, else empty",\n'
+        '  "energybridge_feedback": "one concise first-person feedback sentence that an adaptive assistant could learn from"\n'
+        "}"
+    )
+    metrics: dict = {"used": False}
+    if str(os.getenv("ENERGYBRIDGE_ROLEPLAY_ACCEPTANCE_GATE_USE_LLM", "1")).strip().lower() in {"0", "false", "no", "off"}:
+        roleplay = fallback
+    else:
+        try:
+            raw, metrics = _call_roleplay_acceptance_gate_llm(system_prompt, user_prompt)
+            roleplay = _normalise_roleplay_prompt_acceptance_response(raw, fallback=fallback)
+        except Exception as exc:
+            roleplay = dict(fallback)
+            roleplay["source"] = "deterministic_after_roleplay_prompt_error"
+            roleplay["error"] = str(exc)[:200]
+
+    probability = max(0.004, min(0.95, float(roleplay.get("final_acceptance_probability", fallback["final_acceptance_probability"]) or 0.0)))
+    gate_factors = [
+        "roleplay_prompt_gate",
+        f"persona_baseline={baseline:.3f}",
+        f"roleplay_final={float(roleplay.get('final_acceptance_probability', probability)):.3f}",
+        f"roleplay_source={roleplay.get('source', 'unknown')}",
+    ]
+    if intrusion.get("raw_policy_only"):
+        probability = min(probability, 0.004)
+        gate_factors.append("raw_policy_cap<=0.004")
+    elif not intrusion.get("has_user_facing_explanation"):
+        probability = min(probability, 0.30)
+        gate_factors.append("unexplained_cap<=0.300")
+    elif _is_generic_vpp_explanation(proposed_plan):
+        probability = min(probability, 0.42)
+        gate_factors.append("generic_explanation_cap<=0.420")
+    else:
+        q = max(0.0, min(1.0, float(strategy_quality.get("strategy_quality_score", 0.5) or 0.5)))
+        calendar_score = max(
+            0.0,
+            min(1.0, float(((adaptability.get("calendar_fit") or {}).get("calendar_fit_score", 0.5)) or 0.5)),
+        )
+        preference_score = max(
+            0.0,
+            min(1.0, float(((adaptability.get("roleplay_preference_alignment") or {}).get("alignment_score", 0.5)) or 0.5)),
+        )
+        if (
+            q >= 0.70
+            and calendar_score >= 0.60
+            and not intrusion.get("vpp_conflicts")
+            and not intrusion.get("hvac_off")
+            and float(intrusion.get("comfort_excess_c", 0.0) or 0.0) <= 0.25
+            and not intrusion.get("fixed_services_modified")
+            and not intrusion.get("skip_devices")
+        ):
+            probability = max(probability, 0.72)
+            gate_factors.append("high_quality_personalized_prompt_floor>=0.720")
+        probability = min(probability, 0.82)
+        gate_factors.append("personalized_residual_refusal_cap<=0.820")
+    draw = _stable_unit_random(
+        "vpp_acceptance_gate_v4_event_level_draw",
+        (persona_config or {}).get("id", ""),
+        event.get("id", ""),
+    )
+    accepted = bool(draw <= probability)
+    method_key = str(method or "")
+    gate = {
+        "version": "vpp_plan_acceptance_gate_roleplay_prompt_v1",
+        "event_id": event.get("id", ""),
+        "method": method_key,
+        "accepted": accepted,
+        "decision": "accept_vpp_plan" if accepted else "reject_fallback_to_no_vpp_daily_plan",
+        "acceptance_probability": round(probability, 6),
+        "stable_draw": round(draw, 6),
+        "high_confidence_accept": False,
+        "base_override_probability": round(_persona_vpp_override_prob(persona_config), 6),
+        "baseline_acceptance_probability": round(baseline, 6),
+        "factors": gate_factors,
+        "roleplay_acceptance_reasoning": str(roleplay.get("acceptance_reasoning", ""))[:700],
+        "primary_complaint": str(roleplay.get("primary_complaint", ""))[:300],
+        "roleplay_probability_adjustments": list(roleplay.get("adjustments") or [])[:8],
+        "intrusion": intrusion,
+        "strategy_quality": strategy_quality,
+        "acceptance_learning": {
+            "adjustment": 0.0,
+            "factors": ["prompt_gate_uses_persona_strategy_and_roleplay_reasoning_only"],
+        },
+        "adaptability_diagnostics": adaptability,
+        "prompt_gate_metrics": metrics,
+        "proposed_plan": _plan_snapshot_for_gate(proposed_plan),
+        "default_plan": _plan_snapshot_for_gate(default_plan),
+    }
+    if method_key in {"agent", "EnergyBridge"}:
+        gate["energybridge_feedback"] = str(roleplay.get("energybridge_feedback", ""))[:500]
+    return gate
 
 
 def _eb_acceptance_learning_adjustment(
@@ -3271,6 +3678,22 @@ def _evaluate_vpp_plan_acceptance_gate(
         adaptability=adaptability,
         intrusion=intrusion,
     )
+    if _vpp_acceptance_gate_mode() == "roleplay_prompt_v1":
+        return _evaluate_roleplay_prompt_vpp_plan_acceptance_gate(
+            method=method_key,
+            persona_config=persona_config,
+            appliance_config=appliance_config,
+            event=event,
+            proposed_plan=proposed_plan,
+            default_plan=default_plan,
+            rule_milp_plan=rule_milp_plan,
+            past_events=past_events,
+            user_preference_text=user_preference_text,
+            current_hod=current_hod,
+            intrusion=intrusion,
+            adaptability=adaptability,
+            strategy_quality=strategy_quality,
+        )
     generic_user_explanation = bool((proposed_plan or {}).get("generic_user_explanation"))
     score = 0.58
     factors: list[str] = [f"base=0.58", f"persona_override=-{0.14 * override_prob:.3f}"]
@@ -5076,6 +5499,17 @@ def _update_agent_preference_memory(
     memory = getattr(loop, "agent_preference_memory", {}) or {}
     if not memory:
         return
+    _feedback_text = str(
+        event_result.get("controller_feedback")
+        or event_result.get("member_feedback_summary")
+        or event_result.get("comment", "")
+    )
+    _gate_feedback = ""
+    _gate = event_result.get("vpp_acceptance_gate")
+    if isinstance(_gate, dict):
+        _gate_feedback = str(_gate.get("energybridge_feedback", "") or "")
+    if _gate_feedback:
+        _feedback_text = (_feedback_text + " | Gate feedback: " + _gate_feedback).strip(" |")
     event_entry = {
         "event_id": event_result.get("id"),
         "day": event_result.get("day"),
@@ -5085,11 +5519,7 @@ def _update_agent_preference_memory(
         "vpp_score": event_result.get("vpp_score"),
         "user_input": str(event_result.get("user_input", ""))[:500],
         "controller_reason": str(event_result.get("reason", ""))[:500],
-        "feedback": str(
-            event_result.get("controller_feedback")
-            or event_result.get("member_feedback_summary")
-            or event_result.get("comment", "")
-        )[:1200],
+        "feedback": _feedback_text[:1200],
         "vpp_acceptance_gate": event_result.get("vpp_acceptance_gate", {}),
         "target_achieved": event_result.get("target_achieved"),
         "selected_strategy": event_result.get("selected_strategy", {}),

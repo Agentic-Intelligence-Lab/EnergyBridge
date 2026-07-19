@@ -677,6 +677,59 @@ def test_vpp_acceptance_gate_is_method_agnostic_for_identical_plan() -> None:
     assert len(set(draws)) == 1
 
 
+def test_roleplay_prompt_gate_is_opt_in_and_method_agnostic(monkeypatch) -> None:
+    event, appliances, default_plan, rule_plan = _gate_fixture()
+    persona = {
+        "id": "prompt_gate_method_agnostic",
+        "tags": {"price": "price_sensitive", "control": "suggestion_first"},
+        "preferences": {"scoring_weights": {"comfort": 0.35, "energy": 0.35, "vpp": 0.30}},
+    }
+    plan = {
+        "setpoint": 26.0,
+        "appliance_actions": dict(rule_plan["appliance_actions"]),
+        "reason": "Specific comfort-safe VPP plan with appliance timing and routine protection.",
+        "strategy_explanation": {
+            "natural_language": "I will keep comfort protected and move controllable loads out of the VPP hour."
+        },
+    }
+
+    monkeypatch.delenv("ENERGYBRIDGE_VPP_ACCEPTANCE_GATE", raising=False)
+    default_gate = _evaluate_vpp_plan_acceptance_gate(
+        method="EnergyBridge",
+        persona_config=persona,
+        appliance_config=appliances,
+        event=event,
+        proposed_plan=plan,
+        default_plan=default_plan,
+        rule_milp_plan=rule_plan,
+        user_preference_text="Balanced plan is acceptable if comfort and chores are protected.",
+    )
+    assert default_gate["version"] == "vpp_plan_acceptance_gate_v4_event_level_draw"
+
+    monkeypatch.setenv("ENERGYBRIDGE_VPP_ACCEPTANCE_GATE", "roleplay_prompt_v1")
+    monkeypatch.setenv("ENERGYBRIDGE_ROLEPLAY_ACCEPTANCE_GATE_USE_LLM", "0")
+    gates = [
+        _evaluate_vpp_plan_acceptance_gate(
+            method=method,
+            persona_config=persona,
+            appliance_config=appliances,
+            event=event,
+            proposed_plan=plan,
+            default_plan=default_plan,
+            rule_milp_plan=rule_plan,
+            user_preference_text="Balanced plan is acceptable if comfort and chores are protected.",
+        )
+        for method in ("EnergyBridge", "mpc_dynamic", "rule_milp")
+    ]
+
+    assert {gate["version"] for gate in gates} == {"vpp_plan_acceptance_gate_roleplay_prompt_v1"}
+    assert len({gate["acceptance_probability"] for gate in gates}) == 1
+    assert len({gate["stable_draw"] for gate in gates}) == 1
+    assert "energybridge_feedback" in gates[0]
+    assert "energybridge_feedback" not in gates[1]
+    assert gates[0]["baseline_acceptance_probability"] < gates[0]["acceptance_probability"]
+
+
 def test_vpp_acceptance_gate_caps_raw_policy_strategy_without_method_bias() -> None:
     event, appliances, default_plan, rule_plan = _gate_fixture()
     persona = {
