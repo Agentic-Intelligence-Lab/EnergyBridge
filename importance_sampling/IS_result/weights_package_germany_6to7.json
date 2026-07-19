@@ -1,0 +1,1190 @@
+{
+  "case": "Germany June(source) -> July(target) | Scheme 5: Pre-event load + pre-1h temp + VPP-window temp (3D, hourly)",
+  "source_data": "D:\\Pycharm_project\\PycharmProjects\\EnergyBridge\\importance_sampling\\data\\clean_records_285_with_preload.json",
+  "target_data": "D:\\Pycharm_project\\PycharmProjects\\EnergyBridge\\importance_sampling\\data\\july_events_31days.json",
+  "estimator": "LogisticDensityRatio(weight_decay=0.05, lr=0.05, steps=500, seed=0)",
+  "feature_names": [
+    "pre_event_load_kw",
+    "temp_pre_1h",
+    "temp_vpp"
+  ],
+  "n_source": 145,
+  "n_target": 145,
+  "ess_fraction": 0.9635,
+  "weight_min": 0.641,
+  "weight_max": 1.3502,
+  "weight_mean": 0.9934,
+  "per_event_weights": [
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-01|hist_d01_1",
+      "date": "2025-06-01",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 5.102098,
+      "realized_delivery_kwh": 4.2792,
+      "raw_weight": 1.1456
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-02|hist_d02_1_patched",
+      "date": "2025-06-02",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 5.474485,
+      "realized_delivery_kwh": 4.2176,
+      "raw_weight": 1.2704
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-03|hist_d03_1_patched",
+      "date": "2025-06-03",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 5.94694,
+      "realized_delivery_kwh": 4.1747,
+      "raw_weight": 1.1477
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-05|hist_d05_1_patched",
+      "date": "2025-06-05",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 2.024667,
+      "realized_delivery_kwh": 4.2452,
+      "raw_weight": 1.2023
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-06|hist_d06_1",
+      "date": "2025-06-06",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 0.569923,
+      "realized_delivery_kwh": 4.0166,
+      "raw_weight": 1.1805
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-07|hist_d07_1_patched",
+      "date": "2025-06-07",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 1.441096,
+      "realized_delivery_kwh": 4.1044,
+      "raw_weight": 1.219
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-08|hist_d08_1_patched",
+      "date": "2025-06-08",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 0.674761,
+      "realized_delivery_kwh": 3.9811,
+      "raw_weight": 1.3502
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-09|hist_d09_1_patched",
+      "date": "2025-06-09",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 1.841297,
+      "realized_delivery_kwh": 4.1454,
+      "raw_weight": 1.2621
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-10|hist_d10_1",
+      "date": "2025-06-10",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 3.834353,
+      "realized_delivery_kwh": 4.1725,
+      "raw_weight": 1.0638
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-11|hist_d11_1",
+      "date": "2025-06-11",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 6.094151,
+      "realized_delivery_kwh": 4.0391,
+      "raw_weight": 1.2193
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-12|hist_d12_1_patched",
+      "date": "2025-06-12",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 7.133678,
+      "realized_delivery_kwh": 3.7411,
+      "raw_weight": 0.9109
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-13|hist_d13_1_patched",
+      "date": "2025-06-13",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 6.593141,
+      "realized_delivery_kwh": 3.5687,
+      "raw_weight": 0.7646
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-14|hist_d14_1_patched",
+      "date": "2025-06-14",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 6.528455,
+      "realized_delivery_kwh": 3.513,
+      "raw_weight": 0.8633
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-15|hist_d15_1_patched",
+      "date": "2025-06-15",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 4.550253,
+      "realized_delivery_kwh": 4.0638,
+      "raw_weight": 1.211
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-16|hist_d16_1_patched",
+      "date": "2025-06-16",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 6.265832,
+      "realized_delivery_kwh": 4.0163,
+      "raw_weight": 1.1231
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-17|hist_d17_1",
+      "date": "2025-06-17",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 17.839425,
+      "realized_delivery_kwh": 3.5136,
+      "raw_weight": 1.2229
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-18|hist_d18_1_patched",
+      "date": "2025-06-18",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 7.209624,
+      "realized_delivery_kwh": 3.5944,
+      "raw_weight": 0.906
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-19|hist_d19_1",
+      "date": "2025-06-19",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 7.312046,
+      "realized_delivery_kwh": 3.7131,
+      "raw_weight": 1.117
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-20|hist_d20_1",
+      "date": "2025-06-20",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 6.11575,
+      "realized_delivery_kwh": 3.8679,
+      "raw_weight": 0.9905
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-21|hist_d21_1_patched",
+      "date": "2025-06-21",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 6.403395,
+      "realized_delivery_kwh": 3.6017,
+      "raw_weight": 0.8249
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-22|hist_d22_1_patched",
+      "date": "2025-06-22",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 6.741478,
+      "realized_delivery_kwh": 3.3712,
+      "raw_weight": 0.7106
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-23|hist_d23_1",
+      "date": "2025-06-23",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 6.124549,
+      "realized_delivery_kwh": 3.7834,
+      "raw_weight": 1.0465
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-24|hist_d24_1",
+      "date": "2025-06-24",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 6.260365,
+      "realized_delivery_kwh": 3.7497,
+      "raw_weight": 0.9195
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-25|hist_d25_1_patched",
+      "date": "2025-06-25",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 6.625791,
+      "realized_delivery_kwh": 3.4851,
+      "raw_weight": 0.757
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-26|hist_d26_1_patched",
+      "date": "2025-06-26",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 5.209529,
+      "realized_delivery_kwh": 3.7299,
+      "raw_weight": 1.03
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-27|hist_d27_1_patched",
+      "date": "2025-06-27",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 4.705045,
+      "realized_delivery_kwh": 4.0394,
+      "raw_weight": 1.0392
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-28|hist_d28_1_patched",
+      "date": "2025-06-28",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 6.757826,
+      "realized_delivery_kwh": 3.4213,
+      "raw_weight": 0.8238
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-29|hist_d29_1_patched",
+      "date": "2025-06-29",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 6.703369,
+      "realized_delivery_kwh": 3.299,
+      "raw_weight": 0.7539
+    },
+    {
+      "memory_event_id": "household_s1_dual_commuter_standard|germany|EnergyBridge|2025-06-30|hist_d30_1_patched",
+      "date": "2025-06-30",
+      "household_id": "household_s1_dual_commuter_standard",
+      "pre_event_load_kw": 6.706256,
+      "realized_delivery_kwh": 3.2814,
+      "raw_weight": 0.7382
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-01|hist_d01_1",
+      "date": "2025-06-01",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 1.423524,
+      "realized_delivery_kwh": 4.343,
+      "raw_weight": 1.0582
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-02|hist_d02_1_patched",
+      "date": "2025-06-02",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 1.213227,
+      "realized_delivery_kwh": 4.2587,
+      "raw_weight": 1.1588
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-03|hist_d03_1_patched",
+      "date": "2025-06-03",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 1.332736,
+      "realized_delivery_kwh": 4.2838,
+      "raw_weight": 1.039
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-05|hist_d05_1_patched",
+      "date": "2025-06-05",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 0.896304,
+      "realized_delivery_kwh": 4.2239,
+      "raw_weight": 1.1734
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-06|hist_d06_1",
+      "date": "2025-06-06",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 0.559741,
+      "realized_delivery_kwh": 4.0975,
+      "raw_weight": 1.1803
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-07|hist_d07_1_patched",
+      "date": "2025-06-07",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 0.838265,
+      "realized_delivery_kwh": 4.1474,
+      "raw_weight": 1.2033
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-08|hist_d08_1_patched",
+      "date": "2025-06-08",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 0.548962,
+      "realized_delivery_kwh": 3.9799,
+      "raw_weight": 1.3466
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-09|hist_d09_1_patched",
+      "date": "2025-06-09",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 0.791619,
+      "realized_delivery_kwh": 4.1454,
+      "raw_weight": 1.2339
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-10|hist_d10_1",
+      "date": "2025-06-10",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 1.179309,
+      "realized_delivery_kwh": 4.1957,
+      "raw_weight": 1.0046
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-11|hist_d11_1",
+      "date": "2025-06-11",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 1.270753,
+      "realized_delivery_kwh": 4.1641,
+      "raw_weight": 1.0988
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-12|hist_d12_1_patched",
+      "date": "2025-06-12",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 1.713274,
+      "realized_delivery_kwh": 4.2105,
+      "raw_weight": 0.8104
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-13|hist_d13_1_patched",
+      "date": "2025-06-13",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 2.113289,
+      "realized_delivery_kwh": 4.2049,
+      "raw_weight": 0.6942
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-14|hist_d14_1_patched",
+      "date": "2025-06-14",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 2.092839,
+      "realized_delivery_kwh": 4.2225,
+      "raw_weight": 0.7845
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-15|hist_d15_1_patched",
+      "date": "2025-06-15",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 1.193721,
+      "realized_delivery_kwh": 4.1163,
+      "raw_weight": 1.1264
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-16|hist_d16_1_patched",
+      "date": "2025-06-16",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 1.282247,
+      "realized_delivery_kwh": 4.1325,
+      "raw_weight": 1.0087
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-17|hist_d17_1",
+      "date": "2025-06-17",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 1.682692,
+      "realized_delivery_kwh": 4.1456,
+      "raw_weight": 0.863
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-18|hist_d18_1_patched",
+      "date": "2025-06-18",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 1.790093,
+      "realized_delivery_kwh": 4.1507,
+      "raw_weight": 0.806
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-19|hist_d19_1",
+      "date": "2025-06-19",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 4.981677,
+      "realized_delivery_kwh": 4.1386,
+      "raw_weight": 1.0622
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-20|hist_d20_1",
+      "date": "2025-06-20",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 1.577394,
+      "realized_delivery_kwh": 4.1163,
+      "raw_weight": 0.8981
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-21|hist_d21_1_patched",
+      "date": "2025-06-21",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 1.849786,
+      "realized_delivery_kwh": 4.1184,
+      "raw_weight": 0.7477
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-22|hist_d22_1_patched",
+      "date": "2025-06-22",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 1.965893,
+      "realized_delivery_kwh": 3.9502,
+      "raw_weight": 0.641
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-23|hist_d23_1",
+      "date": "2025-06-23",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 1.638432,
+      "realized_delivery_kwh": 4.0956,
+      "raw_weight": 0.95
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-24|hist_d24_1",
+      "date": "2025-06-24",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 1.735289,
+      "realized_delivery_kwh": 4.1088,
+      "raw_weight": 0.834
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-25|hist_d25_1_patched",
+      "date": "2025-06-25",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 2.111384,
+      "realized_delivery_kwh": 4.104,
+      "raw_weight": 0.6867
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-26|hist_d26_1_patched",
+      "date": "2025-06-26",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 1.813773,
+      "realized_delivery_kwh": 4.094,
+      "raw_weight": 0.9573
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-27|hist_d27_1_patched",
+      "date": "2025-06-27",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 1.377382,
+      "realized_delivery_kwh": 4.0944,
+      "raw_weight": 0.9672
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-28|hist_d28_1_patched",
+      "date": "2025-06-28",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 2.012581,
+      "realized_delivery_kwh": 4.0906,
+      "raw_weight": 0.7436
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-29|hist_d29_1_patched",
+      "date": "2025-06-29",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 2.15363,
+      "realized_delivery_kwh": 3.9993,
+      "raw_weight": 0.6834
+    },
+    {
+      "memory_event_id": "household_s2_multigeneration_caregiver|germany|EnergyBridge|2025-06-30|hist_d30_1_patched",
+      "date": "2025-06-30",
+      "household_id": "household_s2_multigeneration_caregiver",
+      "pre_event_load_kw": 2.155324,
+      "realized_delivery_kwh": 3.9901,
+      "raw_weight": 0.6692
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-01|hist_d01_1",
+      "date": "2025-06-01",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 1.529672,
+      "realized_delivery_kwh": 4.4011,
+      "raw_weight": 1.0606
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-02|hist_d02_1_patched",
+      "date": "2025-06-02",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 1.28443,
+      "realized_delivery_kwh": 4.3268,
+      "raw_weight": 1.1606
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-03|hist_d03_1_patched",
+      "date": "2025-06-03",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 1.409336,
+      "realized_delivery_kwh": 4.3438,
+      "raw_weight": 1.0407
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-05|hist_d05_1_patched",
+      "date": "2025-06-05",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 0.946816,
+      "realized_delivery_kwh": 4.2449,
+      "raw_weight": 1.1746
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-06|hist_d06_1",
+      "date": "2025-06-06",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 0.555304,
+      "realized_delivery_kwh": 4.0487,
+      "raw_weight": 1.1801
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-07|hist_d07_1_patched",
+      "date": "2025-06-07",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 0.866163,
+      "realized_delivery_kwh": 4.1089,
+      "raw_weight": 1.204
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-08|hist_d08_1_patched",
+      "date": "2025-06-08",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 0.546772,
+      "realized_delivery_kwh": 3.9792,
+      "raw_weight": 1.3465
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-09|hist_d09_1_patched",
+      "date": "2025-06-09",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 0.830551,
+      "realized_delivery_kwh": 4.15,
+      "raw_weight": 1.2349
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-10|hist_d10_1",
+      "date": "2025-06-10",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 1.241786,
+      "realized_delivery_kwh": 4.2725,
+      "raw_weight": 1.0059
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-11|hist_d11_1",
+      "date": "2025-06-11",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 1.338861,
+      "realized_delivery_kwh": 4.2728,
+      "raw_weight": 1.1004
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-12|hist_d12_1_patched",
+      "date": "2025-06-12",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 1.978478,
+      "realized_delivery_kwh": 4.3202,
+      "raw_weight": 0.8151
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-13|hist_d13_1_patched",
+      "date": "2025-06-13",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 2.128628,
+      "realized_delivery_kwh": 4.285,
+      "raw_weight": 0.6944
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-14|hist_d14_1_patched",
+      "date": "2025-06-14",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 2.10212,
+      "realized_delivery_kwh": 4.2901,
+      "raw_weight": 0.7847
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-15|hist_d15_1_patched",
+      "date": "2025-06-15",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 1.280778,
+      "realized_delivery_kwh": 4.1928,
+      "raw_weight": 1.1285
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-16|hist_d16_1_patched",
+      "date": "2025-06-16",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 1.362413,
+      "realized_delivery_kwh": 4.1817,
+      "raw_weight": 1.0104
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-17|hist_d17_1",
+      "date": "2025-06-17",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 1.962569,
+      "realized_delivery_kwh": 4.2516,
+      "raw_weight": 0.8683
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-18|hist_d18_1_patched",
+      "date": "2025-06-18",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 1.919924,
+      "realized_delivery_kwh": 4.2418,
+      "raw_weight": 0.8083
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-19|hist_d19_1",
+      "date": "2025-06-19",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 5.301602,
+      "realized_delivery_kwh": 4.2515,
+      "raw_weight": 1.0696
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-20|hist_d20_1",
+      "date": "2025-06-20",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 1.670402,
+      "realized_delivery_kwh": 4.2299,
+      "raw_weight": 0.9
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-21|hist_d21_1_patched",
+      "date": "2025-06-21",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 1.974878,
+      "realized_delivery_kwh": 4.2142,
+      "raw_weight": 0.7497
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-22|hist_d22_1_patched",
+      "date": "2025-06-22",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 2.177478,
+      "realized_delivery_kwh": 4.1046,
+      "raw_weight": 0.6439
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-23|hist_d23_1",
+      "date": "2025-06-23",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 1.911491,
+      "realized_delivery_kwh": 4.2188,
+      "raw_weight": 0.9556
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-24|hist_d24_1",
+      "date": "2025-06-24",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 2.025387,
+      "realized_delivery_kwh": 4.2251,
+      "raw_weight": 0.8392
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-25|hist_d25_1_patched",
+      "date": "2025-06-25",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 2.136493,
+      "realized_delivery_kwh": 4.1864,
+      "raw_weight": 0.6871
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-26|hist_d26_1_patched",
+      "date": "2025-06-26",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 1.906527,
+      "realized_delivery_kwh": 4.2227,
+      "raw_weight": 0.9592
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-27|hist_d27_1_patched",
+      "date": "2025-06-27",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 1.451936,
+      "realized_delivery_kwh": 4.1443,
+      "raw_weight": 0.9688
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-28|hist_d28_1_patched",
+      "date": "2025-06-28",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 2.097357,
+      "realized_delivery_kwh": 4.1741,
+      "raw_weight": 0.745
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-29|hist_d29_1_patched",
+      "date": "2025-06-29",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 1.815722,
+      "realized_delivery_kwh": 3.9238,
+      "raw_weight": 0.6785
+    },
+    {
+      "memory_event_id": "household_s3_hybrid_work_from_home|germany|EnergyBridge|2025-06-30|hist_d30_1_patched",
+      "date": "2025-06-30",
+      "household_id": "household_s3_hybrid_work_from_home",
+      "pre_event_load_kw": 2.160053,
+      "realized_delivery_kwh": 4.1014,
+      "raw_weight": 0.6693
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-01|hist_d01_1",
+      "date": "2025-06-01",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 5.102098,
+      "realized_delivery_kwh": 4.2792,
+      "raw_weight": 1.1456
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-02|hist_d02_1_patched",
+      "date": "2025-06-02",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 5.474485,
+      "realized_delivery_kwh": 4.2176,
+      "raw_weight": 1.2704
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-03|hist_d03_1_patched",
+      "date": "2025-06-03",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 5.94694,
+      "realized_delivery_kwh": 4.1747,
+      "raw_weight": 1.1477
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-05|hist_d05_1_patched",
+      "date": "2025-06-05",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 2.024667,
+      "realized_delivery_kwh": 4.2452,
+      "raw_weight": 1.2023
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-06|hist_d06_1",
+      "date": "2025-06-06",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 0.569923,
+      "realized_delivery_kwh": 4.0166,
+      "raw_weight": 1.1805
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-07|hist_d07_1_patched",
+      "date": "2025-06-07",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 1.441096,
+      "realized_delivery_kwh": 4.1044,
+      "raw_weight": 1.219
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-08|hist_d08_1_patched",
+      "date": "2025-06-08",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 0.674761,
+      "realized_delivery_kwh": 3.9811,
+      "raw_weight": 1.3502
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-09|hist_d09_1_patched",
+      "date": "2025-06-09",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 1.841297,
+      "realized_delivery_kwh": 4.1454,
+      "raw_weight": 1.2621
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-10|hist_d10_1",
+      "date": "2025-06-10",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 3.834353,
+      "realized_delivery_kwh": 4.1725,
+      "raw_weight": 1.0638
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-11|hist_d11_1",
+      "date": "2025-06-11",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 6.094151,
+      "realized_delivery_kwh": 4.0391,
+      "raw_weight": 1.2193
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-12|hist_d12_1_patched",
+      "date": "2025-06-12",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 7.133678,
+      "realized_delivery_kwh": 3.7411,
+      "raw_weight": 0.9109
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-13|hist_d13_1_patched",
+      "date": "2025-06-13",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 6.593141,
+      "realized_delivery_kwh": 3.5687,
+      "raw_weight": 0.7646
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-14|hist_d14_1_patched",
+      "date": "2025-06-14",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 6.528455,
+      "realized_delivery_kwh": 3.513,
+      "raw_weight": 0.8633
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-15|hist_d15_1_patched",
+      "date": "2025-06-15",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 4.550253,
+      "realized_delivery_kwh": 4.0638,
+      "raw_weight": 1.211
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-16|hist_d16_1_patched",
+      "date": "2025-06-16",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 6.265832,
+      "realized_delivery_kwh": 4.0163,
+      "raw_weight": 1.1231
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-17|hist_d17_1",
+      "date": "2025-06-17",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 7.10783,
+      "realized_delivery_kwh": 3.6355,
+      "raw_weight": 0.9702
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-18|hist_d18_1_patched",
+      "date": "2025-06-18",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 7.209624,
+      "realized_delivery_kwh": 3.5944,
+      "raw_weight": 0.906
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-19|hist_d19_1",
+      "date": "2025-06-19",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 7.312046,
+      "realized_delivery_kwh": 3.7131,
+      "raw_weight": 1.117
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-20|hist_d20_1",
+      "date": "2025-06-20",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 6.11575,
+      "realized_delivery_kwh": 3.8679,
+      "raw_weight": 0.9905
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-21|hist_d21_1_patched",
+      "date": "2025-06-21",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 6.403395,
+      "realized_delivery_kwh": 3.6017,
+      "raw_weight": 0.8249
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-22|hist_d22_1_patched",
+      "date": "2025-06-22",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 6.741478,
+      "realized_delivery_kwh": 3.3712,
+      "raw_weight": 0.7106
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-23|hist_d23_1",
+      "date": "2025-06-23",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 6.124549,
+      "realized_delivery_kwh": 3.7834,
+      "raw_weight": 1.0465
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-24|hist_d24_1",
+      "date": "2025-06-24",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 6.260365,
+      "realized_delivery_kwh": 3.7497,
+      "raw_weight": 0.9195
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-25|hist_d25_1_patched",
+      "date": "2025-06-25",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 6.625791,
+      "realized_delivery_kwh": 3.4851,
+      "raw_weight": 0.757
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-26|hist_d26_1_patched",
+      "date": "2025-06-26",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 5.209529,
+      "realized_delivery_kwh": 3.7299,
+      "raw_weight": 1.03
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-27|hist_d27_1_patched",
+      "date": "2025-06-27",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 4.705045,
+      "realized_delivery_kwh": 4.0394,
+      "raw_weight": 1.0392
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-28|hist_d28_1_patched",
+      "date": "2025-06-28",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 6.757826,
+      "realized_delivery_kwh": 3.4213,
+      "raw_weight": 0.8238
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-29|hist_d29_1_patched",
+      "date": "2025-06-29",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 6.703369,
+      "realized_delivery_kwh": 3.299,
+      "raw_weight": 0.7539
+    },
+    {
+      "memory_event_id": "household_s4_ev_commuter_flexible|germany|EnergyBridge|2025-06-30|hist_d30_1_patched",
+      "date": "2025-06-30",
+      "household_id": "household_s4_ev_commuter_flexible",
+      "pre_event_load_kw": 6.706256,
+      "realized_delivery_kwh": 3.2814,
+      "raw_weight": 0.7382
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-01|hist_d01_1",
+      "date": "2025-06-01",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 5.102098,
+      "realized_delivery_kwh": 4.2792,
+      "raw_weight": 1.1456
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-02|hist_d02_1_patched",
+      "date": "2025-06-02",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 5.474485,
+      "realized_delivery_kwh": 4.2176,
+      "raw_weight": 1.2704
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-03|hist_d03_1_patched",
+      "date": "2025-06-03",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 5.94694,
+      "realized_delivery_kwh": 4.1747,
+      "raw_weight": 1.1477
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-05|hist_d05_1_patched",
+      "date": "2025-06-05",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 2.024667,
+      "realized_delivery_kwh": 4.2452,
+      "raw_weight": 1.2023
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-06|hist_d06_1",
+      "date": "2025-06-06",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 0.569923,
+      "realized_delivery_kwh": 4.0166,
+      "raw_weight": 1.1805
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-07|hist_d07_1_patched",
+      "date": "2025-06-07",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 1.441096,
+      "realized_delivery_kwh": 4.1044,
+      "raw_weight": 1.219
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-08|hist_d08_1_patched",
+      "date": "2025-06-08",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 0.674761,
+      "realized_delivery_kwh": 3.9811,
+      "raw_weight": 1.3502
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-09|hist_d09_1_patched",
+      "date": "2025-06-09",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 1.841297,
+      "realized_delivery_kwh": 4.1454,
+      "raw_weight": 1.2621
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-10|hist_d10_1",
+      "date": "2025-06-10",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 3.834353,
+      "realized_delivery_kwh": 4.1725,
+      "raw_weight": 1.0638
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-11|hist_d11_1",
+      "date": "2025-06-11",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 6.094151,
+      "realized_delivery_kwh": 4.0391,
+      "raw_weight": 1.2193
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-12|hist_d12_1_patched",
+      "date": "2025-06-12",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 7.133678,
+      "realized_delivery_kwh": 3.7411,
+      "raw_weight": 0.9109
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-13|hist_d13_1_patched",
+      "date": "2025-06-13",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 6.593141,
+      "realized_delivery_kwh": 3.5687,
+      "raw_weight": 0.7646
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-14|hist_d14_1_patched",
+      "date": "2025-06-14",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 6.528455,
+      "realized_delivery_kwh": 3.513,
+      "raw_weight": 0.8633
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-15|hist_d15_1_patched",
+      "date": "2025-06-15",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 4.550253,
+      "realized_delivery_kwh": 4.0638,
+      "raw_weight": 1.211
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-16|hist_d16_1_patched",
+      "date": "2025-06-16",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 6.265832,
+      "realized_delivery_kwh": 4.0163,
+      "raw_weight": 1.1231
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-17|hist_d17_1",
+      "date": "2025-06-17",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 7.10783,
+      "realized_delivery_kwh": 3.6355,
+      "raw_weight": 0.9702
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-18|hist_d18_1_patched",
+      "date": "2025-06-18",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 7.209624,
+      "realized_delivery_kwh": 3.5944,
+      "raw_weight": 0.906
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-19|hist_d19_1",
+      "date": "2025-06-19",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 7.312046,
+      "realized_delivery_kwh": 3.7131,
+      "raw_weight": 1.117
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-20|hist_d20_1",
+      "date": "2025-06-20",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 6.11575,
+      "realized_delivery_kwh": 3.8679,
+      "raw_weight": 0.9905
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-21|hist_d21_1_patched",
+      "date": "2025-06-21",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 6.403395,
+      "realized_delivery_kwh": 3.6017,
+      "raw_weight": 0.8249
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-22|hist_d22_1_patched",
+      "date": "2025-06-22",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 6.741478,
+      "realized_delivery_kwh": 3.3712,
+      "raw_weight": 0.7106
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-23|hist_d23_1",
+      "date": "2025-06-23",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 6.124549,
+      "realized_delivery_kwh": 3.7834,
+      "raw_weight": 1.0465
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-24|hist_d24_1",
+      "date": "2025-06-24",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 6.260365,
+      "realized_delivery_kwh": 3.7497,
+      "raw_weight": 0.9195
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-25|hist_d25_1_patched",
+      "date": "2025-06-25",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 6.625791,
+      "realized_delivery_kwh": 3.4851,
+      "raw_weight": 0.757
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-26|hist_d26_1_patched",
+      "date": "2025-06-26",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 5.209529,
+      "realized_delivery_kwh": 3.7299,
+      "raw_weight": 1.03
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-27|hist_d27_1_patched",
+      "date": "2025-06-27",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 12.620357,
+      "realized_delivery_kwh": 4.064,
+      "raw_weight": 1.2327
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-28|hist_d28_1_patched",
+      "date": "2025-06-28",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 6.757826,
+      "realized_delivery_kwh": 3.4213,
+      "raw_weight": 0.8238
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-29|hist_d29_1_patched",
+      "date": "2025-06-29",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 6.703369,
+      "realized_delivery_kwh": 3.299,
+      "raw_weight": 0.7539
+    },
+    {
+      "memory_event_id": "household_s5_shared_roommates_irregular|germany|EnergyBridge|2025-06-30|hist_d30_1_patched",
+      "date": "2025-06-30",
+      "household_id": "household_s5_shared_roommates_irregular",
+      "pre_event_load_kw": 6.706256,
+      "realized_delivery_kwh": 3.2814,
+      "raw_weight": 0.7382
+    }
+  ],
+  "validation": {
+    "predicted_p50_kwh": 4.094,
+    "predicted_p25_kwh": 3.7497,
+    "predicted_p75_kwh": 4.1866,
+    "mae_is_kwh": 0.4539,
+    "mae_baseline_kwh": 0.4872,
+    "mae_improvement_pct": 6.83,
+    "rmse_is_kwh": 0.5264,
+    "rmse_baseline_kwh": 0.5421,
+    "rmse_improvement_pct": 2.89
+  }
+}
