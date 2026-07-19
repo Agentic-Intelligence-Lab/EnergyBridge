@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 import experiments.benchmark.family_runner as fr
 from experiments.benchmark.family_runner import (
     _FamilyLoop,
@@ -28,6 +30,12 @@ from experiments.benchmark.family_runner import (
     _roleplay_middle_acceptance_floor,
     _vpp_plan_intrusion_metrics,
 )
+
+
+@pytest.fixture(autouse=True)
+def _use_legacy_gate_for_existing_tests(monkeypatch) -> None:
+    monkeypatch.setenv("ENERGYBRIDGE_VPP_ACCEPTANCE_GATE", "heuristic_v4")
+    monkeypatch.setenv("ENERGYBRIDGE_ROLEPLAY_ACCEPTANCE_GATE_USE_LLM", "0")
 
 
 def test_acceptance_fallback_disable_switch_is_env_scoped(monkeypatch) -> None:
@@ -677,7 +685,7 @@ def test_vpp_acceptance_gate_is_method_agnostic_for_identical_plan() -> None:
     assert len(set(draws)) == 1
 
 
-def test_roleplay_prompt_gate_is_opt_in_and_method_agnostic(monkeypatch) -> None:
+def test_roleplay_prompt_gate_is_default_and_legacy_is_env_selectable(monkeypatch) -> None:
     event, appliances, default_plan, rule_plan = _gate_fixture()
     persona = {
         "id": "prompt_gate_method_agnostic",
@@ -694,6 +702,20 @@ def test_roleplay_prompt_gate_is_opt_in_and_method_agnostic(monkeypatch) -> None
     }
 
     monkeypatch.delenv("ENERGYBRIDGE_VPP_ACCEPTANCE_GATE", raising=False)
+    monkeypatch.setenv("ENERGYBRIDGE_ROLEPLAY_ACCEPTANCE_GATE_USE_LLM", "0")
+    prompt_gate = _evaluate_vpp_plan_acceptance_gate(
+        method="EnergyBridge",
+        persona_config=persona,
+        appliance_config=appliances,
+        event=event,
+        proposed_plan=plan,
+        default_plan=default_plan,
+        rule_milp_plan=rule_plan,
+        user_preference_text="Balanced plan is acceptable if comfort and chores are protected.",
+    )
+    assert prompt_gate["version"] == "vpp_plan_acceptance_gate_roleplay_prompt_v1"
+
+    monkeypatch.setenv("ENERGYBRIDGE_VPP_ACCEPTANCE_GATE", "heuristic_v4")
     default_gate = _evaluate_vpp_plan_acceptance_gate(
         method="EnergyBridge",
         persona_config=persona,
@@ -707,7 +729,6 @@ def test_roleplay_prompt_gate_is_opt_in_and_method_agnostic(monkeypatch) -> None
     assert default_gate["version"] == "vpp_plan_acceptance_gate_v4_event_level_draw"
 
     monkeypatch.setenv("ENERGYBRIDGE_VPP_ACCEPTANCE_GATE", "roleplay_prompt_v1")
-    monkeypatch.setenv("ENERGYBRIDGE_ROLEPLAY_ACCEPTANCE_GATE_USE_LLM", "0")
     gates = [
         _evaluate_vpp_plan_acceptance_gate(
             method=method,
@@ -761,6 +782,25 @@ def test_vpp_acceptance_gate_caps_raw_policy_strategy_without_method_bias() -> N
 
     assert {gate["acceptance_probability"] for gate in gates} == {0.004}
     assert all(gate["intrusion"]["raw_policy_only"] for gate in gates)
+
+    with pytest.MonkeyPatch.context() as prompt_env:
+        prompt_env.setenv("ENERGYBRIDGE_VPP_ACCEPTANCE_GATE", "roleplay_prompt_v1")
+        prompt_env.setenv("ENERGYBRIDGE_ROLEPLAY_ACCEPTANCE_GATE_USE_LLM", "0")
+        prompt_gates = [
+            _evaluate_vpp_plan_acceptance_gate(
+                method=method,
+                persona_config=persona,
+                appliance_config=appliances,
+                event=event,
+                proposed_plan=raw_plan,
+                default_plan=default_plan,
+                rule_milp_plan=rule_plan,
+                user_preference_text="I can cooperate if the plan is clear and still comfortable.",
+            )
+            for method in ("rl_ppo_pref_v2", "EnergyBridge", "mpc_dynamic")
+        ]
+    assert {gate["acceptance_probability"] for gate in prompt_gates} == {0.05}
+    assert all("raw_policy_low_acceptance_band=0.050-0.060" in gate["factors"] for gate in prompt_gates)
 
 
 def test_vpp_acceptance_gate_caps_unexplained_strategy_without_method_bias() -> None:

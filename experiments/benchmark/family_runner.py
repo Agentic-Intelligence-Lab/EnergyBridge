@@ -53,7 +53,7 @@ def _acceptance_fallback_disabled() -> bool:
 
 def _vpp_acceptance_gate_mode() -> str:
     """Select the VPP consent gate implementation without changing defaults."""
-    return str(os.getenv("ENERGYBRIDGE_VPP_ACCEPTANCE_GATE", "heuristic_v4")).strip().lower()
+    return str(os.getenv("ENERGYBRIDGE_VPP_ACCEPTANCE_GATE", "roleplay_prompt_v1")).strip().lower()
 
 
 OCCUPIED_START = 8.0; OCCUPIED_END = 22.0
@@ -3027,6 +3027,7 @@ def _evaluate_household_vpp_plan_acceptance_gate(
     weighted_mean = weighted_total / weight_total
     key_min = min(key_probs) if key_probs else min(float(item["acceptance_probability"]) for item in member_items)
     household_score = 0.65 * weighted_mean + 0.35 * key_min
+    gate_mode = _vpp_acceptance_gate_mode()
     factors = [
         "household_veto_aware_weighted_consent",
         f"member_weighted_mean={weighted_mean:.3f}",
@@ -3041,26 +3042,49 @@ def _evaluate_household_vpp_plan_acceptance_gate(
         event=event,
         current_hod=current_hod,
     )
-    if household_intrusion.get("skip_devices"):
-        household_score = min(household_score, 0.18)
-        factors.append("household_skip_service_veto_cap<=0.180")
-    if household_intrusion.get("fixed_services_modified") and key_min < 0.40:
-        household_score = min(household_score, 0.25)
-        factors.append("household_key_member_fixed_routine_cap<=0.250")
-    if not household_intrusion.get("raw_policy_only") and not household_intrusion.get("has_user_facing_explanation"):
-        household_score = min(household_score, 0.25)
-        factors.append("household_no_user_facing_explanation_cap<=0.250")
-    if household_intrusion.get("raw_policy_only"):
-        household_score = min(household_score, 0.004)
-        factors.append("household_raw_policy_cap<=0.004")
-    if household_intrusion.get("comfort_excess_c", 0.0) > 0.75 and key_min < 0.35:
-        household_score = min(household_score, 0.16)
-        factors.append("household_key_comfort_veto_cap<=0.160")
-
-    gate_mode = _vpp_acceptance_gate_mode()
+    if gate_mode == "roleplay_prompt_v1":
+        if household_intrusion.get("skip_devices"):
+            household_score = min(household_score, 0.20)
+            factors.append("household_skip_service_veto_cap<=0.200")
+        if household_intrusion.get("fixed_services_modified") and key_min < 0.40:
+            household_score = min(household_score, 0.30)
+            factors.append("household_key_member_fixed_routine_cap<=0.300")
+        if not household_intrusion.get("raw_policy_only") and not household_intrusion.get("has_user_facing_explanation"):
+            household_score = min(household_score, 0.36)
+            factors.append("household_no_user_facing_explanation_cap<=0.360")
+        if household_intrusion.get("raw_policy_only"):
+            household_score = min(max(household_score, 0.05), 0.06)
+            factors.append("household_raw_policy_low_acceptance_band=0.050-0.060")
+        if (
+            not household_intrusion.get("raw_policy_only")
+            and household_intrusion.get("comfort_excess_c", 0.0) > 0.75
+            and key_min < 0.35
+        ):
+            household_score = min(max(household_score, 0.12), 0.30)
+            factors.append("household_key_comfort_veto_cap<=0.300")
+    else:
+        if household_intrusion.get("skip_devices"):
+            household_score = min(household_score, 0.18)
+            factors.append("household_skip_service_veto_cap<=0.180")
+        if household_intrusion.get("fixed_services_modified") and key_min < 0.40:
+            household_score = min(household_score, 0.25)
+            factors.append("household_key_member_fixed_routine_cap<=0.250")
+        if not household_intrusion.get("raw_policy_only") and not household_intrusion.get("has_user_facing_explanation"):
+            household_score = min(household_score, 0.25)
+            factors.append("household_no_user_facing_explanation_cap<=0.250")
+        if household_intrusion.get("raw_policy_only"):
+            household_score = min(household_score, 0.004)
+            factors.append("household_raw_policy_cap<=0.004")
+        if household_intrusion.get("comfort_excess_c", 0.0) > 0.75 and key_min < 0.35:
+            household_score = min(household_score, 0.16)
+            factors.append("household_key_comfort_veto_cap<=0.160")
     probability = _bounded_probability(
         household_score,
-        lo=0.004 if household_intrusion.get("raw_policy_only") else 0.03,
+        lo=(
+            0.05
+            if gate_mode == "roleplay_prompt_v1" and household_intrusion.get("raw_policy_only")
+            else (0.004 if household_intrusion.get("raw_policy_only") else 0.03)
+        ),
         hi=ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP if not household_intrusion.get("raw_policy_only") else 1.0,
     )
     if not household_intrusion.get("raw_policy_only") and probability >= ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP:
@@ -3250,11 +3274,16 @@ def _deterministic_roleplay_prompt_gate_estimate(
     has_explanation = bool(intrusion.get("has_user_facing_explanation"))
     generic = _is_generic_vpp_explanation(proposed_plan) or overall < 0.60
     if intrusion.get("raw_policy_only"):
-        probability = 0.004
-        adjustments.append({"delta": "cap", "reason": "raw policy without usable user-facing consent"})
+        add(-0.06, "raw technical policy felt hard to trust")
+        probability = max(probability, 0.05)
+        probability = min(probability, 0.06)
+        adjustments.append({"delta": "band", "reason": "raw policy low but nonzero acceptance band"})
     elif not has_explanation:
-        add(-0.04, "no user-facing explanation")
-        probability = min(probability, 0.30)
+        add(0.06, "the action is understandable even without a user-facing explanation")
+        if not intrusion.get("skip_devices") and not intrusion.get("fixed_services_modified"):
+            probability = max(probability, baseline + 0.08)
+            adjustments.append({"delta": "floor", "reason": "service-safe unexplained plan residual willingness"})
+        probability = min(probability, 0.38)
         adjustments.append({"delta": "cap", "reason": "unexplained plan acceptance cap"})
     elif generic:
         add(0.10, "generic but understandable explanation")
@@ -3264,10 +3293,10 @@ def _deterministic_roleplay_prompt_gate_estimate(
         add(0.18, "specific explanation made the plan easier to trust")
 
     if intrusion.get("hvac_off"):
-        add(-0.10, "HVAC-off felt too aggressive")
+        add(-0.06, "HVAC-off felt aggressive")
     comfort_excess = float(intrusion.get("comfort_excess_c", 0.0) or 0.0)
     if comfort_excess > 0.0:
-        add(-min(0.20, 0.033 * comfort_excess), "temperature moved beyond comfort tolerance")
+        add(-min(0.14, 0.022 * comfort_excess), "temperature moved beyond comfort tolerance")
     conflict_count = len(intrusion.get("vpp_conflicts") or [])
     if conflict_count:
         add(-min(0.18, 0.075 * conflict_count), "some appliance timing still conflicted with the VPP window")
@@ -3447,7 +3476,8 @@ def _evaluate_roleplay_prompt_vpp_plan_acceptance_gate(
         "Start from the suggested baseline acceptance probability, then adjust it only based on what the plan would feel like: comfort, schedule/calendar fit, appliance service reliability, VPP-window intrusion, and explanation clarity. "
         "The ordinary no-VPP plan remains the fallback for services that are not changed by the VPP dispatch, so do not penalize a VPP plan merely because it lists only the changed actions when diagnostics show no skipped service, no fixed-routine modification, and no VPP conflict. "
         "The baseline should usually stay low: it is just the user's prior willingness before seeing the concrete plan. "
-        "A raw technical policy or unexplained plan should remain unlikely to be accepted. "
+        "A raw technical policy should remain unlikely but not impossible to accept; many users would be around 3-8% unless comfort or service clearly fails. "
+        "An unexplained but service-safe plan can still be accepted by some price/grid-motivated or high-trust users, often in the 10-38% range. "
         "A specific, comfort-safe, service-safe, calendar-aware explanation can raise acceptance substantially, but keep some residual refusal probability. "
         "Return only valid JSON."
     )
@@ -3487,11 +3517,14 @@ def _evaluate_roleplay_prompt_vpp_plan_acceptance_gate(
         f"roleplay_source={roleplay.get('source', 'unknown')}",
     ]
     if intrusion.get("raw_policy_only"):
-        probability = min(probability, 0.004)
-        gate_factors.append("raw_policy_cap<=0.004")
+        probability = min(max(probability, 0.05), 0.06)
+        gate_factors.append("raw_policy_low_acceptance_band=0.050-0.060")
     elif not intrusion.get("has_user_facing_explanation"):
-        probability = min(probability, 0.30)
-        gate_factors.append("unexplained_cap<=0.300")
+        if not intrusion.get("skip_devices") and not intrusion.get("fixed_services_modified"):
+            probability = max(probability, baseline + 0.08)
+            gate_factors.append("service_safe_unexplained_floor")
+        probability = min(probability, 0.38)
+        gate_factors.append("unexplained_cap<=0.380")
     elif _is_generic_vpp_explanation(proposed_plan):
         probability = min(probability, 0.42)
         gate_factors.append("generic_explanation_cap<=0.420")
