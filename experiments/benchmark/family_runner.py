@@ -36,7 +36,10 @@ from experiments.benchmark.strategy_explanations import english_only_text, norma
 _EXPERIMENTS_DIR = BENCHMARK_DIR.parent
 DEFAULT_FAMILY_IDF = _EXPERIMENTS_DIR / "models" / "family_home" / "family_simple_3day.idf"
 DEFAULT_FAMILY_EPW = _EXPERIMENTS_DIR / "weather" / "epw" / "CHN_TJ_Tianjin.545270_CSWD.epw"
-ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP = 0.88
+# Even a well-explained, personalized VPP plan should leave realistic residual
+# refusal probability.  This cap is method-agnostic: it applies to any strategy
+# with a concrete household-facing explanation, not to EnergyBridge by name.
+ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP = 0.76
 
 
 def _env_flag(name: str, default: str = "0") -> bool:
@@ -3416,8 +3419,10 @@ def _evaluate_vpp_plan_acceptance_gate(
         and calendar_score >= 0.55
         and preference_score >= 0.35
     ):
-        score = max(score, 0.88)
-        factors.append("cautious_user_low_disruption_consent_floor=0.880")
+        score = max(score, ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP)
+        factors.append(
+            f"cautious_user_low_disruption_consent_floor={ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP:.3f}"
+        )
     if (
         not intrusion.get("raw_policy_only")
         and not generic_user_explanation

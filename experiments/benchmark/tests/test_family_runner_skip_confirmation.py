@@ -925,9 +925,10 @@ def test_cautious_gate_rewards_explicit_fixed_routine_preservation() -> None:
         user_preference_text="Keep comfort and fixed routines protected; ask before changes.",
     )
 
-    assert gate["acceptance_probability"] >= 0.88
-    assert "fixed_routine_consent_preserved_floor=0.880" in gate["factors"]
-    assert "roleplay_residual_refusal_cap<=0.880" in gate["factors"]
+    cap = fr.ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP
+    assert gate["acceptance_probability"] == cap
+    assert f"fixed_routine_consent_preserved_floor={cap:.3f}" in gate["factors"]
+    assert f"roleplay_residual_refusal_cap<={cap:.3f}" in gate["factors"]
 
 
 def test_high_quality_explained_gate_still_uses_probability_draw() -> None:
