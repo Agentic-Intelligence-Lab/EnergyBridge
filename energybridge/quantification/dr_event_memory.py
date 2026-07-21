@@ -25,7 +25,7 @@ _W_HOUR = 2.0
 _W_DURATION = 0.5
 _W_BASELINE = 3.5
 _W_DAY_PROXIMITY = 0.5
-_WEATHER_WEIGHT = 3.5
+_WEATHER_WEIGHT = 8.0
 _WEATHER_MIN_GROUP_SIZE = 3
 _WEATHER_DAILY_CACHE: dict[str, dict[str, dict[str, float]]] = {}
 
