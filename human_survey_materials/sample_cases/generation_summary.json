@@ -1,0 +1,59 @@
+{
+  "case_count": 30,
+  "case_ids": [
+    "tianjin__role_a__EnergyBridge__day1__vpp1",
+    "tianjin__role_a__hema_agent__day1__vpp1",
+    "tianjin__role_a__mpc_dynamic__day1__vpp1",
+    "tianjin__role_a__rule_milp__day1__vpp1",
+    "tianjin__role_a__rl_ppo_pref_v2__day1__vpp1",
+    "tianjin__role_b__EnergyBridge__day1__vpp1",
+    "tianjin__role_b__hema_agent__day1__vpp1",
+    "tianjin__role_b__mpc_dynamic__day1__vpp1",
+    "tianjin__role_b__rule_milp__day1__vpp1",
+    "tianjin__role_b__rl_ppo_pref_v2__day1__vpp1",
+    "tianjin__role_c__EnergyBridge__day1__vpp1",
+    "tianjin__role_c__hema_agent__day1__vpp1",
+    "tianjin__role_c__mpc_dynamic__day1__vpp1",
+    "tianjin__role_c__rule_milp__day1__vpp1",
+    "tianjin__role_c__rl_ppo_pref_v2__day1__vpp1",
+    "tianjin__role_d__EnergyBridge__day1__vpp1",
+    "tianjin__role_d__hema_agent__day1__vpp1",
+    "tianjin__role_d__mpc_dynamic__day1__vpp1",
+    "tianjin__role_d__rule_milp__day1__vpp1",
+    "tianjin__role_d__rl_ppo_pref_v2__day1__vpp1",
+    "tianjin__role_e__EnergyBridge__day1__vpp1",
+    "tianjin__role_e__hema_agent__day1__vpp1",
+    "tianjin__role_e__mpc_dynamic__day1__vpp1",
+    "tianjin__role_e__rule_milp__day1__vpp1",
+    "tianjin__role_e__rl_ppo_pref_v2__day1__vpp1",
+    "tianjin__role_f__EnergyBridge__day1__vpp1",
+    "tianjin__role_f__hema_agent__day1__vpp1",
+    "tianjin__role_f__mpc_dynamic__day1__vpp1",
+    "tianjin__role_f__rule_milp__day1__vpp1",
+    "tianjin__role_f__rl_ppo_pref_v2__day1__vpp1"
+  ],
+  "methods_in_researcher_data": [
+    "EnergyBridge",
+    "hema_agent",
+    "mpc_dynamic",
+    "rl_ppo_pref_v2",
+    "rule_milp"
+  ],
+  "role_cards": [
+    "role_a_price_cooperative_commuter",
+    "role_b_home_comfort_gated",
+    "role_c_irregular_cautious",
+    "role_d_ideal_dr_participant",
+    "role_e_caregiver_low_dr",
+    "role_f_ev_commuter_optimizer"
+  ],
+  "profile_modes": [
+    "persona"
+  ],
+  "cities": [
+    "tianjin"
+  ],
+  "missing_source_count": 0,
+  "missing_sources": [],
+  "note": "Method labels are for researcher analysis only and should not be shown to participants in the main calibration study."
+}

@@ -1,0 +1,129 @@
+{
+  "version": "energybridge_onboarding_questionnaire_v3_short",
+  "purpose": "Shared schema for EnergyBridge role-play LLM onboarding and human user preference survey.",
+  "notes": [
+    "The same question IDs and option IDs should be used for role-play LLM onboarding and human survey collection.",
+    "EnergyBridge may consume natural-language answers, but selected_option_ids make human/LLM calibration easier.",
+    "The short human form uses the same four core items and one optional overall constraint note; per-item explanations are not required."
+  ],
+  "questions": [
+    {
+      "id": "vpp_priority",
+      "question_en": "During a one-hour VPP peak event, what should the home prioritize: comfort and routine, bill savings, grid support, or a balance?",
+      "question_zh": "当系统建议你在 1 小时 VPP 高峰事件中减少用电时，家庭应该优先考虑什么？",
+      "options": [
+        {
+          "id": "comfort_routine_first",
+          "label_en": "Comfort and routine first",
+          "label_zh": "舒适和日常 routine 优先"
+        },
+        {
+          "id": "bill_savings_first",
+          "label_en": "Bill savings first",
+          "label_zh": "电费节省优先"
+        },
+        {
+          "id": "grid_support_first",
+          "label_en": "Grid support first",
+          "label_zh": "支持电网/环保优先"
+        },
+        {
+          "id": "balanced_tradeoff",
+          "label_en": "Balanced tradeoff",
+          "label_zh": "平衡处理"
+        },
+        {
+          "id": "confirm_before_changes",
+          "label_en": "Clear explanation and confirmation before changes",
+          "label_zh": "解释和确认优先"
+        }
+      ]
+    },
+    {
+      "id": "thermostat_flexibility",
+      "question_en": "If the home remains safe, how much temporary AC setpoint change would you usually accept during a peak event?",
+      "question_zh": "如果安全没有问题，在 VPP 高峰事件中，你通常能接受多大的临时空调设定温度变化？",
+      "options": [
+        {
+          "id": "almost_none_0_5c",
+          "label_en": "Almost none, around 0.5C or less",
+          "label_zh": "几乎不能接受，约 0.5°C 或更小"
+        },
+        {
+          "id": "small_1c_short",
+          "label_en": "Around 1C for a short time",
+          "label_zh": "可以接受约 1°C，但必须时间较短"
+        },
+        {
+          "id": "moderate_1_2c_with_benefit",
+          "label_en": "Around 1-2C if savings or grid benefit are clear",
+          "label_zh": "如果收益清楚，可以接受约 1-2°C"
+        },
+        {
+          "id": "larger_when_unoccupied",
+          "label_en": "Larger changes when unoccupied or routine is unaffected",
+          "label_zh": "家里没人或不影响 routine 时可以接受更大变化"
+        }
+      ]
+    },
+    {
+      "id": "appliance_shift_consent",
+      "question_en": "Can the system automatically shift washer, dishwasher, water-heater, or EV timing when deadlines are protected, or should it ask first?",
+      "question_zh": "对于洗衣机、洗碗机、热水器、电动车充电这类设备，如果完成期限能保证，系统可以自动调整时间吗，还是必须先问你？",
+      "options": [
+        {
+          "id": "do_not_move_without_approval",
+          "label_en": "Do not move without explicit approval",
+          "label_zh": "未经明确同意不要调整"
+        },
+        {
+          "id": "shift_1_2h_deadline_protected",
+          "label_en": "Can shift by 1-2 hours if deadlines are protected",
+          "label_zh": "可以提前或推迟 1-2 小时，但必须按时完成"
+        },
+        {
+          "id": "shift_to_cheaper_periods",
+          "label_en": "Can shift to cheaper periods if readiness is protected",
+          "label_zh": "可以移到更便宜的时段，但可用性必须保证"
+        },
+        {
+          "id": "automatic_optimization_ok",
+          "label_en": "Automatic optimization is acceptable",
+          "label_zh": "可以自动优化"
+        }
+      ]
+    },
+    {
+      "id": "calendar_routine_constraints",
+      "question_en": "Which calendar or household routines should not be disturbed, especially around evening arrival, meals, showers, caregiving, or sleep?",
+      "question_zh": "哪些日程或家庭 routine 不应该被打扰？尤其是傍晚回家、吃饭、洗澡、照护、睡眠或工作安排。",
+      "options": [
+        {
+          "id": "arrival_comfort",
+          "label_en": "Return-home comfort must be protected",
+          "label_zh": "回家时的舒适必须保证"
+        },
+        {
+          "id": "meals_chores",
+          "label_en": "Meals and household chores must not be disrupted",
+          "label_zh": "吃饭和固定家务安排不能被打乱"
+        },
+        {
+          "id": "shower_hot_water",
+          "label_en": "Shower and hot-water timing must be protected",
+          "label_zh": "洗澡和热水时间必须保证"
+        },
+        {
+          "id": "caregiving_sleep_work",
+          "label_en": "Caregiving, sleep, or work routines must be protected",
+          "label_zh": "照护、睡眠或工作安排必须保证"
+        },
+        {
+          "id": "irregular_confirm_same_day",
+          "label_en": "Schedule changes often; confirm same-day before acting",
+          "label_zh": "日程经常变，当天行动前最好再次确认"
+        }
+      ]
+    }
+  ]
+}
