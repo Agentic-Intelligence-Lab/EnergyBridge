@@ -855,6 +855,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", default="")
     parser.add_argument("--max-memory-items", type=int, default=10)
     parser.add_argument("--verbose", "-v", action="store_true")
+    parser.add_argument("--dr-memory-library", type=str, default="", help="Path to historical DR memory library JSON (for capacity reporting).")
     return parser.parse_args()
 
 
@@ -937,6 +938,9 @@ def main() -> None:
             "questionnaire memory, observable calendar context, member role-play outputs, "
             "and scored feedback over the run."
         )
+
+    dr_memory_library_path = args.dr_memory_library or None
+
     result = fr.run_family_agent(
         idf_path=idf_path,
         epw_path=epw_path,
@@ -958,6 +962,7 @@ def main() -> None:
         vpp_schedule_source=vpp_schedule_source,
         pre_event_preference_callback=pre_event_callback,
         post_event_score_callback=post_event_callback,
+        dr_memory_library_path=dr_memory_library_path,
     )
 
     if result is None:

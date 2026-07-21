@@ -6031,6 +6031,7 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
                      planning_hour: float = DEFAULT_PLANNING_HOUR,
                      vpp_start_h: float = 18.0,
                      vpp_duration_h: float = 1.0,
+                     dr_memory_library_path: str | Path | None = None,
                      vpp_events_config: list[dict] | None = None,
                      vpp_schedule_source: str = "",
                      pre_event_preference_callback: Any = None,
@@ -6106,6 +6107,16 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     _init_daily_llm_usage(loop, sim_days)
     loop.daily_plans_done = set()
     loop.next_check = planning_hour
+    loop.dr_memory_library = None
+    if dr_memory_library_path:
+        try:
+            import json
+            loop.dr_memory_library = json.loads(Path(dr_memory_library_path).read_text(encoding="utf-8"))
+            print(
+                f"  [DR Memory] loaded library with {len(loop.dr_memory_library.get('events', []))} historical events")
+        except Exception as e:
+            print(f"  [DR Memory] failed to load: {e}")
+            loop.dr_memory_library = None
     _init_agent_preference_memory(
         loop,
         output_dir,
@@ -8143,6 +8154,53 @@ All times are hour-of-day (0–23.9)."""
                             print(f"  [Capacity Assessment] failed: {_ce}")
                     loop.vpp_capacity_by_id[vid] = _capacity
                     loop.current_vpp_capacity = _capacity
+                    if hasattr(loop, 'dr_memory_library') and loop.dr_memory_library is not None:
+                        try:
+                            from energybridge.quantification.dr_event_memory import apply_dr_memory_capacity_estimate
+                            temp_result = {
+                                "method": method,
+                                "vpp_event_log": [
+                                    {
+                                        "id": vid,
+                                        "trigger_h": float(triggered_vpp["trigger_h"]),
+                                        "end_h": float(triggered_vpp["end_h"]),
+                                        "day": int(triggered_vpp.get("day", 1))
+                                    }
+                                ],
+                                "household_id": (persona_config or {}).get("id", "unknown"),
+                                "city": weather_label,
+                                "sim_days": sim_days,
+                                "start_date": run_start_date.isoformat() if run_start_date else "",
+                            }
+                            metadata = {
+                                "household_id": (persona_config or {}).get("id", ""),
+                                "persona_id": (persona_config or {}).get("id", ""),
+                                "city": weather_label,
+                                "days": sim_days,
+                                "start_date": run_start_date.isoformat() if run_start_date else "",
+                            }
+                            updated = apply_dr_memory_capacity_estimate(
+                                temp_result,
+                                loop.dr_memory_library,
+                                metadata=metadata,
+                                top_k=5,
+                                factor_cap=2.0,
+                            )
+                            memory_reported_kw = updated.get("historical_dr_memory_reported_capacity_avg_kw")
+                            if memory_reported_kw is not None and memory_reported_kw > 0:
+                                original_bid = float(_capacity["assessment"].get("recommended_bid_kw", 0.0))
+                                _capacity["assessment"]["recommended_bid_kw"] = round(float(memory_reported_kw), 3)
+                                _capacity["assessment"]["memory_adjusted"] = True
+                                _capacity["assessment"]["memory_basis"] = "historical_dr_memory"
+                                _capacity["assessment"]["original_recommended_bid_kw"] = original_bid
+                                print(
+                                    f"  [DR Memory Adjustment] original_bid={original_bid:.3f}kW "
+                                    f"-> adjusted_bid={memory_reported_kw:.3f}kW"
+                                )
+                            else:
+                                print("  [DR Memory Adjustment] no valid memory estimate, keeping original bid")
+                        except Exception as e:
+                            print(f"  [DR Memory Adjustment] failed: {e}")
                     _assessment = _capacity.get("assessment", {})
                     print(
                         "  [Household Capacity] "

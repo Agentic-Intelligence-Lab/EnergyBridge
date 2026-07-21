@@ -60,6 +60,7 @@ class HouseholdJob:
     vpp_events_json: str
     output_dir: Path
     log_file: Path
+    dr_memory_library: str = ""
 
 
 def _method_token(method: str, horizon: int) -> str:
@@ -92,6 +93,7 @@ def _make_jobs(args: argparse.Namespace) -> list[HouseholdJob]:
     log_dir = date_dir / "_batch_logs" / f"household_matrix_{args.city.lower()}_{days}days_H{args.mpc_horizon}"
     households = args.households or list_household_ids()
     methods = [_canonical_method(method) for method in (args.methods or list(DEFAULT_METHODS))]
+    dr_memory_library = args.dr_memory_library or ""
 
     jobs: list[HouseholdJob] = []
     for household_id in households:
@@ -111,6 +113,7 @@ def _make_jobs(args: argparse.Namespace) -> list[HouseholdJob]:
                     vpp_events_json=args.vpp_events_json,
                     output_dir=date_dir / run_name,
                     log_file=log_dir / f"{run_name}.log",
+                    dr_memory_library=dr_memory_library,
                 )
             )
     return jobs
@@ -152,6 +155,8 @@ def _command_for(job: HouseholdJob) -> list[str]:
         cmd += ["--vpp-events-json", job.vpp_events_json]
     if job.method == "mpc_dynamic":
         cmd += ["--mpc-horizon", str(job.mpc_horizon)]
+    if job.dr_memory_library:
+        cmd += ["--dr-memory-library", job.dr_memory_library]
     return cmd
 
 
@@ -306,6 +311,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fail-fast", action="store_true")
     parser.add_argument("--max-runs", type=int, default=0)
     parser.add_argument("--workers", type=int, default=1, help="Number of jobs to run in parallel. Default: 1.")
+    parser.add_argument("--dr-memory-library", type=str, default="", help="Path to historical DR memory library JSON (for capacity reporting).")
     return parser.parse_args()
 
 
