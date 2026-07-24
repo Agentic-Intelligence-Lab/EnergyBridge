@@ -1,3 +1,13 @@
+#!/usr/bin/env python3
+"""IS weight training for June(source) -> July(target) density ratio estimation.
+
+Supports Germany and Tianjin via USE_CITY switch.
+Scheme 5 only (pre_event_load_kw + temp_pre_1h + temp_vpp, 3D hourly).
+
+Usage:
+  Set USE_CITY = "Germany" or "Tianjin" below, then run:
+    python importance_sampling/IS_weather_and_preload.py
+"""
 import csv
 import json
 from collections import defaultdict
@@ -8,21 +18,26 @@ from scipy.special import expit
 
 # ======================== CONFIGURATION ========================
 BASE_DIR = Path(__file__).parent
-JUNE_DATA = BASE_DIR / "data" / "clean_records_285_with_preload.json"
-JULY_DATA = BASE_DIR / "data" / "july_events_31days.json"
-WEATHER_CSV = "../experiments/real_data/germany_2025_weather.csv"
+
+USE_CITY = "Germany"   # switch: "Germany" or "Tianjin"
+
+if USE_CITY == "Germany":
+    JUNE_DATA = BASE_DIR / "data" / "june_2025_germany_with_preload.json"
+    JULY_DATA = BASE_DIR / "data" / "july_2025_germany_with_preload.json"
+    WEATHER_CSV = BASE_DIR.parent / "experiments" / "real_data" / "germany_2025_weather.csv"
+else:  # Tianjin
+    JUNE_DATA = BASE_DIR / "data" / "june_2025_tianjin_with_preload.json"
+    JULY_DATA = BASE_DIR / "data" / "july_2025_tianjin_with_preload.json"
+    WEATHER_CSV = BASE_DIR.parent / "experiments" / "weather" / "tianjin.csv"
+
 OUTPUT_DIR = BASE_DIR / "IS_result"
 
-USE_CITY = "Germany"
-VPP_HOUR = 18          # VPP start hour
-PRE_HOUR = 17          # 1 hour before VPP
+VPP_HOUR = 18   # VPP start hour
+PRE_HOUR = 17   # 1 hour before VPP
+
 WEATHER_FEATURE_NAMES = ["t_mean_day", "t_max_day", "rh_mean_day", "ghi_sum_day", "cloud_cover_mean_day"]
 # ==============================================================
 
-
-# ============================================================
-# 1. Data loading and cleaning
-# ============================================================
 
 def load_json_data(path):
     with open(path, "r") as f:
@@ -34,7 +49,6 @@ def filter_city(records, city):
 
 
 def clean_records(records):
-    """Remove records with missing key fields."""
     cleaned = []
     for r in records:
         if r.get("pre_event_load_kw") is None:
@@ -45,16 +59,11 @@ def clean_records(records):
     return cleaned
 
 
-# ============================================================
-# 2. Weather data loading (daily + hourly)
-# ============================================================
+# ── Weather loaders ──────────────────────────────────────────────────────────
 
 def load_weather_data(csv_path):
-    """
-    Load German weather CSV and return daily aggregated features.
-    Assumes CSV has columns: date, temperature_2m, relative_humidity_2m,
-    shortwave_radiation, cloud_cover.
-    """
+    """Germany daily-aggregated weather: date col + temperature_2m/relative_humidity_2m/
+    shortwave_radiation/cloud_cover columns."""
     by_day = defaultdict(list)
     with open(csv_path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -83,10 +92,7 @@ def load_weather_data(csv_path):
 
 
 def load_hourly_temperature(csv_path):
-    """
-    Load hourly temperature and return {date: {hour: temp}}.
-    The CSV date column is assumed to be "YYYY-MM-DD HH:MM:SS".
-    """
+    """Germany hourly temp: date col format "YYYY-MM-DD HH:MM:SS". Returns {date: {hour: temp}}."""
     result = defaultdict(dict)
     with open(csv_path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -97,8 +103,28 @@ def load_hourly_temperature(csv_path):
                 hour = int(time_part.split(":")[0])
             else:
                 continue
-            temp = float(row["temperature_2m"])
-            result[date_part][hour] = temp
+            result[date_part][hour] = float(row["temperature_2m"])
+    return result
+
+
+def load_hourly_temperature_tianjin(csv_path):
+    """Open-Meteo hourly export: 2 metadata lines then header starting with "time,".
+    time format "YYYY-MM-DDTHH:MM", column name has unit suffix e.g. "temperature_2m (°C)".
+    Returns {date: {hour: temp}}."""
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        lines = f.readlines()
+    header_idx = next(i for i, l in enumerate(lines) if l.startswith("time,"))
+    reader = csv.DictReader(lines[header_idx:])
+    temp_key = next(k for k in reader.fieldnames if k.startswith("temperature_2m"))
+
+    result = defaultdict(dict)
+    for row in reader:
+        ts = row["time"]
+        if "T" not in ts:
+            continue
+        date_part, time_part = ts.split("T")
+        hour = int(time_part.split(":")[0])
+        result[date_part][hour] = float(row[temp_key])
     return result
 
 
@@ -115,38 +141,28 @@ def attach_hourly_temp(records, hourly_temp, pre_hour=PRE_HOUR, vpp_hour=VPP_HOU
         rec["temp_vpp_hour"] = hourly_temp.get(date_key, {}).get(vpp_hour, np.nan)
 
 
-# ============================================================
-# 3. Feature construction
-# ============================================================
+# ── Feature construction ─────────────────────────────────────────────────────
 
 def build_feature_matrix(records, use_weather=True, weather_keys=None, use_hourly_temp=False):
-    """
-    Build the feature matrix.
-
-    - use_weather=True: include daily weather features
-    - use_hourly_temp=True: include hourly temperature (pre-1h + VPP window)
-    """
+    """Build feature matrix.
+    use_weather=True: daily weather features; use_hourly_temp=True: pre-1h + VPP-window temp."""
     if weather_keys is None:
         weather_keys = WEATHER_FEATURE_NAMES
 
     features = []
     feature_names = []
 
-    # 1. Pre-event load (always included)
     pre_load = [r.get("pre_event_load_kw", 0) for r in records]
     features.append(pre_load)
     feature_names.append("pre_event_load_kw")
 
-    # 2. Daily weather
     if use_weather:
         for key in weather_keys:
             vals = [r.get("weather", {}).get(key, 0) for r in records]
             features.append(vals)
             feature_names.append(key)
 
-    # 3. Hourly temperature
     if use_hourly_temp:
-        # Pre-1h temperature
         vals_pre = [r.get("temp_pre_hour", np.nan) for r in records]
         if any(np.isnan(v) for v in vals_pre):
             print("Warning: missing pre-1h temperature values, filling with 0")
@@ -154,7 +170,6 @@ def build_feature_matrix(records, use_weather=True, weather_keys=None, use_hourl
         features.append(vals_pre)
         feature_names.append("temp_pre_1h")
 
-        # VPP window temperature
         vals_vpp = [r.get("temp_vpp_hour", np.nan) for r in records]
         if any(np.isnan(v) for v in vals_vpp):
             print("Warning: missing VPP window temperature values, filling with 0")
@@ -162,16 +177,14 @@ def build_feature_matrix(records, use_weather=True, weather_keys=None, use_hourl
         features.append(vals_vpp)
         feature_names.append("temp_vpp")
 
-    X = np.array(features).T  # (n_samples, n_features)
+    X = np.array(features).T
     return X, feature_names
 
 
-# ============================================================
-# 4. Density ratio estimator
-# ============================================================
+# ── Density ratio estimator ──────────────────────────────────────────────────
 
 class LogisticDensityRatio:
-    def __init__(self, weight_decay=0.05, lr=0.05, steps=500, seed=0):
+    def __init__(self, weight_decay=0.05, lr=0.05, steps=1000, seed=0):
         self.weight_decay = weight_decay
         self.lr = lr
         self.steps = steps
@@ -223,9 +236,7 @@ class LogisticDensityRatio:
         return odds * (self._n_source / max(1, self._n_target))
 
 
-# ============================================================
-# 5. Evaluation metrics
-# ============================================================
+# ── Metrics ──────────────────────────────────────────────────────────────────
 
 def compute_ess(weights):
     w = np.asarray(weights, dtype=np.float64)
@@ -257,11 +268,9 @@ def weighted_quantile(values, weights, q):
     return float(v[lo] * (1.0 - frac) + v[hi] * frac)
 
 
-# ============================================================
-# 6. Training and evaluation
-# ============================================================
+# ── Training ─────────────────────────────────────────────────────────────────
 
-def train_and_evaluate(X_source, X_target, y_source, y_target_true, label, scheme_id):
+def train_and_evaluate(X_source, X_target, y_source, y_target_true, label):
     print(f"\n{'=' * 70}")
     print(f"Training {label}")
     print(f"{'=' * 70}")
@@ -289,10 +298,9 @@ def train_and_evaluate(X_source, X_target, y_source, y_target_true, label, schem
     print(f"   True mean:   {np.mean(y_target_true):.4f} kWh")
     print(f"   MAE (IS):    {mae_is:.4f} kWh")
     print(f"   MAE (baseline): {mae_baseline:.4f} kWh")
-    print(f"   MAE improvement: {(mae_baseline - mae_is):.4f} kWh")
+    print(f"   MAE improvement: {(mae_baseline - mae_is):.4f} kWh ({(mae_baseline - mae_is) / mae_baseline * 100:.2f}%)")
 
     return {
-        "scheme_id": scheme_id,
         "label": label,
         "ess": ess,
         "weights": weights,
@@ -305,25 +313,24 @@ def train_and_evaluate(X_source, X_target, y_source, y_target_true, label, schem
         "rmse_is": rmse_is,
         "rmse_baseline": rmse_baseline,
         "est": est,
-        "feature_names": None,  # will be filled by caller
     }
 
 
-def save_weight_package(result, records, feature_names, output_path):
-    """Save weight package for a given scheme result."""
+def save_weight_package(result, records, feature_names, output_path, city):
     weights = result["weights"]
     weight_package = {
-        "case": f"Germany June(source) -> July(target) | {result['label']}",
+        "case": f"{city} June(source) -> July(target) | {result['label']}",
         "source_data": str(JUNE_DATA),
         "target_data": str(JULY_DATA),
-        "estimator": "LogisticDensityRatio(weight_decay=0.05, lr=0.05, steps=500, seed=0)",
+        "weather_source": str(WEATHER_CSV),
+        "estimator": "LogisticDensityRatio(weight_decay=0.05, lr=0.05, steps=1000, seed=0)",
         "feature_names": feature_names,
         "n_source": len(records),
-        "n_target": len(records),  # placeholder, actual target count from validation
+        "n_target": int(result["est"]._n_target),
         "ess_fraction": round(result["ess"], 4),
-        "weight_min": round(weights.min(), 4),
-        "weight_max": round(weights.max(), 4),
-        "weight_mean": round(weights.mean(), 4),
+        "weight_min": round(float(weights.min()), 4),
+        "weight_max": round(float(weights.max()), 4),
+        "weight_mean": round(float(weights.mean()), 4),
         "per_event_weights": [
             {
                 "memory_event_id": r["memory_event_id"],
@@ -331,42 +338,35 @@ def save_weight_package(result, records, feature_names, output_path):
                 "household_id": r["household_id"],
                 "pre_event_load_kw": r["pre_event_load_kw"],
                 "realized_delivery_kwh": r["realized_delivery_kwh"],
-                "raw_weight": round(w, 4),
+                "raw_weight": round(float(w), 4),
             }
             for r, w in zip(records, weights)
         ],
         "validation": {
-            "predicted_p50_kwh": round(result["pred_p50"], 4),
-            "predicted_p25_kwh": round(result["pred_p25"], 4),
-            "predicted_p75_kwh": round(result["pred_p75"], 4),
-            "mae_is_kwh": round(result["mae_is"], 4),
-            "mae_baseline_kwh": round(result["mae_baseline"], 4),
-            "mae_improvement_pct": round(result["mae_improvement_pct"], 2),
-            "rmse_is_kwh": round(result["rmse_is"], 4),
-            "rmse_baseline_kwh": round(result["rmse_baseline"], 4),
+            "predicted_p50_kwh": round(float(result["pred_p50"]), 4),
+            "predicted_p25_kwh": round(float(result["pred_p25"]), 4),
+            "predicted_p75_kwh": round(float(result["pred_p75"]), 4),
+            "mae_is_kwh": round(float(result["mae_is"]), 4),
+            "mae_baseline_kwh": round(float(result["mae_baseline"]), 4),
+            "mae_improvement_pct": round(float(result["mae_improvement_pct"]), 2),
+            "rmse_is_kwh": round(float(result["rmse_is"]), 4),
+            "rmse_baseline_kwh": round(float(result["rmse_baseline"]), 4),
             "rmse_improvement_pct": round(
                 (result["rmse_baseline"] - result["rmse_is"]) / result["rmse_baseline"] * 100, 2
             ),
-        }
+        },
     }
-
     with open(output_path, "w") as f:
         json.dump(weight_package, f, indent=2, ensure_ascii=False)
     print(f"\nWeight package saved: {output_path}")
     return output_path
 
 
-# ============================================================
-# 7. Main workflow
-# ============================================================
-
 def main():
     print("=" * 70)
-    print("IS Weight Training: Pre-event Load + Temperature Features")
-    print("(Daily / Hourly) - Auto-select Best Scheme")
+    print(f"IS Weight Training ({USE_CITY}): Pre-event Load + Hourly Temperature")
     print("=" * 70)
 
-    # 1. Load data
     june_raw = load_json_data(JUNE_DATA)
     july_raw = load_json_data(JULY_DATA)
     june_records = clean_records(filter_city(june_raw, USE_CITY))
@@ -374,142 +374,34 @@ def main():
     print(f"\nJune {USE_CITY} data: {len(june_records)} records")
     print(f"July {USE_CITY} data: {len(july_records)} records")
 
-    # 2. Load weather data
-    weather_lookup = load_weather_data(WEATHER_CSV)
-    hourly_temp = load_hourly_temperature(WEATHER_CSV)
+    if USE_CITY == "Germany":
+        hourly_temp = load_hourly_temperature(WEATHER_CSV)
+    else:  # Tianjin
+        hourly_temp = load_hourly_temperature_tianjin(WEATHER_CSV)
 
-    # 3. Attach features
-    attach_weather(june_records, weather_lookup)
-    attach_weather(july_records, weather_lookup)
     attach_hourly_temp(june_records, hourly_temp)
     attach_hourly_temp(july_records, hourly_temp)
 
-    # 4. Prepare target variables
     y_source = np.array([r["realized_delivery_kwh"] for r in june_records])
     y_target = np.array([r["realized_delivery_kwh"] for r in july_records])
 
-    results = {}
+    X_src, fnames = build_feature_matrix(june_records, use_weather=False, use_hourly_temp=True)
+    X_tgt, _ = build_feature_matrix(july_records, use_weather=False, use_hourly_temp=True)
 
-    # Define schemes to evaluate
-    schemes = [
-        # {
-        #     "id": "pre_load",
-        #     "label": "Scheme 1: Pure pre-event load (1D)",
-        #     "use_weather": False,
-        #     "weather_keys": None,
-        #     "use_hourly_temp": False,
-        # },
-        # {
-        #     "id": "weather",
-        #     "label": "Scheme 2: Pure daily weather (5D)",
-        #     "use_weather": True,
-        #     "weather_keys": WEATHER_FEATURE_NAMES,
-        #     "use_hourly_temp": False,
-        # },
-        # {
-        #     "id": "combined",
-        #     "label": "Scheme 3: Daily weather + pre-event load (6D)",
-        #     "use_weather": True,
-        #     "weather_keys": WEATHER_FEATURE_NAMES,
-        #     "use_hourly_temp": False,
-        # },
-        # {
-        #     "id": "combined_partial",
-        #     "label": "Scheme 4: Pre-event load + t_max + t_mean (3D)",
-        #     "use_weather": True,
-        #     "weather_keys": ["t_max_day", "t_mean_day"],
-        #     "use_hourly_temp": False,
-        # },
-        {
-            "id": "hourly_temp",
-            "label": "Scheme 5: Pre-event load + pre-1h temp + VPP-window temp (3D, hourly)",
-            "use_weather": False,
-            "weather_keys": None,
-            "use_hourly_temp": True,
-        },
-    ]
+    label = "Scheme 5: Pre-event load + pre-1h temp + VPP-window temp (3D, hourly)"
+    result = train_and_evaluate(X_src, X_tgt, y_source, y_target, label)
 
-    for scheme in schemes:
-        X_src, fnames = build_feature_matrix(
-            june_records,
-            use_weather=scheme["use_weather"],
-            weather_keys=scheme["weather_keys"],
-            use_hourly_temp=scheme["use_hourly_temp"],
-        )
-        X_tgt, _ = build_feature_matrix(
-            july_records,
-            use_weather=scheme["use_weather"],
-            weather_keys=scheme["weather_keys"],
-            use_hourly_temp=scheme["use_hourly_temp"],
-        )
-
-        result = train_and_evaluate(X_src, X_tgt, y_source, y_target, scheme["label"], scheme["id"])
-        result["feature_names"] = fnames
-        results[scheme["id"]] = result
-
-    # Summary
-    print("\n" + "=" * 70)
-    print("Summary Comparison")
-    print("=" * 70)
-    print(f"\n{'Scheme':<45} {'ESS':>10} {'MAE (IS)':>12} {'MAE (baseline)':>12} {'Improvement':>10}")
-    print("-" * 91)
-    for key, r in results.items():
-        label = r["label"].split(":")[0]
-        print(
-            f"{label:<45} {r['ess']:>10.4f} {r['mae_is']:>12.4f} {r['mae_baseline']:>12.4f} {r['mae_improvement_pct']:>9.2f}%"
-        )
-
-    # Best scheme (by improvement percentage)
-    best_key = max(results, key=lambda k: results[k]["mae_improvement_pct"])
-    best = results[best_key]
-    print(f"\nBest scheme: {best['label']}")
-    print(f"   ESS: {best['ess']:.4f}, MAE improvement: {best['mae_improvement_pct']:.2f}%")
-
-    # Save best scheme's weight package
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = OUTPUT_DIR / f"weights_package_germany_6to7.json"
-
-    # Rebuild feature matrix for best scheme to get source records with correct features
-    # Find the scheme config that produced this result
-    best_scheme_config = next((s for s in schemes if s["id"] == best_key), None)
-    if best_scheme_config:
-        _, fnames = build_feature_matrix(
-            june_records,
-            use_weather=best_scheme_config["use_weather"],
-            weather_keys=best_scheme_config["weather_keys"],
-            use_hourly_temp=best_scheme_config["use_hourly_temp"],
-        )
-        best["feature_names"] = fnames
-
-    save_weight_package(best, june_records, best["feature_names"], out_path)
+    city_lower = USE_CITY.lower()
+    out_path = OUTPUT_DIR / f"weights_package_{city_lower}_6to7.json"
+    save_weight_package(result, june_records, fnames, out_path, USE_CITY)
 
     print("\n" + "=" * 70)
-    print(f"Feature importance (Best Scheme: {best_key})")
+    print("Feature importance")
     print("=" * 70)
-    est = best["est"]
-    for name, coef in sorted(zip(best["feature_names"], np.abs(est._w)), key=lambda x: x[1], reverse=True):
+    est = result["est"]
+    for name, coef in sorted(zip(fnames, np.abs(est._w)), key=lambda x: x[1], reverse=True):
         print(f"   {name}: {coef:.4f}")
-
-    # Also save a summary of all schemes
-    summary_path = OUTPUT_DIR / "all_schemes_comparison.json"
-    summary = {
-        "best_scheme": best_key,
-        "best_scheme_label": best["label"],
-        "results": {
-            key: {
-                "label": r["label"],
-                "ess": r["ess"],
-                "mae_is": r["mae_is"],
-                "mae_baseline": r["mae_baseline"],
-                "mae_improvement_pct": r["mae_improvement_pct"],
-                "feature_names": r.get("feature_names", []),
-            }
-            for key, r in results.items()
-        }
-    }
-    with open(summary_path, "w") as f:
-        json.dump(summary, f, indent=2, ensure_ascii=False)
-    print(f"\nComparison summary saved: {summary_path}")
 
 
 if __name__ == "__main__":

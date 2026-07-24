@@ -1,15 +1,16 @@
 {
   "case": "Germany June(source) -> July(target) | Scheme 5: Pre-event load + pre-1h temp + VPP-window temp (3D, hourly)",
-  "source_data": "D:\\Pycharm_project\\PycharmProjects\\EnergyBridge\\importance_sampling\\data\\clean_records_285_with_preload.json",
-  "target_data": "D:\\Pycharm_project\\PycharmProjects\\EnergyBridge\\importance_sampling\\data\\july_events_31days.json",
-  "estimator": "LogisticDensityRatio(weight_decay=0.05, lr=0.05, steps=500, seed=0)",
+  "source_data": "importance_sampling/data/june_2025_germany_with_preload.json",
+  "target_data": "importance_sampling/data/july_2025_germany_with_preload.json",
+  "weather_source": "experiments/real_data/germany_2025_weather.csv",
+  "estimator": "LogisticDensityRatio(weight_decay=0.05, lr=0.05, steps=1000, seed=0)",
   "feature_names": [
     "pre_event_load_kw",
     "temp_pre_1h",
     "temp_vpp"
   ],
   "n_source": 145,
-  "n_target": 145,
+  "n_target": 155,
   "ess_fraction": 0.9635,
   "weight_min": 0.641,
   "weight_max": 1.3502,
