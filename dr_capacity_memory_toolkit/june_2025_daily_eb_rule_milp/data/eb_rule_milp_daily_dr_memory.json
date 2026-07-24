@@ -44,7 +44,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.695833333333336,
+        "t_max_day": 23.25,
+        "rh_mean_day": 84.19551404166667,
+        "ghi_sum_day": 5072.0,
+        "cloud_cover_mean_day": 93.25
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-01|hist_d01_1",
@@ -86,7 +93,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.695833333333336,
+        "t_max_day": 23.25,
+        "rh_mean_day": 84.19551404166667,
+        "ghi_sum_day": 5072.0,
+        "cloud_cover_mean_day": 93.25
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-01|hist_d01_1",
@@ -128,7 +142,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.695833333333336,
+        "t_max_day": 23.25,
+        "rh_mean_day": 84.19551404166667,
+        "ghi_sum_day": 5072.0,
+        "cloud_cover_mean_day": 93.25
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-01|hist_d01_1",
@@ -170,7 +191,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.695833333333336,
+        "t_max_day": 23.25,
+        "rh_mean_day": 84.19551404166667,
+        "ghi_sum_day": 5072.0,
+        "cloud_cover_mean_day": 93.25
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-01|hist_d01_1",
@@ -212,7 +240,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.695833333333336,
+        "t_max_day": 23.25,
+        "rh_mean_day": 84.19551404166667,
+        "ghi_sum_day": 5072.0,
+        "cloud_cover_mean_day": 93.25
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-01|hist_d01_1",
@@ -254,7 +289,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.696249999999992,
+        "t_max_day": 30.1,
+        "rh_mean_day": 79.29166666666667,
+        "ghi_sum_day": 5699.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-01|hist_d01_1",
@@ -296,7 +338,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.696249999999992,
+        "t_max_day": 30.1,
+        "rh_mean_day": 79.29166666666667,
+        "ghi_sum_day": 5699.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-01|hist_d01_1",
@@ -338,7 +387,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.696249999999992,
+        "t_max_day": 30.1,
+        "rh_mean_day": 79.29166666666667,
+        "ghi_sum_day": 5699.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-01|hist_d01_1",
@@ -380,7 +436,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.696249999999992,
+        "t_max_day": 30.1,
+        "rh_mean_day": 79.29166666666667,
+        "ghi_sum_day": 5699.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-01|hist_d01_1",
@@ -422,7 +485,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.696249999999992,
+        "t_max_day": 30.1,
+        "rh_mean_day": 79.29166666666667,
+        "ghi_sum_day": 5699.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-02|hist_d02_1",
@@ -464,7 +534,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.304166666666667,
+        "t_max_day": 22.45,
+        "rh_mean_day": 78.03363975,
+        "ghi_sum_day": 5764.0,
+        "cloud_cover_mean_day": 84.25
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-02|hist_d02_1",
@@ -506,7 +583,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.304166666666667,
+        "t_max_day": 22.45,
+        "rh_mean_day": 78.03363975,
+        "ghi_sum_day": 5764.0,
+        "cloud_cover_mean_day": 84.25
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-02|hist_d02_1",
@@ -548,7 +632,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.304166666666667,
+        "t_max_day": 22.45,
+        "rh_mean_day": 78.03363975,
+        "ghi_sum_day": 5764.0,
+        "cloud_cover_mean_day": 84.25
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-02|hist_d02_1",
@@ -590,7 +681,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.304166666666667,
+        "t_max_day": 22.45,
+        "rh_mean_day": 78.03363975,
+        "ghi_sum_day": 5764.0,
+        "cloud_cover_mean_day": 84.25
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-02|hist_d02_1",
@@ -632,7 +730,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.304166666666667,
+        "t_max_day": 22.45,
+        "rh_mean_day": 78.03363975,
+        "ghi_sum_day": 5764.0,
+        "cloud_cover_mean_day": 84.25
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-02|hist_d02_1",
@@ -674,7 +779,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.847500000000007,
+        "t_max_day": 27.4,
+        "rh_mean_day": 79.16666666666667,
+        "ghi_sum_day": 4908.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-02|hist_d02_1",
@@ -716,7 +828,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.847500000000007,
+        "t_max_day": 27.4,
+        "rh_mean_day": 79.16666666666667,
+        "ghi_sum_day": 4908.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-02|hist_d02_1",
@@ -758,7 +877,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.847500000000007,
+        "t_max_day": 27.4,
+        "rh_mean_day": 79.16666666666667,
+        "ghi_sum_day": 4908.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-02|hist_d02_1",
@@ -800,7 +926,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.847500000000007,
+        "t_max_day": 27.4,
+        "rh_mean_day": 79.16666666666667,
+        "ghi_sum_day": 4908.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-02|hist_d02_1",
@@ -842,7 +975,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.847500000000007,
+        "t_max_day": 27.4,
+        "rh_mean_day": 79.16666666666667,
+        "ghi_sum_day": 4908.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-03|hist_d03_1",
@@ -884,7 +1024,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.572916666666664,
+        "t_max_day": 22.65,
+        "rh_mean_day": 74.65949466666666,
+        "ghi_sum_day": 6825.0,
+        "cloud_cover_mean_day": 47.416666666666664
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-03|hist_d03_1",
@@ -926,7 +1073,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.572916666666664,
+        "t_max_day": 22.65,
+        "rh_mean_day": 74.65949466666666,
+        "ghi_sum_day": 6825.0,
+        "cloud_cover_mean_day": 47.416666666666664
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-03|hist_d03_1",
@@ -968,7 +1122,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.572916666666664,
+        "t_max_day": 22.65,
+        "rh_mean_day": 74.65949466666666,
+        "ghi_sum_day": 6825.0,
+        "cloud_cover_mean_day": 47.416666666666664
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-03|hist_d03_1",
@@ -1010,7 +1171,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.572916666666664,
+        "t_max_day": 22.65,
+        "rh_mean_day": 74.65949466666666,
+        "ghi_sum_day": 6825.0,
+        "cloud_cover_mean_day": 47.416666666666664
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-03|hist_d03_1",
@@ -1052,7 +1220,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.69333333333333,
+        "t_max_day": 29.0,
+        "rh_mean_day": 79.20833333333333,
+        "ghi_sum_day": 6076.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-03|hist_d03_1",
@@ -1094,7 +1269,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.69333333333333,
+        "t_max_day": 29.0,
+        "rh_mean_day": 79.20833333333333,
+        "ghi_sum_day": 6076.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-03|hist_d03_1",
@@ -1136,7 +1318,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.69333333333333,
+        "t_max_day": 29.0,
+        "rh_mean_day": 79.20833333333333,
+        "ghi_sum_day": 6076.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-03|hist_d03_1",
@@ -1178,7 +1367,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.572916666666664,
+        "t_max_day": 22.65,
+        "rh_mean_day": 74.65949466666666,
+        "ghi_sum_day": 6825.0,
+        "cloud_cover_mean_day": 47.416666666666664
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-03|hist_d03_1",
@@ -1220,7 +1416,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.69333333333333,
+        "t_max_day": 29.0,
+        "rh_mean_day": 79.20833333333333,
+        "ghi_sum_day": 6076.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-04|hist_d04_1",
@@ -1262,7 +1465,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 16.964583333333334,
+        "t_max_day": 18.85,
+        "rh_mean_day": 92.69300387500003,
+        "ghi_sum_day": 2327.0,
+        "cloud_cover_mean_day": 87.875
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-04|hist_d04_1",
@@ -1304,7 +1514,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 16.964583333333334,
+        "t_max_day": 18.85,
+        "rh_mean_day": 92.69300387500003,
+        "ghi_sum_day": 2327.0,
+        "cloud_cover_mean_day": 87.875
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-04|hist_d04_1",
@@ -1346,7 +1563,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 16.964583333333334,
+        "t_max_day": 18.85,
+        "rh_mean_day": 92.69300387500003,
+        "ghi_sum_day": 2327.0,
+        "cloud_cover_mean_day": 87.875
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-03|hist_d03_1",
@@ -1388,7 +1612,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.69333333333333,
+        "t_max_day": 29.0,
+        "rh_mean_day": 79.20833333333333,
+        "ghi_sum_day": 6076.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-04|hist_d04_1",
@@ -1430,7 +1661,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 16.964583333333334,
+        "t_max_day": 18.85,
+        "rh_mean_day": 92.69300387500003,
+        "ghi_sum_day": 2327.0,
+        "cloud_cover_mean_day": 87.875
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-04|hist_d04_1",
@@ -1472,7 +1710,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.81708333333334,
+        "t_max_day": 32.5,
+        "rh_mean_day": 79.54166666666667,
+        "ghi_sum_day": 6411.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-04|hist_d04_1",
@@ -1514,7 +1759,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 16.964583333333334,
+        "t_max_day": 18.85,
+        "rh_mean_day": 92.69300387500003,
+        "ghi_sum_day": 2327.0,
+        "cloud_cover_mean_day": 87.875
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-04|hist_d04_1",
@@ -1556,7 +1808,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.81708333333334,
+        "t_max_day": 32.5,
+        "rh_mean_day": 79.54166666666667,
+        "ghi_sum_day": 6411.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-04|hist_d04_1",
@@ -1598,7 +1857,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.81708333333334,
+        "t_max_day": 32.5,
+        "rh_mean_day": 79.54166666666667,
+        "ghi_sum_day": 6411.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-04|hist_d04_1",
@@ -1640,7 +1906,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.81708333333334,
+        "t_max_day": 32.5,
+        "rh_mean_day": 79.54166666666667,
+        "ghi_sum_day": 6411.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-05|hist_d05_1",
@@ -1682,7 +1955,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.135416666666664,
+        "t_max_day": 20.25,
+        "rh_mean_day": 73.67403029166668,
+        "ghi_sum_day": 5992.0,
+        "cloud_cover_mean_day": 74.83333333333333
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-05|hist_d05_1",
@@ -1724,7 +2004,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.135416666666664,
+        "t_max_day": 20.25,
+        "rh_mean_day": 73.67403029166668,
+        "ghi_sum_day": 5992.0,
+        "cloud_cover_mean_day": 74.83333333333333
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-05|hist_d05_1",
@@ -1766,7 +2053,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.135416666666664,
+        "t_max_day": 20.25,
+        "rh_mean_day": 73.67403029166668,
+        "ghi_sum_day": 5992.0,
+        "cloud_cover_mean_day": 74.83333333333333
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-04|hist_d04_1",
@@ -1808,7 +2102,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.81708333333334,
+        "t_max_day": 32.5,
+        "rh_mean_day": 79.54166666666667,
+        "ghi_sum_day": 6411.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-05|hist_d05_1",
@@ -1850,7 +2151,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.135416666666664,
+        "t_max_day": 20.25,
+        "rh_mean_day": 73.67403029166668,
+        "ghi_sum_day": 5992.0,
+        "cloud_cover_mean_day": 74.83333333333333
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-05|hist_d05_1",
@@ -1892,7 +2200,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.021666666666672,
+        "t_max_day": 26.0,
+        "rh_mean_day": 79.0,
+        "ghi_sum_day": 4633.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-05|hist_d05_1",
@@ -1934,7 +2249,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.135416666666664,
+        "t_max_day": 20.25,
+        "rh_mean_day": 73.67403029166668,
+        "ghi_sum_day": 5992.0,
+        "cloud_cover_mean_day": 74.83333333333333
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-05|hist_d05_1",
@@ -1976,7 +2298,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.021666666666672,
+        "t_max_day": 26.0,
+        "rh_mean_day": 79.0,
+        "ghi_sum_day": 4633.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-05|hist_d05_1",
@@ -2018,7 +2347,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.021666666666672,
+        "t_max_day": 26.0,
+        "rh_mean_day": 79.0,
+        "ghi_sum_day": 4633.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-05|hist_d05_1",
@@ -2060,7 +2396,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.021666666666672,
+        "t_max_day": 26.0,
+        "rh_mean_day": 79.0,
+        "ghi_sum_day": 4633.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-05|hist_d05_1",
@@ -2102,7 +2445,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.021666666666672,
+        "t_max_day": 26.0,
+        "rh_mean_day": 79.0,
+        "ghi_sum_day": 4633.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-06|hist_d06_1",
@@ -2144,7 +2494,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.375000000000004,
+        "t_max_day": 20.65,
+        "rh_mean_day": 78.37118645833336,
+        "ghi_sum_day": 4488.0,
+        "cloud_cover_mean_day": 76.91666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-06|hist_d06_1",
@@ -2186,7 +2543,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.375000000000004,
+        "t_max_day": 20.65,
+        "rh_mean_day": 78.37118645833336,
+        "ghi_sum_day": 4488.0,
+        "cloud_cover_mean_day": 76.91666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-06|hist_d06_1",
@@ -2228,7 +2592,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.375000000000004,
+        "t_max_day": 20.65,
+        "rh_mean_day": 78.37118645833336,
+        "ghi_sum_day": 4488.0,
+        "cloud_cover_mean_day": 76.91666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-06|hist_d06_1",
@@ -2270,7 +2641,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.375000000000004,
+        "t_max_day": 20.65,
+        "rh_mean_day": 78.37118645833336,
+        "ghi_sum_day": 4488.0,
+        "cloud_cover_mean_day": 76.91666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-06|hist_d06_1",
@@ -2312,7 +2690,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.375000000000004,
+        "t_max_day": 20.65,
+        "rh_mean_day": 78.37118645833336,
+        "ghi_sum_day": 4488.0,
+        "cloud_cover_mean_day": 76.91666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-06|hist_d06_1",
@@ -2354,7 +2739,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.27333333333333,
+        "t_max_day": 34.5,
+        "rh_mean_day": 79.58333333333333,
+        "ghi_sum_day": 6894.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-06|hist_d06_1",
@@ -2396,7 +2788,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.27333333333333,
+        "t_max_day": 34.5,
+        "rh_mean_day": 79.58333333333333,
+        "ghi_sum_day": 6894.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-06|hist_d06_1",
@@ -2438,7 +2837,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.27333333333333,
+        "t_max_day": 34.5,
+        "rh_mean_day": 79.58333333333333,
+        "ghi_sum_day": 6894.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-06|hist_d06_1",
@@ -2480,7 +2886,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.27333333333333,
+        "t_max_day": 34.5,
+        "rh_mean_day": 79.58333333333333,
+        "ghi_sum_day": 6894.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-06|hist_d06_1",
@@ -2522,7 +2935,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.27333333333333,
+        "t_max_day": 34.5,
+        "rh_mean_day": 79.58333333333333,
+        "ghi_sum_day": 6894.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-07|hist_d07_1",
@@ -2564,7 +2984,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 16.697916666666664,
+        "t_max_day": 20.2,
+        "rh_mean_day": 78.11048699999999,
+        "ghi_sum_day": 5535.0,
+        "cloud_cover_mean_day": 74.625
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-07|hist_d07_1",
@@ -2606,7 +3033,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 16.697916666666664,
+        "t_max_day": 20.2,
+        "rh_mean_day": 78.11048699999999,
+        "ghi_sum_day": 5535.0,
+        "cloud_cover_mean_day": 74.625
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-07|hist_d07_1",
@@ -2648,7 +3082,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 16.697916666666664,
+        "t_max_day": 20.2,
+        "rh_mean_day": 78.11048699999999,
+        "ghi_sum_day": 5535.0,
+        "cloud_cover_mean_day": 74.625
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-07|hist_d07_1",
@@ -2690,7 +3131,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 16.697916666666664,
+        "t_max_day": 20.2,
+        "rh_mean_day": 78.11048699999999,
+        "ghi_sum_day": 5535.0,
+        "cloud_cover_mean_day": 74.625
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-07|hist_d07_1",
@@ -2732,7 +3180,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.12125,
+        "t_max_day": 30.8,
+        "rh_mean_day": 79.25,
+        "ghi_sum_day": 4337.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-07|hist_d07_1",
@@ -2774,7 +3229,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 16.697916666666664,
+        "t_max_day": 20.2,
+        "rh_mean_day": 78.11048699999999,
+        "ghi_sum_day": 5535.0,
+        "cloud_cover_mean_day": 74.625
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-07|hist_d07_1",
@@ -2816,7 +3278,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.12125,
+        "t_max_day": 30.8,
+        "rh_mean_day": 79.25,
+        "ghi_sum_day": 4337.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-07|hist_d07_1",
@@ -2858,7 +3327,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.12125,
+        "t_max_day": 30.8,
+        "rh_mean_day": 79.25,
+        "ghi_sum_day": 4337.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-07|hist_d07_1",
@@ -2900,7 +3376,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.12125,
+        "t_max_day": 30.8,
+        "rh_mean_day": 79.25,
+        "ghi_sum_day": 4337.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-07|hist_d07_1",
@@ -2942,7 +3425,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.12125,
+        "t_max_day": 30.8,
+        "rh_mean_day": 79.25,
+        "ghi_sum_day": 4337.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-08|hist_d08_1",
@@ -2984,7 +3474,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 15.137500000000001,
+        "t_max_day": 18.7,
+        "rh_mean_day": 71.14002995833333,
+        "ghi_sum_day": 6657.0,
+        "cloud_cover_mean_day": 42.041666666666664
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-08|hist_d08_1",
@@ -3026,7 +3523,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 15.137500000000001,
+        "t_max_day": 18.7,
+        "rh_mean_day": 71.14002995833333,
+        "ghi_sum_day": 6657.0,
+        "cloud_cover_mean_day": 42.041666666666664
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-08|hist_d08_1",
@@ -3068,7 +3572,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 15.137500000000001,
+        "t_max_day": 18.7,
+        "rh_mean_day": 71.14002995833333,
+        "ghi_sum_day": 6657.0,
+        "cloud_cover_mean_day": 42.041666666666664
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-08|hist_d08_1",
@@ -3110,7 +3621,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 15.137500000000001,
+        "t_max_day": 18.7,
+        "rh_mean_day": 71.14002995833333,
+        "ghi_sum_day": 6657.0,
+        "cloud_cover_mean_day": 42.041666666666664
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-08|hist_d08_1",
@@ -3152,7 +3670,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 15.137500000000001,
+        "t_max_day": 18.7,
+        "rh_mean_day": 71.14002995833333,
+        "ghi_sum_day": 6657.0,
+        "cloud_cover_mean_day": 42.041666666666664
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-08|hist_d08_1",
@@ -3194,7 +3719,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.682916666666667,
+        "t_max_day": 22.09,
+        "rh_mean_day": 78.54166666666667,
+        "ghi_sum_day": 883.0,
+        "cloud_cover_mean_day": 7.125
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-08|hist_d08_1",
@@ -3236,7 +3768,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.682916666666667,
+        "t_max_day": 22.09,
+        "rh_mean_day": 78.54166666666667,
+        "ghi_sum_day": 883.0,
+        "cloud_cover_mean_day": 7.125
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-08|hist_d08_1",
@@ -3278,7 +3817,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.682916666666667,
+        "t_max_day": 22.09,
+        "rh_mean_day": 78.54166666666667,
+        "ghi_sum_day": 883.0,
+        "cloud_cover_mean_day": 7.125
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-08|hist_d08_1",
@@ -3320,7 +3866,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.682916666666667,
+        "t_max_day": 22.09,
+        "rh_mean_day": 78.54166666666667,
+        "ghi_sum_day": 883.0,
+        "cloud_cover_mean_day": 7.125
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-08|hist_d08_1",
@@ -3362,7 +3915,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.682916666666667,
+        "t_max_day": 22.09,
+        "rh_mean_day": 78.54166666666667,
+        "ghi_sum_day": 883.0,
+        "cloud_cover_mean_day": 7.125
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-09|hist_d09_1",
@@ -3404,7 +3964,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 14.095833333333333,
+        "t_max_day": 19.05,
+        "rh_mean_day": 65.87295245833333,
+        "ghi_sum_day": 6313.0,
+        "cloud_cover_mean_day": 43.166666666666664
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-09|hist_d09_1",
@@ -3446,7 +4013,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 14.095833333333333,
+        "t_max_day": 19.05,
+        "rh_mean_day": 65.87295245833333,
+        "ghi_sum_day": 6313.0,
+        "cloud_cover_mean_day": 43.166666666666664
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-09|hist_d09_1",
@@ -3488,7 +4062,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 14.095833333333333,
+        "t_max_day": 19.05,
+        "rh_mean_day": 65.87295245833333,
+        "ghi_sum_day": 6313.0,
+        "cloud_cover_mean_day": 43.166666666666664
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-09|hist_d09_1",
@@ -3530,7 +4111,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 14.095833333333333,
+        "t_max_day": 19.05,
+        "rh_mean_day": 65.87295245833333,
+        "ghi_sum_day": 6313.0,
+        "cloud_cover_mean_day": 43.166666666666664
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-09|hist_d09_1",
@@ -3572,7 +4160,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 14.095833333333333,
+        "t_max_day": 19.05,
+        "rh_mean_day": 65.87295245833333,
+        "ghi_sum_day": 6313.0,
+        "cloud_cover_mean_day": 43.166666666666664
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-09|hist_d09_1",
@@ -3614,7 +4209,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 18.92791666666667,
+        "t_max_day": 20.6,
+        "rh_mean_day": 78.54166666666667,
+        "ghi_sum_day": 1599.0,
+        "cloud_cover_mean_day": 7.208333333333333
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-09|hist_d09_1",
@@ -3656,7 +4258,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 18.92791666666667,
+        "t_max_day": 20.6,
+        "rh_mean_day": 78.54166666666667,
+        "ghi_sum_day": 1599.0,
+        "cloud_cover_mean_day": 7.208333333333333
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-09|hist_d09_1",
@@ -3698,7 +4307,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 18.92791666666667,
+        "t_max_day": 20.6,
+        "rh_mean_day": 78.54166666666667,
+        "ghi_sum_day": 1599.0,
+        "cloud_cover_mean_day": 7.208333333333333
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-09|hist_d09_1",
@@ -3740,7 +4356,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 18.92791666666667,
+        "t_max_day": 20.6,
+        "rh_mean_day": 78.54166666666667,
+        "ghi_sum_day": 1599.0,
+        "cloud_cover_mean_day": 7.208333333333333
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-09|hist_d09_1",
@@ -3782,7 +4405,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 18.92791666666667,
+        "t_max_day": 20.6,
+        "rh_mean_day": 78.54166666666667,
+        "ghi_sum_day": 1599.0,
+        "cloud_cover_mean_day": 7.208333333333333
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-10|hist_d10_1",
@@ -3824,7 +4454,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 16.985416666666662,
+        "t_max_day": 23.5,
+        "rh_mean_day": 67.82289183333333,
+        "ghi_sum_day": 5863.0,
+        "cloud_cover_mean_day": 79.33333333333333
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-10|hist_d10_1",
@@ -3866,7 +4503,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 16.985416666666662,
+        "t_max_day": 23.5,
+        "rh_mean_day": 67.82289183333333,
+        "ghi_sum_day": 5863.0,
+        "cloud_cover_mean_day": 79.33333333333333
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-10|hist_d10_1",
@@ -3908,7 +4552,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 16.985416666666662,
+        "t_max_day": 23.5,
+        "rh_mean_day": 67.82289183333333,
+        "ghi_sum_day": 5863.0,
+        "cloud_cover_mean_day": 79.33333333333333
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-10|hist_d10_1",
@@ -3950,7 +4601,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 16.985416666666662,
+        "t_max_day": 23.5,
+        "rh_mean_day": 67.82289183333333,
+        "ghi_sum_day": 5863.0,
+        "cloud_cover_mean_day": 79.33333333333333
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-10|hist_d10_1",
@@ -3992,7 +4650,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.24125,
+        "t_max_day": 26.0,
+        "rh_mean_day": 78.66666666666667,
+        "ghi_sum_day": 8133.0,
+        "cloud_cover_mean_day": 7.333333333333333
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-10|hist_d10_1",
@@ -4034,7 +4699,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.24125,
+        "t_max_day": 26.0,
+        "rh_mean_day": 78.66666666666667,
+        "ghi_sum_day": 8133.0,
+        "cloud_cover_mean_day": 7.333333333333333
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-10|hist_d10_1",
@@ -4076,7 +4748,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.24125,
+        "t_max_day": 26.0,
+        "rh_mean_day": 78.66666666666667,
+        "ghi_sum_day": 8133.0,
+        "cloud_cover_mean_day": 7.333333333333333
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-10|hist_d10_1",
@@ -4118,7 +4797,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 16.985416666666662,
+        "t_max_day": 23.5,
+        "rh_mean_day": 67.82289183333333,
+        "ghi_sum_day": 5863.0,
+        "cloud_cover_mean_day": 79.33333333333333
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-10|hist_d10_1",
@@ -4160,7 +4846,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.24125,
+        "t_max_day": 26.0,
+        "rh_mean_day": 78.66666666666667,
+        "ghi_sum_day": 8133.0,
+        "cloud_cover_mean_day": 7.333333333333333
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-10|hist_d10_1",
@@ -4202,7 +4895,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.24125,
+        "t_max_day": 26.0,
+        "rh_mean_day": 78.66666666666667,
+        "ghi_sum_day": 8133.0,
+        "cloud_cover_mean_day": 7.333333333333333
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-11|hist_d11_1",
@@ -4244,7 +4944,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.03125,
+        "t_max_day": 21.5,
+        "rh_mean_day": 64.12620391666667,
+        "ghi_sum_day": 7980.0,
+        "cloud_cover_mean_day": 19.375
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-11|hist_d11_1",
@@ -4286,7 +4993,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.03125,
+        "t_max_day": 21.5,
+        "rh_mean_day": 64.12620391666667,
+        "ghi_sum_day": 7980.0,
+        "cloud_cover_mean_day": 19.375
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-11|hist_d11_1",
@@ -4328,7 +5042,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.03125,
+        "t_max_day": 21.5,
+        "rh_mean_day": 64.12620391666667,
+        "ghi_sum_day": 7980.0,
+        "cloud_cover_mean_day": 19.375
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-11|hist_d11_1",
@@ -4370,7 +5091,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.03125,
+        "t_max_day": 21.5,
+        "rh_mean_day": 64.12620391666667,
+        "ghi_sum_day": 7980.0,
+        "cloud_cover_mean_day": 19.375
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-11|hist_d11_1",
@@ -4412,7 +5140,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 17.03125,
+        "t_max_day": 21.5,
+        "rh_mean_day": 64.12620391666667,
+        "ghi_sum_day": 7980.0,
+        "cloud_cover_mean_day": 19.375
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-11|hist_d11_1",
@@ -4454,7 +5189,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.339583333333334,
+        "t_max_day": 24.7,
+        "rh_mean_day": 78.70833333333333,
+        "ghi_sum_day": 6067.0,
+        "cloud_cover_mean_day": 7.333333333333333
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-11|hist_d11_1",
@@ -4496,7 +5238,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.339583333333334,
+        "t_max_day": 24.7,
+        "rh_mean_day": 78.70833333333333,
+        "ghi_sum_day": 6067.0,
+        "cloud_cover_mean_day": 7.333333333333333
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-11|hist_d11_1",
@@ -4538,7 +5287,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.339583333333334,
+        "t_max_day": 24.7,
+        "rh_mean_day": 78.70833333333333,
+        "ghi_sum_day": 6067.0,
+        "cloud_cover_mean_day": 7.333333333333333
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-11|hist_d11_1",
@@ -4580,7 +5336,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.339583333333334,
+        "t_max_day": 24.7,
+        "rh_mean_day": 78.70833333333333,
+        "ghi_sum_day": 6067.0,
+        "cloud_cover_mean_day": 7.333333333333333
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-11|hist_d11_1",
@@ -4622,7 +5385,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.339583333333334,
+        "t_max_day": 24.7,
+        "rh_mean_day": 78.70833333333333,
+        "ghi_sum_day": 6067.0,
+        "cloud_cover_mean_day": 7.333333333333333
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-12|hist_d12_1",
@@ -4664,7 +5434,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.783333333333335,
+        "t_max_day": 28.6,
+        "rh_mean_day": 48.842554583333346,
+        "ghi_sum_day": 8081.0,
+        "cloud_cover_mean_day": 10.083333333333334
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-12|hist_d12_1",
@@ -4706,7 +5483,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.783333333333335,
+        "t_max_day": 28.6,
+        "rh_mean_day": 48.842554583333346,
+        "ghi_sum_day": 8081.0,
+        "cloud_cover_mean_day": 10.083333333333334
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-12|hist_d12_1",
@@ -4748,7 +5532,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.783333333333335,
+        "t_max_day": 28.6,
+        "rh_mean_day": 48.842554583333346,
+        "ghi_sum_day": 8081.0,
+        "cloud_cover_mean_day": 10.083333333333334
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-12|hist_d12_1",
@@ -4790,7 +5581,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.0125,
+        "t_max_day": 23.3,
+        "rh_mean_day": 78.70833333333333,
+        "ghi_sum_day": 4301.0,
+        "cloud_cover_mean_day": 7.166666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-12|hist_d12_1",
@@ -4832,7 +5630,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.783333333333335,
+        "t_max_day": 28.6,
+        "rh_mean_day": 48.842554583333346,
+        "ghi_sum_day": 8081.0,
+        "cloud_cover_mean_day": 10.083333333333334
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-12|hist_d12_1",
@@ -4874,7 +5679,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.0125,
+        "t_max_day": 23.3,
+        "rh_mean_day": 78.70833333333333,
+        "ghi_sum_day": 4301.0,
+        "cloud_cover_mean_day": 7.166666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-12|hist_d12_1",
@@ -4916,7 +5728,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.783333333333335,
+        "t_max_day": 28.6,
+        "rh_mean_day": 48.842554583333346,
+        "ghi_sum_day": 8081.0,
+        "cloud_cover_mean_day": 10.083333333333334
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-12|hist_d12_1",
@@ -4958,7 +5777,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.0125,
+        "t_max_day": 23.3,
+        "rh_mean_day": 78.70833333333333,
+        "ghi_sum_day": 4301.0,
+        "cloud_cover_mean_day": 7.166666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-12|hist_d12_1",
@@ -5000,7 +5826,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.0125,
+        "t_max_day": 23.3,
+        "rh_mean_day": 78.70833333333333,
+        "ghi_sum_day": 4301.0,
+        "cloud_cover_mean_day": 7.166666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-13|hist_d13_1",
@@ -5042,7 +5875,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.897916666666674,
+        "t_max_day": 32.45,
+        "rh_mean_day": 38.54092104166667,
+        "ghi_sum_day": 7787.0,
+        "cloud_cover_mean_day": 23.416666666666668
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-12|hist_d12_1",
@@ -5084,7 +5924,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.0125,
+        "t_max_day": 23.3,
+        "rh_mean_day": 78.70833333333333,
+        "ghi_sum_day": 4301.0,
+        "cloud_cover_mean_day": 7.166666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-13|hist_d13_1",
@@ -5126,7 +5973,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.897916666666674,
+        "t_max_day": 32.45,
+        "rh_mean_day": 38.54092104166667,
+        "ghi_sum_day": 7787.0,
+        "cloud_cover_mean_day": 23.416666666666668
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-13|hist_d13_1",
@@ -5168,7 +6022,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.897916666666674,
+        "t_max_day": 32.45,
+        "rh_mean_day": 38.54092104166667,
+        "ghi_sum_day": 7787.0,
+        "cloud_cover_mean_day": 23.416666666666668
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-13|hist_d13_1",
@@ -5210,7 +6071,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.897916666666674,
+        "t_max_day": 32.45,
+        "rh_mean_day": 38.54092104166667,
+        "ghi_sum_day": 7787.0,
+        "cloud_cover_mean_day": 23.416666666666668
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-13|hist_d13_1",
@@ -5252,7 +6120,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.897916666666674,
+        "t_max_day": 32.45,
+        "rh_mean_day": 38.54092104166667,
+        "ghi_sum_day": 7787.0,
+        "cloud_cover_mean_day": 23.416666666666668
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-13|hist_d13_1",
@@ -5294,7 +6169,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.75583333333333,
+        "t_max_day": 24.6,
+        "rh_mean_day": 78.54166666666667,
+        "ghi_sum_day": 6608.0,
+        "cloud_cover_mean_day": 7.333333333333333
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-13|hist_d13_1",
@@ -5336,7 +6218,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.75583333333333,
+        "t_max_day": 24.6,
+        "rh_mean_day": 78.54166666666667,
+        "ghi_sum_day": 6608.0,
+        "cloud_cover_mean_day": 7.333333333333333
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-13|hist_d13_1",
@@ -5378,7 +6267,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.75583333333333,
+        "t_max_day": 24.6,
+        "rh_mean_day": 78.54166666666667,
+        "ghi_sum_day": 6608.0,
+        "cloud_cover_mean_day": 7.333333333333333
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-13|hist_d13_1",
@@ -5420,7 +6316,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.75583333333333,
+        "t_max_day": 24.6,
+        "rh_mean_day": 78.54166666666667,
+        "ghi_sum_day": 6608.0,
+        "cloud_cover_mean_day": 7.333333333333333
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-13|hist_d13_1",
@@ -5462,7 +6365,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.75583333333333,
+        "t_max_day": 24.6,
+        "rh_mean_day": 78.54166666666667,
+        "ghi_sum_day": 6608.0,
+        "cloud_cover_mean_day": 7.333333333333333
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-14|hist_d14_1",
@@ -5504,7 +6414,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.852083333333336,
+        "t_max_day": 33.8,
+        "rh_mean_day": 48.62329141666668,
+        "ghi_sum_day": 7459.0,
+        "cloud_cover_mean_day": 19.375
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-14|hist_d14_1",
@@ -5546,7 +6463,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.852083333333336,
+        "t_max_day": 33.8,
+        "rh_mean_day": 48.62329141666668,
+        "ghi_sum_day": 7459.0,
+        "cloud_cover_mean_day": 19.375
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-14|hist_d14_1",
@@ -5588,7 +6512,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.852083333333336,
+        "t_max_day": 33.8,
+        "rh_mean_day": 48.62329141666668,
+        "ghi_sum_day": 7459.0,
+        "cloud_cover_mean_day": 19.375
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-14|hist_d14_1",
@@ -5630,7 +6561,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.852083333333336,
+        "t_max_day": 33.8,
+        "rh_mean_day": 48.62329141666668,
+        "ghi_sum_day": 7459.0,
+        "cloud_cover_mean_day": 19.375
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-14|hist_d14_1",
@@ -5672,7 +6610,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.852083333333336,
+        "t_max_day": 33.8,
+        "rh_mean_day": 48.62329141666668,
+        "ghi_sum_day": 7459.0,
+        "cloud_cover_mean_day": 19.375
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-14|hist_d14_1",
@@ -5714,7 +6659,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 22.21416666666667,
+        "t_max_day": 27.7,
+        "rh_mean_day": 79.04166666666667,
+        "ghi_sum_day": 6439.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-14|hist_d14_1",
@@ -5756,7 +6708,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 22.21416666666667,
+        "t_max_day": 27.7,
+        "rh_mean_day": 79.04166666666667,
+        "ghi_sum_day": 6439.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-14|hist_d14_1",
@@ -5798,7 +6757,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 22.21416666666667,
+        "t_max_day": 27.7,
+        "rh_mean_day": 79.04166666666667,
+        "ghi_sum_day": 6439.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-14|hist_d14_1",
@@ -5840,7 +6806,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 22.21416666666667,
+        "t_max_day": 27.7,
+        "rh_mean_day": 79.04166666666667,
+        "ghi_sum_day": 6439.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-14|hist_d14_1",
@@ -5882,7 +6855,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 22.21416666666667,
+        "t_max_day": 27.7,
+        "rh_mean_day": 79.04166666666667,
+        "ghi_sum_day": 6439.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-15|hist_d15_1",
@@ -5924,7 +6904,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 21.318749999999998,
+        "t_max_day": 26.9,
+        "rh_mean_day": 75.61841770833334,
+        "ghi_sum_day": 4767.0,
+        "cloud_cover_mean_day": 81.70833333333333
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-15|hist_d15_1",
@@ -5966,7 +6953,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 21.318749999999998,
+        "t_max_day": 26.9,
+        "rh_mean_day": 75.61841770833334,
+        "ghi_sum_day": 4767.0,
+        "cloud_cover_mean_day": 81.70833333333333
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-15|hist_d15_1",
@@ -6008,7 +7002,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 21.318749999999998,
+        "t_max_day": 26.9,
+        "rh_mean_day": 75.61841770833334,
+        "ghi_sum_day": 4767.0,
+        "cloud_cover_mean_day": 81.70833333333333
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-15|hist_d15_1",
@@ -6050,7 +7051,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 21.318749999999998,
+        "t_max_day": 26.9,
+        "rh_mean_day": 75.61841770833334,
+        "ghi_sum_day": 4767.0,
+        "cloud_cover_mean_day": 81.70833333333333
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-15|hist_d15_1",
@@ -6092,7 +7100,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.456666666666663,
+        "t_max_day": 28.2,
+        "rh_mean_day": 79.125,
+        "ghi_sum_day": 6325.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-15|hist_d15_1",
@@ -6134,7 +7149,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.456666666666663,
+        "t_max_day": 28.2,
+        "rh_mean_day": 79.125,
+        "ghi_sum_day": 6325.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-15|hist_d15_1",
@@ -6176,7 +7198,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 21.318749999999998,
+        "t_max_day": 26.9,
+        "rh_mean_day": 75.61841770833334,
+        "ghi_sum_day": 4767.0,
+        "cloud_cover_mean_day": 81.70833333333333
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-15|hist_d15_1",
@@ -6218,7 +7247,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.456666666666663,
+        "t_max_day": 28.2,
+        "rh_mean_day": 79.125,
+        "ghi_sum_day": 6325.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-15|hist_d15_1",
@@ -6260,7 +7296,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.456666666666663,
+        "t_max_day": 28.2,
+        "rh_mean_day": 79.125,
+        "ghi_sum_day": 6325.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-15|hist_d15_1",
@@ -6302,7 +7345,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.456666666666663,
+        "t_max_day": 28.2,
+        "rh_mean_day": 79.125,
+        "ghi_sum_day": 6325.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-16|hist_d16_1",
@@ -6344,7 +7394,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.472916666666666,
+        "t_max_day": 23.95,
+        "rh_mean_day": 63.07775858333332,
+        "ghi_sum_day": 6154.0,
+        "cloud_cover_mean_day": 46.875
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-16|hist_d16_1",
@@ -6386,7 +7443,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.472916666666666,
+        "t_max_day": 23.95,
+        "rh_mean_day": 63.07775858333332,
+        "ghi_sum_day": 6154.0,
+        "cloud_cover_mean_day": 46.875
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-16|hist_d16_1",
@@ -6428,7 +7492,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.472916666666666,
+        "t_max_day": 23.95,
+        "rh_mean_day": 63.07775858333332,
+        "ghi_sum_day": 6154.0,
+        "cloud_cover_mean_day": 46.875
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-16|hist_d16_1",
@@ -6470,7 +7541,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.472916666666666,
+        "t_max_day": 23.95,
+        "rh_mean_day": 63.07775858333332,
+        "ghi_sum_day": 6154.0,
+        "cloud_cover_mean_day": 46.875
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-16|hist_d16_1",
@@ -6512,7 +7590,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 19.472916666666666,
+        "t_max_day": 23.95,
+        "rh_mean_day": 63.07775858333332,
+        "ghi_sum_day": 6154.0,
+        "cloud_cover_mean_day": 46.875
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-16|hist_d16_1",
@@ -6554,7 +7639,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.25916666666667,
+        "t_max_day": 32.3,
+        "rh_mean_day": 79.54166666666667,
+        "ghi_sum_day": 7021.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-16|hist_d16_1",
@@ -6596,7 +7688,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.25916666666667,
+        "t_max_day": 32.3,
+        "rh_mean_day": 79.54166666666667,
+        "ghi_sum_day": 7021.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-16|hist_d16_1",
@@ -6638,7 +7737,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.25916666666667,
+        "t_max_day": 32.3,
+        "rh_mean_day": 79.54166666666667,
+        "ghi_sum_day": 7021.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-17|hist_d17_1",
@@ -6680,7 +7786,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 21.181250000000002,
+        "t_max_day": 27.15,
+        "rh_mean_day": 55.843974333333335,
+        "ghi_sum_day": 7898.0,
+        "cloud_cover_mean_day": 26.166666666666668
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-16|hist_d16_1",
@@ -6722,7 +7835,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.25916666666667,
+        "t_max_day": 32.3,
+        "rh_mean_day": 79.54166666666667,
+        "ghi_sum_day": 7021.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-17|hist_d17_1",
@@ -6764,7 +7884,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 21.181250000000002,
+        "t_max_day": 27.15,
+        "rh_mean_day": 55.843974333333335,
+        "ghi_sum_day": 7898.0,
+        "cloud_cover_mean_day": 26.166666666666668
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-17|hist_d17_1",
@@ -6806,7 +7933,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 21.181250000000002,
+        "t_max_day": 27.15,
+        "rh_mean_day": 55.843974333333335,
+        "ghi_sum_day": 7898.0,
+        "cloud_cover_mean_day": 26.166666666666668
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-16|hist_d16_1",
@@ -6848,7 +7982,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.25916666666667,
+        "t_max_day": 32.3,
+        "rh_mean_day": 79.54166666666667,
+        "ghi_sum_day": 7021.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-17|hist_d17_1",
@@ -6890,7 +8031,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 21.181250000000002,
+        "t_max_day": 27.15,
+        "rh_mean_day": 55.843974333333335,
+        "ghi_sum_day": 7898.0,
+        "cloud_cover_mean_day": 26.166666666666668
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-17|hist_d17_1",
@@ -6932,7 +8080,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 21.181250000000002,
+        "t_max_day": 27.15,
+        "rh_mean_day": 55.843974333333335,
+        "ghi_sum_day": 7898.0,
+        "cloud_cover_mean_day": 26.166666666666668
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-17|hist_d17_1",
@@ -6974,7 +8129,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.717083333333335,
+        "t_max_day": 33.7,
+        "rh_mean_day": 79.66666666666667,
+        "ghi_sum_day": 3949.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-17|hist_d17_1",
@@ -7016,7 +8178,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.717083333333335,
+        "t_max_day": 33.7,
+        "rh_mean_day": 79.66666666666667,
+        "ghi_sum_day": 3949.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-17|hist_d17_1",
@@ -7058,7 +8227,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.717083333333335,
+        "t_max_day": 33.7,
+        "rh_mean_day": 79.66666666666667,
+        "ghi_sum_day": 3949.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-17|hist_d17_1",
@@ -7100,7 +8276,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.717083333333335,
+        "t_max_day": 33.7,
+        "rh_mean_day": 79.66666666666667,
+        "ghi_sum_day": 3949.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-17|hist_d17_1",
@@ -7142,7 +8325,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.717083333333335,
+        "t_max_day": 33.7,
+        "rh_mean_day": 79.66666666666667,
+        "ghi_sum_day": 3949.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-18|hist_d18_1",
@@ -7184,7 +8374,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.16458333333333,
+        "t_max_day": 29.15,
+        "rh_mean_day": 51.51540887499999,
+        "ghi_sum_day": 7325.0,
+        "cloud_cover_mean_day": 55.166666666666664
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-18|hist_d18_1",
@@ -7226,7 +8423,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.16458333333333,
+        "t_max_day": 29.15,
+        "rh_mean_day": 51.51540887499999,
+        "ghi_sum_day": 7325.0,
+        "cloud_cover_mean_day": 55.166666666666664
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-18|hist_d18_1",
@@ -7268,7 +8472,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.16458333333333,
+        "t_max_day": 29.15,
+        "rh_mean_day": 51.51540887499999,
+        "ghi_sum_day": 7325.0,
+        "cloud_cover_mean_day": 55.166666666666664
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-18|hist_d18_1",
@@ -7310,7 +8521,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.16458333333333,
+        "t_max_day": 29.15,
+        "rh_mean_day": 51.51540887499999,
+        "ghi_sum_day": 7325.0,
+        "cloud_cover_mean_day": 55.166666666666664
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-18|hist_d18_1",
@@ -7352,7 +8570,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.16458333333333,
+        "t_max_day": 29.15,
+        "rh_mean_day": 51.51540887499999,
+        "ghi_sum_day": 7325.0,
+        "cloud_cover_mean_day": 55.166666666666664
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-18|hist_d18_1",
@@ -7394,7 +8619,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.872500000000002,
+        "t_max_day": 33.2,
+        "rh_mean_day": 79.83333333333333,
+        "ghi_sum_day": 4445.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-18|hist_d18_1",
@@ -7436,7 +8668,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.872500000000002,
+        "t_max_day": 33.2,
+        "rh_mean_day": 79.83333333333333,
+        "ghi_sum_day": 4445.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-18|hist_d18_1",
@@ -7478,7 +8717,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.872500000000002,
+        "t_max_day": 33.2,
+        "rh_mean_day": 79.83333333333333,
+        "ghi_sum_day": 4445.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-18|hist_d18_1",
@@ -7520,7 +8766,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.872500000000002,
+        "t_max_day": 33.2,
+        "rh_mean_day": 79.83333333333333,
+        "ghi_sum_day": 4445.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-19|hist_d19_1",
@@ -7562,7 +8815,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 22.191666666666674,
+        "t_max_day": 30.0,
+        "rh_mean_day": 53.535785666666676,
+        "ghi_sum_day": 7820.0,
+        "cloud_cover_mean_day": 2.75
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-18|hist_d18_1",
@@ -7604,7 +8864,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.872500000000002,
+        "t_max_day": 33.2,
+        "rh_mean_day": 79.83333333333333,
+        "ghi_sum_day": 4445.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-19|hist_d19_1",
@@ -7646,7 +8913,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 22.191666666666674,
+        "t_max_day": 30.0,
+        "rh_mean_day": 53.535785666666676,
+        "ghi_sum_day": 7820.0,
+        "cloud_cover_mean_day": 2.75
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-19|hist_d19_1",
@@ -7688,7 +8962,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 22.191666666666674,
+        "t_max_day": 30.0,
+        "rh_mean_day": 53.535785666666676,
+        "ghi_sum_day": 7820.0,
+        "cloud_cover_mean_day": 2.75
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-19|hist_d19_1",
@@ -7730,7 +9011,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 22.191666666666674,
+        "t_max_day": 30.0,
+        "rh_mean_day": 53.535785666666676,
+        "ghi_sum_day": 7820.0,
+        "cloud_cover_mean_day": 2.75
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-19|hist_d19_1",
@@ -7772,7 +9060,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 22.191666666666674,
+        "t_max_day": 30.0,
+        "rh_mean_day": 53.535785666666676,
+        "ghi_sum_day": 7820.0,
+        "cloud_cover_mean_day": 2.75
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-19|hist_d19_1",
@@ -7814,7 +9109,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.913750000000004,
+        "t_max_day": 33.5,
+        "rh_mean_day": 79.70833333333333,
+        "ghi_sum_day": 4366.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-19|hist_d19_1",
@@ -7856,7 +9158,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.913750000000004,
+        "t_max_day": 33.5,
+        "rh_mean_day": 79.70833333333333,
+        "ghi_sum_day": 4366.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-19|hist_d19_1",
@@ -7898,7 +9207,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.913750000000004,
+        "t_max_day": 33.5,
+        "rh_mean_day": 79.70833333333333,
+        "ghi_sum_day": 4366.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-19|hist_d19_1",
@@ -7940,7 +9256,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.913750000000004,
+        "t_max_day": 33.5,
+        "rh_mean_day": 79.70833333333333,
+        "ghi_sum_day": 4366.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-19|hist_d19_1",
@@ -7982,7 +9305,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.913750000000004,
+        "t_max_day": 33.5,
+        "rh_mean_day": 79.70833333333333,
+        "ghi_sum_day": 4366.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-20|hist_d20_1",
@@ -8024,7 +9354,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.3875,
+        "t_max_day": 26.25,
+        "rh_mean_day": 46.90795987500001,
+        "ghi_sum_day": 8205.0,
+        "cloud_cover_mean_day": 2.2916666666666665
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-20|hist_d20_1",
@@ -8066,7 +9403,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.3875,
+        "t_max_day": 26.25,
+        "rh_mean_day": 46.90795987500001,
+        "ghi_sum_day": 8205.0,
+        "cloud_cover_mean_day": 2.2916666666666665
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-20|hist_d20_1",
@@ -8108,7 +9452,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.3875,
+        "t_max_day": 26.25,
+        "rh_mean_day": 46.90795987500001,
+        "ghi_sum_day": 8205.0,
+        "cloud_cover_mean_day": 2.2916666666666665
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-20|hist_d20_1",
@@ -8150,7 +9501,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.3875,
+        "t_max_day": 26.25,
+        "rh_mean_day": 46.90795987500001,
+        "ghi_sum_day": 8205.0,
+        "cloud_cover_mean_day": 2.2916666666666665
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-20|hist_d20_1",
@@ -8192,7 +9550,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.3875,
+        "t_max_day": 26.25,
+        "rh_mean_day": 46.90795987500001,
+        "ghi_sum_day": 8205.0,
+        "cloud_cover_mean_day": 2.2916666666666665
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-20|hist_d20_1",
@@ -8234,7 +9599,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 29.92708333333333,
+        "t_max_day": 36.9,
+        "rh_mean_day": 80.04166666666667,
+        "ghi_sum_day": 4799.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-20|hist_d20_1",
@@ -8276,7 +9648,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 29.92708333333333,
+        "t_max_day": 36.9,
+        "rh_mean_day": 80.04166666666667,
+        "ghi_sum_day": 4799.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-20|hist_d20_1",
@@ -8318,7 +9697,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 29.92708333333333,
+        "t_max_day": 36.9,
+        "rh_mean_day": 80.04166666666667,
+        "ghi_sum_day": 4799.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-20|hist_d20_1",
@@ -8360,7 +9746,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 29.92708333333333,
+        "t_max_day": 36.9,
+        "rh_mean_day": 80.04166666666667,
+        "ghi_sum_day": 4799.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-21|hist_d21_1",
@@ -8402,7 +9795,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.108333333333334,
+        "t_max_day": 30.75,
+        "rh_mean_day": 39.800918249999995,
+        "ghi_sum_day": 7968.0,
+        "cloud_cover_mean_day": 42.833333333333336
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-20|hist_d20_1",
@@ -8444,7 +9844,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 29.92708333333333,
+        "t_max_day": 36.9,
+        "rh_mean_day": 80.04166666666667,
+        "ghi_sum_day": 4799.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-21|hist_d21_1",
@@ -8486,7 +9893,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.108333333333334,
+        "t_max_day": 30.75,
+        "rh_mean_day": 39.800918249999995,
+        "ghi_sum_day": 7968.0,
+        "cloud_cover_mean_day": 42.833333333333336
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-21|hist_d21_1",
@@ -8528,7 +9942,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.108333333333334,
+        "t_max_day": 30.75,
+        "rh_mean_day": 39.800918249999995,
+        "ghi_sum_day": 7968.0,
+        "cloud_cover_mean_day": 42.833333333333336
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-21|hist_d21_1",
@@ -8570,7 +9991,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.108333333333334,
+        "t_max_day": 30.75,
+        "rh_mean_day": 39.800918249999995,
+        "ghi_sum_day": 7968.0,
+        "cloud_cover_mean_day": 42.833333333333336
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-21|hist_d21_1",
@@ -8612,7 +10040,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.07874999999999,
+        "t_max_day": 32.2,
+        "rh_mean_day": 79.625,
+        "ghi_sum_day": 5221.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-21|hist_d21_1",
@@ -8654,7 +10089,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.108333333333334,
+        "t_max_day": 30.75,
+        "rh_mean_day": 39.800918249999995,
+        "ghi_sum_day": 7968.0,
+        "cloud_cover_mean_day": 42.833333333333336
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-21|hist_d21_1",
@@ -8696,7 +10138,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.07874999999999,
+        "t_max_day": 32.2,
+        "rh_mean_day": 79.625,
+        "ghi_sum_day": 5221.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-21|hist_d21_1",
@@ -8738,7 +10187,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.07874999999999,
+        "t_max_day": 32.2,
+        "rh_mean_day": 79.625,
+        "ghi_sum_day": 5221.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-21|hist_d21_1",
@@ -8780,7 +10236,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.07874999999999,
+        "t_max_day": 32.2,
+        "rh_mean_day": 79.625,
+        "ghi_sum_day": 5221.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-21|hist_d21_1",
@@ -8822,7 +10285,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.07874999999999,
+        "t_max_day": 32.2,
+        "rh_mean_day": 79.625,
+        "ghi_sum_day": 5221.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-22|hist_d22_1",
@@ -8864,7 +10334,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 26.308333333333334,
+        "t_max_day": 34.45,
+        "rh_mean_day": 40.03057345833334,
+        "ghi_sum_day": 8000.0,
+        "cloud_cover_mean_day": 34.208333333333336
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-22|hist_d22_1",
@@ -8906,7 +10383,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 26.308333333333334,
+        "t_max_day": 34.45,
+        "rh_mean_day": 40.03057345833334,
+        "ghi_sum_day": 8000.0,
+        "cloud_cover_mean_day": 34.208333333333336
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-22|hist_d22_1",
@@ -8948,7 +10432,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 26.308333333333334,
+        "t_max_day": 34.45,
+        "rh_mean_day": 40.03057345833334,
+        "ghi_sum_day": 8000.0,
+        "cloud_cover_mean_day": 34.208333333333336
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-22|hist_d22_1",
@@ -8990,7 +10481,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 26.308333333333334,
+        "t_max_day": 34.45,
+        "rh_mean_day": 40.03057345833334,
+        "ghi_sum_day": 8000.0,
+        "cloud_cover_mean_day": 34.208333333333336
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-22|hist_d22_1",
@@ -9032,7 +10530,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.463333333333335,
+        "t_max_day": 28.39,
+        "rh_mean_day": 79.16666666666667,
+        "ghi_sum_day": 3183.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-22|hist_d22_1",
@@ -9074,7 +10579,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.463333333333335,
+        "t_max_day": 28.39,
+        "rh_mean_day": 79.16666666666667,
+        "ghi_sum_day": 3183.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-22|hist_d22_1",
@@ -9116,7 +10628,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 26.308333333333334,
+        "t_max_day": 34.45,
+        "rh_mean_day": 40.03057345833334,
+        "ghi_sum_day": 8000.0,
+        "cloud_cover_mean_day": 34.208333333333336
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-22|hist_d22_1",
@@ -9158,7 +10677,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.463333333333335,
+        "t_max_day": 28.39,
+        "rh_mean_day": 79.16666666666667,
+        "ghi_sum_day": 3183.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-22|hist_d22_1",
@@ -9200,7 +10726,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.463333333333335,
+        "t_max_day": 28.39,
+        "rh_mean_day": 79.16666666666667,
+        "ghi_sum_day": 3183.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-23|hist_d23_1",
@@ -9242,7 +10775,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.599999999999998,
+        "t_max_day": 27.45,
+        "rh_mean_day": 56.68325220833333,
+        "ghi_sum_day": 6162.0,
+        "cloud_cover_mean_day": 56.375
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-22|hist_d22_1",
@@ -9284,7 +10824,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.463333333333335,
+        "t_max_day": 28.39,
+        "rh_mean_day": 79.16666666666667,
+        "ghi_sum_day": 3183.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-23|hist_d23_1",
@@ -9326,7 +10873,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.599999999999998,
+        "t_max_day": 27.45,
+        "rh_mean_day": 56.68325220833333,
+        "ghi_sum_day": 6162.0,
+        "cloud_cover_mean_day": 56.375
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-23|hist_d23_1",
@@ -9368,7 +10922,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.599999999999998,
+        "t_max_day": 27.45,
+        "rh_mean_day": 56.68325220833333,
+        "ghi_sum_day": 6162.0,
+        "cloud_cover_mean_day": 56.375
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-23|hist_d23_1",
@@ -9410,7 +10971,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.599999999999998,
+        "t_max_day": 27.45,
+        "rh_mean_day": 56.68325220833333,
+        "ghi_sum_day": 6162.0,
+        "cloud_cover_mean_day": 56.375
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-23|hist_d23_1",
@@ -9452,7 +11020,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.599999999999998,
+        "t_max_day": 27.45,
+        "rh_mean_day": 56.68325220833333,
+        "ghi_sum_day": 6162.0,
+        "cloud_cover_mean_day": 56.375
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-23|hist_d23_1",
@@ -9494,7 +11069,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.162499999999998,
+        "t_max_day": 28.1,
+        "rh_mean_day": 79.125,
+        "ghi_sum_day": 3439.0,
+        "cloud_cover_mean_day": 7.375
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-23|hist_d23_1",
@@ -9536,7 +11118,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.162499999999998,
+        "t_max_day": 28.1,
+        "rh_mean_day": 79.125,
+        "ghi_sum_day": 3439.0,
+        "cloud_cover_mean_day": 7.375
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-23|hist_d23_1",
@@ -9578,7 +11167,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.162499999999998,
+        "t_max_day": 28.1,
+        "rh_mean_day": 79.125,
+        "ghi_sum_day": 3439.0,
+        "cloud_cover_mean_day": 7.375
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-23|hist_d23_1",
@@ -9620,7 +11216,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.162499999999998,
+        "t_max_day": 28.1,
+        "rh_mean_day": 79.125,
+        "ghi_sum_day": 3439.0,
+        "cloud_cover_mean_day": 7.375
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-23|hist_d23_1",
@@ -9662,7 +11265,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.162499999999998,
+        "t_max_day": 28.1,
+        "rh_mean_day": 79.125,
+        "ghi_sum_day": 3439.0,
+        "cloud_cover_mean_day": 7.375
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-24|hist_d24_1",
@@ -9704,7 +11314,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.89166666666667,
+        "t_max_day": 27.85,
+        "rh_mean_day": 48.36102249999999,
+        "ghi_sum_day": 7745.0,
+        "cloud_cover_mean_day": 17.25
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-24|hist_d24_1",
@@ -9746,7 +11363,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.89166666666667,
+        "t_max_day": 27.85,
+        "rh_mean_day": 48.36102249999999,
+        "ghi_sum_day": 7745.0,
+        "cloud_cover_mean_day": 17.25
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-24|hist_d24_1",
@@ -9788,7 +11412,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.89166666666667,
+        "t_max_day": 27.85,
+        "rh_mean_day": 48.36102249999999,
+        "ghi_sum_day": 7745.0,
+        "cloud_cover_mean_day": 17.25
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-24|hist_d24_1",
@@ -9830,7 +11461,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.89166666666667,
+        "t_max_day": 27.85,
+        "rh_mean_day": 48.36102249999999,
+        "ghi_sum_day": 7745.0,
+        "cloud_cover_mean_day": 17.25
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-24|hist_d24_1",
@@ -9872,7 +11510,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.79166666666666,
+        "t_max_day": 32.6,
+        "rh_mean_day": 79.41666666666667,
+        "ghi_sum_day": 8532.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-24|hist_d24_1",
@@ -9914,7 +11559,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 20.89166666666667,
+        "t_max_day": 27.85,
+        "rh_mean_day": 48.36102249999999,
+        "ghi_sum_day": 7745.0,
+        "cloud_cover_mean_day": 17.25
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-24|hist_d24_1",
@@ -9956,7 +11608,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.79166666666666,
+        "t_max_day": 32.6,
+        "rh_mean_day": 79.41666666666667,
+        "ghi_sum_day": 8532.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-24|hist_d24_1",
@@ -9998,7 +11657,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.79166666666666,
+        "t_max_day": 32.6,
+        "rh_mean_day": 79.41666666666667,
+        "ghi_sum_day": 8532.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-25|hist_d25_1",
@@ -10040,7 +11706,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.74791666666667,
+        "t_max_day": 32.5,
+        "rh_mean_day": 45.81133729166666,
+        "ghi_sum_day": 7201.0,
+        "cloud_cover_mean_day": 25.25
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-24|hist_d24_1",
@@ -10082,7 +11755,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.79166666666666,
+        "t_max_day": 32.6,
+        "rh_mean_day": 79.41666666666667,
+        "ghi_sum_day": 8532.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-24|hist_d24_1",
@@ -10124,7 +11804,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.79166666666666,
+        "t_max_day": 32.6,
+        "rh_mean_day": 79.41666666666667,
+        "ghi_sum_day": 8532.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-25|hist_d25_1",
@@ -10166,7 +11853,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.74791666666667,
+        "t_max_day": 32.5,
+        "rh_mean_day": 45.81133729166666,
+        "ghi_sum_day": 7201.0,
+        "cloud_cover_mean_day": 25.25
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-25|hist_d25_1",
@@ -10208,7 +11902,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.74791666666667,
+        "t_max_day": 32.5,
+        "rh_mean_day": 45.81133729166666,
+        "ghi_sum_day": 7201.0,
+        "cloud_cover_mean_day": 25.25
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-25|hist_d25_1",
@@ -10250,7 +11951,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 26.778333333333336,
+        "t_max_day": 33.0,
+        "rh_mean_day": 79.75,
+        "ghi_sum_day": 6041.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-25|hist_d25_1",
@@ -10292,7 +12000,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.74791666666667,
+        "t_max_day": 32.5,
+        "rh_mean_day": 45.81133729166666,
+        "ghi_sum_day": 7201.0,
+        "cloud_cover_mean_day": 25.25
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-25|hist_d25_1",
@@ -10334,7 +12049,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.74791666666667,
+        "t_max_day": 32.5,
+        "rh_mean_day": 45.81133729166666,
+        "ghi_sum_day": 7201.0,
+        "cloud_cover_mean_day": 25.25
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-25|hist_d25_1",
@@ -10376,7 +12098,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 26.778333333333336,
+        "t_max_day": 33.0,
+        "rh_mean_day": 79.75,
+        "ghi_sum_day": 6041.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-25|hist_d25_1",
@@ -10418,7 +12147,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 26.778333333333336,
+        "t_max_day": 33.0,
+        "rh_mean_day": 79.75,
+        "ghi_sum_day": 6041.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-25|hist_d25_1",
@@ -10460,7 +12196,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 26.778333333333336,
+        "t_max_day": 33.0,
+        "rh_mean_day": 79.75,
+        "ghi_sum_day": 6041.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-25|hist_d25_1",
@@ -10502,7 +12245,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 26.778333333333336,
+        "t_max_day": 33.0,
+        "rh_mean_day": 79.75,
+        "ghi_sum_day": 6041.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-26|hist_d26_1",
@@ -10544,7 +12294,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.764583333333324,
+        "t_max_day": 28.25,
+        "rh_mean_day": 62.65970708333333,
+        "ghi_sum_day": 6658.0,
+        "cloud_cover_mean_day": 48.541666666666664
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-26|hist_d26_1",
@@ -10586,7 +12343,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.764583333333324,
+        "t_max_day": 28.25,
+        "rh_mean_day": 62.65970708333333,
+        "ghi_sum_day": 6658.0,
+        "cloud_cover_mean_day": 48.541666666666664
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-26|hist_d26_1",
@@ -10628,7 +12392,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.764583333333324,
+        "t_max_day": 28.25,
+        "rh_mean_day": 62.65970708333333,
+        "ghi_sum_day": 6658.0,
+        "cloud_cover_mean_day": 48.541666666666664
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-26|hist_d26_1",
@@ -10670,7 +12441,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.125833333333333,
+        "t_max_day": 26.85,
+        "rh_mean_day": 79.29166666666667,
+        "ghi_sum_day": 1773.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-26|hist_d26_1",
@@ -10712,7 +12490,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.125833333333333,
+        "t_max_day": 26.85,
+        "rh_mean_day": 79.29166666666667,
+        "ghi_sum_day": 1773.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-26|hist_d26_1",
@@ -10754,7 +12539,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.764583333333324,
+        "t_max_day": 28.25,
+        "rh_mean_day": 62.65970708333333,
+        "ghi_sum_day": 6658.0,
+        "cloud_cover_mean_day": 48.541666666666664
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-26|hist_d26_1",
@@ -10796,7 +12588,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 23.764583333333324,
+        "t_max_day": 28.25,
+        "rh_mean_day": 62.65970708333333,
+        "ghi_sum_day": 6658.0,
+        "cloud_cover_mean_day": 48.541666666666664
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-26|hist_d26_1",
@@ -10838,7 +12637,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.125833333333333,
+        "t_max_day": 26.85,
+        "rh_mean_day": 79.29166666666667,
+        "ghi_sum_day": 1773.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-26|hist_d26_1",
@@ -10880,7 +12686,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.125833333333333,
+        "t_max_day": 26.85,
+        "rh_mean_day": 79.29166666666667,
+        "ghi_sum_day": 1773.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-27|hist_d27_1",
@@ -10922,7 +12735,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 21.510416666666668,
+        "t_max_day": 24.4,
+        "rh_mean_day": 70.266189625,
+        "ghi_sum_day": 3887.0,
+        "cloud_cover_mean_day": 69.58333333333333
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-26|hist_d26_1",
@@ -10964,7 +12784,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.125833333333333,
+        "t_max_day": 26.85,
+        "rh_mean_day": 79.29166666666667,
+        "ghi_sum_day": 1773.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-27|hist_d27_1",
@@ -11006,7 +12833,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 21.510416666666668,
+        "t_max_day": 24.4,
+        "rh_mean_day": 70.266189625,
+        "ghi_sum_day": 3887.0,
+        "cloud_cover_mean_day": 69.58333333333333
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-27|hist_d27_1",
@@ -11048,7 +12882,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 21.510416666666668,
+        "t_max_day": 24.4,
+        "rh_mean_day": 70.266189625,
+        "ghi_sum_day": 3887.0,
+        "cloud_cover_mean_day": 69.58333333333333
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-27|hist_d27_1",
@@ -11090,7 +12931,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 21.510416666666668,
+        "t_max_day": 24.4,
+        "rh_mean_day": 70.266189625,
+        "ghi_sum_day": 3887.0,
+        "cloud_cover_mean_day": 69.58333333333333
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-27|hist_d27_1",
@@ -11132,7 +12980,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 21.510416666666668,
+        "t_max_day": 24.4,
+        "rh_mean_day": 70.266189625,
+        "ghi_sum_day": 3887.0,
+        "cloud_cover_mean_day": 69.58333333333333
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-27|hist_d27_1",
@@ -11174,7 +13029,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.505416666666672,
+        "t_max_day": 30.3,
+        "rh_mean_day": 79.33333333333333,
+        "ghi_sum_day": 6450.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-27|hist_d27_1",
@@ -11216,7 +13078,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.505416666666672,
+        "t_max_day": 30.3,
+        "rh_mean_day": 79.33333333333333,
+        "ghi_sum_day": 6450.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-27|hist_d27_1",
@@ -11258,7 +13127,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.505416666666672,
+        "t_max_day": 30.3,
+        "rh_mean_day": 79.33333333333333,
+        "ghi_sum_day": 6450.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-27|hist_d27_1",
@@ -11300,7 +13176,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.505416666666672,
+        "t_max_day": 30.3,
+        "rh_mean_day": 79.33333333333333,
+        "ghi_sum_day": 6450.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-27|hist_d27_1",
@@ -11342,7 +13225,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.505416666666672,
+        "t_max_day": 30.3,
+        "rh_mean_day": 79.33333333333333,
+        "ghi_sum_day": 6450.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-28|hist_d28_1",
@@ -11384,7 +13274,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.254166666666663,
+        "t_max_day": 31.2,
+        "rh_mean_day": 63.07382608333334,
+        "ghi_sum_day": 6680.0,
+        "cloud_cover_mean_day": 23.75
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-28|hist_d28_1",
@@ -11426,7 +13323,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.254166666666663,
+        "t_max_day": 31.2,
+        "rh_mean_day": 63.07382608333334,
+        "ghi_sum_day": 6680.0,
+        "cloud_cover_mean_day": 23.75
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-28|hist_d28_1",
@@ -11468,7 +13372,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.254166666666663,
+        "t_max_day": 31.2,
+        "rh_mean_day": 63.07382608333334,
+        "ghi_sum_day": 6680.0,
+        "cloud_cover_mean_day": 23.75
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-28|hist_d28_1",
@@ -11510,7 +13421,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.254166666666663,
+        "t_max_day": 31.2,
+        "rh_mean_day": 63.07382608333334,
+        "ghi_sum_day": 6680.0,
+        "cloud_cover_mean_day": 23.75
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-28|hist_d28_1",
@@ -11552,7 +13470,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.109583333333337,
+        "t_max_day": 30.8,
+        "rh_mean_day": 79.33333333333333,
+        "ghi_sum_day": 7156.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-28|hist_d28_1",
@@ -11594,7 +13519,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.254166666666663,
+        "t_max_day": 31.2,
+        "rh_mean_day": 63.07382608333334,
+        "ghi_sum_day": 6680.0,
+        "cloud_cover_mean_day": 23.75
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-28|hist_d28_1",
@@ -11636,7 +13568,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.109583333333337,
+        "t_max_day": 30.8,
+        "rh_mean_day": 79.33333333333333,
+        "ghi_sum_day": 7156.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-28|hist_d28_1",
@@ -11678,7 +13617,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.109583333333337,
+        "t_max_day": 30.8,
+        "rh_mean_day": 79.33333333333333,
+        "ghi_sum_day": 7156.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-28|hist_d28_1",
@@ -11720,7 +13666,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.109583333333337,
+        "t_max_day": 30.8,
+        "rh_mean_day": 79.33333333333333,
+        "ghi_sum_day": 7156.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-28|hist_d28_1",
@@ -11762,7 +13715,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.109583333333337,
+        "t_max_day": 30.8,
+        "rh_mean_day": 79.33333333333333,
+        "ghi_sum_day": 7156.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-29|hist_d29_1",
@@ -11804,7 +13764,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 26.175,
+        "t_max_day": 33.2,
+        "rh_mean_day": 55.93058054166667,
+        "ghi_sum_day": 7644.0,
+        "cloud_cover_mean_day": 19.083333333333332
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-29|hist_d29_1",
@@ -11846,7 +13813,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 26.175,
+        "t_max_day": 33.2,
+        "rh_mean_day": 55.93058054166667,
+        "ghi_sum_day": 7644.0,
+        "cloud_cover_mean_day": 19.083333333333332
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-29|hist_d29_1",
@@ -11888,7 +13862,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 26.175,
+        "t_max_day": 33.2,
+        "rh_mean_day": 55.93058054166667,
+        "ghi_sum_day": 7644.0,
+        "cloud_cover_mean_day": 19.083333333333332
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-29|hist_d29_1",
@@ -11930,7 +13911,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 26.175,
+        "t_max_day": 33.2,
+        "rh_mean_day": 55.93058054166667,
+        "ghi_sum_day": 7644.0,
+        "cloud_cover_mean_day": 19.083333333333332
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-29|hist_d29_1",
@@ -11972,7 +13960,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 26.175,
+        "t_max_day": 33.2,
+        "rh_mean_day": 55.93058054166667,
+        "ghi_sum_day": 7644.0,
+        "cloud_cover_mean_day": 19.083333333333332
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-29|hist_d29_1",
@@ -12014,7 +14009,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.832916666666662,
+        "t_max_day": 31.7,
+        "rh_mean_day": 79.54166666666667,
+        "ghi_sum_day": 6191.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-29|hist_d29_1",
@@ -12056,7 +14058,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.832916666666662,
+        "t_max_day": 31.7,
+        "rh_mean_day": 79.54166666666667,
+        "ghi_sum_day": 6191.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-29|hist_d29_1",
@@ -12098,7 +14107,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.832916666666662,
+        "t_max_day": 31.7,
+        "rh_mean_day": 79.54166666666667,
+        "ghi_sum_day": 6191.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-29|hist_d29_1",
@@ -12140,7 +14156,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.832916666666662,
+        "t_max_day": 31.7,
+        "rh_mean_day": 79.54166666666667,
+        "ghi_sum_day": 6191.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-29|hist_d29_1",
@@ -12182,7 +14205,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 25.832916666666662,
+        "t_max_day": 31.7,
+        "rh_mean_day": 79.54166666666667,
+        "ghi_sum_day": 6191.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|germany|eb_rule_milp|2025-06-30|hist_d30_1",
@@ -12224,7 +14254,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.147916666666674,
+        "t_max_day": 33.1,
+        "rh_mean_day": 49.585130083333354,
+        "ghi_sum_day": 7818.0,
+        "cloud_cover_mean_day": 15.5
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|germany|eb_rule_milp|2025-06-30|hist_d30_1",
@@ -12266,7 +14303,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.147916666666674,
+        "t_max_day": 33.1,
+        "rh_mean_day": 49.585130083333354,
+        "ghi_sum_day": 7818.0,
+        "cloud_cover_mean_day": 15.5
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|germany|eb_rule_milp|2025-06-30|hist_d30_1",
@@ -12308,7 +14352,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.147916666666674,
+        "t_max_day": 33.1,
+        "rh_mean_day": 49.585130083333354,
+        "ghi_sum_day": 7818.0,
+        "cloud_cover_mean_day": 15.5
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|germany|eb_rule_milp|2025-06-30|hist_d30_1",
@@ -12350,7 +14401,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.147916666666674,
+        "t_max_day": 33.1,
+        "rh_mean_day": 49.585130083333354,
+        "ghi_sum_day": 7818.0,
+        "cloud_cover_mean_day": 15.5
+      }
     },
     {
       "memory_event_id": "household_s3_hybrid_work_from_home|tianjin|eb_rule_milp|2025-06-30|hist_d30_1",
@@ -12392,7 +14450,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.462500000000002,
+        "t_max_day": 26.66,
+        "rh_mean_day": 79.16666666666667,
+        "ghi_sum_day": 1945.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s2_multigeneration_caregiver|tianjin|eb_rule_milp|2025-06-30|hist_d30_1",
@@ -12434,7 +14499,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.462500000000002,
+        "t_max_day": 26.66,
+        "rh_mean_day": 79.16666666666667,
+        "ghi_sum_day": 1945.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s1_dual_commuter_standard|tianjin|eb_rule_milp|2025-06-30|hist_d30_1",
@@ -12476,7 +14548,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.462500000000002,
+        "t_max_day": 26.66,
+        "rh_mean_day": 79.16666666666667,
+        "ghi_sum_day": 1945.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|germany|eb_rule_milp|2025-06-30|hist_d30_1",
@@ -12518,7 +14597,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 27.147916666666674,
+        "t_max_day": 33.1,
+        "rh_mean_day": 49.585130083333354,
+        "ghi_sum_day": 7818.0,
+        "cloud_cover_mean_day": 15.5
+      }
     },
     {
       "memory_event_id": "household_s4_ev_commuter_flexible|tianjin|eb_rule_milp|2025-06-30|hist_d30_1",
@@ -12560,7 +14646,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.462500000000002,
+        "t_max_day": 26.66,
+        "rh_mean_day": 79.16666666666667,
+        "ghi_sum_day": 1945.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     },
     {
       "memory_event_id": "household_s5_shared_roommates_irregular|tianjin|eb_rule_milp|2025-06-30|hist_d30_1",
@@ -12602,7 +14695,14 @@
       "non_ac_appliances_during_event": [],
       "selected_strategy_id": "multi_user_feedback",
       "selected_strategy_reason": "",
-      "basis": "historical_controller_delivery_vs_no_dr_counterfactual"
+      "basis": "historical_controller_delivery_vs_no_dr_counterfactual",
+      "weather_features": {
+        "t_mean_day": 24.462500000000002,
+        "t_max_day": 26.66,
+        "rh_mean_day": 79.16666666666667,
+        "ghi_sum_day": 1945.0,
+        "cloud_cover_mean_day": 7.416666666666667
+      }
     }
   ],
   "summary": {
