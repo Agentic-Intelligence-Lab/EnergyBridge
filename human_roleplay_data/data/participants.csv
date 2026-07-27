@@ -1,0 +1,585 @@
+participant_id,persona,age_band
+R0001,Comfort-sensitive,20-24
+R0002,Caregiver,35-44
+R0003,Caregiver,20-24
+R0004,Price-sensitive,25-34
+R0005,EV commuter,20-24
+R0006,EV commuter,20-24
+R0007,Comfort-sensitive,35-44
+R0008,EV commuter,20-24
+R0009,Cooperative regular,45-55
+R0010,Caregiver,45-55
+R0011,Comfort-sensitive,20-24
+R0012,EV commuter,25-34
+R0013,Comfort-sensitive,25-34
+R0014,Caregiver,25-34
+R0015,EV commuter,35-44
+R0016,EV commuter,25-34
+R0017,Caregiver,20-24
+R0018,Caregiver,20-24
+R0019,Price-sensitive,20-24
+R0020,Price-sensitive,20-24
+R0021,EV commuter,35-44
+R0022,Caregiver,25-34
+R0023,Irregular routine,20-24
+R0024,EV commuter,25-34
+R0025,EV commuter,25-34
+R0026,Irregular routine,45-55
+R0027,Price-sensitive,20-24
+R0028,Cooperative regular,45-55
+R0029,Irregular routine,35-44
+R0030,Irregular routine,35-44
+R0031,Comfort-sensitive,25-34
+R0032,Cooperative regular,20-24
+R0033,Price-sensitive,20-24
+R0034,Comfort-sensitive,25-34
+R0035,Comfort-sensitive,20-24
+R0036,Comfort-sensitive,35-44
+R0037,Irregular routine,20-24
+R0038,Cooperative regular,20-24
+R0039,Comfort-sensitive,20-24
+R0040,Cooperative regular,25-34
+R0041,EV commuter,20-24
+R0042,Price-sensitive,25-34
+R0043,Cooperative regular,45-55
+R0044,Price-sensitive,20-24
+R0045,EV commuter,25-34
+R0046,EV commuter,25-34
+R0047,Comfort-sensitive,20-24
+R0048,Cooperative regular,25-34
+R0049,Comfort-sensitive,25-34
+R0050,EV commuter,25-34
+R0051,Irregular routine,45-55
+R0052,Cooperative regular,35-44
+R0053,EV commuter,20-24
+R0054,Caregiver,25-34
+R0055,Price-sensitive,25-34
+R0056,Cooperative regular,25-34
+R0057,Comfort-sensitive,20-24
+R0058,Caregiver,45-55
+R0059,Price-sensitive,25-34
+R0060,Cooperative regular,20-24
+R0061,Comfort-sensitive,35-44
+R0062,Caregiver,45-55
+R0063,Cooperative regular,20-24
+R0064,Price-sensitive,25-34
+R0065,Caregiver,45-55
+R0066,Price-sensitive,25-34
+R0067,Irregular routine,20-24
+R0068,EV commuter,25-34
+R0069,Cooperative regular,45-55
+R0070,EV commuter,25-34
+R0071,Comfort-sensitive,20-24
+R0072,Irregular routine,25-34
+R0073,EV commuter,25-34
+R0074,EV commuter,20-24
+R0075,Cooperative regular,35-44
+R0076,EV commuter,20-24
+R0077,Price-sensitive,20-24
+R0078,Price-sensitive,20-24
+R0079,Caregiver,25-34
+R0080,Cooperative regular,25-34
+R0081,Irregular routine,20-24
+R0082,Caregiver,25-34
+R0083,EV commuter,45-55
+R0084,Cooperative regular,45-55
+R0085,Price-sensitive,45-55
+R0086,EV commuter,20-24
+R0087,Cooperative regular,20-24
+R0088,Caregiver,45-55
+R0089,Cooperative regular,35-44
+R0090,Price-sensitive,45-55
+R0091,Price-sensitive,35-44
+R0092,EV commuter,45-55
+R0093,Caregiver,35-44
+R0094,Irregular routine,20-24
+R0095,Irregular routine,45-55
+R0096,EV commuter,20-24
+R0097,Irregular routine,20-24
+R0098,Comfort-sensitive,20-24
+R0099,Comfort-sensitive,25-34
+R0100,Irregular routine,35-44
+R0101,EV commuter,20-24
+R0102,Comfort-sensitive,25-34
+R0103,Comfort-sensitive,20-24
+R0104,Comfort-sensitive,20-24
+R0105,Cooperative regular,45-55
+R0106,Caregiver,20-24
+R0107,Cooperative regular,45-55
+R0108,Comfort-sensitive,25-34
+R0109,EV commuter,20-24
+R0110,Irregular routine,35-44
+R0111,Irregular routine,20-24
+R0112,Cooperative regular,45-55
+R0113,Irregular routine,25-34
+R0114,Irregular routine,25-34
+R0115,EV commuter,20-24
+R0116,Cooperative regular,20-24
+R0117,Comfort-sensitive,25-34
+R0118,Price-sensitive,25-34
+R0119,Price-sensitive,25-34
+R0120,Irregular routine,45-55
+R0121,Comfort-sensitive,25-34
+R0122,Comfort-sensitive,25-34
+R0123,Cooperative regular,25-34
+R0124,EV commuter,20-24
+R0125,Irregular routine,20-24
+R0126,EV commuter,20-24
+R0127,Irregular routine,25-34
+R0128,Price-sensitive,35-44
+R0129,Cooperative regular,20-24
+R0130,EV commuter,20-24
+R0131,Cooperative regular,20-24
+R0132,EV commuter,35-44
+R0133,Price-sensitive,20-24
+R0134,Price-sensitive,20-24
+R0135,Caregiver,20-24
+R0136,Cooperative regular,45-55
+R0137,Caregiver,25-34
+R0138,Comfort-sensitive,25-34
+R0139,Comfort-sensitive,45-55
+R0140,Cooperative regular,25-34
+R0141,Cooperative regular,35-44
+R0142,Caregiver,45-55
+R0143,Cooperative regular,35-44
+R0144,Comfort-sensitive,45-55
+R0145,Caregiver,25-34
+R0146,Comfort-sensitive,25-34
+R0147,Comfort-sensitive,20-24
+R0148,Price-sensitive,35-44
+R0149,Comfort-sensitive,25-34
+R0150,Irregular routine,45-55
+R0151,Caregiver,25-34
+R0152,Irregular routine,25-34
+R0153,Irregular routine,20-24
+R0154,Cooperative regular,45-55
+R0155,Comfort-sensitive,20-24
+R0156,Comfort-sensitive,20-24
+R0157,EV commuter,20-24
+R0158,Comfort-sensitive,20-24
+R0159,Caregiver,35-44
+R0160,Caregiver,35-44
+R0161,Price-sensitive,45-55
+R0162,Irregular routine,45-55
+R0163,Comfort-sensitive,20-24
+R0164,Cooperative regular,25-34
+R0165,EV commuter,20-24
+R0166,Comfort-sensitive,20-24
+R0167,Cooperative regular,25-34
+R0168,Price-sensitive,20-24
+R0169,Comfort-sensitive,20-24
+R0170,EV commuter,45-55
+R0171,Cooperative regular,20-24
+R0172,Cooperative regular,45-55
+R0173,EV commuter,45-55
+R0174,Irregular routine,20-24
+R0175,Cooperative regular,25-34
+R0176,EV commuter,25-34
+R0177,Price-sensitive,45-55
+R0178,Caregiver,45-55
+R0179,EV commuter,20-24
+R0180,Irregular routine,25-34
+R0181,Caregiver,25-34
+R0182,Comfort-sensitive,45-55
+R0183,Price-sensitive,45-55
+R0184,EV commuter,20-24
+R0185,EV commuter,35-44
+R0186,Caregiver,25-34
+R0187,Irregular routine,20-24
+R0188,Irregular routine,45-55
+R0189,Price-sensitive,25-34
+R0190,Irregular routine,45-55
+R0191,Comfort-sensitive,20-24
+R0192,EV commuter,25-34
+R0193,Comfort-sensitive,35-44
+R0194,EV commuter,20-24
+R0195,Cooperative regular,25-34
+R0196,Comfort-sensitive,45-55
+R0197,Price-sensitive,20-24
+R0198,EV commuter,20-24
+R0199,Cooperative regular,35-44
+R0200,EV commuter,45-55
+R0201,Caregiver,20-24
+R0202,Comfort-sensitive,20-24
+R0203,Price-sensitive,25-34
+R0204,Caregiver,45-55
+R0205,Cooperative regular,35-44
+R0206,EV commuter,20-24
+R0207,EV commuter,20-24
+R0208,EV commuter,25-34
+R0209,Caregiver,20-24
+R0210,Comfort-sensitive,25-34
+R0211,Price-sensitive,20-24
+R0212,EV commuter,35-44
+R0213,Price-sensitive,20-24
+R0214,Comfort-sensitive,25-34
+R0215,Caregiver,25-34
+R0216,EV commuter,25-34
+R0217,EV commuter,25-34
+R0218,Price-sensitive,45-55
+R0219,EV commuter,25-34
+R0220,Price-sensitive,45-55
+R0221,Cooperative regular,20-24
+R0222,Irregular routine,35-44
+R0223,Irregular routine,20-24
+R0224,Price-sensitive,20-24
+R0225,EV commuter,25-34
+R0226,Comfort-sensitive,25-34
+R0227,Caregiver,25-34
+R0228,Cooperative regular,25-34
+R0229,EV commuter,20-24
+R0230,Comfort-sensitive,25-34
+R0231,Comfort-sensitive,35-44
+R0232,Cooperative regular,45-55
+R0233,Comfort-sensitive,25-34
+R0234,EV commuter,20-24
+R0235,Caregiver,25-34
+R0236,EV commuter,35-44
+R0237,Irregular routine,45-55
+R0238,Price-sensitive,35-44
+R0239,Price-sensitive,45-55
+R0240,EV commuter,25-34
+R0241,Comfort-sensitive,25-34
+R0242,Caregiver,35-44
+R0243,Caregiver,45-55
+R0244,EV commuter,20-24
+R0245,Cooperative regular,25-34
+R0246,Caregiver,25-34
+R0247,EV commuter,20-24
+R0248,EV commuter,20-24
+R0249,Irregular routine,20-24
+R0250,Cooperative regular,45-55
+R0251,Comfort-sensitive,35-44
+R0252,Irregular routine,35-44
+R0253,Comfort-sensitive,35-44
+R0254,Comfort-sensitive,20-24
+R0255,EV commuter,35-44
+R0256,Comfort-sensitive,35-44
+R0257,EV commuter,35-44
+R0258,Comfort-sensitive,25-34
+R0259,Caregiver,45-55
+R0260,Cooperative regular,20-24
+R0261,Comfort-sensitive,25-34
+R0262,Price-sensitive,25-34
+R0263,EV commuter,35-44
+R0264,Comfort-sensitive,45-55
+R0265,Irregular routine,25-34
+R0266,EV commuter,20-24
+R0267,Caregiver,20-24
+R0268,Caregiver,35-44
+R0269,Price-sensitive,25-34
+R0270,Cooperative regular,35-44
+R0271,Cooperative regular,25-34
+R0272,Caregiver,25-34
+R0273,Price-sensitive,25-34
+R0274,Cooperative regular,20-24
+R0275,Comfort-sensitive,45-55
+R0276,Caregiver,35-44
+R0277,Irregular routine,20-24
+R0278,Comfort-sensitive,20-24
+R0279,Price-sensitive,25-34
+R0280,Comfort-sensitive,25-34
+R0281,Price-sensitive,25-34
+R0282,Caregiver,35-44
+R0283,EV commuter,25-34
+R0284,Caregiver,35-44
+R0285,Caregiver,25-34
+R0286,Comfort-sensitive,20-24
+R0287,Caregiver,25-34
+R0288,EV commuter,25-34
+R0289,Price-sensitive,20-24
+R0290,Caregiver,35-44
+R0291,Comfort-sensitive,35-44
+R0292,EV commuter,45-55
+R0293,Comfort-sensitive,20-24
+R0294,Caregiver,45-55
+R0295,Caregiver,25-34
+R0296,Caregiver,45-55
+R0297,Comfort-sensitive,25-34
+R0298,Cooperative regular,35-44
+R0299,Irregular routine,45-55
+R0300,Cooperative regular,45-55
+R0301,Comfort-sensitive,35-44
+R0302,Price-sensitive,20-24
+R0303,EV commuter,20-24
+R0304,Comfort-sensitive,20-24
+R0305,Irregular routine,45-55
+R0306,EV commuter,25-34
+R0307,EV commuter,25-34
+R0308,Irregular routine,25-34
+R0309,Caregiver,25-34
+R0310,EV commuter,45-55
+R0311,Price-sensitive,45-55
+R0312,Cooperative regular,25-34
+R0313,Cooperative regular,20-24
+R0314,Caregiver,20-24
+R0315,Comfort-sensitive,25-34
+R0316,Irregular routine,35-44
+R0317,Comfort-sensitive,35-44
+R0318,Comfort-sensitive,25-34
+R0319,Comfort-sensitive,20-24
+R0320,Caregiver,35-44
+R0321,EV commuter,25-34
+R0322,Cooperative regular,25-34
+R0323,EV commuter,25-34
+R0324,Price-sensitive,20-24
+R0325,EV commuter,35-44
+R0326,Cooperative regular,25-34
+R0327,EV commuter,45-55
+R0328,Caregiver,25-34
+R0329,Comfort-sensitive,45-55
+R0330,EV commuter,45-55
+R0331,EV commuter,25-34
+R0332,EV commuter,20-24
+R0333,EV commuter,20-24
+R0334,Price-sensitive,25-34
+R0335,Price-sensitive,20-24
+R0336,EV commuter,35-44
+R0337,Caregiver,35-44
+R0338,EV commuter,25-34
+R0339,EV commuter,35-44
+R0340,EV commuter,45-55
+R0341,Irregular routine,20-24
+R0342,Caregiver,20-24
+R0343,EV commuter,35-44
+R0344,Caregiver,25-34
+R0345,Price-sensitive,20-24
+R0346,Caregiver,25-34
+R0347,Comfort-sensitive,35-44
+R0348,Cooperative regular,20-24
+R0349,Caregiver,20-24
+R0350,Irregular routine,45-55
+R0351,Comfort-sensitive,25-34
+R0352,Caregiver,25-34
+R0353,Cooperative regular,45-55
+R0354,Cooperative regular,20-24
+R0355,Cooperative regular,20-24
+R0356,Price-sensitive,25-34
+R0357,Price-sensitive,25-34
+R0358,Cooperative regular,45-55
+R0359,EV commuter,35-44
+R0360,EV commuter,35-44
+R0361,Cooperative regular,45-55
+R0362,Comfort-sensitive,20-24
+R0363,Comfort-sensitive,25-34
+R0364,Price-sensitive,45-55
+R0365,Irregular routine,20-24
+R0366,EV commuter,20-24
+R0367,Price-sensitive,45-55
+R0368,Price-sensitive,25-34
+R0369,Comfort-sensitive,25-34
+R0370,Comfort-sensitive,35-44
+R0371,Cooperative regular,45-55
+R0372,Irregular routine,35-44
+R0373,Irregular routine,45-55
+R0374,Comfort-sensitive,20-24
+R0375,Caregiver,20-24
+R0376,Caregiver,20-24
+R0377,Caregiver,45-55
+R0378,Caregiver,25-34
+R0379,Caregiver,35-44
+R0380,Price-sensitive,20-24
+R0381,Comfort-sensitive,20-24
+R0382,Comfort-sensitive,35-44
+R0383,Price-sensitive,20-24
+R0384,Comfort-sensitive,25-34
+R0385,Caregiver,20-24
+R0386,Cooperative regular,20-24
+R0387,EV commuter,25-34
+R0388,EV commuter,25-34
+R0389,Price-sensitive,20-24
+R0390,Caregiver,45-55
+R0391,EV commuter,20-24
+R0392,Price-sensitive,45-55
+R0393,Irregular routine,25-34
+R0394,Cooperative regular,45-55
+R0395,Comfort-sensitive,20-24
+R0396,Price-sensitive,45-55
+R0397,EV commuter,20-24
+R0398,Price-sensitive,45-55
+R0399,Price-sensitive,20-24
+R0400,Price-sensitive,25-34
+R0401,Cooperative regular,35-44
+R0402,EV commuter,20-24
+R0403,Caregiver,20-24
+R0404,EV commuter,25-34
+R0405,Irregular routine,35-44
+R0406,EV commuter,35-44
+R0407,Comfort-sensitive,35-44
+R0408,EV commuter,20-24
+R0409,EV commuter,25-34
+R0410,EV commuter,25-34
+R0411,Irregular routine,35-44
+R0412,Price-sensitive,25-34
+R0413,Irregular routine,35-44
+R0414,Caregiver,35-44
+R0415,Cooperative regular,20-24
+R0416,Cooperative regular,35-44
+R0417,Price-sensitive,20-24
+R0418,Caregiver,25-34
+R0419,Irregular routine,20-24
+R0420,Price-sensitive,25-34
+R0421,EV commuter,20-24
+R0422,Price-sensitive,25-34
+R0423,Irregular routine,25-34
+R0424,Comfort-sensitive,25-34
+R0425,EV commuter,45-55
+R0426,Price-sensitive,25-34
+R0427,Irregular routine,45-55
+R0428,Comfort-sensitive,25-34
+R0429,Price-sensitive,45-55
+R0430,Comfort-sensitive,35-44
+R0431,Comfort-sensitive,25-34
+R0432,EV commuter,35-44
+R0433,Irregular routine,20-24
+R0434,Comfort-sensitive,20-24
+R0435,Price-sensitive,45-55
+R0436,Comfort-sensitive,45-55
+R0437,Comfort-sensitive,25-34
+R0438,Irregular routine,35-44
+R0439,EV commuter,20-24
+R0440,Cooperative regular,20-24
+R0441,Cooperative regular,20-24
+R0442,EV commuter,45-55
+R0443,Comfort-sensitive,35-44
+R0444,Caregiver,45-55
+R0445,Irregular routine,20-24
+R0446,Comfort-sensitive,20-24
+R0447,Irregular routine,45-55
+R0448,Irregular routine,25-34
+R0449,Cooperative regular,25-34
+R0450,Cooperative regular,25-34
+R0451,Comfort-sensitive,45-55
+R0452,Price-sensitive,25-34
+R0453,Cooperative regular,20-24
+R0454,Cooperative regular,45-55
+R0455,Price-sensitive,35-44
+R0456,Price-sensitive,20-24
+R0457,EV commuter,25-34
+R0458,Irregular routine,45-55
+R0459,Cooperative regular,20-24
+R0460,Caregiver,20-24
+R0461,Price-sensitive,20-24
+R0462,Irregular routine,35-44
+R0463,Comfort-sensitive,35-44
+R0464,Comfort-sensitive,35-44
+R0465,Comfort-sensitive,20-24
+R0466,EV commuter,20-24
+R0467,Irregular routine,45-55
+R0468,Price-sensitive,20-24
+R0469,Caregiver,20-24
+R0470,Irregular routine,25-34
+R0471,EV commuter,20-24
+R0472,Caregiver,20-24
+R0473,Comfort-sensitive,20-24
+R0474,EV commuter,20-24
+R0475,Comfort-sensitive,45-55
+R0476,Price-sensitive,45-55
+R0477,Cooperative regular,35-44
+R0478,Comfort-sensitive,35-44
+R0479,Irregular routine,20-24
+R0480,Price-sensitive,20-24
+R0481,Irregular routine,20-24
+R0482,EV commuter,20-24
+R0483,Cooperative regular,25-34
+R0484,Caregiver,25-34
+R0485,Price-sensitive,20-24
+R0486,EV commuter,25-34
+R0487,Cooperative regular,20-24
+R0488,Price-sensitive,45-55
+R0489,Caregiver,20-24
+R0490,Comfort-sensitive,25-34
+R0491,Price-sensitive,25-34
+R0492,Cooperative regular,20-24
+R0493,Comfort-sensitive,25-34
+R0494,Price-sensitive,20-24
+R0495,Cooperative regular,25-34
+R0496,Cooperative regular,20-24
+R0497,Comfort-sensitive,20-24
+R0498,Price-sensitive,25-34
+R0499,Price-sensitive,35-44
+R0500,Price-sensitive,20-24
+R0501,Comfort-sensitive,35-44
+R0502,Price-sensitive,20-24
+R0503,Caregiver,45-55
+R0504,Caregiver,25-34
+R0505,Irregular routine,20-24
+R0506,EV commuter,25-34
+R0507,Caregiver,20-24
+R0508,Cooperative regular,25-34
+R0509,Comfort-sensitive,25-34
+R0510,Cooperative regular,45-55
+R0511,Caregiver,45-55
+R0512,Comfort-sensitive,20-24
+R0513,Comfort-sensitive,20-24
+R0514,Cooperative regular,20-24
+R0515,Cooperative regular,45-55
+R0516,Caregiver,45-55
+R0517,Cooperative regular,20-24
+R0518,Comfort-sensitive,25-34
+R0519,Price-sensitive,45-55
+R0520,Caregiver,20-24
+R0521,EV commuter,20-24
+R0522,EV commuter,35-44
+R0523,Price-sensitive,35-44
+R0524,Caregiver,35-44
+R0525,Comfort-sensitive,35-44
+R0526,EV commuter,20-24
+R0527,Irregular routine,45-55
+R0528,Price-sensitive,45-55
+R0529,Comfort-sensitive,35-44
+R0530,Cooperative regular,45-55
+R0531,Price-sensitive,35-44
+R0532,Caregiver,25-34
+R0533,EV commuter,25-34
+R0534,Price-sensitive,45-55
+R0535,EV commuter,25-34
+R0536,Comfort-sensitive,20-24
+R0537,Irregular routine,20-24
+R0538,Caregiver,20-24
+R0539,EV commuter,20-24
+R0540,Caregiver,35-44
+R0541,EV commuter,35-44
+R0542,Price-sensitive,25-34
+R0543,Caregiver,35-44
+R0544,Cooperative regular,45-55
+R0545,Comfort-sensitive,45-55
+R0546,Irregular routine,20-24
+R0547,EV commuter,20-24
+R0548,EV commuter,35-44
+R0549,Cooperative regular,25-34
+R0550,Price-sensitive,20-24
+R0551,Irregular routine,35-44
+R0552,Irregular routine,35-44
+R0553,Irregular routine,20-24
+R0554,Comfort-sensitive,25-34
+R0555,EV commuter,25-34
+R0556,Comfort-sensitive,20-24
+R0557,Caregiver,35-44
+R0558,Price-sensitive,25-34
+R0559,Comfort-sensitive,35-44
+R0560,Comfort-sensitive,20-24
+R0561,Price-sensitive,45-55
+R0562,EV commuter,20-24
+R0563,Price-sensitive,25-34
+R0564,EV commuter,20-24
+R0565,Comfort-sensitive,25-34
+R0566,Caregiver,20-24
+R0567,Cooperative regular,20-24
+R0568,Price-sensitive,45-55
+R0569,Comfort-sensitive,45-55
+R0570,Irregular routine,25-34
+R0571,Cooperative regular,20-24
+R0572,Caregiver,20-24
+R0573,Comfort-sensitive,25-34
+R0574,Caregiver,45-55
+R0575,Irregular routine,20-24
+R0576,Price-sensitive,25-34
+R0577,Caregiver,20-24
+R0578,Cooperative regular,25-34
+R0579,Irregular routine,35-44
+R0580,Comfort-sensitive,20-24
+R0581,Caregiver,25-34
+R0582,Price-sensitive,45-55
+R0583,Price-sensitive,20-24
+R0584,EV commuter,25-34

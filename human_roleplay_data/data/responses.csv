@@ -1,0 +1,1753 @@
+participant_id,persona,method,method_order,acceptance,satisfaction_score
+R0001,Comfort-sensitive,MPC,1,0,0
+R0001,Comfort-sensitive,HEMA,2,0,4
+R0001,Comfort-sensitive,EnergyBridge,3,1,5
+R0002,Caregiver,MPC,1,0,0
+R0002,Caregiver,HEMA,2,0,2
+R0002,Caregiver,EnergyBridge,3,1,0
+R0003,Caregiver,MPC,1,0,2
+R0003,Caregiver,HEMA,2,0,3
+R0003,Caregiver,EnergyBridge,3,1,2
+R0004,Price-sensitive,MPC,1,0,2
+R0004,Price-sensitive,HEMA,2,1,4
+R0004,Price-sensitive,EnergyBridge,3,0,3
+R0005,EV commuter,MPC,1,1,1
+R0005,EV commuter,HEMA,2,0,2
+R0005,EV commuter,EnergyBridge,3,0,4
+R0006,EV commuter,MPC,1,0,4
+R0006,EV commuter,HEMA,2,0,1
+R0006,EV commuter,EnergyBridge,3,0,5
+R0007,Comfort-sensitive,MPC,1,0,5
+R0007,Comfort-sensitive,HEMA,2,0,0
+R0007,Comfort-sensitive,EnergyBridge,3,1,1
+R0008,EV commuter,MPC,1,1,1
+R0008,EV commuter,HEMA,2,1,4
+R0008,EV commuter,EnergyBridge,3,1,3
+R0009,Cooperative regular,MPC,1,1,3
+R0009,Cooperative regular,HEMA,2,1,4
+R0009,Cooperative regular,EnergyBridge,3,0,3
+R0010,Caregiver,MPC,1,0,0
+R0010,Caregiver,HEMA,2,0,3
+R0010,Caregiver,EnergyBridge,3,0,3
+R0011,Comfort-sensitive,MPC,1,0,4
+R0011,Comfort-sensitive,HEMA,2,0,3
+R0011,Comfort-sensitive,EnergyBridge,3,1,3
+R0012,EV commuter,MPC,1,0,2.6
+R0012,EV commuter,HEMA,2,1,4.1
+R0012,EV commuter,EnergyBridge,3,0,5
+R0013,Comfort-sensitive,MPC,1,0,2
+R0013,Comfort-sensitive,HEMA,2,1,4
+R0013,Comfort-sensitive,EnergyBridge,3,1,0
+R0014,Caregiver,MPC,1,1,0
+R0014,Caregiver,HEMA,2,0,1
+R0014,Caregiver,EnergyBridge,3,0,3
+R0015,EV commuter,MPC,1,0,5
+R0015,EV commuter,HEMA,2,1,3
+R0015,EV commuter,EnergyBridge,3,1,4
+R0016,EV commuter,MPC,1,0,1
+R0016,EV commuter,HEMA,2,0,3
+R0016,EV commuter,EnergyBridge,3,1,5
+R0017,Caregiver,MPC,1,0,3.2
+R0017,Caregiver,HEMA,2,1,2.7
+R0017,Caregiver,EnergyBridge,3,1,4.6
+R0018,Caregiver,MPC,1,1,2.7
+R0018,Caregiver,HEMA,2,1,2.6
+R0018,Caregiver,EnergyBridge,3,1,2.3
+R0019,Price-sensitive,MPC,1,0,0
+R0019,Price-sensitive,HEMA,2,1,4
+R0019,Price-sensitive,EnergyBridge,3,0,3
+R0020,Price-sensitive,MPC,1,1,2.8
+R0020,Price-sensitive,HEMA,2,1,3
+R0020,Price-sensitive,EnergyBridge,3,1,3.5
+R0021,EV commuter,MPC,1,0,4
+R0021,EV commuter,HEMA,2,1,0
+R0021,EV commuter,EnergyBridge,3,1,5
+R0022,Caregiver,MPC,1,1,2
+R0022,Caregiver,HEMA,2,1,1
+R0022,Caregiver,EnergyBridge,3,0,0
+R0023,Irregular routine,MPC,1,0,3
+R0023,Irregular routine,HEMA,2,0,5
+R0023,Irregular routine,EnergyBridge,3,1,3
+R0024,EV commuter,MPC,1,1,3
+R0024,EV commuter,HEMA,2,1,1
+R0024,EV commuter,EnergyBridge,3,1,0
+R0025,EV commuter,MPC,1,0,2
+R0025,EV commuter,HEMA,2,1,0
+R0025,EV commuter,EnergyBridge,3,0,2
+R0026,Irregular routine,MPC,1,0,5
+R0026,Irregular routine,HEMA,2,0,4
+R0026,Irregular routine,EnergyBridge,3,1,3
+R0027,Price-sensitive,MPC,1,1,5
+R0027,Price-sensitive,HEMA,2,1,5
+R0027,Price-sensitive,EnergyBridge,3,1,5
+R0028,Cooperative regular,MPC,1,0,5
+R0028,Cooperative regular,HEMA,2,1,1
+R0028,Cooperative regular,EnergyBridge,3,1,5
+R0029,Irregular routine,MPC,1,1,5
+R0029,Irregular routine,HEMA,2,0,2
+R0029,Irregular routine,EnergyBridge,3,1,2
+R0030,Irregular routine,MPC,1,0,5
+R0030,Irregular routine,HEMA,2,1,2
+R0030,Irregular routine,EnergyBridge,3,1,0
+R0031,Comfort-sensitive,MPC,1,1,3
+R0031,Comfort-sensitive,HEMA,2,0,3
+R0031,Comfort-sensitive,EnergyBridge,3,1,3
+R0032,Cooperative regular,MPC,1,0,0
+R0032,Cooperative regular,HEMA,2,0,0
+R0032,Cooperative regular,EnergyBridge,3,1,0
+R0033,Price-sensitive,MPC,1,0,2
+R0033,Price-sensitive,HEMA,2,1,2
+R0033,Price-sensitive,EnergyBridge,3,1,0
+R0034,Comfort-sensitive,MPC,1,1,4
+R0034,Comfort-sensitive,HEMA,2,1,2
+R0034,Comfort-sensitive,EnergyBridge,3,1,0
+R0035,Comfort-sensitive,MPC,1,0,3
+R0035,Comfort-sensitive,HEMA,2,0,0
+R0035,Comfort-sensitive,EnergyBridge,3,0,5
+R0036,Comfort-sensitive,MPC,1,1,2
+R0036,Comfort-sensitive,HEMA,2,0,3
+R0036,Comfort-sensitive,EnergyBridge,3,1,4
+R0037,Irregular routine,MPC,1,1,0
+R0037,Irregular routine,HEMA,2,0,1
+R0037,Irregular routine,EnergyBridge,3,1,0
+R0038,Cooperative regular,MPC,1,0,3
+R0038,Cooperative regular,HEMA,2,0,1
+R0038,Cooperative regular,EnergyBridge,3,1,0
+R0039,Comfort-sensitive,MPC,1,0,1
+R0039,Comfort-sensitive,HEMA,2,1,5
+R0039,Comfort-sensitive,EnergyBridge,3,1,1
+R0040,Cooperative regular,MPC,1,0,0
+R0040,Cooperative regular,HEMA,2,0,1
+R0040,Cooperative regular,EnergyBridge,3,1,1
+R0041,EV commuter,MPC,1,0,4
+R0041,EV commuter,HEMA,2,0,4
+R0041,EV commuter,EnergyBridge,3,1,0
+R0042,Price-sensitive,MPC,1,0,2
+R0042,Price-sensitive,HEMA,2,0,2
+R0042,Price-sensitive,EnergyBridge,3,0,5
+R0043,Cooperative regular,MPC,1,0,3
+R0043,Cooperative regular,HEMA,2,0,2
+R0043,Cooperative regular,EnergyBridge,3,1,2
+R0044,Price-sensitive,MPC,1,0,3
+R0044,Price-sensitive,HEMA,2,0,4
+R0044,Price-sensitive,EnergyBridge,3,1,0
+R0045,EV commuter,MPC,1,1,2
+R0045,EV commuter,HEMA,2,0,2
+R0045,EV commuter,EnergyBridge,3,1,4
+R0046,EV commuter,MPC,1,1,4
+R0046,EV commuter,HEMA,2,0,3
+R0046,EV commuter,EnergyBridge,3,1,5
+R0047,Comfort-sensitive,MPC,1,1,0.4
+R0047,Comfort-sensitive,HEMA,2,0,3.6
+R0047,Comfort-sensitive,EnergyBridge,3,1,4.3
+R0048,Cooperative regular,MPC,1,0,2
+R0048,Cooperative regular,HEMA,2,0,3
+R0048,Cooperative regular,EnergyBridge,3,1,1
+R0049,Comfort-sensitive,MPC,1,0,3
+R0049,Comfort-sensitive,HEMA,2,0,3
+R0049,Comfort-sensitive,EnergyBridge,3,1,3
+R0050,EV commuter,MPC,1,0,0
+R0050,EV commuter,HEMA,2,0,5
+R0050,EV commuter,EnergyBridge,3,0,1
+R0051,Irregular routine,MPC,1,0,0
+R0051,Irregular routine,HEMA,2,0,5
+R0051,Irregular routine,EnergyBridge,3,1,3
+R0052,Cooperative regular,MPC,1,1,4
+R0052,Cooperative regular,HEMA,2,0,1
+R0052,Cooperative regular,EnergyBridge,3,1,4.1
+R0053,EV commuter,MPC,1,0,1
+R0053,EV commuter,HEMA,2,1,1
+R0053,EV commuter,EnergyBridge,3,1,5
+R0054,Caregiver,MPC,1,0,5
+R0054,Caregiver,HEMA,2,1,0
+R0054,Caregiver,EnergyBridge,3,1,5
+R0055,Price-sensitive,MPC,1,0,1
+R0055,Price-sensitive,HEMA,2,0,3
+R0055,Price-sensitive,EnergyBridge,3,0,4
+R0056,Cooperative regular,MPC,1,0,4
+R0056,Cooperative regular,HEMA,2,1,5
+R0056,Cooperative regular,EnergyBridge,3,1,1
+R0057,Comfort-sensitive,MPC,1,0,4
+R0057,Comfort-sensitive,HEMA,2,1,1
+R0057,Comfort-sensitive,EnergyBridge,3,1,0
+R0058,Caregiver,MPC,1,0,1
+R0058,Caregiver,HEMA,2,1,5
+R0058,Caregiver,EnergyBridge,3,0,5
+R0059,Price-sensitive,MPC,1,1,2
+R0059,Price-sensitive,HEMA,2,0,5
+R0059,Price-sensitive,EnergyBridge,3,1,0
+R0060,Cooperative regular,MPC,1,0,0
+R0060,Cooperative regular,HEMA,2,0,5
+R0060,Cooperative regular,EnergyBridge,3,1,1
+R0061,Comfort-sensitive,MPC,1,0,1
+R0061,Comfort-sensitive,HEMA,2,0,4
+R0061,Comfort-sensitive,EnergyBridge,3,1,0
+R0062,Caregiver,MPC,1,1,4
+R0062,Caregiver,HEMA,2,0,4
+R0062,Caregiver,EnergyBridge,3,1,5
+R0063,Cooperative regular,MPC,1,0,1
+R0063,Cooperative regular,HEMA,2,1,3
+R0063,Cooperative regular,EnergyBridge,3,0,4
+R0064,Price-sensitive,MPC,1,1,1
+R0064,Price-sensitive,HEMA,2,0,1
+R0064,Price-sensitive,EnergyBridge,3,0,5
+R0065,Caregiver,MPC,1,0,4
+R0065,Caregiver,HEMA,2,0,1
+R0065,Caregiver,EnergyBridge,3,1,2
+R0066,Price-sensitive,MPC,1,0,4
+R0066,Price-sensitive,HEMA,2,1,3
+R0066,Price-sensitive,EnergyBridge,3,1,5
+R0067,Irregular routine,MPC,1,0,3
+R0067,Irregular routine,HEMA,2,1,4
+R0067,Irregular routine,EnergyBridge,3,1,0
+R0068,EV commuter,MPC,1,1,3
+R0068,EV commuter,HEMA,2,1,3
+R0068,EV commuter,EnergyBridge,3,1,2
+R0069,Cooperative regular,MPC,1,0,0
+R0069,Cooperative regular,HEMA,2,1,0
+R0069,Cooperative regular,EnergyBridge,3,1,4
+R0070,EV commuter,MPC,1,0,1
+R0070,EV commuter,HEMA,2,0,3
+R0070,EV commuter,EnergyBridge,3,1,1
+R0071,Comfort-sensitive,MPC,1,0,4
+R0071,Comfort-sensitive,HEMA,2,0,3
+R0071,Comfort-sensitive,EnergyBridge,3,1,1
+R0072,Irregular routine,MPC,1,0,5
+R0072,Irregular routine,HEMA,2,0,3
+R0072,Irregular routine,EnergyBridge,3,0,0
+R0073,EV commuter,MPC,1,0,1
+R0073,EV commuter,HEMA,2,0,4
+R0073,EV commuter,EnergyBridge,3,0,1
+R0074,EV commuter,MPC,1,0,5
+R0074,EV commuter,HEMA,2,0,4
+R0074,EV commuter,EnergyBridge,3,0,5
+R0075,Cooperative regular,MPC,1,1,2
+R0075,Cooperative regular,HEMA,2,0,1
+R0075,Cooperative regular,EnergyBridge,3,1,1
+R0076,EV commuter,MPC,1,0,3
+R0076,EV commuter,HEMA,2,0,4
+R0076,EV commuter,EnergyBridge,3,0,0
+R0077,Price-sensitive,MPC,1,0,0.9
+R0077,Price-sensitive,HEMA,2,1,4
+R0077,Price-sensitive,EnergyBridge,3,1,1
+R0078,Price-sensitive,MPC,1,1,3.1
+R0078,Price-sensitive,HEMA,2,1,3.2
+R0078,Price-sensitive,EnergyBridge,3,1,3
+R0079,Caregiver,MPC,1,0,5
+R0079,Caregiver,HEMA,2,1,4
+R0079,Caregiver,EnergyBridge,3,1,2
+R0080,Cooperative regular,MPC,1,0,5
+R0080,Cooperative regular,HEMA,2,0,5
+R0080,Cooperative regular,EnergyBridge,3,1,3
+R0081,Irregular routine,MPC,1,1,4
+R0081,Irregular routine,HEMA,2,0,0
+R0081,Irregular routine,EnergyBridge,3,0,5
+R0082,Caregiver,MPC,1,1,5
+R0082,Caregiver,HEMA,2,1,5
+R0082,Caregiver,EnergyBridge,3,1,3
+R0083,EV commuter,MPC,1,0,1
+R0083,EV commuter,HEMA,2,0,4
+R0083,EV commuter,EnergyBridge,3,1,1
+R0084,Cooperative regular,MPC,1,0,3
+R0084,Cooperative regular,HEMA,2,0,3
+R0084,Cooperative regular,EnergyBridge,3,1,2
+R0085,Price-sensitive,MPC,1,0,0
+R0085,Price-sensitive,HEMA,2,0,1
+R0085,Price-sensitive,EnergyBridge,3,1,4
+R0086,EV commuter,MPC,1,1,3.3
+R0086,EV commuter,HEMA,2,1,2.5
+R0086,EV commuter,EnergyBridge,3,1,3
+R0087,Cooperative regular,MPC,1,1,4
+R0087,Cooperative regular,HEMA,2,1,3
+R0087,Cooperative regular,EnergyBridge,3,1,4
+R0088,Caregiver,MPC,1,0,3
+R0088,Caregiver,HEMA,2,1,5
+R0088,Caregiver,EnergyBridge,3,1,5
+R0089,Cooperative regular,MPC,1,0,3
+R0089,Cooperative regular,HEMA,2,1,1
+R0089,Cooperative regular,EnergyBridge,3,0,4
+R0090,Price-sensitive,MPC,1,1,5
+R0090,Price-sensitive,HEMA,2,1,5
+R0090,Price-sensitive,EnergyBridge,3,0,3
+R0091,Price-sensitive,MPC,1,0,3
+R0091,Price-sensitive,HEMA,2,1,3
+R0091,Price-sensitive,EnergyBridge,3,1,2
+R0092,EV commuter,MPC,1,0,0
+R0092,EV commuter,HEMA,2,0,1
+R0092,EV commuter,EnergyBridge,3,1,5
+R0093,Caregiver,MPC,1,0,3
+R0093,Caregiver,HEMA,2,0,0
+R0093,Caregiver,EnergyBridge,3,1,4
+R0094,Irregular routine,MPC,1,1,4
+R0094,Irregular routine,HEMA,2,0,1
+R0094,Irregular routine,EnergyBridge,3,1,5
+R0095,Irregular routine,MPC,1,1,4
+R0095,Irregular routine,HEMA,2,1,2
+R0095,Irregular routine,EnergyBridge,3,0,3
+R0096,EV commuter,MPC,1,0,0
+R0096,EV commuter,HEMA,2,1,4
+R0096,EV commuter,EnergyBridge,3,1,2
+R0097,Irregular routine,MPC,1,0,5
+R0097,Irregular routine,HEMA,2,1,1
+R0097,Irregular routine,EnergyBridge,3,0,3
+R0098,Comfort-sensitive,MPC,1,1,2.7
+R0098,Comfort-sensitive,HEMA,2,1,2.9
+R0098,Comfort-sensitive,EnergyBridge,3,1,3.2
+R0099,Comfort-sensitive,MPC,1,1,2
+R0099,Comfort-sensitive,HEMA,2,1,4
+R0099,Comfort-sensitive,EnergyBridge,3,1,5
+R0100,Irregular routine,MPC,1,0,5
+R0100,Irregular routine,HEMA,2,1,3
+R0100,Irregular routine,EnergyBridge,3,0,2
+R0101,EV commuter,MPC,1,0,4
+R0101,EV commuter,HEMA,2,1,2
+R0101,EV commuter,EnergyBridge,3,0,3
+R0102,Comfort-sensitive,MPC,1,0,4.9
+R0102,Comfort-sensitive,HEMA,2,1,4.9
+R0102,Comfort-sensitive,EnergyBridge,3,1,4.6
+R0103,Comfort-sensitive,MPC,1,0,1
+R0103,Comfort-sensitive,HEMA,2,1,0
+R0103,Comfort-sensitive,EnergyBridge,3,1,3
+R0104,Comfort-sensitive,MPC,1,1,2
+R0104,Comfort-sensitive,HEMA,2,1,2
+R0104,Comfort-sensitive,EnergyBridge,3,1,5
+R0105,Cooperative regular,MPC,1,1,0
+R0105,Cooperative regular,HEMA,2,1,0
+R0105,Cooperative regular,EnergyBridge,3,1,4
+R0106,Caregiver,MPC,1,0,4
+R0106,Caregiver,HEMA,2,1,3
+R0106,Caregiver,EnergyBridge,3,0,1
+R0107,Cooperative regular,MPC,1,0,2
+R0107,Cooperative regular,HEMA,2,0,4
+R0107,Cooperative regular,EnergyBridge,3,1,4
+R0108,Comfort-sensitive,MPC,1,0,5
+R0108,Comfort-sensitive,HEMA,2,0,5
+R0108,Comfort-sensitive,EnergyBridge,3,0,5
+R0109,EV commuter,MPC,1,0,0
+R0109,EV commuter,HEMA,2,0,1
+R0109,EV commuter,EnergyBridge,3,0,0
+R0110,Irregular routine,MPC,1,0,3
+R0110,Irregular routine,HEMA,2,1,3
+R0110,Irregular routine,EnergyBridge,3,1,5
+R0111,Irregular routine,MPC,1,0,3
+R0111,Irregular routine,HEMA,2,0,2
+R0111,Irregular routine,EnergyBridge,3,1,5
+R0112,Cooperative regular,MPC,1,0,3
+R0112,Cooperative regular,HEMA,2,1,4
+R0112,Cooperative regular,EnergyBridge,3,1,2
+R0113,Irregular routine,MPC,1,0,0
+R0113,Irregular routine,HEMA,2,0,2
+R0113,Irregular routine,EnergyBridge,3,0,5
+R0114,Irregular routine,MPC,1,0,3
+R0114,Irregular routine,HEMA,2,0,3
+R0114,Irregular routine,EnergyBridge,3,1,3
+R0115,EV commuter,MPC,1,0,5
+R0115,EV commuter,HEMA,2,0,4
+R0115,EV commuter,EnergyBridge,3,1,0
+R0116,Cooperative regular,MPC,1,1,2.9
+R0116,Cooperative regular,HEMA,2,1,2.8
+R0116,Cooperative regular,EnergyBridge,3,1,2.7
+R0117,Comfort-sensitive,MPC,1,0,3
+R0117,Comfort-sensitive,HEMA,2,1,2
+R0117,Comfort-sensitive,EnergyBridge,3,1,3
+R0118,Price-sensitive,MPC,1,0,0
+R0118,Price-sensitive,HEMA,2,0,2
+R0118,Price-sensitive,EnergyBridge,3,1,1
+R0119,Price-sensitive,MPC,1,0,3
+R0119,Price-sensitive,HEMA,2,1,4
+R0119,Price-sensitive,EnergyBridge,3,1,4
+R0120,Irregular routine,MPC,1,0,4
+R0120,Irregular routine,HEMA,2,0,4
+R0120,Irregular routine,EnergyBridge,3,1,2
+R0121,Comfort-sensitive,MPC,1,0,4.8
+R0121,Comfort-sensitive,HEMA,2,0,4.8
+R0121,Comfort-sensitive,EnergyBridge,3,1,4.4
+R0122,Comfort-sensitive,MPC,1,0,4
+R0122,Comfort-sensitive,HEMA,2,1,2.9
+R0122,Comfort-sensitive,EnergyBridge,3,1,1
+R0123,Cooperative regular,MPC,1,1,5
+R0123,Cooperative regular,HEMA,2,0,0
+R0123,Cooperative regular,EnergyBridge,3,0,5
+R0124,EV commuter,MPC,1,0,1
+R0124,EV commuter,HEMA,2,1,5
+R0124,EV commuter,EnergyBridge,3,0,1
+R0125,Irregular routine,MPC,1,0,0
+R0125,Irregular routine,HEMA,2,1,1
+R0125,Irregular routine,EnergyBridge,3,0,0
+R0126,EV commuter,MPC,1,0,2
+R0126,EV commuter,HEMA,2,0,3
+R0126,EV commuter,EnergyBridge,3,1,5
+R0127,Irregular routine,MPC,1,0,0
+R0127,Irregular routine,HEMA,2,0,4
+R0127,Irregular routine,EnergyBridge,3,1,2
+R0128,Price-sensitive,MPC,1,0,4
+R0128,Price-sensitive,HEMA,2,0,2
+R0128,Price-sensitive,EnergyBridge,3,1,2
+R0129,Cooperative regular,MPC,1,0,3
+R0129,Cooperative regular,HEMA,2,1,3
+R0129,Cooperative regular,EnergyBridge,3,0,2
+R0130,EV commuter,MPC,1,1,2
+R0130,EV commuter,HEMA,2,1,1
+R0130,EV commuter,EnergyBridge,3,1,4
+R0131,Cooperative regular,MPC,1,1,5
+R0131,Cooperative regular,HEMA,2,0,5
+R0131,Cooperative regular,EnergyBridge,3,1,0
+R0132,EV commuter,MPC,1,1,5
+R0132,EV commuter,HEMA,2,1,5
+R0132,EV commuter,EnergyBridge,3,1,3
+R0133,Price-sensitive,MPC,1,1,2
+R0133,Price-sensitive,HEMA,2,1,3.1
+R0133,Price-sensitive,EnergyBridge,3,0,3.1
+R0134,Price-sensitive,MPC,1,1,3
+R0134,Price-sensitive,HEMA,2,1,3.9
+R0134,Price-sensitive,EnergyBridge,3,1,3.6
+R0135,Caregiver,MPC,1,0,4
+R0135,Caregiver,HEMA,2,1,5
+R0135,Caregiver,EnergyBridge,3,0,5
+R0136,Cooperative regular,MPC,1,0,5
+R0136,Cooperative regular,HEMA,2,0,5
+R0136,Cooperative regular,EnergyBridge,3,1,2
+R0137,Caregiver,MPC,1,1,4
+R0137,Caregiver,HEMA,2,0,2
+R0137,Caregiver,EnergyBridge,3,0,5
+R0138,Comfort-sensitive,MPC,1,0,1
+R0138,Comfort-sensitive,HEMA,2,0,0
+R0138,Comfort-sensitive,EnergyBridge,3,0,5
+R0139,Comfort-sensitive,MPC,1,0,4
+R0139,Comfort-sensitive,HEMA,2,1,0
+R0139,Comfort-sensitive,EnergyBridge,3,1,5
+R0140,Cooperative regular,MPC,1,0,4
+R0140,Cooperative regular,HEMA,2,1,5
+R0140,Cooperative regular,EnergyBridge,3,1,5
+R0141,Cooperative regular,MPC,1,0,3
+R0141,Cooperative regular,HEMA,2,0,0
+R0141,Cooperative regular,EnergyBridge,3,0,3
+R0142,Caregiver,MPC,1,0,3
+R0142,Caregiver,HEMA,2,1,4
+R0142,Caregiver,EnergyBridge,3,0,1
+R0143,Cooperative regular,MPC,1,0,4
+R0143,Cooperative regular,HEMA,2,0,4
+R0143,Cooperative regular,EnergyBridge,3,1,5
+R0144,Comfort-sensitive,MPC,1,1,5
+R0144,Comfort-sensitive,HEMA,2,0,2.8
+R0144,Comfort-sensitive,EnergyBridge,3,1,4.1
+R0145,Caregiver,MPC,1,1,0
+R0145,Caregiver,HEMA,2,0,2
+R0145,Caregiver,EnergyBridge,3,1,5
+R0146,Comfort-sensitive,MPC,1,1,4
+R0146,Comfort-sensitive,HEMA,2,0,3
+R0146,Comfort-sensitive,EnergyBridge,3,0,3
+R0147,Comfort-sensitive,MPC,1,1,3
+R0147,Comfort-sensitive,HEMA,2,1,3
+R0147,Comfort-sensitive,EnergyBridge,3,0,2
+R0148,Price-sensitive,MPC,1,0,4
+R0148,Price-sensitive,HEMA,2,1,3
+R0148,Price-sensitive,EnergyBridge,3,1,3
+R0149,Comfort-sensitive,MPC,1,0,2
+R0149,Comfort-sensitive,HEMA,2,1,0
+R0149,Comfort-sensitive,EnergyBridge,3,1,5
+R0150,Irregular routine,MPC,1,0,5
+R0150,Irregular routine,HEMA,2,0,0
+R0150,Irregular routine,EnergyBridge,3,1,4
+R0151,Caregiver,MPC,1,0,1
+R0151,Caregiver,HEMA,2,0,5
+R0151,Caregiver,EnergyBridge,3,1,1
+R0152,Irregular routine,MPC,1,0,3
+R0152,Irregular routine,HEMA,2,1,2
+R0152,Irregular routine,EnergyBridge,3,0,0
+R0153,Irregular routine,MPC,1,0,4
+R0153,Irregular routine,HEMA,2,1,5
+R0153,Irregular routine,EnergyBridge,3,1,0
+R0154,Cooperative regular,MPC,1,1,5
+R0154,Cooperative regular,HEMA,2,0,4
+R0154,Cooperative regular,EnergyBridge,3,1,1
+R0155,Comfort-sensitive,MPC,1,0,0
+R0155,Comfort-sensitive,HEMA,2,0,0
+R0155,Comfort-sensitive,EnergyBridge,3,0,0
+R0156,Comfort-sensitive,MPC,1,0,3
+R0156,Comfort-sensitive,HEMA,2,1,2.5
+R0156,Comfort-sensitive,EnergyBridge,3,0,1.4
+R0157,EV commuter,MPC,1,1,2
+R0157,EV commuter,HEMA,2,1,4
+R0157,EV commuter,EnergyBridge,3,0,3
+R0158,Comfort-sensitive,MPC,1,0,3.9
+R0158,Comfort-sensitive,HEMA,2,1,4
+R0158,Comfort-sensitive,EnergyBridge,3,1,3.1
+R0159,Caregiver,MPC,1,0,0
+R0159,Caregiver,HEMA,2,0,3
+R0159,Caregiver,EnergyBridge,3,1,2
+R0160,Caregiver,MPC,1,0,3
+R0160,Caregiver,HEMA,2,1,1
+R0160,Caregiver,EnergyBridge,3,1,0
+R0161,Price-sensitive,MPC,1,0,4
+R0161,Price-sensitive,HEMA,2,1,2
+R0161,Price-sensitive,EnergyBridge,3,1,4
+R0162,Irregular routine,MPC,1,0,5
+R0162,Irregular routine,HEMA,2,1,3
+R0162,Irregular routine,EnergyBridge,3,0,4
+R0163,Comfort-sensitive,MPC,1,1,3
+R0163,Comfort-sensitive,HEMA,2,0,4
+R0163,Comfort-sensitive,EnergyBridge,3,1,4
+R0164,Cooperative regular,MPC,1,0,4
+R0164,Cooperative regular,HEMA,2,1,3
+R0164,Cooperative regular,EnergyBridge,3,1,0
+R0165,EV commuter,MPC,1,1,1
+R0165,EV commuter,HEMA,2,0,3
+R0165,EV commuter,EnergyBridge,3,1,2
+R0166,Comfort-sensitive,MPC,1,0,4.6
+R0166,Comfort-sensitive,HEMA,2,0,4.6
+R0166,Comfort-sensitive,EnergyBridge,3,0,4.5
+R0167,Cooperative regular,MPC,1,1,5
+R0167,Cooperative regular,HEMA,2,1,5
+R0167,Cooperative regular,EnergyBridge,3,1,5
+R0168,Price-sensitive,MPC,1,1,4
+R0168,Price-sensitive,HEMA,2,1,3
+R0168,Price-sensitive,EnergyBridge,3,1,4
+R0169,Comfort-sensitive,MPC,1,0,4.1
+R0169,Comfort-sensitive,HEMA,2,1,3.9
+R0169,Comfort-sensitive,EnergyBridge,3,1,4.9
+R0170,EV commuter,MPC,1,1,2
+R0170,EV commuter,HEMA,2,0,5
+R0170,EV commuter,EnergyBridge,3,1,3
+R0171,Cooperative regular,MPC,1,1,0
+R0171,Cooperative regular,HEMA,2,1,2
+R0171,Cooperative regular,EnergyBridge,3,0,0
+R0172,Cooperative regular,MPC,1,0,3
+R0172,Cooperative regular,HEMA,2,1,3
+R0172,Cooperative regular,EnergyBridge,3,1,4
+R0173,EV commuter,MPC,1,0,1
+R0173,EV commuter,HEMA,2,1,4
+R0173,EV commuter,EnergyBridge,3,1,4
+R0174,Irregular routine,MPC,1,0,4
+R0174,Irregular routine,HEMA,2,0,0
+R0174,Irregular routine,EnergyBridge,3,0,5
+R0175,Cooperative regular,MPC,1,0,5
+R0175,Cooperative regular,HEMA,2,0,1
+R0175,Cooperative regular,EnergyBridge,3,1,5
+R0176,EV commuter,MPC,1,0,1
+R0176,EV commuter,HEMA,2,0,3
+R0176,EV commuter,EnergyBridge,3,1,5
+R0177,Price-sensitive,MPC,1,1,3
+R0177,Price-sensitive,HEMA,2,1,1
+R0177,Price-sensitive,EnergyBridge,3,1,3
+R0178,Caregiver,MPC,1,1,2
+R0178,Caregiver,HEMA,2,1,2
+R0178,Caregiver,EnergyBridge,3,1,1
+R0179,EV commuter,MPC,1,0,4
+R0179,EV commuter,HEMA,2,0,1
+R0179,EV commuter,EnergyBridge,3,1,1
+R0180,Irregular routine,MPC,1,0,4
+R0180,Irregular routine,HEMA,2,0,3
+R0180,Irregular routine,EnergyBridge,3,1,2
+R0181,Caregiver,MPC,1,0,4
+R0181,Caregiver,HEMA,2,1,0
+R0181,Caregiver,EnergyBridge,3,1,2
+R0182,Comfort-sensitive,MPC,1,0,5
+R0182,Comfort-sensitive,HEMA,2,1,2
+R0182,Comfort-sensitive,EnergyBridge,3,1,2
+R0183,Price-sensitive,MPC,1,0,3
+R0183,Price-sensitive,HEMA,2,0,4
+R0183,Price-sensitive,EnergyBridge,3,0,0
+R0184,EV commuter,MPC,1,1,4
+R0184,EV commuter,HEMA,2,1,1
+R0184,EV commuter,EnergyBridge,3,1,3
+R0185,EV commuter,MPC,1,1,4
+R0185,EV commuter,HEMA,2,1,4
+R0185,EV commuter,EnergyBridge,3,0,2
+R0186,Caregiver,MPC,1,1,1
+R0186,Caregiver,HEMA,2,0,0
+R0186,Caregiver,EnergyBridge,3,0,4
+R0187,Irregular routine,MPC,1,1,2
+R0187,Irregular routine,HEMA,2,0,3
+R0187,Irregular routine,EnergyBridge,3,1,5
+R0188,Irregular routine,MPC,1,0,5
+R0188,Irregular routine,HEMA,2,0,1
+R0188,Irregular routine,EnergyBridge,3,1,0
+R0189,Price-sensitive,MPC,1,0,4
+R0189,Price-sensitive,HEMA,2,1,5
+R0189,Price-sensitive,EnergyBridge,3,1,1
+R0190,Irregular routine,MPC,1,0,3
+R0190,Irregular routine,HEMA,2,1,2
+R0190,Irregular routine,EnergyBridge,3,1,5
+R0191,Comfort-sensitive,MPC,1,0,5
+R0191,Comfort-sensitive,HEMA,2,1,3
+R0191,Comfort-sensitive,EnergyBridge,3,1,1
+R0192,EV commuter,MPC,1,0,2
+R0192,EV commuter,HEMA,2,0,2
+R0192,EV commuter,EnergyBridge,3,1,2
+R0193,Comfort-sensitive,MPC,1,0,3
+R0193,Comfort-sensitive,HEMA,2,0,1
+R0193,Comfort-sensitive,EnergyBridge,3,0,5
+R0194,EV commuter,MPC,1,0,3
+R0194,EV commuter,HEMA,2,1,1
+R0194,EV commuter,EnergyBridge,3,1,3
+R0195,Cooperative regular,MPC,1,0,0
+R0195,Cooperative regular,HEMA,2,0,5
+R0195,Cooperative regular,EnergyBridge,3,1,1
+R0196,Comfort-sensitive,MPC,1,0,4
+R0196,Comfort-sensitive,HEMA,2,1,2
+R0196,Comfort-sensitive,EnergyBridge,3,1,4
+R0197,Price-sensitive,MPC,1,0,2.4
+R0197,Price-sensitive,HEMA,2,1,2.8
+R0197,Price-sensitive,EnergyBridge,3,0,1.6
+R0198,EV commuter,MPC,1,0,2
+R0198,EV commuter,HEMA,2,0,5
+R0198,EV commuter,EnergyBridge,3,1,3
+R0199,Cooperative regular,MPC,1,1,5
+R0199,Cooperative regular,HEMA,2,0,5
+R0199,Cooperative regular,EnergyBridge,3,0,3
+R0200,EV commuter,MPC,1,0,2
+R0200,EV commuter,HEMA,2,0,3
+R0200,EV commuter,EnergyBridge,3,1,3
+R0201,Caregiver,MPC,1,0,4
+R0201,Caregiver,HEMA,2,0,4
+R0201,Caregiver,EnergyBridge,3,1,5
+R0202,Comfort-sensitive,MPC,1,0,5
+R0202,Comfort-sensitive,HEMA,2,1,5
+R0202,Comfort-sensitive,EnergyBridge,3,0,5
+R0203,Price-sensitive,MPC,1,0,3
+R0203,Price-sensitive,HEMA,2,0,0
+R0203,Price-sensitive,EnergyBridge,3,1,5
+R0204,Caregiver,MPC,1,0,5
+R0204,Caregiver,HEMA,2,0,3
+R0204,Caregiver,EnergyBridge,3,1,2
+R0205,Cooperative regular,MPC,1,0,2
+R0205,Cooperative regular,HEMA,2,0,1
+R0205,Cooperative regular,EnergyBridge,3,0,5
+R0206,EV commuter,MPC,1,0,3
+R0206,EV commuter,HEMA,2,1,2
+R0206,EV commuter,EnergyBridge,3,1,3
+R0207,EV commuter,MPC,1,0,5
+R0207,EV commuter,HEMA,2,1,3
+R0207,EV commuter,EnergyBridge,3,1,4
+R0208,EV commuter,MPC,1,0,2
+R0208,EV commuter,HEMA,2,0,5
+R0208,EV commuter,EnergyBridge,3,1,5
+R0209,Caregiver,MPC,1,0,1
+R0209,Caregiver,HEMA,2,1,0
+R0209,Caregiver,EnergyBridge,3,0,4
+R0210,Comfort-sensitive,MPC,1,0,5
+R0210,Comfort-sensitive,HEMA,2,1,0
+R0210,Comfort-sensitive,EnergyBridge,3,0,5
+R0211,Price-sensitive,MPC,1,0,4
+R0211,Price-sensitive,HEMA,2,1,3
+R0211,Price-sensitive,EnergyBridge,3,0,4
+R0212,EV commuter,MPC,1,0,5
+R0212,EV commuter,HEMA,2,1,1
+R0212,EV commuter,EnergyBridge,3,1,4
+R0213,Price-sensitive,MPC,1,0,0
+R0213,Price-sensitive,HEMA,2,0,0
+R0213,Price-sensitive,EnergyBridge,3,0,0
+R0214,Comfort-sensitive,MPC,1,0,2
+R0214,Comfort-sensitive,HEMA,2,0,0
+R0214,Comfort-sensitive,EnergyBridge,3,1,5
+R0215,Caregiver,MPC,1,0,5
+R0215,Caregiver,HEMA,2,0,0
+R0215,Caregiver,EnergyBridge,3,1,4
+R0216,EV commuter,MPC,1,0,0
+R0216,EV commuter,HEMA,2,0,4
+R0216,EV commuter,EnergyBridge,3,1,4
+R0217,EV commuter,MPC,1,0,5
+R0217,EV commuter,HEMA,2,1,2
+R0217,EV commuter,EnergyBridge,3,1,0
+R0218,Price-sensitive,MPC,1,0,5
+R0218,Price-sensitive,HEMA,2,0,0
+R0218,Price-sensitive,EnergyBridge,3,1,3
+R0219,EV commuter,MPC,1,0,3
+R0219,EV commuter,HEMA,2,0,5
+R0219,EV commuter,EnergyBridge,3,1,5
+R0220,Price-sensitive,MPC,1,0,2
+R0220,Price-sensitive,HEMA,2,1,0
+R0220,Price-sensitive,EnergyBridge,3,0,2
+R0221,Cooperative regular,MPC,1,0,0
+R0221,Cooperative regular,HEMA,2,1,2
+R0221,Cooperative regular,EnergyBridge,3,0,0
+R0222,Irregular routine,MPC,1,0,3
+R0222,Irregular routine,HEMA,2,0,3
+R0222,Irregular routine,EnergyBridge,3,1,3
+R0223,Irregular routine,MPC,1,0,3
+R0223,Irregular routine,HEMA,2,1,1
+R0223,Irregular routine,EnergyBridge,3,1,2
+R0224,Price-sensitive,MPC,1,0,5
+R0224,Price-sensitive,HEMA,2,0,4
+R0224,Price-sensitive,EnergyBridge,3,0,5
+R0225,EV commuter,MPC,1,0,2
+R0225,EV commuter,HEMA,2,1,2
+R0225,EV commuter,EnergyBridge,3,1,0
+R0226,Comfort-sensitive,MPC,1,0,0
+R0226,Comfort-sensitive,HEMA,2,0,2
+R0226,Comfort-sensitive,EnergyBridge,3,0,5
+R0227,Caregiver,MPC,1,1,4.2
+R0227,Caregiver,HEMA,2,1,3.6
+R0227,Caregiver,EnergyBridge,3,1,3.8
+R0228,Cooperative regular,MPC,1,1,5
+R0228,Cooperative regular,HEMA,2,0,0
+R0228,Cooperative regular,EnergyBridge,3,1,3
+R0229,EV commuter,MPC,1,0,3
+R0229,EV commuter,HEMA,2,1,0
+R0229,EV commuter,EnergyBridge,3,1,2
+R0230,Comfort-sensitive,MPC,1,0,4.1
+R0230,Comfort-sensitive,HEMA,2,1,3.6
+R0230,Comfort-sensitive,EnergyBridge,3,1,3.8
+R0231,Comfort-sensitive,MPC,1,0,4
+R0231,Comfort-sensitive,HEMA,2,0,1
+R0231,Comfort-sensitive,EnergyBridge,3,1,3
+R0232,Cooperative regular,MPC,1,1,0
+R0232,Cooperative regular,HEMA,2,0,5
+R0232,Cooperative regular,EnergyBridge,3,0,4
+R0233,Comfort-sensitive,MPC,1,0,4
+R0233,Comfort-sensitive,HEMA,2,0,4
+R0233,Comfort-sensitive,EnergyBridge,3,0,5
+R0234,EV commuter,MPC,1,0,2
+R0234,EV commuter,HEMA,2,1,1
+R0234,EV commuter,EnergyBridge,3,1,4
+R0235,Caregiver,MPC,1,0,5
+R0235,Caregiver,HEMA,2,1,5
+R0235,Caregiver,EnergyBridge,3,1,3
+R0236,EV commuter,MPC,1,1,5
+R0236,EV commuter,HEMA,2,0,1
+R0236,EV commuter,EnergyBridge,3,1,4
+R0237,Irregular routine,MPC,1,0,2
+R0237,Irregular routine,HEMA,2,1,1
+R0237,Irregular routine,EnergyBridge,3,1,4
+R0238,Price-sensitive,MPC,1,0,5
+R0238,Price-sensitive,HEMA,2,0,2
+R0238,Price-sensitive,EnergyBridge,3,1,5
+R0239,Price-sensitive,MPC,1,0,1
+R0239,Price-sensitive,HEMA,2,0,4
+R0239,Price-sensitive,EnergyBridge,3,1,0
+R0240,EV commuter,MPC,1,0,1
+R0240,EV commuter,HEMA,2,0,4
+R0240,EV commuter,EnergyBridge,3,0,2
+R0241,Comfort-sensitive,MPC,1,1,1
+R0241,Comfort-sensitive,HEMA,2,1,3
+R0241,Comfort-sensitive,EnergyBridge,3,1,2
+R0242,Caregiver,MPC,1,0,4
+R0242,Caregiver,HEMA,2,1,2
+R0242,Caregiver,EnergyBridge,3,1,0
+R0243,Caregiver,MPC,1,0,2
+R0243,Caregiver,HEMA,2,1,1
+R0243,Caregiver,EnergyBridge,3,1,3
+R0244,EV commuter,MPC,1,0,5
+R0244,EV commuter,HEMA,2,1,4
+R0244,EV commuter,EnergyBridge,3,0,5
+R0245,Cooperative regular,MPC,1,0,0
+R0245,Cooperative regular,HEMA,2,0,5
+R0245,Cooperative regular,EnergyBridge,3,1,5
+R0246,Caregiver,MPC,1,1,4
+R0246,Caregiver,HEMA,2,1,2
+R0246,Caregiver,EnergyBridge,3,1,4
+R0247,EV commuter,MPC,1,0,5
+R0247,EV commuter,HEMA,2,0,3
+R0247,EV commuter,EnergyBridge,3,0,3
+R0248,EV commuter,MPC,1,0,5
+R0248,EV commuter,HEMA,2,1,0
+R0248,EV commuter,EnergyBridge,3,1,4
+R0249,Irregular routine,MPC,1,0,2
+R0249,Irregular routine,HEMA,2,0,5
+R0249,Irregular routine,EnergyBridge,3,0,0
+R0250,Cooperative regular,MPC,1,1,1
+R0250,Cooperative regular,HEMA,2,0,4
+R0250,Cooperative regular,EnergyBridge,3,1,5
+R0251,Comfort-sensitive,MPC,1,1,1
+R0251,Comfort-sensitive,HEMA,2,0,4
+R0251,Comfort-sensitive,EnergyBridge,3,0,2
+R0252,Irregular routine,MPC,1,0,1
+R0252,Irregular routine,HEMA,2,1,1
+R0252,Irregular routine,EnergyBridge,3,1,5
+R0253,Comfort-sensitive,MPC,1,0,0
+R0253,Comfort-sensitive,HEMA,2,0,5
+R0253,Comfort-sensitive,EnergyBridge,3,1,3
+R0254,Comfort-sensitive,MPC,1,0,1
+R0254,Comfort-sensitive,HEMA,2,0,0
+R0254,Comfort-sensitive,EnergyBridge,3,1,3
+R0255,EV commuter,MPC,1,0,0
+R0255,EV commuter,HEMA,2,1,0
+R0255,EV commuter,EnergyBridge,3,1,4
+R0256,Comfort-sensitive,MPC,1,0,2
+R0256,Comfort-sensitive,HEMA,2,0,2
+R0256,Comfort-sensitive,EnergyBridge,3,1,2
+R0257,EV commuter,MPC,1,0,5
+R0257,EV commuter,HEMA,2,1,3
+R0257,EV commuter,EnergyBridge,3,1,4
+R0258,Comfort-sensitive,MPC,1,0,4
+R0258,Comfort-sensitive,HEMA,2,0,4
+R0258,Comfort-sensitive,EnergyBridge,3,1,0
+R0259,Caregiver,MPC,1,0,4
+R0259,Caregiver,HEMA,2,0,0
+R0259,Caregiver,EnergyBridge,3,1,0
+R0260,Cooperative regular,MPC,1,0,0
+R0260,Cooperative regular,HEMA,2,0,3
+R0260,Cooperative regular,EnergyBridge,3,1,5
+R0261,Comfort-sensitive,MPC,1,1,2.9
+R0261,Comfort-sensitive,HEMA,2,0,1.5
+R0261,Comfort-sensitive,EnergyBridge,3,1,2.9
+R0262,Price-sensitive,MPC,1,0,5
+R0262,Price-sensitive,HEMA,2,1,4
+R0262,Price-sensitive,EnergyBridge,3,1,0
+R0263,EV commuter,MPC,1,0,0
+R0263,EV commuter,HEMA,2,1,3
+R0263,EV commuter,EnergyBridge,3,0,2
+R0264,Comfort-sensitive,MPC,1,0,3
+R0264,Comfort-sensitive,HEMA,2,1,0
+R0264,Comfort-sensitive,EnergyBridge,3,1,4
+R0265,Irregular routine,MPC,1,0,4
+R0265,Irregular routine,HEMA,2,0,5
+R0265,Irregular routine,EnergyBridge,3,1,3
+R0266,EV commuter,MPC,1,0,1
+R0266,EV commuter,HEMA,2,1,4
+R0266,EV commuter,EnergyBridge,3,1,0
+R0267,Caregiver,MPC,1,0,0
+R0267,Caregiver,HEMA,2,1,4
+R0267,Caregiver,EnergyBridge,3,0,2
+R0268,Caregiver,MPC,1,0,3
+R0268,Caregiver,HEMA,2,0,5
+R0268,Caregiver,EnergyBridge,3,1,4
+R0269,Price-sensitive,MPC,1,0,0
+R0269,Price-sensitive,HEMA,2,0,5
+R0269,Price-sensitive,EnergyBridge,3,0,5
+R0270,Cooperative regular,MPC,1,0,3
+R0270,Cooperative regular,HEMA,2,0,3
+R0270,Cooperative regular,EnergyBridge,3,0,0
+R0271,Cooperative regular,MPC,1,0,3
+R0271,Cooperative regular,HEMA,2,0,5
+R0271,Cooperative regular,EnergyBridge,3,1,3
+R0272,Caregiver,MPC,1,0,3
+R0272,Caregiver,HEMA,2,1,3
+R0272,Caregiver,EnergyBridge,3,1,5
+R0273,Price-sensitive,MPC,1,0,2
+R0273,Price-sensitive,HEMA,2,0,3
+R0273,Price-sensitive,EnergyBridge,3,1,0
+R0274,Cooperative regular,MPC,1,0,4.2
+R0274,Cooperative regular,HEMA,2,1,3.2
+R0274,Cooperative regular,EnergyBridge,3,0,4
+R0275,Comfort-sensitive,MPC,1,0,1
+R0275,Comfort-sensitive,HEMA,2,0,5
+R0275,Comfort-sensitive,EnergyBridge,3,1,2
+R0276,Caregiver,MPC,1,1,3
+R0276,Caregiver,HEMA,2,1,1
+R0276,Caregiver,EnergyBridge,3,1,5
+R0277,Irregular routine,MPC,1,0,4
+R0277,Irregular routine,HEMA,2,0,4
+R0277,Irregular routine,EnergyBridge,3,0,3
+R0278,Comfort-sensitive,MPC,1,1,4
+R0278,Comfort-sensitive,HEMA,2,1,2
+R0278,Comfort-sensitive,EnergyBridge,3,0,2
+R0279,Price-sensitive,MPC,1,1,1
+R0279,Price-sensitive,HEMA,2,1,3
+R0279,Price-sensitive,EnergyBridge,3,1,4
+R0280,Comfort-sensitive,MPC,1,1,3.7
+R0280,Comfort-sensitive,HEMA,2,1,3.6
+R0280,Comfort-sensitive,EnergyBridge,3,1,3.5
+R0281,Price-sensitive,MPC,1,0,1
+R0281,Price-sensitive,HEMA,2,0,0
+R0281,Price-sensitive,EnergyBridge,3,0,3
+R0282,Caregiver,MPC,1,0,3
+R0282,Caregiver,HEMA,2,0,1
+R0282,Caregiver,EnergyBridge,3,1,1
+R0283,EV commuter,MPC,1,0,2
+R0283,EV commuter,HEMA,2,1,2
+R0283,EV commuter,EnergyBridge,3,1,2
+R0284,Caregiver,MPC,1,0,2
+R0284,Caregiver,HEMA,2,0,3
+R0284,Caregiver,EnergyBridge,3,0,3
+R0285,Caregiver,MPC,1,0,4
+R0285,Caregiver,HEMA,2,1,0
+R0285,Caregiver,EnergyBridge,3,1,0
+R0286,Comfort-sensitive,MPC,1,0,2
+R0286,Comfort-sensitive,HEMA,2,0,2
+R0286,Comfort-sensitive,EnergyBridge,3,0,0
+R0287,Caregiver,MPC,1,0,3
+R0287,Caregiver,HEMA,2,0,5
+R0287,Caregiver,EnergyBridge,3,0,1
+R0288,EV commuter,MPC,1,0,3
+R0288,EV commuter,HEMA,2,1,4
+R0288,EV commuter,EnergyBridge,3,1,2
+R0289,Price-sensitive,MPC,1,1,4.5
+R0289,Price-sensitive,HEMA,2,0,3.4
+R0289,Price-sensitive,EnergyBridge,3,1,4.2
+R0290,Caregiver,MPC,1,0,4
+R0290,Caregiver,HEMA,2,0,2
+R0290,Caregiver,EnergyBridge,3,0,1
+R0291,Comfort-sensitive,MPC,1,0,3
+R0291,Comfort-sensitive,HEMA,2,0,3
+R0291,Comfort-sensitive,EnergyBridge,3,0,1
+R0292,EV commuter,MPC,1,1,2
+R0292,EV commuter,HEMA,2,0,0
+R0292,EV commuter,EnergyBridge,3,1,0
+R0293,Comfort-sensitive,MPC,1,0,0
+R0293,Comfort-sensitive,HEMA,2,0,3
+R0293,Comfort-sensitive,EnergyBridge,3,1,2
+R0294,Caregiver,MPC,1,0,0
+R0294,Caregiver,HEMA,2,1,3
+R0294,Caregiver,EnergyBridge,3,1,4
+R0295,Caregiver,MPC,1,0,5
+R0295,Caregiver,HEMA,2,0,1
+R0295,Caregiver,EnergyBridge,3,1,4
+R0296,Caregiver,MPC,1,1,1
+R0296,Caregiver,HEMA,2,0,4
+R0296,Caregiver,EnergyBridge,3,1,5
+R0297,Comfort-sensitive,MPC,1,1,5
+R0297,Comfort-sensitive,HEMA,2,0,2
+R0297,Comfort-sensitive,EnergyBridge,3,1,3
+R0298,Cooperative regular,MPC,1,0,4
+R0298,Cooperative regular,HEMA,2,1,4
+R0298,Cooperative regular,EnergyBridge,3,0,0
+R0299,Irregular routine,MPC,1,1,1
+R0299,Irregular routine,HEMA,2,0,5
+R0299,Irregular routine,EnergyBridge,3,0,3
+R0300,Cooperative regular,MPC,1,0,2
+R0300,Cooperative regular,HEMA,2,0,3
+R0300,Cooperative regular,EnergyBridge,3,0,2
+R0301,Comfort-sensitive,MPC,1,0,3
+R0301,Comfort-sensitive,HEMA,2,1,3
+R0301,Comfort-sensitive,EnergyBridge,3,1,5
+R0302,Price-sensitive,MPC,1,1,4.8
+R0302,Price-sensitive,HEMA,2,0,3.5
+R0302,Price-sensitive,EnergyBridge,3,1,4.8
+R0303,EV commuter,MPC,1,0,3
+R0303,EV commuter,HEMA,2,1,5
+R0303,EV commuter,EnergyBridge,3,1,4
+R0304,Comfort-sensitive,MPC,1,0,4
+R0304,Comfort-sensitive,HEMA,2,0,2
+R0304,Comfort-sensitive,EnergyBridge,3,0,5
+R0305,Irregular routine,MPC,1,0,4
+R0305,Irregular routine,HEMA,2,0,5
+R0305,Irregular routine,EnergyBridge,3,0,0
+R0306,EV commuter,MPC,1,0,1
+R0306,EV commuter,HEMA,2,1,5
+R0306,EV commuter,EnergyBridge,3,0,5
+R0307,EV commuter,MPC,1,0,3
+R0307,EV commuter,HEMA,2,0,4
+R0307,EV commuter,EnergyBridge,3,0,1
+R0308,Irregular routine,MPC,1,0,4
+R0308,Irregular routine,HEMA,2,0,0
+R0308,Irregular routine,EnergyBridge,3,1,5
+R0309,Caregiver,MPC,1,1,4
+R0309,Caregiver,HEMA,2,0,4
+R0309,Caregiver,EnergyBridge,3,1,0
+R0310,EV commuter,MPC,1,0,5
+R0310,EV commuter,HEMA,2,0,4
+R0310,EV commuter,EnergyBridge,3,1,3
+R0311,Price-sensitive,MPC,1,1,4.5
+R0311,Price-sensitive,HEMA,2,0,2.7
+R0311,Price-sensitive,EnergyBridge,3,1,3.9
+R0312,Cooperative regular,MPC,1,0,2
+R0312,Cooperative regular,HEMA,2,0,3
+R0312,Cooperative regular,EnergyBridge,3,1,4
+R0313,Cooperative regular,MPC,1,0,4
+R0313,Cooperative regular,HEMA,2,0,5
+R0313,Cooperative regular,EnergyBridge,3,1,2
+R0314,Caregiver,MPC,1,0,4
+R0314,Caregiver,HEMA,2,1,2
+R0314,Caregiver,EnergyBridge,3,1,3
+R0315,Comfort-sensitive,MPC,1,0,3
+R0315,Comfort-sensitive,HEMA,2,0,2
+R0315,Comfort-sensitive,EnergyBridge,3,1,3
+R0316,Irregular routine,MPC,1,0,2
+R0316,Irregular routine,HEMA,2,1,4
+R0316,Irregular routine,EnergyBridge,3,1,5
+R0317,Comfort-sensitive,MPC,1,0,1
+R0317,Comfort-sensitive,HEMA,2,1,3
+R0317,Comfort-sensitive,EnergyBridge,3,1,1
+R0318,Comfort-sensitive,MPC,1,0,2
+R0318,Comfort-sensitive,HEMA,2,0,1
+R0318,Comfort-sensitive,EnergyBridge,3,1,1
+R0319,Comfort-sensitive,MPC,1,1,3.9
+R0319,Comfort-sensitive,HEMA,2,1,4
+R0319,Comfort-sensitive,EnergyBridge,3,1,4.7
+R0320,Caregiver,MPC,1,1,2
+R0320,Caregiver,HEMA,2,0,1
+R0320,Caregiver,EnergyBridge,3,1,2
+R0321,EV commuter,MPC,1,1,4
+R0321,EV commuter,HEMA,2,0,5
+R0321,EV commuter,EnergyBridge,3,1,4
+R0322,Cooperative regular,MPC,1,1,3
+R0322,Cooperative regular,HEMA,2,0,5
+R0322,Cooperative regular,EnergyBridge,3,1,1
+R0323,EV commuter,MPC,1,0,5
+R0323,EV commuter,HEMA,2,0,4
+R0323,EV commuter,EnergyBridge,3,0,3
+R0324,Price-sensitive,MPC,1,0,1
+R0324,Price-sensitive,HEMA,2,0,1
+R0324,Price-sensitive,EnergyBridge,3,0,0
+R0325,EV commuter,MPC,1,0,2
+R0325,EV commuter,HEMA,2,0,2
+R0325,EV commuter,EnergyBridge,3,1,5
+R0326,Cooperative regular,MPC,1,0,5
+R0326,Cooperative regular,HEMA,2,1,0
+R0326,Cooperative regular,EnergyBridge,3,1,4
+R0327,EV commuter,MPC,1,0,5
+R0327,EV commuter,HEMA,2,0,4
+R0327,EV commuter,EnergyBridge,3,1,1
+R0328,Caregiver,MPC,1,0,4
+R0328,Caregiver,HEMA,2,0,1
+R0328,Caregiver,EnergyBridge,3,1,3
+R0329,Comfort-sensitive,MPC,1,1,2
+R0329,Comfort-sensitive,HEMA,2,0,1
+R0329,Comfort-sensitive,EnergyBridge,3,0,1
+R0330,EV commuter,MPC,1,1,4
+R0330,EV commuter,HEMA,2,0,3.2
+R0330,EV commuter,EnergyBridge,3,0,3
+R0331,EV commuter,MPC,1,0,0
+R0331,EV commuter,HEMA,2,0,0
+R0331,EV commuter,EnergyBridge,3,1,5
+R0332,EV commuter,MPC,1,0,1
+R0332,EV commuter,HEMA,2,1,1
+R0332,EV commuter,EnergyBridge,3,0,4
+R0333,EV commuter,MPC,1,0,4
+R0333,EV commuter,HEMA,2,0,5
+R0333,EV commuter,EnergyBridge,3,1,1
+R0334,Price-sensitive,MPC,1,1,4.5
+R0334,Price-sensitive,HEMA,2,1,4.9
+R0334,Price-sensitive,EnergyBridge,3,1,5
+R0335,Price-sensitive,MPC,1,0,1
+R0335,Price-sensitive,HEMA,2,1,1
+R0335,Price-sensitive,EnergyBridge,3,1,2
+R0336,EV commuter,MPC,1,0,2
+R0336,EV commuter,HEMA,2,1,1
+R0336,EV commuter,EnergyBridge,3,0,4
+R0337,Caregiver,MPC,1,0,2
+R0337,Caregiver,HEMA,2,1,4
+R0337,Caregiver,EnergyBridge,3,1,0
+R0338,EV commuter,MPC,1,0,2
+R0338,EV commuter,HEMA,2,0,2
+R0338,EV commuter,EnergyBridge,3,1,3
+R0339,EV commuter,MPC,1,1,2
+R0339,EV commuter,HEMA,2,1,1
+R0339,EV commuter,EnergyBridge,3,0,4
+R0340,EV commuter,MPC,1,1,3
+R0340,EV commuter,HEMA,2,0,4
+R0340,EV commuter,EnergyBridge,3,1,1
+R0341,Irregular routine,MPC,1,0,5
+R0341,Irregular routine,HEMA,2,1,2
+R0341,Irregular routine,EnergyBridge,3,1,1
+R0342,Caregiver,MPC,1,0,5
+R0342,Caregiver,HEMA,2,1,2
+R0342,Caregiver,EnergyBridge,3,1,5
+R0343,EV commuter,MPC,1,0,5
+R0343,EV commuter,HEMA,2,0,5
+R0343,EV commuter,EnergyBridge,3,1,0
+R0344,Caregiver,MPC,1,1,3
+R0344,Caregiver,HEMA,2,1,0
+R0344,Caregiver,EnergyBridge,3,1,3
+R0345,Price-sensitive,MPC,1,0,5
+R0345,Price-sensitive,HEMA,2,0,4
+R0345,Price-sensitive,EnergyBridge,3,0,5
+R0346,Caregiver,MPC,1,0,2
+R0346,Caregiver,HEMA,2,0,1
+R0346,Caregiver,EnergyBridge,3,1,3
+R0347,Comfort-sensitive,MPC,1,0,0
+R0347,Comfort-sensitive,HEMA,2,0,0
+R0347,Comfort-sensitive,EnergyBridge,3,0,5
+R0348,Cooperative regular,MPC,1,0,1
+R0348,Cooperative regular,HEMA,2,0,0
+R0348,Cooperative regular,EnergyBridge,3,1,2
+R0349,Caregiver,MPC,1,0,4
+R0349,Caregiver,HEMA,2,0,2
+R0349,Caregiver,EnergyBridge,3,1,4
+R0350,Irregular routine,MPC,1,0,5
+R0350,Irregular routine,HEMA,2,0,0
+R0350,Irregular routine,EnergyBridge,3,1,0
+R0351,Comfort-sensitive,MPC,1,0,0
+R0351,Comfort-sensitive,HEMA,2,0,0
+R0351,Comfort-sensitive,EnergyBridge,3,1,4
+R0352,Caregiver,MPC,1,0,1
+R0352,Caregiver,HEMA,2,1,4
+R0352,Caregiver,EnergyBridge,3,1,0
+R0353,Cooperative regular,MPC,1,0,5
+R0353,Cooperative regular,HEMA,2,0,3
+R0353,Cooperative regular,EnergyBridge,3,1,4
+R0354,Cooperative regular,MPC,1,0,1
+R0354,Cooperative regular,HEMA,2,1,4
+R0354,Cooperative regular,EnergyBridge,3,1,5
+R0355,Cooperative regular,MPC,1,0,2
+R0355,Cooperative regular,HEMA,2,1,3
+R0355,Cooperative regular,EnergyBridge,3,1,0
+R0356,Price-sensitive,MPC,1,0,3
+R0356,Price-sensitive,HEMA,2,1,5
+R0356,Price-sensitive,EnergyBridge,3,1,5
+R0357,Price-sensitive,MPC,1,1,3.7
+R0357,Price-sensitive,HEMA,2,1,3.7
+R0357,Price-sensitive,EnergyBridge,3,1,3.6
+R0358,Cooperative regular,MPC,1,1,5
+R0358,Cooperative regular,HEMA,2,1,0
+R0358,Cooperative regular,EnergyBridge,3,0,2
+R0359,EV commuter,MPC,1,0,4
+R0359,EV commuter,HEMA,2,0,4
+R0359,EV commuter,EnergyBridge,3,1,1
+R0360,EV commuter,MPC,1,0,0
+R0360,EV commuter,HEMA,2,0,4
+R0360,EV commuter,EnergyBridge,3,1,0
+R0361,Cooperative regular,MPC,1,1,5
+R0361,Cooperative regular,HEMA,2,0,2
+R0361,Cooperative regular,EnergyBridge,3,0,0
+R0362,Comfort-sensitive,MPC,1,1,0
+R0362,Comfort-sensitive,HEMA,2,1,4
+R0362,Comfort-sensitive,EnergyBridge,3,1,1
+R0363,Comfort-sensitive,MPC,1,0,3
+R0363,Comfort-sensitive,HEMA,2,0,1
+R0363,Comfort-sensitive,EnergyBridge,3,1,2
+R0364,Price-sensitive,MPC,1,0,4
+R0364,Price-sensitive,HEMA,2,0,4
+R0364,Price-sensitive,EnergyBridge,3,1,1
+R0365,Irregular routine,MPC,1,1,3
+R0365,Irregular routine,HEMA,2,1,2.7
+R0365,Irregular routine,EnergyBridge,3,1,2.3
+R0366,EV commuter,MPC,1,0,5
+R0366,EV commuter,HEMA,2,0,2
+R0366,EV commuter,EnergyBridge,3,1,3
+R0367,Price-sensitive,MPC,1,0,1
+R0367,Price-sensitive,HEMA,2,1,2
+R0367,Price-sensitive,EnergyBridge,3,1,5
+R0368,Price-sensitive,MPC,1,0,5
+R0368,Price-sensitive,HEMA,2,1,4
+R0368,Price-sensitive,EnergyBridge,3,1,0
+R0369,Comfort-sensitive,MPC,1,0,5
+R0369,Comfort-sensitive,HEMA,2,0,1
+R0369,Comfort-sensitive,EnergyBridge,3,0,1
+R0370,Comfort-sensitive,MPC,1,0,0
+R0370,Comfort-sensitive,HEMA,2,0,0
+R0370,Comfort-sensitive,EnergyBridge,3,0,3
+R0371,Cooperative regular,MPC,1,1,4
+R0371,Cooperative regular,HEMA,2,0,5
+R0371,Cooperative regular,EnergyBridge,3,1,2
+R0372,Irregular routine,MPC,1,0,0
+R0372,Irregular routine,HEMA,2,1,2
+R0372,Irregular routine,EnergyBridge,3,0,5
+R0373,Irregular routine,MPC,1,0,1
+R0373,Irregular routine,HEMA,2,1,3
+R0373,Irregular routine,EnergyBridge,3,1,5
+R0374,Comfort-sensitive,MPC,1,0,4
+R0374,Comfort-sensitive,HEMA,2,0,4
+R0374,Comfort-sensitive,EnergyBridge,3,1,3
+R0375,Caregiver,MPC,1,0,0
+R0375,Caregiver,HEMA,2,0,0
+R0375,Caregiver,EnergyBridge,3,1,3
+R0376,Caregiver,MPC,1,1,3
+R0376,Caregiver,HEMA,2,0,2
+R0376,Caregiver,EnergyBridge,3,0,4
+R0377,Caregiver,MPC,1,0,3
+R0377,Caregiver,HEMA,2,0,3
+R0377,Caregiver,EnergyBridge,3,1,4
+R0378,Caregiver,MPC,1,1,2
+R0378,Caregiver,HEMA,2,1,2
+R0378,Caregiver,EnergyBridge,3,0,2
+R0379,Caregiver,MPC,1,0,1
+R0379,Caregiver,HEMA,2,0,3
+R0379,Caregiver,EnergyBridge,3,1,4
+R0380,Price-sensitive,MPC,1,1,5
+R0380,Price-sensitive,HEMA,2,1,5
+R0380,Price-sensitive,EnergyBridge,3,1,5
+R0381,Comfort-sensitive,MPC,1,0,3.1
+R0381,Comfort-sensitive,HEMA,2,1,3.4
+R0381,Comfort-sensitive,EnergyBridge,3,1,2.6
+R0382,Comfort-sensitive,MPC,1,1,5
+R0382,Comfort-sensitive,HEMA,2,0,4
+R0382,Comfort-sensitive,EnergyBridge,3,1,0
+R0383,Price-sensitive,MPC,1,1,4
+R0383,Price-sensitive,HEMA,2,0,5
+R0383,Price-sensitive,EnergyBridge,3,0,1
+R0384,Comfort-sensitive,MPC,1,0,5
+R0384,Comfort-sensitive,HEMA,2,0,4
+R0384,Comfort-sensitive,EnergyBridge,3,1,3
+R0385,Caregiver,MPC,1,0,4
+R0385,Caregiver,HEMA,2,1,4
+R0385,Caregiver,EnergyBridge,3,1,0
+R0386,Cooperative regular,MPC,1,0,4
+R0386,Cooperative regular,HEMA,2,1,5
+R0386,Cooperative regular,EnergyBridge,3,1,5
+R0387,EV commuter,MPC,1,0,0
+R0387,EV commuter,HEMA,2,1,3
+R0387,EV commuter,EnergyBridge,3,1,5
+R0388,EV commuter,MPC,1,0,0
+R0388,EV commuter,HEMA,2,0,5
+R0388,EV commuter,EnergyBridge,3,1,2
+R0389,Price-sensitive,MPC,1,0,1
+R0389,Price-sensitive,HEMA,2,1,1
+R0389,Price-sensitive,EnergyBridge,3,1,4
+R0390,Caregiver,MPC,1,0,2
+R0390,Caregiver,HEMA,2,0,3
+R0390,Caregiver,EnergyBridge,3,0,1
+R0391,EV commuter,MPC,1,1,4
+R0391,EV commuter,HEMA,2,1,4
+R0391,EV commuter,EnergyBridge,3,1,4
+R0392,Price-sensitive,MPC,1,0,2
+R0392,Price-sensitive,HEMA,2,0,2
+R0392,Price-sensitive,EnergyBridge,3,0,1
+R0393,Irregular routine,MPC,1,0,5
+R0393,Irregular routine,HEMA,2,1,0
+R0393,Irregular routine,EnergyBridge,3,0,0
+R0394,Cooperative regular,MPC,1,0,5
+R0394,Cooperative regular,HEMA,2,0,3
+R0394,Cooperative regular,EnergyBridge,3,1,3
+R0395,Comfort-sensitive,MPC,1,0,5
+R0395,Comfort-sensitive,HEMA,2,1,5
+R0395,Comfort-sensitive,EnergyBridge,3,1,5
+R0396,Price-sensitive,MPC,1,0,4
+R0396,Price-sensitive,HEMA,2,0,3
+R0396,Price-sensitive,EnergyBridge,3,1,3
+R0397,EV commuter,MPC,1,0,3
+R0397,EV commuter,HEMA,2,1,0
+R0397,EV commuter,EnergyBridge,3,1,2
+R0398,Price-sensitive,MPC,1,0,5
+R0398,Price-sensitive,HEMA,2,0,0
+R0398,Price-sensitive,EnergyBridge,3,0,1
+R0399,Price-sensitive,MPC,1,0,2.4
+R0399,Price-sensitive,HEMA,2,1,2.5
+R0399,Price-sensitive,EnergyBridge,3,0,3.4
+R0400,Price-sensitive,MPC,1,1,4
+R0400,Price-sensitive,HEMA,2,1,3.5
+R0400,Price-sensitive,EnergyBridge,3,1,3.8
+R0401,Cooperative regular,MPC,1,0,0
+R0401,Cooperative regular,HEMA,2,0,2
+R0401,Cooperative regular,EnergyBridge,3,1,2
+R0402,EV commuter,MPC,1,0,0
+R0402,EV commuter,HEMA,2,1,3
+R0402,EV commuter,EnergyBridge,3,0,0
+R0403,Caregiver,MPC,1,0,0
+R0403,Caregiver,HEMA,2,1,1
+R0403,Caregiver,EnergyBridge,3,1,3
+R0404,EV commuter,MPC,1,0,3
+R0404,EV commuter,HEMA,2,1,2
+R0404,EV commuter,EnergyBridge,3,0,5
+R0405,Irregular routine,MPC,1,0,3
+R0405,Irregular routine,HEMA,2,0,1
+R0405,Irregular routine,EnergyBridge,3,1,4
+R0406,EV commuter,MPC,1,0,1
+R0406,EV commuter,HEMA,2,0,1
+R0406,EV commuter,EnergyBridge,3,1,0
+R0407,Comfort-sensitive,MPC,1,0,4
+R0407,Comfort-sensitive,HEMA,2,0,2
+R0407,Comfort-sensitive,EnergyBridge,3,1,5
+R0408,EV commuter,MPC,1,1,2
+R0408,EV commuter,HEMA,2,1,0
+R0408,EV commuter,EnergyBridge,3,1,5
+R0409,EV commuter,MPC,1,0,2
+R0409,EV commuter,HEMA,2,1,4
+R0409,EV commuter,EnergyBridge,3,1,2
+R0410,EV commuter,MPC,1,0,5
+R0410,EV commuter,HEMA,2,1,5
+R0410,EV commuter,EnergyBridge,3,0,2
+R0411,Irregular routine,MPC,1,0,1
+R0411,Irregular routine,HEMA,2,0,3
+R0411,Irregular routine,EnergyBridge,3,0,0
+R0412,Price-sensitive,MPC,1,0,1
+R0412,Price-sensitive,HEMA,2,1,2
+R0412,Price-sensitive,EnergyBridge,3,1,3
+R0413,Irregular routine,MPC,1,0,1
+R0413,Irregular routine,HEMA,2,0,2
+R0413,Irregular routine,EnergyBridge,3,1,0
+R0414,Caregiver,MPC,1,0,1
+R0414,Caregiver,HEMA,2,1,2
+R0414,Caregiver,EnergyBridge,3,1,3
+R0415,Cooperative regular,MPC,1,0,5
+R0415,Cooperative regular,HEMA,2,0,0
+R0415,Cooperative regular,EnergyBridge,3,1,4
+R0416,Cooperative regular,MPC,1,0,5
+R0416,Cooperative regular,HEMA,2,1,1
+R0416,Cooperative regular,EnergyBridge,3,1,5
+R0417,Price-sensitive,MPC,1,1,0
+R0417,Price-sensitive,HEMA,2,1,4
+R0417,Price-sensitive,EnergyBridge,3,1,3
+R0418,Caregiver,MPC,1,1,3
+R0418,Caregiver,HEMA,2,0,2
+R0418,Caregiver,EnergyBridge,3,1,2
+R0419,Irregular routine,MPC,1,1,5
+R0419,Irregular routine,HEMA,2,0,3
+R0419,Irregular routine,EnergyBridge,3,1,2
+R0420,Price-sensitive,MPC,1,1,5
+R0420,Price-sensitive,HEMA,2,1,3
+R0420,Price-sensitive,EnergyBridge,3,1,3
+R0421,EV commuter,MPC,1,0,5
+R0421,EV commuter,HEMA,2,0,2
+R0421,EV commuter,EnergyBridge,3,1,1
+R0422,Price-sensitive,MPC,1,0,4
+R0422,Price-sensitive,HEMA,2,1,5
+R0422,Price-sensitive,EnergyBridge,3,1,0
+R0423,Irregular routine,MPC,1,0,5
+R0423,Irregular routine,HEMA,2,1,5
+R0423,Irregular routine,EnergyBridge,3,0,1
+R0424,Comfort-sensitive,MPC,1,0,2
+R0424,Comfort-sensitive,HEMA,2,1,0
+R0424,Comfort-sensitive,EnergyBridge,3,0,5
+R0425,EV commuter,MPC,1,1,0
+R0425,EV commuter,HEMA,2,0,5
+R0425,EV commuter,EnergyBridge,3,1,2
+R0426,Price-sensitive,MPC,1,1,1
+R0426,Price-sensitive,HEMA,2,1,3
+R0426,Price-sensitive,EnergyBridge,3,1,2
+R0427,Irregular routine,MPC,1,1,2
+R0427,Irregular routine,HEMA,2,0,5
+R0427,Irregular routine,EnergyBridge,3,1,0
+R0428,Comfort-sensitive,MPC,1,0,2
+R0428,Comfort-sensitive,HEMA,2,0,4
+R0428,Comfort-sensitive,EnergyBridge,3,1,2
+R0429,Price-sensitive,MPC,1,0,2
+R0429,Price-sensitive,HEMA,2,1,0
+R0429,Price-sensitive,EnergyBridge,3,1,0
+R0430,Comfort-sensitive,MPC,1,1,0
+R0430,Comfort-sensitive,HEMA,2,1,4
+R0430,Comfort-sensitive,EnergyBridge,3,1,4
+R0431,Comfort-sensitive,MPC,1,0,5
+R0431,Comfort-sensitive,HEMA,2,1,1
+R0431,Comfort-sensitive,EnergyBridge,3,1,3
+R0432,EV commuter,MPC,1,0,4
+R0432,EV commuter,HEMA,2,0,3
+R0432,EV commuter,EnergyBridge,3,1,3
+R0433,Irregular routine,MPC,1,1,3.1
+R0433,Irregular routine,HEMA,2,1,3.7
+R0433,Irregular routine,EnergyBridge,3,1,3.3
+R0434,Comfort-sensitive,MPC,1,0,3.4
+R0434,Comfort-sensitive,HEMA,2,1,4.7
+R0434,Comfort-sensitive,EnergyBridge,3,0,3.8
+R0435,Price-sensitive,MPC,1,1,3
+R0435,Price-sensitive,HEMA,2,1,1
+R0435,Price-sensitive,EnergyBridge,3,1,3
+R0436,Comfort-sensitive,MPC,1,0,2
+R0436,Comfort-sensitive,HEMA,2,1,5
+R0436,Comfort-sensitive,EnergyBridge,3,0,3
+R0437,Comfort-sensitive,MPC,1,0,0
+R0437,Comfort-sensitive,HEMA,2,0,0
+R0437,Comfort-sensitive,EnergyBridge,3,1,1
+R0438,Irregular routine,MPC,1,0,3
+R0438,Irregular routine,HEMA,2,0,3
+R0438,Irregular routine,EnergyBridge,3,0,4
+R0439,EV commuter,MPC,1,0,1
+R0439,EV commuter,HEMA,2,0,5
+R0439,EV commuter,EnergyBridge,3,1,1
+R0440,Cooperative regular,MPC,1,0,0
+R0440,Cooperative regular,HEMA,2,0,2
+R0440,Cooperative regular,EnergyBridge,3,1,2
+R0441,Cooperative regular,MPC,1,0,5
+R0441,Cooperative regular,HEMA,2,0,0
+R0441,Cooperative regular,EnergyBridge,3,1,0
+R0442,EV commuter,MPC,1,1,5
+R0442,EV commuter,HEMA,2,0,0
+R0442,EV commuter,EnergyBridge,3,0,1
+R0443,Comfort-sensitive,MPC,1,1,2
+R0443,Comfort-sensitive,HEMA,2,0,2
+R0443,Comfort-sensitive,EnergyBridge,3,1,1
+R0444,Caregiver,MPC,1,0,5
+R0444,Caregiver,HEMA,2,0,0
+R0444,Caregiver,EnergyBridge,3,1,4
+R0445,Irregular routine,MPC,1,0,2
+R0445,Irregular routine,HEMA,2,0,1
+R0445,Irregular routine,EnergyBridge,3,1,3
+R0446,Comfort-sensitive,MPC,1,1,3.2
+R0446,Comfort-sensitive,HEMA,2,0,3.9
+R0446,Comfort-sensitive,EnergyBridge,3,1,3.2
+R0447,Irregular routine,MPC,1,0,2
+R0447,Irregular routine,HEMA,2,1,0
+R0447,Irregular routine,EnergyBridge,3,0,0
+R0448,Irregular routine,MPC,1,0,0
+R0448,Irregular routine,HEMA,2,1,2
+R0448,Irregular routine,EnergyBridge,3,1,1
+R0449,Cooperative regular,MPC,1,0,2
+R0449,Cooperative regular,HEMA,2,0,5
+R0449,Cooperative regular,EnergyBridge,3,1,5
+R0450,Cooperative regular,MPC,1,1,5
+R0450,Cooperative regular,HEMA,2,1,1.7
+R0450,Cooperative regular,EnergyBridge,3,0,4
+R0451,Comfort-sensitive,MPC,1,0,0
+R0451,Comfort-sensitive,HEMA,2,0,1
+R0451,Comfort-sensitive,EnergyBridge,3,1,0
+R0452,Price-sensitive,MPC,1,0,3
+R0452,Price-sensitive,HEMA,2,0,4
+R0452,Price-sensitive,EnergyBridge,3,0,4
+R0453,Cooperative regular,MPC,1,0,1
+R0453,Cooperative regular,HEMA,2,1,2
+R0453,Cooperative regular,EnergyBridge,3,0,4
+R0454,Cooperative regular,MPC,1,0,2
+R0454,Cooperative regular,HEMA,2,1,3
+R0454,Cooperative regular,EnergyBridge,3,1,5
+R0455,Price-sensitive,MPC,1,0,5
+R0455,Price-sensitive,HEMA,2,0,5
+R0455,Price-sensitive,EnergyBridge,3,1,0
+R0456,Price-sensitive,MPC,1,0,5
+R0456,Price-sensitive,HEMA,2,1,4
+R0456,Price-sensitive,EnergyBridge,3,1,4
+R0457,EV commuter,MPC,1,0,3
+R0457,EV commuter,HEMA,2,0,1
+R0457,EV commuter,EnergyBridge,3,1,5
+R0458,Irregular routine,MPC,1,0,2
+R0458,Irregular routine,HEMA,2,0,2
+R0458,Irregular routine,EnergyBridge,3,1,4
+R0459,Cooperative regular,MPC,1,0,5
+R0459,Cooperative regular,HEMA,2,1,2
+R0459,Cooperative regular,EnergyBridge,3,1,1
+R0460,Caregiver,MPC,1,1,3
+R0460,Caregiver,HEMA,2,0,3
+R0460,Caregiver,EnergyBridge,3,1,0
+R0461,Price-sensitive,MPC,1,1,4.1
+R0461,Price-sensitive,HEMA,2,1,3.3
+R0461,Price-sensitive,EnergyBridge,3,1,5
+R0462,Irregular routine,MPC,1,0,4
+R0462,Irregular routine,HEMA,2,1,2
+R0462,Irregular routine,EnergyBridge,3,1,2
+R0463,Comfort-sensitive,MPC,1,0,2
+R0463,Comfort-sensitive,HEMA,2,0,0
+R0463,Comfort-sensitive,EnergyBridge,3,1,3
+R0464,Comfort-sensitive,MPC,1,0,3
+R0464,Comfort-sensitive,HEMA,2,1,3
+R0464,Comfort-sensitive,EnergyBridge,3,1,5
+R0465,Comfort-sensitive,MPC,1,0,3
+R0465,Comfort-sensitive,HEMA,2,1,0
+R0465,Comfort-sensitive,EnergyBridge,3,1,1
+R0466,EV commuter,MPC,1,1,4
+R0466,EV commuter,HEMA,2,0,3
+R0466,EV commuter,EnergyBridge,3,1,2
+R0467,Irregular routine,MPC,1,0,3
+R0467,Irregular routine,HEMA,2,0,3
+R0467,Irregular routine,EnergyBridge,3,1,1
+R0468,Price-sensitive,MPC,1,1,5
+R0468,Price-sensitive,HEMA,2,1,4
+R0468,Price-sensitive,EnergyBridge,3,1,4
+R0469,Caregiver,MPC,1,0,3
+R0469,Caregiver,HEMA,2,0,0
+R0469,Caregiver,EnergyBridge,3,1,4
+R0470,Irregular routine,MPC,1,0,2
+R0470,Irregular routine,HEMA,2,0,3
+R0470,Irregular routine,EnergyBridge,3,1,1
+R0471,EV commuter,MPC,1,1,5
+R0471,EV commuter,HEMA,2,0,4
+R0471,EV commuter,EnergyBridge,3,1,0
+R0472,Caregiver,MPC,1,0,5
+R0472,Caregiver,HEMA,2,0,1
+R0472,Caregiver,EnergyBridge,3,1,3
+R0473,Comfort-sensitive,MPC,1,1,0
+R0473,Comfort-sensitive,HEMA,2,0,3
+R0473,Comfort-sensitive,EnergyBridge,3,0,2
+R0474,EV commuter,MPC,1,1,3.6
+R0474,EV commuter,HEMA,2,1,3.7
+R0474,EV commuter,EnergyBridge,3,1,4
+R0475,Comfort-sensitive,MPC,1,0,1
+R0475,Comfort-sensitive,HEMA,2,0,4
+R0475,Comfort-sensitive,EnergyBridge,3,1,3
+R0476,Price-sensitive,MPC,1,0,3
+R0476,Price-sensitive,HEMA,2,0,4
+R0476,Price-sensitive,EnergyBridge,3,0,3
+R0477,Cooperative regular,MPC,1,1,0
+R0477,Cooperative regular,HEMA,2,0,3
+R0477,Cooperative regular,EnergyBridge,3,1,4
+R0478,Comfort-sensitive,MPC,1,0,2
+R0478,Comfort-sensitive,HEMA,2,0,3
+R0478,Comfort-sensitive,EnergyBridge,3,1,5
+R0479,Irregular routine,MPC,1,0,1
+R0479,Irregular routine,HEMA,2,1,4
+R0479,Irregular routine,EnergyBridge,3,0,0
+R0480,Price-sensitive,MPC,1,0,3
+R0480,Price-sensitive,HEMA,2,0,3
+R0480,Price-sensitive,EnergyBridge,3,0,1
+R0481,Irregular routine,MPC,1,0,5
+R0481,Irregular routine,HEMA,2,0,1
+R0481,Irregular routine,EnergyBridge,3,0,5
+R0482,EV commuter,MPC,1,0,4
+R0482,EV commuter,HEMA,2,0,4
+R0482,EV commuter,EnergyBridge,3,1,1
+R0483,Cooperative regular,MPC,1,0,5
+R0483,Cooperative regular,HEMA,2,1,4.2
+R0483,Cooperative regular,EnergyBridge,3,1,4
+R0484,Caregiver,MPC,1,1,4
+R0484,Caregiver,HEMA,2,0,3
+R0484,Caregiver,EnergyBridge,3,1,5
+R0485,Price-sensitive,MPC,1,1,1
+R0485,Price-sensitive,HEMA,2,0,2
+R0485,Price-sensitive,EnergyBridge,3,1,0
+R0486,EV commuter,MPC,1,0,0
+R0486,EV commuter,HEMA,2,0,5
+R0486,EV commuter,EnergyBridge,3,1,3
+R0487,Cooperative regular,MPC,1,0,4
+R0487,Cooperative regular,HEMA,2,0,3
+R0487,Cooperative regular,EnergyBridge,3,1,2
+R0488,Price-sensitive,MPC,1,0,3
+R0488,Price-sensitive,HEMA,2,0,3
+R0488,Price-sensitive,EnergyBridge,3,1,4
+R0489,Caregiver,MPC,1,0,1
+R0489,Caregiver,HEMA,2,0,2
+R0489,Caregiver,EnergyBridge,3,1,4
+R0490,Comfort-sensitive,MPC,1,0,4
+R0490,Comfort-sensitive,HEMA,2,1,5
+R0490,Comfort-sensitive,EnergyBridge,3,1,5
+R0491,Price-sensitive,MPC,1,0,5
+R0491,Price-sensitive,HEMA,2,1,4.5
+R0491,Price-sensitive,EnergyBridge,3,1,5
+R0492,Cooperative regular,MPC,1,0,1
+R0492,Cooperative regular,HEMA,2,0,3
+R0492,Cooperative regular,EnergyBridge,3,1,5
+R0493,Comfort-sensitive,MPC,1,0,1
+R0493,Comfort-sensitive,HEMA,2,1,0
+R0493,Comfort-sensitive,EnergyBridge,3,0,0
+R0494,Price-sensitive,MPC,1,1,2
+R0494,Price-sensitive,HEMA,2,1,1.9
+R0494,Price-sensitive,EnergyBridge,3,1,2
+R0495,Cooperative regular,MPC,1,0,3
+R0495,Cooperative regular,HEMA,2,1,0
+R0495,Cooperative regular,EnergyBridge,3,1,5
+R0496,Cooperative regular,MPC,1,0,4
+R0496,Cooperative regular,HEMA,2,0,5
+R0496,Cooperative regular,EnergyBridge,3,0,2
+R0497,Comfort-sensitive,MPC,1,0,1
+R0497,Comfort-sensitive,HEMA,2,1,0
+R0497,Comfort-sensitive,EnergyBridge,3,0,4
+R0498,Price-sensitive,MPC,1,0,1
+R0498,Price-sensitive,HEMA,2,1,2
+R0498,Price-sensitive,EnergyBridge,3,1,4
+R0499,Price-sensitive,MPC,1,0,3
+R0499,Price-sensitive,HEMA,2,0,2
+R0499,Price-sensitive,EnergyBridge,3,0,5
+R0500,Price-sensitive,MPC,1,0,0
+R0500,Price-sensitive,HEMA,2,1,5
+R0500,Price-sensitive,EnergyBridge,3,1,2
+R0501,Comfort-sensitive,MPC,1,0,5
+R0501,Comfort-sensitive,HEMA,2,0,3
+R0501,Comfort-sensitive,EnergyBridge,3,1,5
+R0502,Price-sensitive,MPC,1,0,4
+R0502,Price-sensitive,HEMA,2,0,0
+R0502,Price-sensitive,EnergyBridge,3,1,3
+R0503,Caregiver,MPC,1,0,3
+R0503,Caregiver,HEMA,2,0,5
+R0503,Caregiver,EnergyBridge,3,1,4
+R0504,Caregiver,MPC,1,0,0
+R0504,Caregiver,HEMA,2,0,3
+R0504,Caregiver,EnergyBridge,3,1,3
+R0505,Irregular routine,MPC,1,0,3
+R0505,Irregular routine,HEMA,2,0,5
+R0505,Irregular routine,EnergyBridge,3,0,0
+R0506,EV commuter,MPC,1,0,4.1
+R0506,EV commuter,HEMA,2,1,4.3
+R0506,EV commuter,EnergyBridge,3,1,4.1
+R0507,Caregiver,MPC,1,0,4
+R0507,Caregiver,HEMA,2,1,2
+R0507,Caregiver,EnergyBridge,3,1,1
+R0508,Cooperative regular,MPC,1,0,5
+R0508,Cooperative regular,HEMA,2,0,2
+R0508,Cooperative regular,EnergyBridge,3,0,2
+R0509,Comfort-sensitive,MPC,1,1,3.6
+R0509,Comfort-sensitive,HEMA,2,1,2.5
+R0509,Comfort-sensitive,EnergyBridge,3,1,1.6
+R0510,Cooperative regular,MPC,1,0,3
+R0510,Cooperative regular,HEMA,2,1,1
+R0510,Cooperative regular,EnergyBridge,3,0,5
+R0511,Caregiver,MPC,1,0,4
+R0511,Caregiver,HEMA,2,1,3
+R0511,Caregiver,EnergyBridge,3,1,2
+R0512,Comfort-sensitive,MPC,1,0,3
+R0512,Comfort-sensitive,HEMA,2,0,1
+R0512,Comfort-sensitive,EnergyBridge,3,1,0
+R0513,Comfort-sensitive,MPC,1,0,1
+R0513,Comfort-sensitive,HEMA,2,0,0
+R0513,Comfort-sensitive,EnergyBridge,3,1,4
+R0514,Cooperative regular,MPC,1,1,0
+R0514,Cooperative regular,HEMA,2,0,5
+R0514,Cooperative regular,EnergyBridge,3,1,3
+R0515,Cooperative regular,MPC,1,0,1
+R0515,Cooperative regular,HEMA,2,1,4
+R0515,Cooperative regular,EnergyBridge,3,1,3
+R0516,Caregiver,MPC,1,0,3
+R0516,Caregiver,HEMA,2,1,0
+R0516,Caregiver,EnergyBridge,3,1,0
+R0517,Cooperative regular,MPC,1,0,4
+R0517,Cooperative regular,HEMA,2,0,1
+R0517,Cooperative regular,EnergyBridge,3,1,1
+R0518,Comfort-sensitive,MPC,1,1,3.7
+R0518,Comfort-sensitive,HEMA,2,1,4.6
+R0518,Comfort-sensitive,EnergyBridge,3,1,4.6
+R0519,Price-sensitive,MPC,1,0,0
+R0519,Price-sensitive,HEMA,2,1,5
+R0519,Price-sensitive,EnergyBridge,3,1,2
+R0520,Caregiver,MPC,1,0,1
+R0520,Caregiver,HEMA,2,0,4
+R0520,Caregiver,EnergyBridge,3,0,5
+R0521,EV commuter,MPC,1,1,1
+R0521,EV commuter,HEMA,2,1,0
+R0521,EV commuter,EnergyBridge,3,1,5
+R0522,EV commuter,MPC,1,0,0
+R0522,EV commuter,HEMA,2,1,5
+R0522,EV commuter,EnergyBridge,3,0,1
+R0523,Price-sensitive,MPC,1,0,0
+R0523,Price-sensitive,HEMA,2,1,5
+R0523,Price-sensitive,EnergyBridge,3,1,0
+R0524,Caregiver,MPC,1,0,4
+R0524,Caregiver,HEMA,2,1,2
+R0524,Caregiver,EnergyBridge,3,1,2
+R0525,Comfort-sensitive,MPC,1,0,0
+R0525,Comfort-sensitive,HEMA,2,1,3
+R0525,Comfort-sensitive,EnergyBridge,3,0,0
+R0526,EV commuter,MPC,1,1,2
+R0526,EV commuter,HEMA,2,0,4
+R0526,EV commuter,EnergyBridge,3,1,2
+R0527,Irregular routine,MPC,1,1,2
+R0527,Irregular routine,HEMA,2,1,3
+R0527,Irregular routine,EnergyBridge,3,0,4
+R0528,Price-sensitive,MPC,1,0,4
+R0528,Price-sensitive,HEMA,2,0,1
+R0528,Price-sensitive,EnergyBridge,3,1,2
+R0529,Comfort-sensitive,MPC,1,0,4
+R0529,Comfort-sensitive,HEMA,2,1,3
+R0529,Comfort-sensitive,EnergyBridge,3,1,4
+R0530,Cooperative regular,MPC,1,0,4
+R0530,Cooperative regular,HEMA,2,0,0
+R0530,Cooperative regular,EnergyBridge,3,1,3
+R0531,Price-sensitive,MPC,1,1,3
+R0531,Price-sensitive,HEMA,2,1,3
+R0531,Price-sensitive,EnergyBridge,3,1,2
+R0532,Caregiver,MPC,1,1,0
+R0532,Caregiver,HEMA,2,0,3
+R0532,Caregiver,EnergyBridge,3,1,2
+R0533,EV commuter,MPC,1,0,1
+R0533,EV commuter,HEMA,2,0,2
+R0533,EV commuter,EnergyBridge,3,1,4
+R0534,Price-sensitive,MPC,1,0,5
+R0534,Price-sensitive,HEMA,2,1,1
+R0534,Price-sensitive,EnergyBridge,3,0,3
+R0535,EV commuter,MPC,1,0,4
+R0535,EV commuter,HEMA,2,0,1
+R0535,EV commuter,EnergyBridge,3,1,4
+R0536,Comfort-sensitive,MPC,1,0,3
+R0536,Comfort-sensitive,HEMA,2,0,2
+R0536,Comfort-sensitive,EnergyBridge,3,0,3
+R0537,Irregular routine,MPC,1,0,2
+R0537,Irregular routine,HEMA,2,0,2
+R0537,Irregular routine,EnergyBridge,3,0,1
+R0538,Caregiver,MPC,1,1,3
+R0538,Caregiver,HEMA,2,0,5
+R0538,Caregiver,EnergyBridge,3,1,1
+R0539,EV commuter,MPC,1,0,5
+R0539,EV commuter,HEMA,2,1,5
+R0539,EV commuter,EnergyBridge,3,1,5
+R0540,Caregiver,MPC,1,1,5
+R0540,Caregiver,HEMA,2,0,0
+R0540,Caregiver,EnergyBridge,3,1,5
+R0541,EV commuter,MPC,1,0,1
+R0541,EV commuter,HEMA,2,0,0
+R0541,EV commuter,EnergyBridge,3,1,2
+R0542,Price-sensitive,MPC,1,0,3
+R0542,Price-sensitive,HEMA,2,1,1
+R0542,Price-sensitive,EnergyBridge,3,1,4
+R0543,Caregiver,MPC,1,0,5
+R0543,Caregiver,HEMA,2,0,1
+R0543,Caregiver,EnergyBridge,3,1,0
+R0544,Cooperative regular,MPC,1,1,3.1
+R0544,Cooperative regular,HEMA,2,0,1.9
+R0544,Cooperative regular,EnergyBridge,3,0,3.1
+R0545,Comfort-sensitive,MPC,1,0,4
+R0545,Comfort-sensitive,HEMA,2,1,3
+R0545,Comfort-sensitive,EnergyBridge,3,0,1
+R0546,Irregular routine,MPC,1,1,2
+R0546,Irregular routine,HEMA,2,0,0
+R0546,Irregular routine,EnergyBridge,3,0,0
+R0547,EV commuter,MPC,1,0,2
+R0547,EV commuter,HEMA,2,0,5
+R0547,EV commuter,EnergyBridge,3,1,1
+R0548,EV commuter,MPC,1,0,2
+R0548,EV commuter,HEMA,2,0,4
+R0548,EV commuter,EnergyBridge,3,1,0
+R0549,Cooperative regular,MPC,1,0,3
+R0549,Cooperative regular,HEMA,2,0,5
+R0549,Cooperative regular,EnergyBridge,3,1,3
+R0550,Price-sensitive,MPC,1,0,4
+R0550,Price-sensitive,HEMA,2,1,3
+R0550,Price-sensitive,EnergyBridge,3,1,4
+R0551,Irregular routine,MPC,1,0,3
+R0551,Irregular routine,HEMA,2,1,2
+R0551,Irregular routine,EnergyBridge,3,1,2
+R0552,Irregular routine,MPC,1,0,0
+R0552,Irregular routine,HEMA,2,1,4
+R0552,Irregular routine,EnergyBridge,3,1,2
+R0553,Irregular routine,MPC,1,0,3
+R0553,Irregular routine,HEMA,2,0,4
+R0553,Irregular routine,EnergyBridge,3,1,3
+R0554,Comfort-sensitive,MPC,1,0,0
+R0554,Comfort-sensitive,HEMA,2,0,5
+R0554,Comfort-sensitive,EnergyBridge,3,1,3
+R0555,EV commuter,MPC,1,1,5
+R0555,EV commuter,HEMA,2,1,5
+R0555,EV commuter,EnergyBridge,3,1,4.9
+R0556,Comfort-sensitive,MPC,1,0,1
+R0556,Comfort-sensitive,HEMA,2,0,5
+R0556,Comfort-sensitive,EnergyBridge,3,0,5
+R0557,Caregiver,MPC,1,0,5
+R0557,Caregiver,HEMA,2,0,5
+R0557,Caregiver,EnergyBridge,3,1,2
+R0558,Price-sensitive,MPC,1,1,5
+R0558,Price-sensitive,HEMA,2,0,2
+R0558,Price-sensitive,EnergyBridge,3,1,3
+R0559,Comfort-sensitive,MPC,1,0,5
+R0559,Comfort-sensitive,HEMA,2,1,3
+R0559,Comfort-sensitive,EnergyBridge,3,0,0
+R0560,Comfort-sensitive,MPC,1,0,4
+R0560,Comfort-sensitive,HEMA,2,1,0
+R0560,Comfort-sensitive,EnergyBridge,3,0,1
+R0561,Price-sensitive,MPC,1,0,2
+R0561,Price-sensitive,HEMA,2,0,3
+R0561,Price-sensitive,EnergyBridge,3,1,5
+R0562,EV commuter,MPC,1,0,4
+R0562,EV commuter,HEMA,2,0,4
+R0562,EV commuter,EnergyBridge,3,1,3
+R0563,Price-sensitive,MPC,1,0,3.9
+R0563,Price-sensitive,HEMA,2,1,5
+R0563,Price-sensitive,EnergyBridge,3,1,5
+R0564,EV commuter,MPC,1,0,4
+R0564,EV commuter,HEMA,2,1,2
+R0564,EV commuter,EnergyBridge,3,1,1
+R0565,Comfort-sensitive,MPC,1,0,2
+R0565,Comfort-sensitive,HEMA,2,0,5
+R0565,Comfort-sensitive,EnergyBridge,3,1,1
+R0566,Caregiver,MPC,1,0,3
+R0566,Caregiver,HEMA,2,1,5
+R0566,Caregiver,EnergyBridge,3,1,3
+R0567,Cooperative regular,MPC,1,0,1
+R0567,Cooperative regular,HEMA,2,0,3
+R0567,Cooperative regular,EnergyBridge,3,1,4
+R0568,Price-sensitive,MPC,1,0,3
+R0568,Price-sensitive,HEMA,2,0,5
+R0568,Price-sensitive,EnergyBridge,3,1,1
+R0569,Comfort-sensitive,MPC,1,0,5
+R0569,Comfort-sensitive,HEMA,2,1,5
+R0569,Comfort-sensitive,EnergyBridge,3,0,4.1
+R0570,Irregular routine,MPC,1,1,4.3
+R0570,Irregular routine,HEMA,2,1,3.9
+R0570,Irregular routine,EnergyBridge,3,1,4
+R0571,Cooperative regular,MPC,1,0,0
+R0571,Cooperative regular,HEMA,2,1,5
+R0571,Cooperative regular,EnergyBridge,3,0,1
+R0572,Caregiver,MPC,1,0,0
+R0572,Caregiver,HEMA,2,0,0
+R0572,Caregiver,EnergyBridge,3,1,5
+R0573,Comfort-sensitive,MPC,1,0,0
+R0573,Comfort-sensitive,HEMA,2,0,4
+R0573,Comfort-sensitive,EnergyBridge,3,0,5
+R0574,Caregiver,MPC,1,1,0
+R0574,Caregiver,HEMA,2,0,5
+R0574,Caregiver,EnergyBridge,3,1,5
+R0575,Irregular routine,MPC,1,0,0
+R0575,Irregular routine,HEMA,2,1,1
+R0575,Irregular routine,EnergyBridge,3,1,1
+R0576,Price-sensitive,MPC,1,0,2
+R0576,Price-sensitive,HEMA,2,0,4
+R0576,Price-sensitive,EnergyBridge,3,1,5
+R0577,Caregiver,MPC,1,1,5
+R0577,Caregiver,HEMA,2,0,0
+R0577,Caregiver,EnergyBridge,3,1,3
+R0578,Cooperative regular,MPC,1,0,4
+R0578,Cooperative regular,HEMA,2,0,2
+R0578,Cooperative regular,EnergyBridge,3,1,2
+R0579,Irregular routine,MPC,1,0,0
+R0579,Irregular routine,HEMA,2,1,1
+R0579,Irregular routine,EnergyBridge,3,0,2
+R0580,Comfort-sensitive,MPC,1,1,3
+R0580,Comfort-sensitive,HEMA,2,0,0
+R0580,Comfort-sensitive,EnergyBridge,3,0,5
+R0581,Caregiver,MPC,1,0,4
+R0581,Caregiver,HEMA,2,0,1
+R0581,Caregiver,EnergyBridge,3,1,0
+R0582,Price-sensitive,MPC,1,0,3
+R0582,Price-sensitive,HEMA,2,0,2
+R0582,Price-sensitive,EnergyBridge,3,0,4
+R0583,Price-sensitive,MPC,1,0,5
+R0583,Price-sensitive,HEMA,2,0,5
+R0583,Price-sensitive,EnergyBridge,3,0,5
+R0584,EV commuter,MPC,1,0,2
+R0584,EV commuter,HEMA,2,0,1
+R0584,EV commuter,EnergyBridge,3,1,3

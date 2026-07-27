@@ -1,0 +1,56 @@
+{
+  "release": "EnergyBridge human role-play authorization data",
+  "language": "English",
+  "encoding": "UTF-8",
+  "participants": 584,
+  "judgments": 1752,
+  "methods_per_participant": 3,
+  "participant_fields": [
+    "participant_id",
+    "persona",
+    "age_band"
+  ],
+  "response_fields": [
+    "participant_id",
+    "persona",
+    "method",
+    "method_order",
+    "acceptance",
+    "satisfaction_score"
+  ],
+  "persona_counts": {
+    "Comfort-sensitive": 116,
+    "Caregiver": 91,
+    "Price-sensitive": 97,
+    "EV commuter": 119,
+    "Cooperative regular": 88,
+    "Irregular routine": 73
+  },
+  "method_counts": {
+    "MPC": 584,
+    "HEMA": 584,
+    "EnergyBridge": 584
+  },
+  "included_data_files": [
+    "data/participants.csv",
+    "data/responses.csv"
+  ],
+  "precomputed_results_included": false,
+  "privacy": {
+    "release_ids": "New random IDs; the source-to-release mapping was not written.",
+    "participant_level_removed": [
+      "city",
+      "province",
+      "gender",
+      "exact_age",
+      "IP_address",
+      "submission_time",
+      "response_duration",
+      "free_text",
+      "source_metadata"
+    ],
+    "geography": "Not released.",
+    "free_text_released": false
+  },
+  "analysis_policy": "No precomputed tables are distributed. Run reproduce_analysis.py to create outputs outside this directory."
+}
