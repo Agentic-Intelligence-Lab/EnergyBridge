@@ -184,15 +184,15 @@ below for its documentation.
 ## Requirements
 
 - Conda environment: `energybridge`
-- EnergyPlus 24.1: `/home/hku_user/EnergyPlus-24-1-0`, or override it with
-  `EPLUS_ROOT`
+- EnergyPlus 24.1, configured through `EPLUS_ROOT` (for example,
+  `/opt/EnergyPlus-24-1-0`)
 - Python packages: `gymnasium`, `numpy`, `stable-baselines3`, `torch`
 - Remote LLM credentials in `.env` for the mandatory final role-play scoring
 
 Run commands from the repository root:
 
 ```bash
-cd /home/hku_user/work/EnergyBridge
+cd /path/to/EnergyBridge
 conda activate energybridge
 ```
 

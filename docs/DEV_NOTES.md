@@ -18,8 +18,8 @@
 
 ### EnergyPlus 24.1.0 Local Setup
 
-- Installed EnergyPlus 24.1.0 to `/home/ha_agent/EnergyPlus-24-1-0`.
-- Updated `EPLUS_ROOT` to `Path("/home/ha_agent/EnergyPlus-24-1-0")`.
+- Installed EnergyPlus 24.1.0 and exposed its location through `EPLUS_ROOT`.
+- Updated the runtime setup to read the installation from `EPLUS_ROOT`.
 - Verified `pyenergyplus.api.EnergyPlusAPI` imports successfully in the `energybridge` conda environment.
 - Verified `control_model.py` passes with `python control_model.py --help`.
 
@@ -53,7 +53,7 @@
 Added `energybridge/simulation/` as a adapter layer connecting the EnergyBridge agent loop to a real EnergyPlus building simulation via `pyenergyplus`.  The agent graph and all skills are completely unchanged; only the data source (home_state) and the actuation target (EnergyPlus actuators) are replaced.
 
 ### EnergyPlus Installation
-Installed EnergyPlus 24.1.0 to `/home/ha_agent/EnergyPlus-24-1-0`
+Installed EnergyPlus 24.1.0 and set `EPLUS_ROOT` to its installation directory.
 
 ```bash
 wget https://github.com/NREL/EnergyPlus/releases/download/v24.1.0/EnergyPlus-24.1.0-9d7789a3ac-Linux-Ubuntu22.04-x86_64.sh
@@ -112,7 +112,7 @@ thermostat conflicts.
 ```bash
 python examples/run_eplus_agent_loop.py \
   --idf Family_Model/Family_Simple_3day.idf \
-  --epw /home/ha_agent/EnergyPlus-24-1-0/WeatherData/USA_IL_Chicago-OHare.Intl.AP.725300_TMY3.epw \
+  --epw "$EPLUS_ROOT/WeatherData/USA_IL_Chicago-OHare.Intl.AP.725300_TMY3.epw" \
   --output logs/eplus_test_run4 \
   --trigger 18.0
 ```

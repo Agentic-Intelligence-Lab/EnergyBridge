@@ -8,9 +8,9 @@
 #
 # Dependencies:
 #   conda activate energybridge
-#   EnergyPlus-24-1-0 at /home/hku_user/EnergyPlus-24-1-0/
-#   EPW files at /home/ha_agent/work/supporting/weather/epw/
-#   IDF files at /home/ha_agent/work/supporting/models/
+#   EnergyPlus 24.1 configured through EPLUS_ROOT
+#   EPW files configured through ENERGYBRIDGE_EPW_ROOT
+#   IDF files configured through ENERGYBRIDGE_IDF_ROOT
 
 set -e
 
@@ -22,9 +22,12 @@ echo " EnergyBridge Benchmark Suite"
 echo " $(date)"
 echo "================================================"
 
-# Activate conda env
-source /home/ha_agent/miniconda3/etc/profile.d/conda.sh
-conda activate energybridge
+# Activate the configured conda environment. Set CONDA_SH when conda has not
+# already initialized the current shell.
+if [[ -n "${CONDA_SH:-}" ]]; then
+    source "$CONDA_SH"
+fi
+conda activate "${ENERGYBRIDGE_CONDA_ENV:-energybridge}"
 
 cd "$SCRIPT_DIR"
 

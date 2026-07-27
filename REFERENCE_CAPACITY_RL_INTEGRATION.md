@@ -38,9 +38,8 @@
 ## Simulator versions
 
 The reference bundle targets Sinergym 3.12 and EnergyPlus 25.1 with an epJSON
-model. The standard EnergyPlus 25.1 build used by the reference reproduction is
-at `/home/hku_user/EnergyPlus-25-1-0-standard`; the collaborator-provided
-special build is preserved separately but requires a newer glibc.
+model. Configure the standard EnergyPlus 25.1 installation through
+`EPLUS_ROOT`. A separately installed special build may require a newer glibc.
 
 EnergyBridge's family and office benchmarks continue to use EnergyPlus 24.1
 through the native Python API. The three-day RL baseline uses the same 24.1
