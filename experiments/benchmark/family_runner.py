@@ -40,6 +40,9 @@ DEFAULT_FAMILY_EPW = _EXPERIMENTS_DIR / "weather" / "epw" / "CHN_TJ_Tianjin.5452
 # refusal probability.  This cap is method-agnostic: it applies to any strategy
 # with a concrete household-facing explanation, not to EnergyBridge by name.
 ROLEPLAY_EXPLAINED_PLAN_ACCEPTANCE_CAP = 0.76
+TRADITIONAL_METHOD_NEUTRAL_ACCEPTANCE_METHODS = frozenset(
+    {"mpc_dynamic", "rule_milp", "rl_ppo_pref_v2"}
+)
 
 
 def _env_flag(name: str, default: str = "0") -> bool:
@@ -1135,6 +1138,11 @@ def _schedule_no_dr_routine_appliances(suite, appliance_config: dict | None, sim
             duration = float(app_cfg.get("duration_h", 2.0))
             if latest < earliest:
                 latest += 24.0
+            # The last simulated day's after-midnight portion is outside the
+            # evaluation horizon. Keep that final routine in the same-evening
+            # segment so a valid service is not counted as horizon-censored.
+            if day_idx == max(1, int(sim_days)) - 1 and latest > 24.0:
+                latest = 24.0
             latest_start = max(earliest, latest - duration)
             start_h = earliest if latest_start <= earliest else rng.uniform(earliest, latest_start)
             start_abs = day_idx * 24.0 + start_h
@@ -2205,6 +2213,66 @@ def _plan_snapshot_for_gate(plan: dict | None) -> dict:
         "reason": str(plan.get("reason", ""))[:240],
         "appliance_actions": _non_null_actions(plan.get("appliance_actions")),
         "objective_source": plan.get("objective_source", ""),
+    }
+
+
+def _traditional_method_neutral_acceptance_plan(
+    plan: dict | None,
+    *,
+    default_plan: dict | None,
+    event: dict | None,
+) -> dict:
+    """Expose a traditional controller's physical proposal through one interface.
+
+    MPC, Rule+MILP, and PPO produce differently formatted technical outputs.  A
+    consent comparison should therefore score the proposed household actions,
+    not whether a controller happened to emit natural language.  This adapter
+    deterministically describes the same setpoint and appliance actions for all
+    three controllers.  It does not add personalization, calendar reasoning, or
+    private household memory.
+    """
+    source = dict(plan or {})
+    default = dict(default_plan or {})
+    actions = _non_null_actions(source.get("appliance_actions"))
+    default_actions = _non_null_actions(default.get("appliance_actions"))
+    _, changed_services = _count_action_service_changes(actions, default_actions)
+
+    try:
+        setpoint = float(source.get("setpoint"))
+        cooling_text = (
+            "turn cooling off during the event"
+            if setpoint >= 35.0
+            else f"use a {setpoint:.1f} C cooling setpoint during the event"
+        )
+    except (TypeError, ValueError):
+        setpoint = source.get("setpoint")
+        cooling_text = "keep the proposed cooling setting during the event"
+
+    if changed_services:
+        service_text = "change the " + ", ".join(changed_services) + " schedule"
+    else:
+        service_text = "leave appliance routines unchanged"
+    try:
+        start_h = float((event or {}).get("trigger_h", 0.0)) % 24.0
+        end_h = float((event or {}).get("end_h", 0.0)) % 24.0
+        window_text = f"{start_h:04.1f}-{end_h:04.1f}"
+    except (TypeError, ValueError):
+        window_text = "the event window"
+
+    reason = (
+        f"VPP household action summary for {window_text}: {cooling_text}; "
+        f"{service_text}. Comfort impact follows from this setting, other routines "
+        "stay on the ordinary plan, and normal operation resumes after the event."
+    )
+    return {
+        "setpoint": setpoint,
+        "next_check_hour": source.get("next_check_hour"),
+        "reason": reason[:240],
+        "appliance_actions": actions,
+        "objective_source": "traditional_method_neutral_household_proposal_v1",
+        "generic_user_explanation": True,
+        "raw_policy_only": False,
+        "acceptance_interface": "method_neutral_action_summary_v1",
     }
 
 
@@ -4780,13 +4848,20 @@ def _compute_posthoc_decision_objective(
     )
 
 
-_AGENT_ONBOARDING_QUESTIONS: list[dict[str, str]] = [
+_AGENT_ONBOARDING_QUESTIONS: list[dict[str, Any]] = [
     {
         "id": "vpp_priority",
         "question": (
             "During a one-hour VPP peak event, what should the home prioritize: "
             "comfort and routine, bill savings, grid support, or a balance?"
         ),
+        "options": [
+            {"id": "comfort_routine_first", "label": "Comfort and routine first"},
+            {"id": "bill_savings_first", "label": "Bill savings first"},
+            {"id": "grid_support_first", "label": "Grid support first"},
+            {"id": "balanced_tradeoff", "label": "Balanced tradeoff"},
+            {"id": "confirm_before_changes", "label": "Clear explanation and confirmation before changes"},
+        ],
     },
     {
         "id": "thermostat_flexibility",
@@ -4794,6 +4869,12 @@ _AGENT_ONBOARDING_QUESTIONS: list[dict[str, str]] = [
             "If the home remains safe, how much temporary AC setpoint change would you usually accept "
             "during a peak event?"
         ),
+        "options": [
+            {"id": "almost_none_0_5c", "label": "Almost none, around 0.5C or less"},
+            {"id": "small_1c_short", "label": "Around 1C for a short time"},
+            {"id": "moderate_1_2c_with_benefit", "label": "Around 1-2C if savings or grid benefit are clear"},
+            {"id": "larger_when_unoccupied", "label": "Larger changes when unoccupied or routine is unaffected"},
+        ],
     },
     {
         "id": "appliance_shift_consent",
@@ -4801,6 +4882,12 @@ _AGENT_ONBOARDING_QUESTIONS: list[dict[str, str]] = [
             "Can the system automatically shift washer, dishwasher, water-heater, or EV timing when "
             "deadlines are protected, or should it ask first?"
         ),
+        "options": [
+            {"id": "do_not_move_without_approval", "label": "Do not move without explicit approval"},
+            {"id": "shift_1_2h_deadline_protected", "label": "Can shift by 1-2 hours if deadlines are protected"},
+            {"id": "shift_to_cheaper_periods", "label": "Can shift to cheaper periods if readiness is protected"},
+            {"id": "automatic_optimization_ok", "label": "Automatic optimization is acceptable"},
+        ],
     },
     {
         "id": "calendar_routine_constraints",
@@ -4808,11 +4895,18 @@ _AGENT_ONBOARDING_QUESTIONS: list[dict[str, str]] = [
             "Which calendar or household routines should not be disturbed, especially around evening "
             "arrival, meals, showers, caregiving, or sleep?"
         ),
+        "options": [
+            {"id": "arrival_comfort", "label": "Return-home comfort must be protected"},
+            {"id": "meals_chores", "label": "Meals and household chores must not be disrupted"},
+            {"id": "shower_hot_water", "label": "Shower and hot-water timing must be protected"},
+            {"id": "caregiving_sleep_work", "label": "Caregiving, sleep, or work routines must be protected"},
+            {"id": "irregular_confirm_same_day", "label": "Schedule changes often; confirm same-day before acting"},
+        ],
     },
 ]
 
 
-def _agent_onboarding_questions() -> list[dict[str, str]]:
+def _agent_onboarding_questions() -> list[dict[str, Any]]:
     return [dict(item) for item in _AGENT_ONBOARDING_QUESTIONS]
 
 
@@ -4839,6 +4933,7 @@ def _normalize_agent_onboarding_result(
     metrics: dict | None = None,
 ) -> dict:
     answers_by_id: dict[str, str] = {}
+    selected_options_by_id: dict[str, list[str]] = {}
     raw_answers = data.get("answers") if isinstance(data, dict) else None
     if isinstance(raw_answers, list):
         for item in raw_answers:
@@ -4848,6 +4943,9 @@ def _normalize_agent_onboarding_result(
             answer = str(item.get("answer", "")).strip()
             if qid and answer:
                 answers_by_id[qid] = answer
+            selected = item.get("selected_option_ids")
+            if qid and isinstance(selected, list):
+                selected_options_by_id[qid] = [str(opt).strip() for opt in selected if str(opt).strip()]
     elif isinstance(raw_answers, dict):
         for qid, answer in raw_answers.items():
             if str(qid).strip() and str(answer).strip():
@@ -4857,6 +4955,7 @@ def _normalize_agent_onboarding_result(
         {
             "id": q["id"],
             "question": q["question"],
+            "selected_option_ids": selected_options_by_id.get(q["id"], []),
             "answer": answers_by_id.get(q["id"], "No strong preference stated."),
         }
         for q in questions[:4]
@@ -4929,18 +5028,21 @@ def _fallback_agent_onboarding_questionnaire(persona_config: dict | None) -> dic
 
     if price_grid_motivated and not confirmation_needed and not comfort_sensitive:
         strategy_bias = "cost_grid_oriented"
+        vpp_option_id = "bill_savings_first"
         vpp_answer = (
             "I am willing to prioritize bill savings and grid support if comfort stays reasonable "
             "and the controller explains the benefit."
         )
     elif comfort_sensitive or confirmation_needed or irregular_calendar:
         strategy_bias = "comfort_calendar_protective"
+        vpp_option_id = "confirm_before_changes" if confirmation_needed else "comfort_routine_first"
         vpp_answer = (
             "Use a balanced plan, but do not disrupt comfort, evening routine, or last-minute calendar changes "
             "just to chase VPP savings."
         )
     else:
         strategy_bias = "balanced_middle"
+        vpp_option_id = "balanced_tradeoff"
         vpp_answer = (
             "Aim for a balance: save energy during peaks when it is low disruption, but keep comfort and "
             "daily tasks on track."
@@ -4948,45 +5050,60 @@ def _fallback_agent_onboarding_questionnaire(persona_config: dict | None) -> dic
 
     if confirmation_needed:
         automation_preference = "ask_before_vpp_specific_changes"
+        appliance_option_id = "do_not_move_without_approval"
         appliance_answer = (
             "Ask before changing appliance or water-heater timing for a VPP event, especially if plans may have changed."
         )
     elif suggestion_first:
         automation_preference = "suggestion_first_with_clear_benefit"
+        appliance_option_id = "shift_1_2h_deadline_protected"
         appliance_answer = (
             "You can suggest shifts and usually proceed when the benefit is clear and deadlines remain protected."
         )
     else:
         automation_preference = "automatic_when_deadlines_protected"
+        appliance_option_id = "automatic_optimization_ok"
         appliance_answer = (
             "Automatic shifting is fine for flexible loads when the task still finishes on time."
         )
     if task_rigid:
         appliance_flexibility = "limited_by_fixed_routines"
+        appliance_option_id = "do_not_move_without_approval"
         appliance_answer += " Fixed or routine tasks should be preserved unless I explicitly approve a change."
     else:
         appliance_flexibility = "flexible_if_deadlines_protected"
 
     if irregular_calendar or confirmation_needed:
         calendar_routine_sensitivity = "high"
+        calendar_option_id = "irregular_confirm_same_day"
         calendar_answer = (
             "Treat evening arrival, shower/bath preparation, and any same-day changes as protected. "
             "Do not assume yesterday's schedule is still valid."
         )
     elif schedule.get("returns_home_h") is not None:
         calendar_routine_sensitivity = "medium"
+        calendar_option_id = "arrival_comfort"
         calendar_answer = (
             f"Keep the home comfortable around my usual return near {float(schedule.get('returns_home_h')):.1f}h "
             "and avoid pushing chores into late evening."
         )
     else:
         calendar_routine_sensitivity = "medium"
+        calendar_option_id = "caregiving_sleep_work" if bool(schedule.get("vulnerable_members")) else "meals_chores"
         calendar_answer = "Protect normal evening routines and avoid late surprises."
 
     thermo_answer = (
         f"Keep AC inside about {pref_min:.1f}-{pref_max:.1f}C. A temporary change of about "
         f"{thermostat_flex_c:.1f}C is the normal limit unless I approve more."
     )
+    if thermostat_flex_c <= 0.55:
+        thermostat_option_id = "almost_none_0_5c"
+    elif thermostat_flex_c <= 1.05:
+        thermostat_option_id = "small_1c_short"
+    elif thermostat_flex_c <= 2.0:
+        thermostat_option_id = "moderate_1_2c_with_benefit"
+    else:
+        thermostat_option_id = "larger_when_unoccupied"
     cost_grid_priority = "high" if price_grid_motivated or cost_grid_w >= 0.62 else ("medium" if cost_grid_w >= 0.45 else "low")
     profile = {
         "comfort_priority": comfort_priority,
@@ -5013,10 +5130,10 @@ def _fallback_agent_onboarding_questionnaire(persona_config: dict | None) -> dic
 
     data = {
         "answers": [
-            {"id": "vpp_priority", "answer": vpp_answer},
-            {"id": "thermostat_flexibility", "answer": thermo_answer},
-            {"id": "appliance_shift_consent", "answer": appliance_answer},
-            {"id": "calendar_routine_constraints", "answer": calendar_answer},
+            {"id": "vpp_priority", "selected_option_ids": [vpp_option_id], "answer": vpp_answer},
+            {"id": "thermostat_flexibility", "selected_option_ids": [thermostat_option_id], "answer": thermo_answer},
+            {"id": "appliance_shift_consent", "selected_option_ids": [appliance_option_id], "answer": appliance_answer},
+            {"id": "calendar_routine_constraints", "selected_option_ids": [calendar_option_id], "answer": calendar_answer},
         ],
         "inferred_profile": profile,
         "preference_rules": rules,
@@ -6110,7 +6227,6 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     loop.dr_memory_library = None
     if dr_memory_library_path:
         try:
-            import json
             loop.dr_memory_library = json.loads(Path(dr_memory_library_path).read_text(encoding="utf-8"))
             print(
                 f"  [DR Memory] loaded library with {len(loop.dr_memory_library.get('events', []))} historical events")
@@ -8534,11 +8650,20 @@ All times are hour-of-day (0–23.9)."""
                                 vpp_event=_mpc_cmp_event,
                             )
                         )
+                        _acceptance_plan = (
+                            _traditional_method_neutral_acceptance_plan(
+                                res,
+                                default_plan=_default_plan,
+                                event=planning_vpp_event,
+                            )
+                            if method in TRADITIONAL_METHOD_NEUTRAL_ACCEPTANCE_METHODS
+                            else res
+                        )
                         if disable_acceptance_fallback:
                             res["acceptance_fallback_disabled"] = True
                             res["adaptability_diagnostics"] = _adaptability_diagnostics(
                                 method=method,
-                                plan=res,
+                                plan=_acceptance_plan,
                                 default_plan=_default_plan,
                                 reference_plan=_mpc_cmp,
                                 reference_label="mpc",
@@ -8553,13 +8678,20 @@ All times are hour-of-day (0–23.9)."""
                                 persona_config=persona_config,
                                 appliance_config=appliance_config or {},
                                 event=planning_vpp_event,
-                                proposed_plan=res,
+                                proposed_plan=_acceptance_plan,
                                 default_plan=_default_plan,
                                 rule_milp_plan=_mpc_cmp,
                                 past_events=loop.vpp_event_log,
                                 user_preference_text=loop.vpp_user_input_by_id.get(planning_vid, loop.vpp_user_input),
                                 current_hod=hod if is_vpp else None,
                             )
+                            if method in TRADITIONAL_METHOD_NEUTRAL_ACCEPTANCE_METHODS:
+                                _vpp_acceptance_gate["acceptance_interface"] = (
+                                    "method_neutral_action_summary_v1"
+                                )
+                                _vpp_acceptance_gate["controller_proposed_plan"] = (
+                                    _plan_snapshot_for_gate(res)
+                                )
                             loop.vpp_plan_gate_by_id[planning_vid] = dict(_vpp_acceptance_gate)
                     if disable_acceptance_fallback:
                         pass

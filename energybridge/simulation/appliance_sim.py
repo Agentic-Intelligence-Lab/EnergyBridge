@@ -92,10 +92,22 @@ class ShiftableAppliance:
         if not self.present:
             return 0.0
         day_idx = _day_of(sim_h)
-        if self._day_skipped.get(day_idx, False):
-            return 0.0
-        rec = self._days.get(day_idx)
-        if rec is None or rec.completed:
+        # An overnight window belongs to the day on which the task was
+        # requested, even when its absolute start/end fall after midnight.
+        # Check that prior-day record first so a 23:30--01:00 cycle is not
+        # abandoned at the calendar boundary.
+        rec = None
+        candidate_days = ([day_idx - 1] if day_idx > 0 else []) + [day_idx]
+        for candidate_day in candidate_days:
+            candidate = self._days.get(candidate_day)
+            if candidate is None or candidate.completed or self._day_skipped.get(candidate_day, False):
+                continue
+            if candidate.run_start_abs_h is not None or (
+                candidate.scheduled_abs_h is not None and sim_h >= candidate.scheduled_abs_h
+            ):
+                rec = candidate
+                break
+        if rec is None:
             return 0.0
         if rec.run_start_abs_h is None and rec.scheduled_abs_h is not None and sim_h >= rec.scheduled_abs_h:
             rec.run_start_abs_h = sim_h
@@ -106,7 +118,11 @@ class ShiftableAppliance:
                 return 0.0
             if vpp_active:
                 rec.ran_during_vpp = True
-            return self.power_kw
+            remaining_h = self.duration_h - elapsed
+            fraction = min(1.0, remaining_h / max(dt_h, 1e-9))
+            if elapsed + dt_h >= self.duration_h - 1e-9:
+                rec.completed = True
+            return self.power_kw * fraction
         return 0.0
 
     def day_result(self, day_idx: int) -> dict:

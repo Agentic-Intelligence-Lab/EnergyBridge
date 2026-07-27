@@ -86,6 +86,27 @@ def test_explicit_only_still_has_no_hidden_default_for_routine_locked_devices():
     assert heater.step(16.0, 1.0, vpp_active=False) == 0.0
 
 
+def test_overnight_shiftable_finishes_across_calendar_boundary():
+    dishwasher = ShiftableAppliance(
+        "dishwasher",
+        {
+            "present": True,
+            "earliest_h": 19.0,
+            "latest_h": 7.0,
+            "duration_h": 1.5,
+            "power_kw": 1.2,
+        },
+        sim_days=2,
+        explicit_only=True,
+    )
+
+    assert dishwasher.shift(0, 23.5)
+    for quarter_hour in range(94, 102):
+        dishwasher.step(quarter_hour / 4.0, 0.25, vpp_active=False)
+
+    assert dishwasher.day_result(0)["completed"] is True
+
+
 def test_routine_locked_appliances_are_required_explicit_policy_outputs():
     appliance_config = {
         "washer": {

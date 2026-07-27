@@ -28,6 +28,7 @@ from experiments.benchmark.family_runner import (
     _preserve_fixed_routine_actions,
     _requested_skip_devices,
     _roleplay_middle_acceptance_floor,
+    _traditional_method_neutral_acceptance_plan,
     _vpp_plan_intrusion_metrics,
 )
 
@@ -801,6 +802,54 @@ def test_vpp_acceptance_gate_caps_raw_policy_strategy_without_method_bias() -> N
         ]
     assert {gate["acceptance_probability"] for gate in prompt_gates} == {0.05}
     assert all("raw_policy_low_acceptance_band=0.050-0.060" in gate["factors"] for gate in prompt_gates)
+
+
+def test_traditional_acceptance_adapter_removes_controller_format_bias() -> None:
+    event, appliances, default_plan, rule_plan = _gate_fixture()
+    physical_actions = dict(rule_plan["appliance_actions"])
+    technical_plans = [
+        {
+            "setpoint": 27.0,
+            "appliance_actions": physical_actions,
+            "reason": "objective=0.42 solver dispatch",
+            "objective_source": "mpc_internal",
+        },
+        {
+            "setpoint": 27.0,
+            "appliance_actions": physical_actions,
+            "reason": "raw PPO policy action vector",
+            "objective_source": "rl_internal",
+            "raw_policy_only": True,
+        },
+    ]
+
+    exposed = [
+        _traditional_method_neutral_acceptance_plan(
+            plan,
+            default_plan=default_plan,
+            event=event,
+        )
+        for plan in technical_plans
+    ]
+
+    assert exposed[0] == exposed[1]
+    assert exposed[0]["generic_user_explanation"] is True
+    assert exposed[0]["raw_policy_only"] is False
+    assert exposed[0]["setpoint"] == 27.0
+    assert exposed[0]["appliance_actions"] == physical_actions
+    assert not any(
+        token in exposed[0]["reason"].lower()
+        for token in ("mpc", "milp", "ppo", "solver", "policy")
+    )
+    intrusion = _vpp_plan_intrusion_metrics(
+        proposed_plan=exposed[0],
+        default_plan=default_plan,
+        persona_config={"id": "neutral"},
+        appliance_config=appliances,
+        event=event,
+    )
+    assert intrusion["has_user_facing_explanation"] is True
+    assert intrusion["raw_policy_only"] is False
 
 
 def test_vpp_acceptance_gate_caps_unexplained_strategy_without_method_bias() -> None:
