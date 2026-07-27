@@ -509,8 +509,8 @@ def _write_report(
         "Consent decisions are joined event by event to guarded-P70 capacity",
         "reports over the same physical cohort.",
         "",
-        "| Method | All-event pass | Accepted n / N | Acceptance | Accepted-only pass | Joint accurate / N |",
-        "|---|---:|---:|---:|---:|---:|",
+        "| Method | Accepted-only accuracy | Acceptance rate | Overall accurate coverage |",
+        "|---|---:|---:|---:|",
     ]
     for row in summary:
         accepted_only = row["accepted_only_pass_rate"]
@@ -518,10 +518,8 @@ def _write_report(
             f"{100 * accepted_only:.1f}%" if accepted_only is not None else "NA"
         )
         lines.append(
-            f"| {row['label']} | {100 * row['all_pass_rate']:.1f}% | "
-            f"{row['accepted_events']} / {row['events']} | "
+            f"| {row['label']} | {accepted_only_text} | "
             f"{100 * row['acceptance_rate']:.1f}% | "
-            f"{accepted_only_text} | "
             f"{100 * row['joint_accurate_coverage']:.1f}% |"
         )
     lines.extend(
@@ -699,7 +697,19 @@ def main() -> None:
         for row in (dict(item) for item in rows)
     ]
     _write_csv(output_dir / "capacity_consent_joined_events.csv", csv_rows)
-    _write_csv(output_dir / "capacity_consent_joined_summary.csv", summary)
+    paper_summary = [
+        {
+            "method": row["label"],
+            "accepted_only_accuracy": row["accepted_only_pass_rate"],
+            "acceptance_rate": row["acceptance_rate"],
+            "overall_accurate_coverage": row["joint_accurate_coverage"],
+        }
+        for row in summary
+    ]
+    _write_csv(
+        output_dir / "capacity_consent_joined_summary.csv",
+        paper_summary,
+    )
     (output_dir / "capacity_consent_joined_summary.json").write_text(
         json.dumps(
             {

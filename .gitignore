@@ -30,11 +30,18 @@ epluszsz.csv
 # Benchmark generated results & memory
 experiments/benchmark/results/
 benchmark_results/
+paper_results/
+generated_results/
+reproduced_results/
 experiments/benchmark/results_longterm/
 experiments/benchmark/memory/
 experiments/benchmark/metrics_table.csv
 experiments/benchmark/*.bak
 experiments/benchmark/api_keys.txt
+dr_capacity_memory_toolkit/**/data/
+importance_sampling/IS_result/
+VPP-1/outputs/*
+!VPP-1/outputs/.gitkeep
 
 # Local paper analysis helpers and generated personas
 energybridge/roleplay/personas/paper_fullapp_*.json
