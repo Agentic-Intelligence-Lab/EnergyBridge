@@ -1,10 +1,8 @@
-"""Local copy of the collaborator control-oriented dynamic model.
+"""Control-oriented dynamic model used by the benchmark MPC adapter.
 
-The reference implementation lives outside this repo under
-``/home/hku_user/work/reference/Dynamic_Model``.  This module keeps the fitted
-model assets local to the benchmark baseline and exposes a small adapter that
-turns benchmark decision-time state/action pairs into objective-ready predicted
-state dictionaries.
+The fitted model and runtime-calibration assets are stored with the benchmark.
+This module exposes a small adapter that turns decision-time state/action pairs
+into objective-ready predicted state dictionaries.
 """
 
 from __future__ import annotations
@@ -24,9 +22,8 @@ ASSET_DIR = Path(__file__).resolve().parent / "assets"
 BEHAVIOR_MATRIX = ASSET_DIR / "person_behavior_mdp" / "matrices" / "action_policy_matrix.csv"
 FACTOR_MATRIX = ASSET_DIR / "person_behavior_mdp" / "matrices" / "factorized_transition_matrix.csv"
 THERMAL_PARAMS = ASSET_DIR / "thermal_improvement_experiments" / "04_5r3c_hvac_solar" / "parameters.json"
-THERMAL_SUMMARY = ASSET_DIR / "thermal_improvement_experiments" / "summary.json"
 APPLIANCE_CONFIG = ASSET_DIR / "configs" / "tianjin_family_appliances.yaml"
-HVAC_AUDIT = ASSET_DIR / "complete_sinergym_long" / "metrics" / "complete_sinergym_long_metrics.json"
+RUNTIME_CALIBRATION = ASSET_DIR / "runtime_calibration.json"
 REGIONAL_5R3C_DIR = ASSET_DIR / "regional_5r3c"
 DEFAULT_DYNAMIC_MODEL_REGION = "tianjin"
 TASKS = ("dishwasher", "clothes_washer", "clothes_dryer")
@@ -147,15 +144,11 @@ def _region_asset_paths(region_key: str) -> dict[str, Path]:
         regional_dir = REGIONAL_5R3C_DIR / "berlin"
         return {
             "parameters": regional_dir / "parameters_5r3c_hvac_solar.json",
-            "metrics": regional_dir / "metrics_5r3c_hvac_solar.json",
             "power_parameters": regional_dir / "power_model_parameters.json",
-            "power_metrics": regional_dir / "power_model_metrics.json",
         }
     return {
         "parameters": THERMAL_PARAMS,
-        "metrics": THERMAL_SUMMARY,
         "power_parameters": Path(),
-        "power_metrics": Path(),
     }
 
 
@@ -271,34 +264,18 @@ class DeterministicExpectedMPCDynamicModel:
         self.asset_paths = _region_asset_paths(self.region_key)
         self.behavior = BehaviorMDPExpected()
         self.thermal_params = json.loads(self.asset_paths["parameters"].read_text(encoding="utf-8"))
-        self.thermal_summary = _read_json_if_exists(self.asset_paths["metrics"])
+        calibration = json.loads(
+            RUNTIME_CALIBRATION.read_text(encoding="utf-8")
+        )["regions"][self.region_key]
         self.appliance_cfg = yaml.safe_load(APPLIANCE_CONFIG.read_text(encoding="utf-8"))
         self.devices_cfg = self.appliance_cfg["devices"]
         self.dt_hours = float(self.appliance_cfg["simulation"].get("time_step_minutes", 10)) / 60.0
-        self.hvac = self._load_hvac_audit()
-        self.envelope = self.thermal_summary["envelope_audit"]
-        self.power_model_parameters = _read_json_if_exists(self.asset_paths["power_parameters"])
-
-    def _load_hvac_audit(self) -> dict[str, float]:
-        regional_audit = self.thermal_summary.get("hvac_audit")
-        if isinstance(regional_audit, dict) and "cooling_capacity_kw" in regional_audit:
-            return {
-                "cooling_capacity_kw": float(regional_audit.get("cooling_capacity_kw", 10.0)),
-                "cooling_cop": float(regional_audit.get("cooling_cop", 4.0)),
-                "heating_capacity_kw": float(regional_audit.get("heating_capacity_kw", 6.0)),
-                "heating_cop": float(regional_audit.get("heating_cop", 3.5)),
-                "supplemental_heating_kw": float(regional_audit.get("supplemental_heating_kw", 0.0)),
-                "supply_fan_kw": float(regional_audit.get("supply_fan_kw", 0.25)),
-            }
-        legacy = json.loads(HVAC_AUDIT.read_text(encoding="utf-8"))["energyplus_hvac_audit"]
-        return {
-            "cooling_capacity_kw": float(legacy.get("cooling_capacity_kw", 10.0)),
-            "cooling_cop": float(legacy.get("cooling_cop", 4.0)),
-            "heating_capacity_kw": float(legacy.get("heating_capacity_kw", 6.0)),
-            "heating_cop": float(legacy.get("heating_cop", 3.5)),
-            "supplemental_heating_kw": float(legacy.get("supplemental_heating_kw", 0.0)),
-            "supply_fan_kw": float(legacy.get("supply_fan_kw", 0.25)),
+        self.hvac = {
+            key: float(value)
+            for key, value in calibration["hvac_audit"].items()
         }
+        self.envelope = calibration["envelope_audit"]
+        self.power_model_parameters = _read_json_if_exists(self.asset_paths["power_parameters"])
 
     def q_solar_kw(self, forecast: ForecastInput) -> float:
         irradiance_kw_m2 = _clip((forecast.direct_solar_w_m2 + forecast.diffuse_solar_w_m2) / 1000.0, 0.0, 1.2)

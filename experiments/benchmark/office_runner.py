@@ -11,7 +11,7 @@ try:
     load_dotenv(PROJECT_ROOT / ".env")
 except Exception:
     pass
-EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/home/hku_user/EnergyPlus-24-1-0"))
+EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/opt/EnergyPlus-24-1-0"))
 BENCHMARK_DIR = Path(__file__).resolve().parent
 for p in (str(EPLUS_ROOT), str(PROJECT_ROOT)):
     if p not in sys.path: sys.path.insert(0, p)

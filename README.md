@@ -1,1349 +1,191 @@
 # EnergyBridge
 
-EnergyBridge is a home-grid coordination benchmark for comparing an LLM
-home-energy Agent against MPC baselines under persona preferences, calendars,
-VPP demand-response events, EnergyPlus co-simulation, and role-play scoring.
+EnergyBridge is a consent-aware residential grid-flexibility benchmark. It
+connects capacity reporting, household-specific planning, simulated household
+authorization, controller-or-fallback execution, EnergyPlus measurement, and
+post-event audit.
 
-The current main benchmark is the **family-home VPP evaluation**. For fast
-iteration, use the Germany 3-day quick run: it starts on Sunday 2025-06-01,
-uses real Germany weather, can include day-ahead prices, and still keeps
-calendar context, capacity quantification, EnergyPlus execution, and role-play
-scoring. The longer Tianjin/Germany 7-day runs remain the comparable full
-baseline path.
+This repository is organized as a result-free research artifact: it provides
+deidentified questionnaire data, benchmark code, model/configuration inputs,
+and from-scratch launch scripts. Historical benchmark outputs, LLM transcripts,
+precomputed capacity results, tables, and figures are intentionally excluded
+from the anonymous release profile.
 
----
+## Start here
 
-## Quick Start
+- Full experiment and data map:
+  [`reproducibility/README.md`](reproducibility/README.md)
+- Deidentified questionnaire data:
+  [`human_roleplay_data/README.md`](human_roleplay_data/README.md)
+- Benchmark implementation: `experiments/benchmark/`
+- Core package: `energybridge/`
 
-```bash
-cd /home/hku_user/work/EnergyBridge
-conda activate energybridge
-pip install -r requirements.txt
-```
+## Install
 
-Configure the OpenAI-compatible LLM backend:
-
-```bash
-cp .env.example .env
-```
-
-`.env` example:
-
-```ini
-LLM_MODEL=gpt-4o-mini
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_API_KEY=sk-xxxx
-# Optional: rotate multiple keys automatically on failures
-LLM_API_KEY_POOL=sk-key1,sk-key2,sk-key3
-```
-
-Required runtime:
-
-
-| Requirement             | Current default                    |
-| ----------------------- | ---------------------------------- |
-| Python                  | 3.10+                              |
-| Conda env               | `energybridge`                     |
-| EnergyPlus              | 24.1.0                             |
-| Default EnergyPlus path | `/home/hku_user/EnergyPlus-24-1-0` |
-
-If EnergyPlus is installed elsewhere, set:
+The validated runtime is Python 3.10+ with EnergyPlus 24.1.0.
 
 ```bash
-export EPLUS_ROOT=/path/to/EnergyPlus-24-1-0
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+cp reproducibility/paper.env.example .env
 ```
 
----
+Edit `.env` with a local EnergyPlus path and, for API-backed methods, local
+credentials. `.env` and key files are ignored and must never be committed.
 
-## Web Dashboard
+HEMA is an external baseline. Its pinned revision and installation steps are
+listed in the reproducibility guide.
 
-Use this first when you want to run or inspect benchmarks interactively.
+## Public data
 
-```bash
-cd /home/hku_user/work/EnergyBridge
-conda activate energybridge
-python experiments/benchmark/web_dashboard.py --host 0.0.0.0 --port 8787
-```
-
-Open locally on the server:
+The questionnaire release contains only:
 
 ```text
-http://127.0.0.1:8787
+human_roleplay_data/data/participants.csv
+human_roleplay_data/data/responses.csv
 ```
 
-If the dashboard is running on a remote server, forward the port from your
-local machine:
+Both files use newly randomized public participant IDs. Participant-level
+geography, gender, exact age, timestamps, response duration, free text, source
+IDs, and the source-to-public mapping are not distributed.
+
+Validate and analyze the release:
 
 ```bash
-ssh -o ExitOnForwardFailure=yes -fN -L 8798:127.0.0.1:8787 hku_user@100.116.9.76
-open http://127.0.0.1:8798
+bash reproducibility/run_human_analysis.sh
 ```
 
-Dashboard workflow:
+Generated statistics are written to `generated_results/`, not to the tracked
+data directory.
 
-1. Select user category: `Role-play LLM` or `Human`.
-2. Select user type/name.
-3. Configure the city, date range, VPP event window, and optional price/event files.
-4. Start the `EnergyBridge` Agent run and watch live logs, progressive event cards, appliance
-   schedules, user scores, and the final `run_summary.txt`.
-5. Open historical results from the collapsible sidebar.
+## From-scratch benchmarks
 
-The dashboard frontend lives in `energybridge/frontend/agent_console.html` and is
-served by `experiments/benchmark/web_dashboard.py`. Its interaction shell is
-inspired by the open-source
-[Home Assistant frontend](https://github.com/home-assistant/frontend): a
-persistent sidebar, card-based status surfaces, and human-centered controls.
-EnergyBridge keeps its own implementation and extends that style for VPP
-capacity forecasting, Agent strategy selection, and human-in-the-loop feedback.
-
-The dashboard uses Python's standard library HTTP server. No extra package is
-needed beyond `requirements.txt`.
-
----
-
-## Reports And Baseline Interface
-
-This is the section to share with collaborators who want to add another
-baseline and compare it in the same reports.
-
-### Recommended Report Workflow
-
-Run one full matrix first. The matrix delegates every job to
-`experiments/benchmark/run_persona_json.py`, so single-run behavior, calendar
-loading, capacity quantification, VPP schedule handling, role-play scoring,
-and output naming stay consistent.
-
-Fast Germany 3-day matrix with real weather, the Berlin family IDF, and
-day-ahead price:
+Main two-region household benchmark:
 
 ```bash
-python experiments/benchmark/run_baseline_matrix.py \
-  --city Germany --days 3 --start-date 2025-06-01 --mpc-horizon 6 \
-  --price-csv experiments/real_data/germany_2025_price.csv
+bash reproducibility/run_main_benchmark_from_scratch.sh --run
 ```
 
-Full Tianjin 7-day personal-user matrix. Tianjin automatically loads
-`experiments/real_data/tianjin_tou_price_normalized.csv`, so the report uses
-total electricity cost instead of total energy when the price metrics are
-available.
+June-to-July capacity reporting comparison:
 
 ```bash
-PYTHONUNBUFFERED=1 \
-python experiments/benchmark/run_baseline_matrix.py \
-  --methods EnergyBridge mpc_dynamic rule_milp rl_ppo_pref_v2 hema_agent \
-  --city Tianjin \
-  --days 7 \
-  --mpc-horizon 6 \
-  --date <YYYY-MM-DD> \
-  --workers 5 \
-  --resume
+bash reproducibility/run_capacity_reporting_from_scratch.sh --run
 ```
 
-Full Germany 7-day personal-user matrix. Germany automatically uses
-`experiments/models/family_home/berlin_family_geg_final.idf`; pass the
-Germany price CSV to make the report use total electricity cost.
+Both wrappers require `--run` to prevent accidental large simulator/API jobs.
+They support resuming completed jobs and write only beneath the ignored
+`generated_results/` directory.
 
-```bash
-PYTHONUNBUFFERED=1 \
-python experiments/benchmark/run_baseline_matrix.py \
-  --methods EnergyBridge mpc_dynamic rule_milp rl_ppo_pref_v2 hema_agent \
-  --city Germany \
-  --days 7 \
-  --start-date 2025-06-01 \
-  --mpc-horizon 6 \
-  --price-csv experiments/real_data/germany_2025_price.csv \
-  --date <YYYY-MM-DD> \
-  --workers 5 \
-  --resume
-```
+The capacity analysis reports three quantities:
 
-Matrix summaries are written to:
+1. accepted-only capacity accuracy;
+2. simulated household acceptance rate;
+3. overall accurate coverage, equal to the first two quantities multiplied
+   together up to displayed rounding.
+
+No prior value for any of these quantities is stored in the anonymous release.
+
+## Code map
 
 ```text
-benchmark_results/<YYYY-MM-DD>/_batch_logs/
-├── baseline_matrix_summary_<city>_<days>days_H<horizon>.json
-└── baseline_matrix_summary_<city>_<days>days_H<horizon>.csv
+energybridge/
+├── data/               # tariff/weather readers
+├── llm/                # provider-neutral LLM client
+├── memory/             # household/event memory
+├── quantification/     # event baselines and capacity reporting
+├── roleplay/           # personas, households, calendars, consent simulator
+├── simulation/         # EnergyPlus and appliance interfaces
+└── skills/             # controller/tool interfaces
+
+experiments/benchmark/
+├── baselines/          # HEMA, MPC, Rule+MILP, PPO adapters
+├── family_runner.py    # household physical/control loop
+├── run_household_matrix.py
+├── run_daily_dr_memory_matrix.py
+└── run_capacity_consent_joined_replay.py
+
+reproducibility/
+├── README.md
+├── paper.env.example
+├── run_human_analysis.sh
+├── run_main_benchmark_from_scratch.sh
+└── run_capacity_reporting_from_scratch.sh
 ```
 
-Generate the personal-user report figure/table/markdown from a summary:
+PPO training code is under `baselines/rl_energyplus/`, with inference
+checkpoints under `models/`. Region-specific building, tariff, weather, persona,
+calendar, and VPP-event inputs are mapped in the reproducibility guide.
+
+## Tests
+
+Run the release-data validator and core tests from the repository root:
 
 ```bash
-python experiments/benchmark/generate_baseline_matrix_report.py \
-  --summary-json benchmark_results/<YYYY-MM-DD>/_batch_logs/baseline_matrix_summary_tianjin_7days_H6.json \
-  --artifact-prefix personal_tianjin_7day_5method \
-  --output-dir benchmark_results/<YYYY-MM-DD>/_batch_logs/personal_tianjin_7day_5method_report
+python human_roleplay_data/scripts/validate_release.py
+PYTHONPATH=. pytest -q tests experiments/benchmark/tests
 ```
 
-For the Germany personal-user report:
+EnergyPlus integration tests require a valid `EPLUS_ROOT`; API integration
+tests require credentials supplied only through the local environment.
 
-```bash
-python experiments/benchmark/generate_baseline_matrix_report.py \
-  --summary-json benchmark_results/<YYYY-MM-DD>/_batch_logs/baseline_matrix_summary_germany_7days_H6.json \
-  --artifact-prefix personal_germany_7day_5method \
-  --output-dir benchmark_results/<YYYY-MM-DD>/_batch_logs/personal_germany_7day_5method_report
-```
+## Result and privacy policy
 
-Report outputs:
+Do not add generated outputs to source control. In particular, keep these
+paths untracked:
 
 ```text
-benchmark_results/reports/<report_name>/
-├── <prefix>_baseline_matrix_report.png
-├── <prefix>_baseline_matrix_report.md
-└── <prefix>_baseline_matrix_report_table.csv
+benchmark_results/
+paper_results/
+generated_results/
+reproduced_results/
+experiments/benchmark/results/
+importance_sampling/IS_result/
+dr_capacity_memory_toolkit/*/data/
 ```
 
-The current report reads each job's `benchmark_result.json` and visualizes:
+The private questionnaire ZIP must never enter Git history. The public
+source-data-only ZIP under `human_roleplay_data/release/` is built from the two
+deidentified CSV files and contains no precomputed analysis result.
 
-- role-play/human user score
-- total electricity cost when a price profile is available; otherwise EnergyPlus electricity consumption
-- VPP-window electricity consumption
-- appliance shift success rate
+For double-blind submission, do not push this working repository or its Git
+history. Use the history-free export and audit workflow documented under
+`scripts/`; connect only the newly initialized anonymous snapshot to the
+submission remote.
 
-### Multi-User Household Matrix And EnergyBridge Skills
-
-The fixed multi-user household benchmark treats each household JSON under
-`energybridge/roleplay/households/` as one large user. Each member keeps an
-independent role-play context for strategy comments and scoring, while the
-physical household owns one shared full appliance set: AC, washer, dryer,
-dishwasher, water heater, EV, and refrigerator. Household scores are the mean
-of the independent member scores.
-
-EnergyBridge is the agent method for this path. It sees the household context,
-member preferences, calendar state, and available skills. It may call
-`mpc_dynamic`, `rule_milp`, and/or `dynamic_hvac`, then choose, combine, or
-reject their outputs in its final control JSON. Preference memory is run-local
-by default. Set `ENERGYBRIDGE_PERSIST_AGENT_MEMORY=1` only when you want review
-files written into the run output directory.
-
-Run one household with EnergyBridge:
+Create the snapshot outside this repository:
 
 ```bash
-ENERGYBRIDGE_PERSIST_AGENT_MEMORY=0 \
-python experiments/benchmark/run_multi_user_household.py \
-  --household household_s2_multigeneration_caregiver \
-  --method EnergyBridge \
-  --city Tianjin \
-  --days 7 \
-  --start-date 2025-06-01 \
-  --vpp-start-hour 18.0 \
-  --vpp-duration-hours 1.0
+python scripts/export_anonymous_release.py \
+  --output-dir ../EnergyBridge-anonymous \
+  --archive ../EnergyBridge-anonymous.zip \
+  --init-git
 ```
 
-Run all five households for Tianjin with all five comparable methods and five
-parallel workers. Tianjin automatically uses the normalized TOU price profile.
+The exporter reads only tracked files, applies the explicit result denylist,
+runs the privacy/path/credential audit, creates a deterministic ZIP, and
+optionally initializes one commit owned by `Anonymous Authors`. It does not
+copy the current remote, branches, tags, reflog, or author history.
 
-```bash
-ENERGYBRIDGE_PERSIST_AGENT_MEMORY=0 \
-PYTHONUNBUFFERED=1 \
-python experiments/benchmark/run_household_matrix.py \
-  --methods EnergyBridge mpc_dynamic rule_milp rl_ppo_pref_v2 hema_agent \
-  --city Tianjin \
-  --days 7 \
-  --start-date 2025-06-01 \
-  --date <YYYY-MM-DD> \
-  --workers 5 \
-  --resume
-```
-
-Run all five households for Germany with all five comparable methods. Germany
-uses the Berlin family IDF by default; pass Germany day-ahead prices explicitly.
+For an additional local identity check, repeat `--forbidden-token` for any
+username, author surname, institution, or organization string that must not
+appear:
 
 ```bash
-ENERGYBRIDGE_PERSIST_AGENT_MEMORY=0 \
-PYTHONUNBUFFERED=1 \
-python experiments/benchmark/run_household_matrix.py \
-  --methods EnergyBridge mpc_dynamic rule_milp rl_ppo_pref_v2 hema_agent \
-  --city Germany \
-  --days 7 \
-  --start-date 2025-06-01 \
-  --price-csv experiments/real_data/germany_2025_price.csv \
-  --date <YYYY-MM-DD> \
-  --workers 5 \
-  --resume
+python scripts/audit_anonymous_release.py \
+  ../EnergyBridge-anonymous \
+  --forbidden-token LOCAL_USERNAME \
+  --forbidden-token ORGANIZATION_NAME
 ```
 
-Five workers are usually CPU-safe on the project server; the bottleneck is more
-likely the LLM API. Watch process load and API retry signals while a batch is
-running:
+Inspect the new repository before connecting it to a remote:
 
 ```bash
-ps -eo pid,ppid,stat,pcpu,pmem,etime,cmd --sort=-pcpu | \
-  rg 'run_household_matrix|run_multi_user_household|EnergyPlus|train_pref_v2|python -u'
-
-rg -n 'LLM attempt|RateLimit|429|JSONDecodeError|Traceback|\\[FAILED\\]|\\[COMPLETED\\]' \
-  benchmark_results/<YYYY-MM-DD>/_batch_logs/household_matrix_*_7days_H6/*.log
-```
-
-The household matrix summaries are written to:
-
-```text
-benchmark_results/<YYYY-MM-DD>/_batch_logs/
-├── household_matrix_summary_tianjin_7days_H6.json
-├── household_matrix_summary_tianjin_7days_H6.csv
-├── household_matrix_summary_germany_7days_H6.json
-└── household_matrix_summary_germany_7days_H6.csv
-```
-
-To generate a household report from explicit summaries:
-
-```bash
-python experiments/benchmark/generate_baseline_matrix_report.py \
-  --summary-json \
-    benchmark_results/<YYYY-MM-DD>/_batch_logs/household_matrix_summary_tianjin_7days_H6.json \
-    benchmark_results/<YYYY-MM-DD>/_batch_logs/household_matrix_summary_germany_7days_H6.json \
-  --output-dir benchmark_results/<YYYY-MM-DD>/_batch_logs/household_5x2_7day_5method_report \
-  --artifact-prefix household_5x2_7day_5method \
-  --row-label Household \
-  --completion-metric physical
-```
-
-The three main 5-method report tables for a full refresh are:
-
-```text
-benchmark_results/<YYYY-MM-DD>/_batch_logs/personal_tianjin_7day_5method_report/
-benchmark_results/<YYYY-MM-DD>/_batch_logs/personal_germany_7day_5method_report/
-benchmark_results/<YYYY-MM-DD>/_batch_logs/household_5x2_7day_5method_report/
-```
-
-When multiple household summaries are produced separately, pass all of the
-summary JSON files to `generate_baseline_matrix_report.py`. The report script
-supports multiple summary JSONs in one call and automatically appends city
-labels to the household rows.
-
-### Counterfactual No-DR Capacity Settlement
-
-For VPP capacity settlement, do not use the reference A3 diagnostic baseline as
-method-specific delivered energy. The reproducible settlement path is:
-
-```text
-reported_capacity_upper_bound_kW =
-  sum(no-DR counterfactual VPP-window kWh) / sum(VPP-window hours)
-
-actual_delivery_kWh =
-  no-DR counterfactual VPP-window kWh - method actual VPP-window kWh
-
-delivery_ratio =
-  sum(actual_delivery_kWh) / sum(no-DR counterfactual VPP-window kWh)
-```
-
-This lets the benchmark answer a different question from appliance-avoidance
-success: how much electricity the method actually reduced against the same
-household with no DR response. Negative delivery is preserved when a method
-uses more electricity than its no-DR counterfactual in the event window.
-
-Run the no-DR counterfactuals once per household and city. They are reusable as
-long as the household JSON, city/weather, start date, simulation length, and VPP
-event schedule stay the same.
-
-```bash
-PYTHONUNBUFFERED=1 \
-python experiments/benchmark/run_household_matrix.py \
-  --methods no_dr \
-  --city Germany \
-  --days 7 \
-  --start-date 2025-06-01 \
-  --price-csv experiments/real_data/germany_2025_price.csv \
-  --date 2026-06-30_counterfactual_baseline \
-  --workers 5 \
-  --resume
-
-PYTHONUNBUFFERED=1 \
-python experiments/benchmark/run_household_matrix.py \
-  --methods no_dr \
-  --city Tianjin \
-  --days 7 \
-  --start-date 2025-06-01 \
-  --price-csv experiments/real_data/tianjin_tou_price_normalized.csv \
-  --date 2026-06-30_counterfactual_baseline \
-  --workers 5 \
-  --resume
-```
-
-Build the reusable no-DR baseline library:
-
-```bash
-python experiments/benchmark/counterfactual_baseline_library.py build \
-  --summary-json \
-    benchmark_results/2026-06-30_counterfactual_baseline/_batch_logs/household_matrix_summary_germany_7days_H6.json \
-    benchmark_results/2026-06-30_counterfactual_baseline/_batch_logs/household_matrix_summary_tianjin_7days_H6.json \
-  --output benchmark_results/counterfactual_baselines/household_5x2_no_dr_2026-06-30.json
-```
-
-Apply the library to an existing method matrix. Use `--write-result-json` when
-you want each matched run's `benchmark_result.json` to carry the settlement
-fields too.
-
-```bash
-python experiments/benchmark/counterfactual_baseline_library.py apply \
-  --library benchmark_results/counterfactual_baselines/household_5x2_no_dr_2026-06-30.json \
-  --summary-json benchmark_results/<DATE>/_batch_logs/household_matrix_summary_5method_7days_H6.json \
-  --output-summary-json benchmark_results/<DATE>/_batch_logs/household_matrix_summary_5method_with_counterfactual_delivery_7days_H6.json \
-  --write-result-json
-```
-
-Important output fields:
-
-| Field | Meaning |
-|-------|---------|
-| `counterfactual_capacity_upper_bound_avg_per_hour_kwh` | New reported capacity upper bound in average kW over VPP windows |
-| `counterfactual_actual_shed_avg_per_hour_kwh` | Actual delivered average kW against no-DR |
-| `counterfactual_delivery_ratio_vs_baseline_upper_bound_total` | Settlement delivery ratio using no-DR as the denominator |
-| `counterfactual_delivery_ratio_vs_target_avg` | Diagnostic ratio against the old target/capacity request |
-| `vpp_energy_reduction_basis` | Should be `no_dr_counterfactual_baseline` after applying the library |
-
-The current 5-household x 2-city settlement artifacts are kept under:
-
-```text
-benchmark_results/reports/counterfactual_baselines/
-```
-
-These files are small CSV/JSON review artifacts. Raw EnergyPlus output folders
-remain generated data and are not committed.
-
-### Historical DR Event Memory For Reported Capacity
-
-The no-DR counterfactual workflow above is for benchmark settlement after the
-run. For capacity reporting before a future event, use a separate historical
-DR event memory. The current internal default is to build this from the
-`EnergyBridge` agent method.
-
-The idea is:
-
-```text
-historical correction factor =
-  realized delivery against no-DR / controller model bid
-
-future reported capacity =
-  current controller model bid * correction factor from similar historical events
-```
-
-This keeps two quantities separate:
-
-| Quantity | Purpose |
-|----------|---------|
-| no-DR counterfactual baseline | Used after the event to settle actual delivered kWh |
-| historical DR event memory | Used before the event to estimate/report credible capacity |
-
-Generate a reusable historical event schedule. For the June-memory demo, run
-the same schedule for both `no_dr` and `EnergyBridge` so realized delivery can
-be computed with the no-DR counterfactual library.
-
-```bash
-python experiments/benchmark/dr_event_memory_library.py generate-events \
-  --days 30 \
-  --events-per-day 1 \
-  --hours 16 17 18 19 20 \
-  --durations 1 \
-  --seed 20260630 \
-  --output experiments/benchmark/configs/vpp_events_june_memory.json
-```
-
-Run only the data needed by the agent reporting method. Historical memory data
-must be generated as independent daily samples: one historical event/day is one
-standalone `--days 1` simulation with its own role-play context and EnergyPlus
-state. Do not feed all 30 days to the controller in one sequence, because that
-mixes daily feedback and state carry-over into the historical event library.
-
-```bash
-PYTHONUNBUFFERED=1 \
-python experiments/benchmark/run_daily_dr_memory_matrix.py \
-  --methods no_dr EnergyBridge \
-  --cities Germany Tianjin \
-  --days 30 \
-  --start-date 2025-06-01 \
-  --vpp-events-json experiments/benchmark/configs/vpp_events_june_memory.json \
-  --date <YYYY-MM-DD>_agent_dr_memory_daily \
-  --workers 5 \
-  --resume
-```
-
-This expands to:
-
-```text
-30 historical days x 5 households x 2 cities x 2 methods = 600 one-day runs
-```
-
-The daily runner writes the raw summary, applies the no-DR counterfactual to
-each `EnergyBridge` one-day result, and builds the historical memory:
-
-```text
-benchmark_results/<DATE>/_batch_logs/
-├── daily_dr_memory_summary_raw.json
-├── daily_dr_memory_summary_raw.csv
-├── daily_dr_memory_summary_with_counterfactual.json
-├── daily_dr_memory_summary_with_counterfactual.csv
-├── daily_dr_memory_no_dr_counterfactual_library.json
-└── energybridge_daily_dr_memory.json
-```
-
-The committed reusable June historical-memory toolkit is kept outside benchmark
-output folders:
-
-```text
-dr_capacity_memory_toolkit/june_2025_daily_energybridge/
-```
-
-Use this toolkit for future capacity reporting. Per-evaluation capacity reports
-should be regenerated for each target benchmark and are not committed as part
-of the toolkit.
-
-Apply the historical memory to a future target summary with the deterministic
-calibrator:
-
-```bash
-python experiments/benchmark/dr_event_memory_library.py estimate \
-  --memory benchmark_results/<DATE>/_batch_logs/energybridge_daily_dr_memory.json \
-  --summary-json benchmark_results/<DATE>/_batch_logs/household_matrix_summary_5method_with_counterfactual_delivery_7days_H6.json \
-  --output-summary-json benchmark_results/<DATE>/_batch_logs/household_matrix_summary_5method_with_dr_memory_capacity_7days_H6.json \
-  --methods EnergyBridge \
-  --top-k 5 \
-  --write-result-json
-```
-
-For the LLM-assisted reporting version, pass a compact top-k delivery
-distribution to the agent. The default is `--top-k 5`: the prompt receives
-distribution statistics plus compact retrieved-event evidence, and the agent
-chooses among precomputed P25/P50/P75 capacity bands. This is more stable than
-top-1 while keeping API latency and token usage bounded.
-Historical retrieval is role/household scoped: a target entity only queries
-historical events from the same `household_id`/`persona_id`.
-
-```bash
-python experiments/benchmark/dr_event_memory_library.py agent-report \
-  --memory benchmark_results/<DATE>/_batch_logs/energybridge_daily_dr_memory.json \
-  --summary-json benchmark_results/<DATE>/_batch_logs/household_matrix_summary_5method_with_counterfactual_delivery_7days_H6.json \
-  --output-summary-json benchmark_results/<DATE>/_batch_logs/household_matrix_summary_energybridge_agent_capacity_report_7days_H6.json \
-  --methods EnergyBridge \
-  --top-k 5 \
-  --write-result-json
-```
-
-Important output fields:
-
-| Field | Meaning |
-|-------|---------|
-| `historical_dr_memory_reported_capacity_total_kwh` | Capacity reported from historical-memory correction |
-| `historical_dr_memory_reported_capacity_avg_kw` | Average reported kW across future VPP windows |
-| `historical_dr_memory_capacity_estimate` | Per-event retrieved examples, correction factor, confidence, and reported capacity |
-| `agent_capacity_report_total_kwh` | LLM-assisted top-k historical-memory reported capacity |
-| `agent_capacity_report_avg_kw` | LLM-assisted average reported kW across future VPP windows |
-| `agent_capacity_report` | Per-event top-k distribution evidence, band choice, and reported capacity |
-| `agent_capacity_report_primary_distribution_position` | Main reported band position, usually `p25`, `p50`, or `p75` |
-| `agent_capacity_report_distribution_position_counts` | Per-run band counts, for example `p25=0,p50=7,p75=0` |
-| `agent_capacity_report_primary_choice` | Main agent choice label, usually `conservative`, `calibrated`, or `assertive` |
-
-### How To Add A New Baseline Method
-
-Use a stable lowercase method id, for example `my_baseline`. Keep the method id
-short because it is used in output directory names, matrix summaries, and
-report columns.
-
-Recommended integration path:
-
-1. Implement the controller in or under `experiments/benchmark/baselines/`.
-2. Add dispatch in `experiments/benchmark/family_runner.py`.
-3. Expose the method in `experiments/benchmark/run_persona_json.py`.
-4. Add the method to `experiments/benchmark/run_baseline_matrix.py`.
-5. Add the display order/label in `experiments/benchmark/generate_baseline_matrix_report.py`.
-
-Files to update:
-
-
-| File                                                       | What to change                                                         |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `experiments/benchmark/family_runner.py`                   | Accept the new`method` and call the baseline at each control decision  |
-| `experiments/benchmark/run_persona_json.py`                | Add the method to`--method` choices and `_method_label()`              |
-| `experiments/benchmark/run_baseline_matrix.py`             | Add the method to`DEFAULT_METHODS`; pass any method-specific CLI flags |
-| `experiments/benchmark/generate_baseline_matrix_report.py` | Add`METHOD_ORDER` and `METHOD_LABEL` entries                           |
-| `experiments/benchmark/web_dashboard.py`                   | Optional: add a button if the method should run from the browser       |
-
-The baseline should return the same control intent shape used by the existing
-runner. At minimum it should provide an AC setpoint and a reason; if it controls
-appliances, use the same keys as the Agent/MPC paths:
-
-```python
-{
-    "setpoint": 25.5,
-    "reason": "short explanation shown in logs and run_summary",
-    "next_check_hour": 19.0,
-    "washer_start_h": 14.0,
-    "washer_skip": False,
-    "dishwasher_start_h": 21.0,
-    "dishwasher_skip": False,
-    "water_heater_preheat": True,
-    "water_heater_preheat_start_h": 14.0,
-    "water_heater_preheat_end_h": 18.0,
-    "water_heater_preheat_temp_c": 68.0,
-    "ev_mode": "smart"
-}
-```
-
-The report layer expects each run directory to contain:
-
-```text
-benchmark_result.json
-run_summary.txt
-eplusout.mtr
-```
-
-Important fields in `benchmark_result.json`:
-
-
-| Field                          | Required for reports | Meaning                                                                                                                 |
-| ------------------------------ | -------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `method`                       | yes                  | Method id, e.g.`EnergyBridge`, `mpc_dynamic`, `my_baseline`. The old `agent` id is accepted only as a deprecated alias. |
-| `weather`                      | yes                  | City/scenario label                                                                                                     |
-| `exit_code`                    | yes                  | `0` means successful run                                                                                                |
-| `user_pref_score`              | yes                  | Average user score                                                                                                      |
-| `energy_kwh_total`             | yes                  | Total EnergyPlus electricity                                                                                            |
-| `vpp_window_energy_kwh`        | yes                  | Total VPP-window electricity                                                                                            |
-| `appliance_shift_success_rate` | yes                  | Shifted completed loads away from VPP                                                                                   |
-| `vpp_event_log`                | recommended          | Per-event details for dashboard and debugging                                                                           |
-| `daily_energy_kwh`             | recommended          | Per-day energy shown in dashboard                                                                                       |
-
-Quick smoke test for a new method:
-
-```bash
-python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Germany --days 3 --start-date 2025-06-01 \
-  --price-csv experiments/real_data/germany_2025_price.csv \
-  --method my_baseline
-```
-
-Then run a tiny matrix before the full comparison:
-
-```bash
-python experiments/benchmark/run_baseline_matrix.py \
-  --city Germany --days 3 --start-date 2025-06-01 \
-  --price-csv experiments/real_data/germany_2025_price.csv \
-  --methods EnergyBridge my_baseline --personas basic_role_a_commuter_price_cooperative \
-  --max-runs 2
-```
-
-If that succeeds, run the full matrix and generate the report with the commands
-above.
-
----
-
-## Main Benchmark Commands
-
-### Recommended Fast Iteration: Germany 3-Day
-
-Use this when tuning Agent prompts or runner logic. It is shorter than the
-7-day matrix but still exercises the modern stack: persona calendar,
-capacity quantification, VPP events, EnergyPlus, optional day-ahead price, and
-role-play scoring.
-
-```bash
-python experiments/benchmark/run_germany_3day_quick.py basic_role_a_commuter_price_cooperative
-```
-
-Defaults:
-
-```text
-city      : Germany
-dates     : 2025-06-01 to 2025-06-03
-weekday   : Sunday, Monday, Tuesday
-days      : 3
-VPP       : daily 18:00-19:00
-price CSV : experiments/real_data/germany_2025_price.csv
-IDF       : generated from experiments/models/family_home/berlin_family_geg_final.idf
-output    : benchmark_results/<YYYY-MM-DD>/<role>_<method>_germany_3days/
-```
-
-The generated run-specific IDF is stored under:
-
-```text
-benchmark_results/<YYYY-MM-DD>/_run_assets/<run_name>/family_simple_3day_2025-06-01_3days.idf
-```
-
-Useful variants:
-
-```bash
-# Same quick path, but a different user
-python experiments/benchmark/run_germany_3day_quick.py basic_role_f_commuter_ev_optimizer
-
-# Quick Germany MPC checks
-python experiments/benchmark/run_germany_3day_quick.py basic_role_a_commuter_price_cooperative --method mpc_dynamic
-
-# Disable price input while keeping Germany weather/date
-python experiments/benchmark/run_germany_3day_quick.py basic_role_a_commuter_price_cooperative --no-price
-
-# Inspect the expanded command without running EnergyPlus
-python experiments/benchmark/run_germany_3day_quick.py basic_role_a_commuter_price_cooperative --dry-run
-```
-
-For a quick 10-persona matrix on the same Germany 3-day setup:
-
-```bash
-python experiments/benchmark/run_baseline_matrix.py \
-  --city Germany --days 3 --start-date 2025-06-01 --mpc-horizon 6 \
-  --price-csv experiments/real_data/germany_2025_price.csv
-```
-
-### Run One Persona And One Method
-
-Run from the repository root:
-
-```bash
-cd /home/hku_user/work/EnergyBridge
-conda activate energybridge
-```
-
-EnergyBridge:
-
-```bash
-python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Tianjin --method EnergyBridge
-```
-
-MPC with regional dynamics:
-
-```bash
-python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Tianjin --method mpc_dynamic --mpc-horizon 6
-```
-
-Human-in-the-loop user instead of role-play LLM:
-
-```bash
-python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Tianjin --method EnergyBridge --user-mode human --human-name alice
-```
-
-Tianjin 7-day Agent run using the existing 7-day IDF:
-
-```bash
-python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Tianjin --method EnergyBridge --days 7
-```
-
-### Germany Real-Data Full Variant
-
-The full Germany comparison uses real weather and a 7-day date range:
-
-```text
-weather: experiments/real_data/germany_2025_weather.csv
-EPW    : experiments/weather/epw/DEU_Germany_2025_real.epw
-start  : 2025-06-01
-days   : 7
-```
-
-The daily planning decision is at **00:00** for all cities. Day-ahead price is
-not a separate Agent or city mode. It is enabled only when `--price-csv` is
-provided. If omitted, the benchmark falls back to the normal policy and price
-metrics are reported as `NaN`.
-
-Run Germany EnergyBridge:
-
-```bash
-python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Germany --method EnergyBridge
-```
-
-Enable day-ahead price optimization for Germany:
-
-```bash
-python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Germany --method EnergyBridge \
-  --price-csv experiments/real_data/germany_2025_price.csv
-```
-
-The same price-aware path works for Tianjin or any other city if a compatible
-price CSV is supplied:
-
-```bash
-python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Tianjin --method EnergyBridge \
-  --price-csv /path/to/tianjin_day_ahead_price.csv
-```
-
-Regenerate the EPW from the real-weather CSV:
-
-```bash
-python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Germany --method EnergyBridge --regenerate-epw
-```
-
-Run Germany MPC dynamics:
-
-```bash
-python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Germany --method mpc_dynamic --mpc-horizon 6
-```
-
-Override the default date range if needed:
-
-```bash
-python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Germany --method EnergyBridge --days 7 --start-date 2025-06-01
-```
-
-If no price CSV is provided, the run still works and the price metrics are
-reported as `NaN`.
-
-VPP windows are parameterized. The default is one event per day from 18:00 to
-19:00. Change the start time or duration with:
-
-```bash
-python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Tianjin --method EnergyBridge \
-  --vpp-start-hour 17 --vpp-duration-hours 2
-```
-
-Current VPP windows must stay within a single simulation day
-(`start + duration <= 24`). Cross-midnight VPP events need a separate absolute
-time-window pass.
-
-For varied windows or multiple events per day, pass a JSON schedule:
-
-```bash
-python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --city Tianjin --method EnergyBridge --days 7 \
-  --vpp-events-json experiments/benchmark/configs/vpp_events_7day_variable.json
-```
-
-Supported JSON shape:
-
-```json
-{
-  "events": [
-    {"day": 1, "start_h": 18.0, "duration_h": 1.0},
-    {"day": 3, "start_h": 12.0, "duration_minutes": 30},
-    {"day": 3, "start_h": 18.0, "end_h": 19.0}
-  ]
-}
-```
-
-Each event wakes the controller at VPP start. The runner forces another wake-up
-at the event end so the Agent can restore comfort and the role-play user can
-score the result. The Agent can still request additional future wake-ups with
-`next_check_hour`.
-
-### Run The 10-Persona Matrix
-
-This is the current five-method personal-user comparison. Tianjin uses the
-normalized TOU price profile automatically.
-
-```bash
-PYTHONUNBUFFERED=1 \
-python experiments/benchmark/run_baseline_matrix.py \
-  --methods EnergyBridge mpc_dynamic rule_milp rl_ppo_pref_v2 hema_agent \
-  --city Tianjin --days 7 --mpc-horizon 6 \
-  --workers 5 --resume
-```
-
-Germany uses the Berlin family IDF automatically. Pass day-ahead prices so the
-right-top metric is total electricity cost:
-
-```bash
-PYTHONUNBUFFERED=1 \
-python experiments/benchmark/run_baseline_matrix.py \
-  --methods EnergyBridge mpc_dynamic rule_milp rl_ppo_pref_v2 hema_agent \
-  --city Germany --days 7 --start-date 2025-06-01 --mpc-horizon 6 \
-  --price-csv experiments/real_data/germany_2025_price.csv \
-  --workers 5 --resume
-```
-
-Current full personal-user matrix:
-
-```text
-10 approved personas x 5 methods = 50 jobs per city
-methods: EnergyBridge, mpc_dynamic, rule_milp, rl_ppo_pref_v2, hema_agent
-duration: 7 days for the comparable full run
-calendar: enabled
-capacity quantification: enabled
-role-play scoring: enabled
-cost metric: total electricity cost when price data is available
-```
-
-Useful controls:
-
-```bash
-# Preview commands without running
-python experiments/benchmark/run_baseline_matrix.py --dry-run
-
-# Resume after interruption
-python experiments/benchmark/run_baseline_matrix.py --resume
-
-# Run only selected methods
-python experiments/benchmark/run_baseline_matrix.py \
-  --methods EnergyBridge mpc_dynamic --city Tianjin --mpc-horizon 6
-
-# Run only selected users
-python experiments/benchmark/run_baseline_matrix.py \
-  --personas basic_role_a_commuter_price_cooperative atom_control_auto \
-  --methods EnergyBridge --city Tianjin
-
-# Smoke test one job
-python experiments/benchmark/run_baseline_matrix.py --max-runs 1
-
-# Sweep a longer VPP window
-python experiments/benchmark/run_baseline_matrix.py \
-  --city Tianjin --vpp-start-hour 17 --vpp-duration-hours 2 --max-runs 1
-
-# Run a custom 7-day VPP schedule
-python experiments/benchmark/run_baseline_matrix.py \
-  --city Tianjin --days 7 \
-  --vpp-events-json experiments/benchmark/configs/vpp_events_7day_variable.json \
-  --max-runs 1
-```
-
-### Generate The Matrix Report
-
-After the matrix finishes:
-
-```bash
-python experiments/benchmark/generate_baseline_matrix_report.py \
-  --date 2026-06-14 --city Tianjin --horizon 6
-```
-
-If `--date` is omitted, the script uses today.
-
-Report outputs:
-
-```text
-benchmark_results/<YYYY-MM-DD>/_batch_logs/baseline_matrix_report/
-├── baseline_matrix_report.png
-├── baseline_matrix_report.md
-└── baseline_matrix_report_table.csv
-```
-
-The current report figure shows four persona-by-method matrices:
-
-1. User score.
-2. Total energy.
-3. VPP-window energy.
-4. Appliance shift success rate.
-
-## Results And Naming
-
-All current benchmark outputs go under:
-
-```text
-benchmark_results/<YYYY-MM-DD>/
-```
-
-Single-user role-play runs:
-
-```text
-benchmark_results/<YYYY-MM-DD>/<role>_<method>[_Hn]_<city>_<days>days/
-├── run_summary.txt          # read this first
-├── benchmark_result.json    # machine-readable metrics
-└── eplusout.*               # EnergyPlus outputs
-```
-
-Examples:
-
-```text
-benchmark_results/2026-06-14/role_a_EnergyBridge_tianjin_3days/
-benchmark_results/2026-06-14/role_a_mpc_dynamic_H6_tianjin_3days/
-benchmark_results/2026-06-14/role_a_EnergyBridge_germany_7days/
-```
-
-Human runs use the custom name:
-
-```text
-benchmark_results/2026-06-14/alice_human_EnergyBridge_tianjin_3days/
-benchmark_results/2026-06-14/alice_human_mpc_dynamic_H6_tianjin_3days/
-```
-
-If the exact same default run directory already exists, only that run directory
-is replaced. Other dates, users, methods, cities, and horizons are not touched.
-Passing `--output /custom/path` bypasses the default naming scheme.
-
-Important result files:
-
-
-| File                                         | Purpose                                                                          |
-| -------------------------------------------- | -------------------------------------------------------------------------------- |
-| `run_summary.txt`                            | Human-readable result, event strategies, VPP target, appliance schedules, scores |
-| `benchmark_result.json`                      | Raw metrics used by matrix/report scripts                                        |
-| `eplusout.mtr`                               | EnergyPlus meter trace used for VPP energy diagnostics                           |
-| `_batch_logs/baseline_matrix_summary_*.json` | Batch-level machine-readable summary                                             |
-| `_batch_logs/baseline_matrix_report/*.png`   | Compact visual report                                                            |
-
-Key metrics:
-
-
-| Metric                           | Meaning                                                                     |
-| -------------------------------- | --------------------------------------------------------------------------- |
-| `user_pref_score`                | Role-play or human user satisfaction, averaged over VPP events              |
-| `energy_kwh_total`               | Total 3-day electricity consumption                                         |
-| `vpp_window_energy_kwh`          | Energy consumed during VPP windows                                          |
-| `appliance_shift_success_rate`   | Present shiftable tasks completed and shifted away from VPP                 |
-| `appliance_task_completion_rate` | Present shiftable tasks completed                                           |
-| `ev_target_reached_rate`         | EV service target success rate                                              |
-| `ewh_preheat_used_rate`          | Water-heater preheat usage/readiness metric                                 |
-| `day_ahead_price_metrics`        | Price-weighted EnergyPlus consumption;`NaN` when no price data is available |
-
----
-
-## Personas And Calendars
-
-Approved persona JSON files live in:
-
-```text
-energybridge/roleplay/personas/*.json
-```
-
-Paired 7-day synthetic calendars live in:
-
-```text
-energybridge/roleplay/personas/calendars/<persona_id>/calendar_7day.json
-```
-
-Day 1 is Sunday. The default 3-day benchmark evaluates Sunday, Monday, and
-Tuesday. Calendars are loaded automatically and injected into role-play
-strategy selection and scoring, so simulated users consider:
-
-- appointments and away/home periods
-- return-home comfort
-- hot-water deadlines
-- EV departure deadlines
-- chore timing constraints
-
-Persona schema details:
-
-```text
-energybridge/roleplay/personas/README.md
-```
-
-Approved persona IDs:
-
-```text
-atom_comfort_sensitive
-atom_control_auto
-atom_price_indifferent
-atom_task_rigid
-basic_role_a_commuter_price_cooperative
-basic_role_b_home_comfort_gated
-basic_role_c_irregular_cautious
-basic_role_d_commuter_ideal_dr
-basic_role_e_caregiver_low_dr
-basic_role_f_commuter_ev_optimizer
-```
-
----
-
-## Methods
-
-### `agent`
-
-The EnergyBridge Agent receives:
-
-- persona preferences
-- paired calendar
-- VPP event window
-- capacity-quantified VPP target
-- day-ahead price context when available
-- live EnergyPlus state
-- appliance state
-
-It must explicitly control present controllable appliances and AC setpoints.
-Role-play LLM users choose strategy candidates before VPP events and score
-outcomes afterward.
-
-### `mpc_dynamic`
-
-Finite-horizon cumulative-cost MPC using the local dynamic model in:
-
-```text
-experiments/benchmark/baselines/mpc/dynamic_model/
-```
-
-This is the collaborator-derived control-oriented dynamic predictor adapted
-into the benchmark package. Tianjin uses the legacy Tianjin dynamics assets;
-Germany uses the Berlin-trained regional dynamics assets.
-
-### `rule_milp`
-
-Oracle-style baseline for transparent lower-bound comparisons. HVAC setpoints
-are selected with the same regional dynamics rollout used by MPC. Shiftable
-appliances, water-heater preheat, and EV charging are scheduled by a small MILP
-over feasible windows, with a large penalty for non-AC appliance operation
-inside VPP windows.
-
-### `EnergyBridge`
-
-EnergyBridge is the agent method. It can decide whether to call `mpc_dynamic`,
-`rule_milp`, and/or the regional `dynamic_hvac` function as skills, inspect the
-returned plans, then choose or combine them into the final control JSON. RL is
-kept as a separate baseline, not an agent skill.
-
-### RL Baseline
-
-Preference-aware PPO baseline (RL PPO Pref-v2, 8-dim action space). Training
-and benchmark evaluation are split: training steps against the region-aware
-MPC dynamic model (`experiments/benchmark/baselines/mpc/dynamic_model`,
-~7-10x faster than EnergyPlus, and automatically uses Berlin regional 5R3C
-parameters for Germany / Tianjin parameters otherwise), while benchmark
-evaluation always runs the same EnergyPlus 24.1 family model, weather, and
-VPP schedule used by every other baseline — so scores stay directly
-comparable. An EnergyPlus-backed training path (`--backend ep`) is retained
-for reference. The 8-dim action covers AC setpoint, washer / dishwasher /
-dryer start hours, water-heater preheat, and EV charge window.
-
-Key locations:
-
-- Trained checkpoints: `models/rl_ppo_pref_v2_{tianjin,germany}.zip`
-- Inference adapter: `experiments/benchmark/baselines/rl_ppo_pref_v2.py`
-- Training code + persona: `baselines/rl_energyplus/`
-
-Full training instructions, hyperparameters, decode ranges, reward weights,
-and inference workflow: [`baselines/rl_energyplus/README.md`](baselines/rl_energyplus/README.md)
-
-Other RL directories: `baselines/rl_typical_human/` (fast lightweight simulator for reward experiments).
-
-### Agent-Method Baselines
-
-Agent-method baselines incorporate third-party intelligent agents into the
-EnergyBridge benchmark. These baselines wrap an external agent so it returns
-the same control-intent shape expected by the benchmark runner, making it
-possible to compare generalist agents against purpose-built EnergyBridge
-controllers on identical VPP avoidance, comfort, and task-completion metrics.
-
-### `HEMA`
-
-Native HEMA ReAct agent baseline. This baseline requires the original HEMA
-repository as an external dependency.
-
-#### Architecture Overview
-
-The HEMA baseline consists of three layers (all located in `experiments/benchmark/baselines/hema/`):
-
-```
-experiments/benchmark/baselines/hema/
-├── hema_controller.py      # HEMAControlBaseline: main controller class
-├── device_bridge.py         # EnergyBridgeToHEMA: state synchronization bridge
-├── path_utils.py            # resolves the external HEMA checkout
-└── __init__.py              # get_hema_controller() + sys.path setup
-```
-
-#### Step 1: Install HEMA
-
-```bash
-# Keep the third-party checkout outside the EnergyBridge repository.
-mkdir -p ../reference
-git clone https://github.com/humanbuildingsynergy/HEMA.git ../reference/HEMA
-```
-
-Install HEMA dependencies:
-
-```bash
-cd ../reference/HEMA
-pip install -r requirements.txt
-```
-
-If HEMA lives somewhere else, set `ENERGYBRIDGE_HEMA_ROOT=/absolute/path/to/HEMA`
-before running the benchmark.
-
-#### Step 2: How the Adapter Works
-
-The adapter bridges EnergyBridge and HEMA through three files in `experiments/benchmark/baselines/hema/`:
-
-##### `__init__.py`
-
-Factory function that returns the HEMA controller class. It resolves the external HEMA checkout through `ENERGYBRIDGE_HEMA_ROOT`, `HEMA_ROOT`, or the default sibling `../reference/HEMA` path.
-
-##### `device_bridge.py` — `EnergyBridgeToHEMA`
-
-| Function | What it does |
-|----------|-------------|
-| `ensure_device_config()` | Resets HEMA's global device state and rebuilds it from EnergyBridge's `appliance_config` + live `eplus_state`. Maps EnergyBridge devices (washer, dishwasher, etc.) to HEMA's schema (washing_machine, dishwasher, etc.) with °C→°F conversion. |
-| `build_query()` | Constructs the natural-language prompt sent to HEMA's ReAct agent. Uses anonymous live state, VPP context, price data, tool-discovered devices, and natural-language feedback; it does not expose role-play prompts or questionnaire/persona fields. |
-| `extract_actions()` | Parses HEMA's tool calls and converts back to EnergyBridge control JSON. Fuzzy-matches device names, maps actions (e.g., `set_temperature` → `setpoint_f`, `set_schedule` → `*_start_h`), and converts °F→°C. |
-
-##### `hema_controller.py` — `HEMAControlBaseline`
-
-| Function | What it does |
-|----------|-------------|
-| `decide()` | Entry point called by `family_runner.py` each timestep. Initializes HEMA agent on first call, then delegates to `_decide_with_retry()`. |
-| `_decide_with_retry()` | Invokes HEMA agent, checks if all present appliances received commands. If any are missing, retries up to 5 times with a strengthened mandatory-action prompt. Logs raw tool calls for debugging. Tracks token usage and latency. |
-| `_to_energybridge()` | Converts parsed HEMA actions to EnergyBridge format: °F→°C setpoint conversion, assembles `appliance_actions` dict, sets `next_check_hour` to wake controller after VPP ends. |
-
-#### Step 3: Run HEMA as a Baseline
-
-```text
-# Run full Tianjin 7-day personal-user matrix
-python experiments/benchmark/run_baseline_matrix.py \
-  --methods hema_agent \
-  --city Tianjin \
-  --days 7 \  
-  --mpc-horizon 6 \
-  --date <yyyy-mm-dd> \
-  --workers 5 \
-  --resume
-
-# Run full Germany 7-day personal-user matrix
-python experiments/benchmark/run_baseline_matrix.py \
-  --methods hema_agent \
-  --city Germany \
-  --days 7 \
-  --start-date 2025-06-01 \
-  --mpc-horizon 6 \
-  --price-csv experiments/real_data/germany_2025_price.csv \
-  --date <yyyy-mm-dd> \
-  --workers 5 \
-  --resume
-
-# Run all five households for Tianjin
-python experiments/benchmark/run_household_matrix.py \
-  --methods hema_agent \
-  --city Tianjin \
-  --days 7 \
-  --start-date 2025-06-01 \
-  --date <YYYY-MM-DD> \
-  --workers 5 \
-  --resume
-
-# Run all five households for Germany
-python experiments/benchmark/run_household_matrix.py \
-  --methods hema_agent \
-  --city Germany \
-  --days 7 \
-  --start-date 2025-06-01 \
-  --price-csv experiments/real_data/germany_2025_price.csv \
-  --date <YYYY-MM-DD> \
-  --workers 5 \
-  --resume
-```
-
-
-```text
-experiments/benchmark/baselines/hema
-```
-
----
-
-## Current Code Structure
-
-```text
-EnergyBridge/
-├── energybridge/
-│   ├── agent/                         # LangGraph agent pieces
-│   ├── data/                          # real-weather, EPW, and day-ahead price helpers
-│   ├── llm/                           # OpenAI-compatible client + key rotation
-│   ├── quantification/                # VPP capacity quantification helpers
-│   ├── roleplay/
-│   │   ├── personas/                  # persona JSON files and schema README
-│   │   └── calendar.py                # calendar attachment/loading
-│   └── simulation/                    # EnergyPlus state/actuator adapters
-├── experiments/benchmark/
-│   ├── family_runner.py               # main 3-day family EnergyPlus runner
-│   ├── run_persona_json.py            # single-persona CLI
-│   ├── run_baseline_matrix.py         # 10-persona x methods batch runner
-│   ├── generate_baseline_matrix_report.py
-│   ├── web_dashboard.py               # browser UI
-│   ├── user_pref_scorer.py            # role-play/human event scoring
-│   ├── configs/                       # VPP event schedule JSON examples
-│   ├── baselines/mpc/                 # MPC planner and regional dynamic model
-│   ├── models/family_home/            # family IDF models
-│   └── weather/epw/                   # weather files
-├── experiments/real_data/             # Germany 2025 weather and price CSVs
-├── baselines/
-│   ├── rl_energyplus/            # PPO baseline against EnergyPlus
-│   └── rl_typical_human/              # lightweight RL environment
-├── benchmark_results/                 # generated outputs, ignored by default
-├── requirements.txt
-└── .env.example
-```
-
-Most coding-agent work starts in one of these files:
-
-
-| Task                         | Start here                                                 |
-| ---------------------------- | ---------------------------------------------------------- |
-| Change Agent behavior/prompt | `experiments/benchmark/family_runner.py`                   |
-| Change role-play scoring     | `experiments/benchmark/user_pref_scorer.py`                |
-| Change matrix run list       | `experiments/benchmark/run_baseline_matrix.py`             |
-| Change report plots/tables   | `experiments/benchmark/generate_baseline_matrix_report.py` |
-| Change MPC planner           | `experiments/benchmark/baselines/mpc/planner.py`           |
-| Change dynamic predictor     | `experiments/benchmark/baselines/mpc/dynamic_model/`       |
-| Change web UI                | `experiments/benchmark/web_dashboard.py`                   |
-
----
-
-## Legacy And Reference Commands
-
-These commands are kept for reproducibility and archaeology. They are not the
-current primary comparison path.
-
-### Multi-Persona Household Discussion
-
-```bash
-python experiments/benchmark/run_multi_persona_json.py \
-  basic_role_a_commuter_price_cooperative \
-  basic_role_b_home_comfort_gated \
-  --city Tianjin --verbose
-```
-
-This produces:
-
-```text
-benchmark_results/multi__<id_a>__<id_b>/
-├── run_summary.txt
-├── benchmark_result.json
-└── household_meta.json
-```
-
-### Office Building PMV/Agent Baseline
-
-```bash
-python experiments/benchmark/office_runner.py --mode pmv --city tianjin
-python experiments/benchmark/office_runner.py --mode agent --city tianjin
-```
-
-### Older Full Comparative Suite
-
-This is an early reproduction path. Check the script before running because it
-may contain stale machine-specific paths from older iterations.
-
-```bash
-bash experiments/benchmark/reproduce_benchmark.sh
-bash experiments/benchmark/reproduce_benchmark.sh --resume
-python experiments/benchmark/run_benchmark.py --scenario family/tianjin/pmv
-python experiments/benchmark/run_benchmark.py --building family --skip-existing
-```
-
-### Legacy Interactive Demo
-
-The current human-in-the-loop path is:
-
-```bash
-python experiments/benchmark/run_persona_json.py basic_role_a_commuter_price_cooperative \
-  --user-mode human --human-name alice --method EnergyBridge
-```
-
-The older lightweight demo is kept here:
-
-```bash
-python examples/run_agent_loop.py
-```
-
-### Automated Role-Play Evaluation Without EnergyPlus
-
-```bash
-python examples/run_roleplay_evaluation.py --turns 5
-```
-
-### Long-Term Memory/Learning Test
-
-```bash
-python experiments/benchmark/run_longterm.py --persona commuter --city Tianjin --days 7
-```
-
----
-
-## Reference Notes
-
-Reference-derived DR capacity quantification and independent RL integration
-notes are in:
-
-```text
-REFERENCE_CAPACITY_RL_INTEGRATION.md
-baselines/rl_energyplus/README.md
+git -C ../EnergyBridge-anonymous log --format=fuller -1
+git -C ../EnergyBridge-anonymous remote -v
+git -C ../EnergyBridge-anonymous status --short
 ```
 
-EnergyBridge is an independent implementation; code in `energybridge/` is
-original unless otherwise noted.
+Only after those checks should the new repository be connected to the
+anonymous submission remote. The current `origin` must not be reused.

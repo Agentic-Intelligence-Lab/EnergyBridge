@@ -30,7 +30,7 @@ try:
     load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 except Exception:
     pass
-EPLUS_ROOT   = Path(os.getenv("EPLUS_ROOT", "/home/hku_user/EnergyPlus-24-1-0"))
+EPLUS_ROOT   = Path(os.getenv("EPLUS_ROOT", "/opt/EnergyPlus-24-1-0"))
 
 for p in (str(EPLUS_ROOT), str(PROJECT_ROOT), str(BENCH_DIR)):
     if p not in sys.path:

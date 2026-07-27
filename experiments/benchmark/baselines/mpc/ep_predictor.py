@@ -21,7 +21,7 @@ from ..state_adapter import build_mpc_state
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
-EPLUS_ROOT = Path(os.environ.get("EPLUS_ROOT", "/home/hku_user/EnergyPlus-24-1-0"))
+EPLUS_ROOT = Path(os.environ.get("EPLUS_ROOT", "/opt/EnergyPlus-24-1-0"))
 for path in (PROJECT_ROOT, EPLUS_ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))

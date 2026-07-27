@@ -7,7 +7,7 @@ make a decision, and write the HVAC setpoint back to EnergyPlus.
 
 Prerequisites
 -------------
-- EnergyPlus 24.1.0 installed at EPLUS_ROOT or /home/hku_user/EnergyPlus-24-1-0
+- EnergyPlus 24.1.0 installed at `EPLUS_ROOT`
 - Tianjin EPW weather file at Family_Model/../Weather/Tianjin/...
 - conda environment: energybridge
 
@@ -15,7 +15,7 @@ Run
 ---
 ::
 
-    cd ~/work/EnergyBridge
+    cd <repository-root>
     python examples/run_eplus_agent_loop.py
 
 Optional arguments
@@ -43,7 +43,7 @@ try:
     load_dotenv(PROJECT_ROOT / ".env")
 except Exception:
     pass
-EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/home/hku_user/EnergyPlus-24-1-0"))
+EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/opt/EnergyPlus-24-1-0"))
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -68,7 +68,6 @@ def _find_epw() -> Path:
         # Tianjin EPW in repo (preferred)
         PROJECT_ROOT / "experiments" / "weather" / "epw" / "CHN_TJ_Tianjin.545270_CSWD.epw",
         PROJECT_ROOT / "Family_Model" / "Weather" / "Tianjin" / "CHN_Tianjin.Tianjin.545270_CSWD.epw",
-        Path("/home/ha_agent/work/Family_Model/Weather/Tianjin/CHN_Tianjin.Tianjin.545270_CSWD.epw"),
         # Fallback: EnergyPlus bundled EPW files for functional testing
         EPLUS_ROOT / "WeatherData" / "USA_IL_Chicago-OHare.Intl.AP.725300_TMY3.epw",
         EPLUS_ROOT / "WeatherData" / "USA_CA_San.Francisco.Intl.AP.724940_TMY3.epw",
@@ -117,7 +116,7 @@ def parse_args() -> argparse.Namespace:
                         help="User preference string")
     parser.add_argument("--analyze-output", action="store_true",
                         help="Auto-run analyze_eplus_run.py after EP finishes")
-    parser.add_argument("--eplus-root", default="/home/hku_user/EnergyPlus-24-1-0",
+    parser.add_argument("--eplus-root", default=str(EPLUS_ROOT),
                         help="Path to EnergyPlus installation root")
     return parser.parse_args()
 

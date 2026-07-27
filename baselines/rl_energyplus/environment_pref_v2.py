@@ -26,7 +26,7 @@ import numpy as np
 from gymnasium import spaces
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-EPLUS_ROOT = Path(os.environ.get("EPLUS_ROOT", "/home/hku_user/EnergyPlus-24-1-0"))
+EPLUS_ROOT = Path(os.environ.get("EPLUS_ROOT", "/opt/EnergyPlus-24-1-0"))
 for path in (PROJECT_ROOT, EPLUS_ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
@@ -273,7 +273,7 @@ def _compute_reward_v2(
     comfort_violation = max(0.0, comfort_min - temp_c, temp_c - comfort_max)
     comfort_penalty = w["comfort_mult"] * comfort_violation if occupied else 0.0
 
-    # Energy: base penalty + price uplift. Structure identical to original Xudong design.
+    # Energy: base penalty plus a non-negative price uplift.
     # Tianjin: price_profile=None -> _price_features returns 0.0 -> max(0,0)=0 -> factor=1.0.
     # Germany: _PriceProfileAdapter feeds real price -> factor rises with price.
     # Negative price: max(0,...) keeps factor=1.0, no incentive to increase consumption.

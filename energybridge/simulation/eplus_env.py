@@ -53,7 +53,7 @@ try:
     load_dotenv(_PROJECT_ROOT / ".env")
 except Exception:
     pass
-_DEFAULT_EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/home/hku_user/EnergyPlus-24-1-0"))
+_DEFAULT_EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/opt/EnergyPlus-24-1-0"))
 
 
 def _ensure_eplus_on_path(eplus_root: Path) -> None:

@@ -2,7 +2,7 @@
   "id": "us_chicago_vpp_smoke",
   "name": "US Chicago EPW VPP Smoke Test",
   "idf_path": "Family_Model/Family_Simple_3day.idf",
-  "epw_path": "/home/hku_user/EnergyPlus-24-1-0/WeatherData/USA_IL_Chicago-OHare.Intl.AP.725300_TMY3.epw",
+  "epw_path": "/opt/EnergyPlus-24-1-0/WeatherData/USA_IL_Chicago-OHare.Intl.AP.725300_TMY3.epw",
   "output_dir": "logs/benchmark_runs/us_chicago_vpp_smoke",
   "trigger_hour": 42.0,
   "user_input": "我希望舒适，但可以配合削峰。",

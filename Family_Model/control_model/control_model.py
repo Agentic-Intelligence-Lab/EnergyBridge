@@ -28,7 +28,7 @@ try:
     load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 except Exception:
     pass
-EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/home/hku_user/EnergyPlus-24-1-0"))
+EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/opt/EnergyPlus-24-1-0"))
 if str(EPLUS_ROOT) not in sys.path:
     sys.path.insert(0, str(EPLUS_ROOT))
 

@@ -162,5 +162,5 @@ python run_demo.py
 如果当前环境需要指定 Python，可以使用项目约定环境：
 
 ```bash
-F:\anaconda\envs\myenv\python.exe run_demo.py
+python run_demo.py
 ```

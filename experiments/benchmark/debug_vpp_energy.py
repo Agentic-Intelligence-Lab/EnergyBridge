@@ -7,7 +7,7 @@ try:
     load_dotenv(PROJECT_ROOT / '.env')
 except Exception:
     pass
-EPLUS_ROOT = Path(os.getenv('EPLUS_ROOT', '/home/hku_user/EnergyPlus-24-1-0'))
+EPLUS_ROOT = Path(os.getenv('EPLUS_ROOT', '/opt/EnergyPlus-24-1-0'))
 sys.path.insert(0, str(PROJECT_ROOT / 'experiments' / 'benchmark'))
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(EPLUS_ROOT))

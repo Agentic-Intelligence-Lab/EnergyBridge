@@ -11,9 +11,9 @@ Usage:
 
 Key file format (api_keys.txt):
     # lines starting with # are ignored
-    sk-key-1-xxxxxxx
-    sk-key-2-xxxxxxx
-    sk-key-3-xxxxxxx
+    <YOUR_API_KEY_1>
+    <YOUR_API_KEY_2>
+    <YOUR_API_KEY_3>
 """
 
 from __future__ import annotations

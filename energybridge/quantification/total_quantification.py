@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from statistics import mean
 from typing import Any, Mapping, Sequence
 
-REFERENCE_ROOT = Path("/home/hku_user/work/reference/examples/Family_Env/quantification")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+REFERENCE_ROOT = Path(
+    os.getenv(
+        "ENERGYBRIDGE_REFERENCE_QUANTIFICATION_ROOT",
+        str(PROJECT_ROOT / "data" / "reference_quantification"),
+    )
+)
 DEFAULT_PREDICTIONS = (
     REFERENCE_ROOT
     / "pbase_method_benchmark/A3_conformal_weather_adjusted/predictions_2026-06-15_to_2026-06-17.csv"

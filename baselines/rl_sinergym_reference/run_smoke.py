@@ -40,12 +40,17 @@ def main() -> None:
     parser.add_argument(
         "--reference-examples",
         type=Path,
-        default=Path("/home/hku_user/work/reference/examples"),
+        default=Path(
+            os.getenv(
+                "ENERGYBRIDGE_REFERENCE_EXAMPLES_ROOT",
+                "../reference/examples",
+            )
+        ),
     )
     parser.add_argument(
         "--energyplus",
         type=Path,
-        default=Path("/home/hku_user/EnergyPlus-25-1-0-standard"),
+        default=Path(os.getenv("EPLUS_PATH", "/opt/EnergyPlus-25-1-0")),
     )
     parser.add_argument(
         "--output",

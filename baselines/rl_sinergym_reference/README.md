@@ -1,7 +1,7 @@
 # Reference Sinergym RL Baseline
 
-This baseline reproduces the unmodified base Sinergym environment from
-`/home/hku_user/work/reference/examples/Family_Env`.
+This baseline reproduces the unmodified base Sinergym environment from an
+external `Family_Env` checkout.
 
 - Sinergym: 3.12.0
 - EnergyPlus runtime: 25.1.0 standard Ubuntu 22.04 build
@@ -11,16 +11,14 @@ This baseline reproduces the unmodified base Sinergym environment from
 - Observation space: 28 EnergyPlus/time variables
 - Reward: the reference Sinergym `LinearReward`
 
-The installed special reference build is preserved at
-`/home/hku_user/EnergyPlus-25-1-0`, but it requires Ubuntu 24.04 glibc. The
-standard build at `/home/hku_user/EnergyPlus-25-1-0-standard` runs the same
-reference epJSON successfully on this Ubuntu 22.04 host.
+Set `EPLUS_PATH` to a compatible EnergyPlus 25.1.0 installation and
+`ENERGYBRIDGE_REFERENCE_EXAMPLES_ROOT` to the external examples checkout.
 
 Run a short PPO smoke test:
 
 ```bash
-EPLUS_PATH=/home/hku_user/EnergyPlus-25-1-0-standard \
-/home/hku_user/miniconda3/envs/sinergym_ep24/bin/python \
+EPLUS_PATH=/opt/EnergyPlus-25-1-0 \
+python \
   baselines/rl_sinergym_reference/run_smoke.py \
   --timesteps 288 \
   --output benchmark_results/reference_sinergym_ep25_smoke

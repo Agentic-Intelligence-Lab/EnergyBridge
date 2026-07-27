@@ -12,6 +12,7 @@ Run
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -28,7 +29,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 # ---------------------------------------------------------------------------
 IDF_PATH  = PROJECT_ROOT / "Family_Model" / "Family_Simple_3day.idf"
 EPW_PATH  = PROJECT_ROOT / "experiments" / "weather" / "epw" / "CHN_TJ_Tianjin.545270_CSWD.epw"
-EPLUS_ROOT = Path("/home/hku_user/EnergyPlus-24-1-0")
+EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/opt/EnergyPlus-24-1-0"))
 PERSONA_PATH = PROJECT_ROOT / "energybridge" / "roleplay" / "personas" / "basic_role_a_commuter_price_cooperative.json"
 
 # VPP event injected at 18:00 on each of the 3 days

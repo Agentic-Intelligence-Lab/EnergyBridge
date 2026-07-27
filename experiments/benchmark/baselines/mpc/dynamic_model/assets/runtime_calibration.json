@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "description": "Runtime-only physical calibration used by the MPC adapter.",
+  "regions": {
+    "tianjin": {
+      "envelope_audit": {
+        "adiabatic_area_m2": 110.4089,
+        "air_heat_capacity_kwh_per_k": 0.191892,
+        "assumed_ach": 0.35,
+        "effective_mass_heat_capacity_kwh_per_k": 14.072534,
+        "envelope_heat_capacity_kwh_per_k": 28.145067,
+        "ground_area_m2": 110.4089,
+        "ground_ua_kw_per_k": 0.46587,
+        "infiltration_ua_kw_per_k": 0.067162,
+        "living_floor_area_m2": 110.4089,
+        "living_volume_m3": 572.2414,
+        "opaque_outdoor_area_m2": 317.0958,
+        "opaque_ua_kw_per_k": 0.408565,
+        "total_ua_kw_per_k": 0.994421,
+        "window_area_m2": 33.0146,
+        "window_shgc_area_m2": 13.866125,
+        "window_ua_kw_per_k": 0.052823
+      },
+      "hvac_audit": {
+        "cooling_capacity_kw": 10.0,
+        "cooling_cop": 4.06853,
+        "heating_capacity_kw": 6.303244,
+        "heating_cop": 3.693081,
+        "supplemental_heating_kw": 9.641916,
+        "supply_fan_kw": 0.3729
+      }
+    },
+    "berlin": {
+      "envelope_audit": {
+        "adiabatic_area_m2": 110.4089,
+        "air_heat_capacity_kwh_per_k": 0.191892,
+        "assumed_ach": 0.35,
+        "effective_mass_heat_capacity_kwh_per_k": 14.271832,
+        "envelope_heat_capacity_kwh_per_k": 28.543665,
+        "ground_area_m2": 110.4089,
+        "ground_ua_kw_per_k": 0.030121,
+        "infiltration_ua_kw_per_k": 0.067162,
+        "living_floor_area_m2": 110.4089,
+        "living_volume_m3": 572.2414,
+        "opaque_outdoor_area_m2": 317.0958,
+        "opaque_ua_kw_per_k": 0.392234,
+        "total_ua_kw_per_k": 0.532436,
+        "window_area_m2": 33.0146,
+        "window_shgc_area_m2": 16.507292,
+        "window_ua_kw_per_k": 0.042919
+      },
+      "hvac_audit": {
+        "cooling_capacity_kw": 7.0,
+        "cooling_cop": 4.06853019625951,
+        "heating_capacity_kw": 11.994399459183978,
+        "heating_cop": 3.69308080013886,
+        "supplemental_heating_kw": 6.077808,
+        "supply_fan_kw": 0.4664855604019289
+      }
+    }
+  }
+}

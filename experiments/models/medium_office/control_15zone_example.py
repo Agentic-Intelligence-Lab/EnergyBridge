@@ -32,7 +32,7 @@ try:
     load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 except Exception:
     pass
-EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/home/hku_user/EnergyPlus-24-1-0"))
+EPLUS_ROOT = Path(os.getenv("EPLUS_ROOT", "/opt/EnergyPlus-24-1-0"))
 if str(EPLUS_ROOT) not in sys.path:
     sys.path.insert(0, str(EPLUS_ROOT))
 
@@ -41,8 +41,11 @@ from pyenergyplus.api import EnergyPlusAPI  # noqa: E402
 
 THIS_DIR = Path(__file__).resolve().parent
 DEFAULT_IDF = THIS_DIR / "medium_office_tianjin.idf"
-DEFAULT_WEATHER = Path(
-    "/home/ha_agent/work/supporting/weather/epw/tianjin_cswd.epw"
+DEFAULT_WEATHER = (
+    THIS_DIR.parents[1]
+    / "weather"
+    / "epw"
+    / "CHN_TJ_Tianjin.545270_CSWD.epw"
 )
 DEFAULT_OUTPUT = THIS_DIR / "run_15zone_control_example"
 
