@@ -56,7 +56,7 @@ The currently validated runtime uses:
 - Python 3.10 or newer;
 - EnergyPlus 24.1.0;
 - six EnergyPlus zone timesteps per hour;
-- the Python packages pinned in `requirements.txt`.
+- the Python dependencies listed in `requirements.txt`.
 
 Create an environment:
 
@@ -97,6 +97,19 @@ committed.
 
 The benchmark configuration uses `--mpc-horizon 6`. In the implementation this
 means six 10-minute control steps, or one hour; it does not mean six hours.
+
+## Quick validation
+
+Run the release validator and API-free smoke tests before launching a
+simulator job:
+
+```bash
+bash reproducibility/run_release_checks.sh
+```
+
+This checks the deidentified data package and the capacity, consent,
+counterfactual-baseline, event-memory, and PPO interfaces without starting
+EnergyPlus or contacting an external model service.
 
 ## 1. Human questionnaire data
 
@@ -180,7 +193,7 @@ The wrapper launches 840 independent one-day simulations:
 - two months;
 - two regions;
 - five households;
-- seven selected event days;
+- the first seven configured event days;
 - five evaluated methods plus the `no_dr` counterfactual reference.
 
 The first monthly matrix uses:
@@ -244,7 +257,7 @@ Use each script's `--help` output to select a new result directory under
 | Capacity/shed evaluator | `experiments/benchmark/run_capacity_shed_evaluation.py` |
 | Importance-weight analysis | `importance_sampling/experiment_is_weight_improvements.py` |
 | Supplementary paired/resource analysis | `experiments/benchmark/analyze_supplementary_evidence.py` |
-| PPO training | `scripts/train_rl_ppo_pref_v2.py` |
+| PPO training | `python -m baselines.rl_energyplus.train_pref_v2` |
 
 Any of these scripts must write outputs below `generated_results/` or another
 ignored external directory. Pre-generated IS weights and summaries are not
@@ -264,16 +277,16 @@ part of the anonymous release profile.
 
 ## Reproducibility limits
 
-EnergyPlus and deterministic controller paths can be repeated under the pinned
-software and inputs. API-backed EnergyBridge, HEMA, and role-play generation
-can change when the external model service changes, even with fixed prompts
-and sampling parameters. A new run is therefore a from-scratch reproduction,
-not a promise of byte-identical historical logs.
+EnergyPlus and deterministic controller paths can be repeated when software
+versions and inputs are held fixed. API-backed EnergyBridge, HEMA, and
+role-play generation can change when the external model service changes, even
+with fixed prompts and sampling parameters. A new run is therefore a
+from-scratch reproduction, not a promise of byte-identical historical logs.
 
 Before interpreting a rerun, record:
 
 - Git commit of this repository and the HEMA checkout;
-- EnergyPlus version and Python dependency lock;
+- EnergyPlus version and `python -m pip freeze` output;
 - model/provider identifiers and generation settings;
 - region, start date, event input, method list, and random seeds;
 - whether the run resumed from prior local outputs.

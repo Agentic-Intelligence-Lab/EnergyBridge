@@ -10,7 +10,6 @@ Users must not:
 - infer or publish attributes about individual participants;
 - represent assigned role-play personas as participants' actual households.
 
-The repository does not assign a standalone data license. The submitting
-authors should add the approved data license and the venue-required ethics
-statement before public release. Code licensing and data licensing should be
-handled separately.
+No standalone data license is included in this review artifact. Reuse or
+redistribution must follow the applicable review terms and any later published
+data license. Code and data licensing are handled separately.

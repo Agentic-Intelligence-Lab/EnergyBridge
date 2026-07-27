@@ -109,7 +109,6 @@ durations, free text, exact ages, participant-level geography, and
 participant-level gender must never be committed or attached to an anonymous
 release.
 
-Before public release, the submitting authors must confirm that study consent
-and the applicable ethics process permit distribution of deidentified
-response microdata. No institutional name or approval identifier is stored
-during double-blind review.
+The review artifact does not encode institutional or approval identifiers.
+Consent, ethics, and data-license terms for any later public distribution must
+be documented separately from the deidentified records.
