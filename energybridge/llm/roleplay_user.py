@@ -517,7 +517,10 @@ class RoleplayUserSimulator:
                 "You are the household described by this resume reflecting on one completed or projected home-energy "
                 "event. Judge the experience as that household would: what felt comfortable, useful, disruptive, "
                 "trustworthy, or unresolved. Safety and service facts are factual constraints, but there is no fixed "
-                "score recipe. Keep the feedback natural, specific, and concise. Return valid JSON only."
+                "score recipe. A pre-event willingness judgement and a post-event satisfaction rating describe "
+                "different moments: keep them directionally coherent unless the observed execution gives the household "
+                "a real reason to change its mind. When it does, name that new evidence rather than silently changing "
+                "attitude. Keep the feedback natural, specific, and concise. Return valid JSON only."
             )
             context_payload = {
                 "turn": turn_index,

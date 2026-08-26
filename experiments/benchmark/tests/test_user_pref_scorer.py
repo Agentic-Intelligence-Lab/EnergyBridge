@@ -180,6 +180,43 @@ def test_v2_preserves_authored_score_comment_and_audits_acceptance(monkeypatch) 
     assert audit["acceptance_probability"] == 0.37
     assert audit["normalized_authored_rating"] == 0.25
     assert audit["signed_rating_minus_acceptance"] == -0.12
+    assert audit["post_event_evidence"]["offer_judgement_phase"] == "pre_event_proposal"
+    assert audit["post_event_evidence"]["satisfaction_phase"] == "post_event_experience"
+
+
+def test_v2_higher_post_event_rating_records_new_outcome_basis_without_remap(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")
+    result = _calibrated_score(
+        0.66,
+        authored_score=5,
+        authored_comment=(
+            "Comfort held, the household services completed, and the appliance event was avoided."
+        ),
+        accepted=True,
+        achieved=True,
+        mean_temp_c=25.0,
+        pmv_ok_fraction=0.95,
+    )
+
+    assert result["score"] == 5
+    assert result["comment"].startswith("Comfort held")
+    audit = result["score_consistency_audit"]
+    assert audit["acceptance_probability"] == 0.66
+    assert audit["normalized_authored_rating"] == 1.0
+    assert audit["signed_rating_minus_acceptance"] == 0.34
+    assert audit["score_was_posthoc_remapped"] is False
+    assert audit["phase_interpretation"] == (
+        "higher_post_event_rating_has_new_positive_outcome_evidence"
+    )
+    evidence = audit["post_event_evidence"]
+    assert evidence["realised_plan_basis"] == "accepted_offered_plan"
+    assert evidence["positive_outcome_evidence"] == [
+        "observed_comfort_preserved",
+        "observed_vpp_service_achieved",
+    ]
+    assert evidence["negative_outcome_evidence"] == []
 
 
 def test_v2_satisfaction_audit_is_method_blind_for_identical_evidence(monkeypatch) -> None:

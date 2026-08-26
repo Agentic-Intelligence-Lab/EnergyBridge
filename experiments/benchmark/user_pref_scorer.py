@@ -513,6 +513,73 @@ def _gate_acceptance_probability(gate: dict | None) -> float | None:
     return None
 
 
+def _post_event_consistency_evidence(
+    *,
+    gate: dict,
+    mean_temp_c: float,
+    pmv_ok_fraction: float,
+    energy_kwh_per_day: float,
+    pref_min: float,
+    pref_max: float,
+    pref_tol: float,
+    vpp_result_context: dict | None,
+    severe_service_issue: bool,
+) -> dict:
+    """Describe new outcome evidence without turning it into a score formula.
+
+    Consent is a judgement before execution, while satisfaction is authored
+    after the event.  Keeping the phases explicit lets evaluation distinguish a
+    genuine change of mind from an unexplained contradiction.  This function is
+    deliberately descriptive: it neither assigns a rating nor changes one.
+    """
+    tolerance = max(0.0, float(pref_tol or 0.0))
+    within_preferred = float(pref_min) <= float(mean_temp_c) <= float(pref_max)
+    within_tolerance = (
+        float(pref_min) - tolerance
+        <= float(mean_temp_c)
+        <= float(pref_max) + tolerance
+    )
+    vpp_context = vpp_result_context if isinstance(vpp_result_context, dict) else {}
+    achieved = vpp_context.get("achieved")
+    accepted = gate.get("accepted") if "accepted" in gate else None
+
+    positive: list[str] = []
+    negative: list[str] = []
+    if within_preferred and float(pmv_ok_fraction) >= 0.8:
+        positive.append("observed_comfort_preserved")
+    elif not within_tolerance or float(pmv_ok_fraction) < 0.5:
+        negative.append("observed_comfort_shortfall")
+    if achieved is True:
+        positive.append("observed_vpp_service_achieved")
+    elif achieved is False:
+        negative.append("observed_vpp_service_not_achieved")
+    if severe_service_issue:
+        negative.append("observed_household_service_issue")
+
+    return {
+        "offer_judgement_phase": "pre_event_proposal",
+        "satisfaction_phase": "post_event_experience",
+        "realised_plan_basis": (
+            "accepted_offered_plan"
+            if accepted is True
+            else "ordinary_fallback_after_rejection"
+            if accepted is False
+            else "execution_basis_unknown"
+        ),
+        "comfort": {
+            "mean_temp_c": round(float(mean_temp_c), 4),
+            "pmv_ok_fraction": round(float(pmv_ok_fraction), 6),
+            "within_preferred_range": within_preferred,
+            "within_preference_tolerance": within_tolerance,
+        },
+        "energy_kwh_per_day": round(float(energy_kwh_per_day), 6),
+        "vpp_achieved": achieved if isinstance(achieved, bool) else None,
+        "severe_service_issue": bool(severe_service_issue),
+        "positive_outcome_evidence": positive,
+        "negative_outcome_evidence": negative,
+    }
+
+
 def _hard_vpp_component(vpp_result_context: dict | None, gate: dict | None, mode: str) -> float:
     ctx = vpp_result_context or {}
     gate = gate or {}
@@ -635,6 +702,32 @@ def _calibrate_roleplay_score(
         )
         probability = _gate_acceptance_probability(gate) if is_live_judgement else None
         rating_willingness = (authored_score - 1.0) / 4.0
+        outcome_evidence = _post_event_consistency_evidence(
+            gate=gate,
+            mean_temp_c=mean_temp_c,
+            pmv_ok_fraction=pmv_ok_fraction,
+            energy_kwh_per_day=energy_kwh_per_day,
+            pref_min=pref_min,
+            pref_max=pref_max,
+            pref_tol=pref_tol,
+            vpp_result_context=vpp_result_context,
+            severe_service_issue=severe_service_issue,
+        )
+        signed_gap = (
+            round(rating_willingness - probability, 6)
+            if probability is not None
+            else None
+        )
+        if signed_gap is None:
+            interpretation = "no_live_pre_event_judgement_to_compare"
+        elif signed_gap > 0 and outcome_evidence["positive_outcome_evidence"]:
+            interpretation = "higher_post_event_rating_has_new_positive_outcome_evidence"
+        elif signed_gap < 0 and outcome_evidence["negative_outcome_evidence"]:
+            interpretation = "lower_post_event_rating_has_new_negative_outcome_evidence"
+        elif signed_gap == 0:
+            interpretation = "post_event_rating_matches_pre_event_willingness"
+        else:
+            interpretation = "rating_difference_not_explained_by_observed_outcome_direction"
         result["score_consistency_audit"] = {
             "version": "prompt_owned_acceptance_satisfaction_v2",
             "method_blind": True,
@@ -650,11 +743,9 @@ def _calibrate_roleplay_score(
             "live_acceptance_judgement": is_live_judgement,
             "acceptance_probability": probability,
             "normalized_authored_rating": round(rating_willingness, 6),
-            "signed_rating_minus_acceptance": (
-                round(rating_willingness - probability, 6)
-                if probability is not None
-                else None
-            ),
+            "signed_rating_minus_acceptance": signed_gap,
+            "phase_interpretation": interpretation,
+            "post_event_evidence": outcome_evidence,
         }
         return result
 
