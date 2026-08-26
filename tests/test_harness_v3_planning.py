@@ -8,6 +8,7 @@ from pathlib import Path
 from energybridge.harness.planning import (
     PLANNING_SCHEMA_VERSION,
     analyze_pareto,
+    build_decision_episode_record,
     build_planning_prompts,
     derive_planning_constraints,
     evaluate_planning_response,
@@ -404,6 +405,58 @@ def test_parse_portfolio_preserves_open_candidate_metadata_and_selection() -> No
     assert gentle["counterfactuals"][0]["prefer"] == "deeper response"
     assert parsed["parse_errors"] == []
     assert parsed["legacy_single_plan"] is False
+
+
+def test_decision_episode_preserves_model_alternatives_without_ranking_or_advisor() -> None:
+    inputs = _inputs()
+    raw = {
+        "candidate_plans": [
+            {
+                "candidate_id": "gentle",
+                "plan": {"setpoint": 26.0, "appliances": {"washer_start_h": 20.0}},
+                "objective_estimates": {
+                    "comfort": {"value": "small change", "confidence": 0.7}
+                },
+                "uncertainty": [{"factor": "arrival time", "effect": "may change fit"}],
+                "counterfactuals": [{"if": "home remains empty", "prefer": "deeper"}],
+                "evidence_citations": ["/observable_profile/comfort"],
+            },
+            {
+                "candidate_id": "deeper",
+                "plan": {"setpoint": 27.0, "appliances": {"washer_start_h": 21.0}},
+                "objective_estimates": {
+                    "cost": {"value": -0.8, "unit": "normalized", "confidence": 0.6}
+                },
+            },
+        ],
+        "selected_candidate_id": "gentle",
+        "selection_reason": "The current comfort evidence is stronger than the uncertain saving.",
+        "information_requests": [
+            {
+                "question": "Will anyone return before 20:00?",
+                "decision_relevance": "It changes whether the deeper plan protects comfort.",
+                "evidence_gap_citations": ["/observable_profile/active_questions/0"],
+            }
+        ],
+    }
+    resolution = evaluate_planning_response(
+        raw,
+        **inputs,
+        advisor_candidates=[{"plan": {"setpoint": 24.0}, "objectives": {"cost": 99}}],
+    )
+
+    record = build_decision_episode_record(resolution)
+
+    assert record["selected_candidate_id"] == "gentle"
+    assert record["candidate_count"] == 2
+    assert [item["candidate_id"] for item in record["candidates"]] == [
+        "gentle",
+        "deeper",
+    ]
+    assert record["candidates"][0]["chosen_in_response"] is True
+    assert record["candidates"][1]["validated_plan"]["setpoint"] == 27.0
+    assert record["automatic_ranking_applied"] is False
+    assert "advisor_01" not in json.dumps(record)
 
 
 def test_parse_legacy_single_plan_is_backwards_compatible() -> None:

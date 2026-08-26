@@ -9451,6 +9451,12 @@ def _update_agent_v3_memory(loop, event_result: dict, feedback_text: str) -> Non
         "preference_observations": deepcopy(event_result.get("preference_observations") or []),
         "planning_evidence": selected_planning_evidence,
     }
+    if portfolio_resolution:
+        from energybridge.harness.planning import build_decision_episode_record
+
+        decision_record = build_decision_episode_record(portfolio_resolution)
+        if decision_record:
+            outcome["decision_record"] = decision_record
     attitude_transition = _adaptive_v3_attitude_transition(
         event_result.get("score_consistency_audit")
     )

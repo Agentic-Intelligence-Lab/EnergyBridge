@@ -181,6 +181,23 @@ tradeoff claim, the actual actuator exposure, and the household response. This
 supports calibration from evidence without converting one score into a fixed
 household rule.
 
+The episode also keeps a bounded decision record containing the base model's
+feasible alternatives, its chosen candidate, its own selection reason,
+uncertainties, and counterfactual conditions. Anonymous advisor candidates are
+not recast as model choices, and the record contains no harness-generated
+ranking. On a later similar event, the model can therefore recall not only what
+happened but which genuine alternative it declined and what new fact could have
+changed its decision. The prompt projection keeps at most a small relevant
+subset under the normal memory character budget.
+
+Pre-event willingness and post-event satisfaction are stored as two distinct
+observations. A narrow attitude-transition record carries the continuous
+willingness, the independently authored post-event rating, their signed
+difference, and the newly observed comfort/service/VPP evidence. It is written
+only for a live role-play judgement, never for a fallback prior. This allows a
+household to become more or less satisfied after seeing execution while making
+that change of mind auditable; no formula remaps either judgement.
+
 `energybridge.outcome_calibration.v1` compares that bound forecast with later
 physical appliance, service, and comfort measurements only when execution was
 observed and causally attributed. Relevant records are summarized as

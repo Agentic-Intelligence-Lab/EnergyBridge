@@ -321,6 +321,7 @@ _OUTCOME_FIELDS = {
     "planning_evidence",
     "planning_calibration",
     "attitude_transition",
+    "decision_record",
 }
 
 _NEGATIVE_TERMS = (
@@ -2151,6 +2152,9 @@ def _compact_episode(episode: Mapping[str, Any]) -> dict[str, Any]:
     attitude_transition = observations.get("attitude_transition")
     if isinstance(attitude_transition, Mapping):
         compact_outcome["attitude_transition"] = _safe(attitude_transition)
+    decision_record = observations.get("decision_record")
+    if isinstance(decision_record, Mapping):
+        compact_outcome["decision_record"] = _safe(decision_record)
     return {
         "episode_id": episode.get("episode_id"),
         "context_signature": (episode.get("context") or {}).get("context_signature"),
@@ -2253,6 +2257,37 @@ def compact_memory_context_v3(
             if len(str(episode.get("feedback", ""))) > 160:
                 episode["feedback"] = str(episode["feedback"])[:157] + "..."
                 return True
+            outcome = episode.get("outcome")
+            decision = (
+                outcome.get("decision_record")
+                if isinstance(outcome, Mapping)
+                and isinstance(outcome.get("decision_record"), Mapping)
+                else None
+            )
+            if isinstance(decision, dict):
+                candidates = list(decision.get("candidates") or [])
+                removable = next(
+                    (
+                        index
+                        for index in range(len(candidates) - 1, -1, -1)
+                        if not bool((candidates[index] or {}).get("chosen_in_response"))
+                    ),
+                    None,
+                )
+                if len(candidates) > 2 and removable is not None:
+                    candidates.pop(removable)
+                    decision["candidates"] = candidates
+                    decision["memory_projection_truncated"] = True
+                    return True
+                for candidate in reversed(candidates):
+                    if not isinstance(candidate, dict):
+                        continue
+                    for field in ("uncertainty", "counterfactuals", "objective_estimates"):
+                        value = candidate.get(field)
+                        if value not in (None, {}, []):
+                            candidate[field] = [] if isinstance(value, list) else {}
+                            decision["memory_projection_truncated"] = True
+                            return True
             for plan_key in ("validated_plan", "executed_plan"):
                 plan = episode.get(plan_key)
                 if isinstance(plan, Mapping) and plan:

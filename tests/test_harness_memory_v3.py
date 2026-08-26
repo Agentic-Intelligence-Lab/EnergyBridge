@@ -781,6 +781,48 @@ def test_compact_memory_preserves_pre_event_to_post_event_attitude_evidence() ->
     ] == "observational_executed_plan"
 
 
+def test_compact_memory_preserves_model_owned_decision_alternatives() -> None:
+    memory = initialize_memory_v3(_questionnaire(), household_id="home-decision-record")
+    context = _context("decision-record-event")
+    decision_record = {
+        "schema_version": "energybridge.observable_decision_episode.v1",
+        "selection_status": "selected",
+        "selected_candidate_id": "gentle",
+        "selection_reason": "Comfort evidence was stronger than the uncertain saving.",
+        "candidate_count": 2,
+        "candidates": [
+            {
+                "candidate_id": "gentle",
+                "chosen_in_response": True,
+                "feasible": True,
+                "validated_plan": {"setpoint": 26.0},
+                "counterfactuals": [],
+            },
+            {
+                "candidate_id": "deeper",
+                "chosen_in_response": False,
+                "feasible": True,
+                "validated_plan": {"setpoint": 27.0},
+                "counterfactuals": [
+                    {"if": "home remains empty", "prefer": "deeper"}
+                ],
+            },
+        ],
+        "automatic_ranking_applied": False,
+    }
+    memory = update_memory_v3(
+        memory,
+        context,
+        {"overall_score": 4, "decision_record": decision_record},
+    )
+
+    capsule = compact_memory_context_v3(memory, context, k=1, max_chars=6000)
+    remembered = capsule["relevant_episodes"][0]["outcome"]["decision_record"]
+    assert remembered == decision_record
+    assert remembered["candidates"][1]["counterfactuals"][0]["prefer"] == "deeper"
+    assert remembered["automatic_ranking_applied"] is False
+
+
 def test_compact_memory_does_not_calibrate_unexecuted_outcome() -> None:
     memory = initialize_memory_v3(_questionnaire(), household_id="home-no-execution")
     context = _context("not-executed", executed_setpoint=None)

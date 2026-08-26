@@ -1750,10 +1750,117 @@ def evaluate_planning_response(
     }
 
 
+def build_decision_episode_record(portfolio_resolution: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Compact a model-owned portfolio decision for later episodic recall.
+
+    The record preserves alternatives and the model's own selection rationale,
+    but performs no scoring, ranking, or hindsight policy update.  Advisor
+    candidates are excluded because they were evidence, not model-authored
+    choices.  Physical outcome attribution remains a separate memory stage.
+    """
+    if not isinstance(portfolio_resolution, Mapping):
+        return {}
+    raw_audit = portfolio_resolution.get("final_portfolio_audit")
+    if not isinstance(raw_audit, Mapping):
+        raw_audit = portfolio_resolution.get("portfolio_audit")
+    if not isinstance(raw_audit, Mapping):
+        raw_audit = portfolio_resolution
+    raw_selection = raw_audit.get("model_selection")
+    raw_selection = raw_selection if isinstance(raw_selection, Mapping) else {}
+    selected_id_raw = raw_selection.get(
+        "requested_candidate_id",
+        portfolio_resolution.get("selected_candidate_id"),
+    )
+    selected_id = _sanitize_model_visible_text(selected_id_raw).strip()[:240]
+    selection_reason = _sanitize_model_visible_text(
+        raw_selection.get("selection_reason", "")
+    ).strip()[:1200]
+    selection_status = _normal_key(
+        raw_selection.get("status", portfolio_resolution.get("status"))
+    )
+    candidates: list[dict[str, Any]] = []
+    for raw_lifecycle in list(raw_audit.get("candidate_lifecycles") or [])[:8]:
+        if (
+            not isinstance(raw_lifecycle, Mapping)
+            or str(raw_lifecycle.get("origin")) != "model"
+        ):
+            continue
+        projected = _sanitize_planning_input({"candidate": raw_lifecycle})
+        lifecycle = (
+            projected.get("candidate")
+            if isinstance(projected, Mapping)
+            and isinstance(projected.get("candidate"), Mapping)
+            else {}
+        )
+        candidate_id = _sanitize_model_visible_text(
+            raw_lifecycle.get("candidate_id") or "candidate"
+        ).strip()[:240] or "candidate"
+        feasible = bool(lifecycle.get("feasible"))
+        validated_snapshot = lifecycle.get("validated_snapshot")
+        compact_plan = (
+            {
+                key: deepcopy(validated_snapshot[key])
+                for key in ("setpoint", "appliances", "next_check_hour", "duration_minutes")
+                if key in validated_snapshot
+            }
+            if feasible and isinstance(validated_snapshot, Mapping)
+            else None
+        )
+        candidate_record: dict[str, Any] = {
+            "candidate_id": candidate_id,
+            "chosen_in_response": str(candidate_id) == str(selected_id),
+            "feasible": feasible,
+            "status": lifecycle.get("status"),
+            "validated_plan": compact_plan,
+            "validated_plan_fingerprint": (
+                _fingerprint(lifecycle.get("validated_snapshot"))
+                if feasible and isinstance(lifecycle.get("validated_snapshot"), Mapping)
+                else None
+            ),
+            "objective_estimates": deepcopy(lifecycle.get("objective_estimates") or {}),
+            "uncertainty": deepcopy(list(lifecycle.get("uncertainty") or [])[:12]),
+            "counterfactuals": deepcopy(list(lifecycle.get("counterfactuals") or [])[:12]),
+            "evidence_citations": deepcopy(list(lifecycle.get("evidence_citations") or [])[:16]),
+        }
+        if not feasible:
+            candidate_record["unresolved_constraints"] = [
+                {
+                    "constraint_id": item.get("constraint_id"),
+                    "path": item.get("path"),
+                    "message": item.get("message"),
+                }
+                for item in list(lifecycle.get("violations") or [])[:12]
+                if isinstance(item, Mapping) and not item.get("repaired")
+            ]
+        candidates.append(candidate_record)
+    if not candidates:
+        return {}
+    information = raw_audit.get("information_acquisition")
+    information = information if isinstance(information, Mapping) else {}
+    grounded_requests = [
+        _sanitize_planning_input(dict(item))
+        for item in list(information.get("requests") or [])[:8]
+        if isinstance(item, Mapping)
+        and item.get("grounded_in_supplied_unknown")
+        and item.get("decision_relevance_stated")
+    ]
+    return {
+        "schema_version": "energybridge.observable_decision_episode.v1",
+        "selection_status": selection_status,
+        "selected_candidate_id": selected_id,
+        "selection_reason": selection_reason,
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+        "grounded_information_requests": grounded_requests,
+        "automatic_ranking_applied": False,
+    }
+
+
 __all__ = [
     "PLANNING_SCHEMA_VERSION",
     "PLAN_LIFECYCLE_VERSION",
     "anonymize_advisor_candidates",
+    "build_decision_episode_record",
     "derive_planning_constraints",
     "build_planning_prompts",
     "normalize_information_requests",
