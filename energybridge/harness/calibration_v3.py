@@ -172,6 +172,96 @@ def build_outcome_calibration_record(
     }, ensure_ascii=False, allow_nan=False, default=str))
 
 
+def build_consensus_outcome_calibration_record(
+    planning_evidences: Sequence[Mapping[str, Any]] | None,
+    outcome: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Calibrate only signals forecast consistently across an exposure sequence.
+
+    An event may have several actuator dispatches and therefore several bound
+    pre-action forecasts.  Event-level measurements cannot identify which one
+    caused a residual.  This function retains a signal only when every bound
+    forecast supplies the same prediction; disagreements stay explicit and do
+    not update calibration memory.
+    """
+    records = [
+        build_outcome_calibration_record(item, outcome)
+        for item in list(planning_evidences or [])
+        if isinstance(item, Mapping)
+    ]
+    groups: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+    for record in records:
+        seen: set[tuple[str, str]] = set()
+        for observation in list(record.get("observations") or []):
+            if not isinstance(observation, Mapping):
+                continue
+            key = (
+                str(observation.get("signal") or "unspecified"),
+                str(observation.get("device") or ""),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            groups.setdefault(key, []).append(observation)
+
+    observations: list[dict[str, Any]] = []
+    ambiguous: list[dict[str, Any]] = []
+    for (signal, device), items in sorted(groups.items()):
+        forecasts = {
+            json.dumps(item.get("forecast"), ensure_ascii=False, sort_keys=True, default=str)
+            for item in items
+        }
+        complete = len(items) == len(records)
+        if not complete or len(forecasts) != 1:
+            ambiguous.append({
+                "signal": signal,
+                "device": device or None,
+                "reason": (
+                    "forecast_missing_from_part_of_execution_sequence"
+                    if not complete
+                    else "bound_forecasts_disagree"
+                ),
+                "source_forecast_count": len(items),
+                "execution_forecast_count": len(records),
+            })
+            continue
+        first = items[0]
+        evidence_paths = list(dict.fromkeys(
+            str(path)
+            for item in items
+            for path in list(item.get("evidence_paths") or [])
+        ))
+        observation = {
+            "signal": signal,
+            "forecast": deepcopy(first.get("forecast")),
+            "measurement": deepcopy(first.get("measurement")),
+            "agreement": bool(first.get("agreement")),
+            "evidence_paths": evidence_paths,
+            "forecast_basis": "consensus_across_bound_execution_forecasts",
+            "source_forecast_count": len(items),
+        }
+        if device:
+            observation["device"] = device
+        observations.append(observation)
+
+    fingerprints = list(dict.fromkeys(
+        str(record.get("plan_fingerprint"))
+        for record in records
+        if record.get("plan_fingerprint")
+    ))
+    return {
+        "schema_version": OUTCOME_CALIBRATION_VERSION,
+        "calibration_basis": "signal_consensus_across_execution_sequence",
+        "source_forecast_count": len(records),
+        "source_plan_fingerprints": fingerprints,
+        "observations": observations,
+        "observation_count": len(observations),
+        "ambiguous_signals": ambiguous,
+        "policy_update_performed": False,
+        "ranking_performed": False,
+    }
+
+
 def build_calibration_capsule(
     records: Sequence[Mapping[str, Any]] | None,
     *,
@@ -233,5 +323,6 @@ __all__ = [
     "OUTCOME_CALIBRATION_VERSION",
     "CALIBRATION_CAPSULE_VERSION",
     "build_outcome_calibration_record",
+    "build_consensus_outcome_calibration_record",
     "build_calibration_capsule",
 ]

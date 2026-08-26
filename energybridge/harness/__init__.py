@@ -44,6 +44,7 @@ from .calibration_v3 import (
     CALIBRATION_CAPSULE_VERSION,
     OUTCOME_CALIBRATION_VERSION,
     build_calibration_capsule,
+    build_consensus_outcome_calibration_record,
     build_outcome_calibration_record,
 )
 from .energy_tools_v3 import (
@@ -107,6 +108,7 @@ __all__ = [
     "CALIBRATION_CAPSULE_VERSION",
     "OUTCOME_CALIBRATION_VERSION",
     "build_calibration_capsule",
+    "build_consensus_outcome_calibration_record",
     "build_outcome_calibration_record",
     "ENERGY_IMPACT_SCHEMA_VERSION",
     "FLEXIBLE_LOAD_OPPORTUNITY_VERSION",

@@ -155,6 +155,13 @@ learned controller weight, scalar reward, method rank, or recommended action.
 The base model remains responsible for interpreting how much confidence those
 observations warrant in the current context.
 
+If one event contains several distinct actuator-bound forecasts, calibration
+is performed per signal rather than assigned to an arbitrary final plan. A
+signal is retained only when every bound forecast supplies the same prediction;
+forecast disagreement or missing coverage remains explicit and uncalibrated.
+This preserves useful invariant evidence without claiming causal credit for a
+single member of a multi-dispatch sequence.
+
 Consent is also treated as a commitment. A feasible pre-event plan that the
 household accepted is retained at event start instead of being silently
 replaced by a fresh model proposal. Replanning and renewed consent occur only

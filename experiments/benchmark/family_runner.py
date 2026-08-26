@@ -9018,7 +9018,24 @@ def _update_agent_v3_memory(loop, event_result: dict, feedback_text: str) -> Non
     if not execution_observed:
         calibration_status = "not_calibrated_without_execution_evidence"
     elif len(exposure_evidence_by_fingerprint) > 1:
-        calibration_status = "not_calibrated_multiple_forecast_exposures"
+        from energybridge.harness.calibration_v3 import (
+            build_consensus_outcome_calibration_record,
+        )
+
+        planning_calibration = build_consensus_outcome_calibration_record(
+            list(exposure_evidence_by_fingerprint.values()),
+            {
+                "appliance_summary": deepcopy(event_result.get("appliance_summary") or {}),
+                "comfort_violation_minutes": event_result.get("comfort_violation_minutes"),
+                "target_achieved": event_result.get("target_achieved"),
+                "actual_kwh": event_result.get("actual_kwh"),
+            },
+        )
+        calibration_status = (
+            "observational_execution_consensus_calibrated"
+            if planning_calibration.get("observation_count")
+            else "not_calibrated_without_forecast_consensus"
+        )
     elif calibration_evidence:
         from energybridge.harness.calibration_v3 import build_outcome_calibration_record
 
