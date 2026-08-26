@@ -14,6 +14,7 @@ from .roleplay import (
     normalize_roleplay_acceptance_response,
     sanitize_household_resume_for_roleplay,
     sanitize_roleplay_text,
+    validate_roleplay_response_against_verified_facts,
 )
 from .memory_v3 import (
     EVENT_CONTEXT_V3_VERSION,
@@ -88,6 +89,7 @@ __all__ = [
     "normalize_roleplay_acceptance_response",
     "sanitize_household_resume_for_roleplay",
     "sanitize_roleplay_text",
+    "validate_roleplay_response_against_verified_facts",
     "EVENT_CONTEXT_V3_VERSION",
     "MEMORY_V3_VERSION",
     "build_event_context_v3",

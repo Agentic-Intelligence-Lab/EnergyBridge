@@ -900,7 +900,8 @@ def build_roleplay_acceptance_prompts(
         "The final probability is how often this household would accept the unchanged offer in 100 comparable situations. The prior "
         "is a starting point, not a floor. Use short signed adjustments only for facts that really change willingness—usually 2-4, "
         "or an empty list when nothing does. Baseline plus adjustments must equal the final probability; do not apply hidden clipping "
-        "or canned deltas. Write every probability and delta as a decimal probability unit, never as a percentage or percentage-point "
+        "or canned deltas. Each signed adjustment must cite evidence whose effect points in the same direction. Write every probability "
+        "and delta as a decimal probability unit, never as a percentage or percentage-point "
         "number. Keep decision, probability, first-person reason, and feedback consistent. A counteroffer names the concrete "
         "change required and credits it only in the counterfactual. Cite 2-4 concise, non-duplicate evidence items by E1, E2, and so "
         "on. A hard safety veto cannot be waived. Return valid JSON only."
@@ -1187,13 +1188,122 @@ def _normalize_valid_response(
         response["normalization"]["expected_baseline"] = expected_baseline
     response["normalization"]["adjustment_sum"] = adjustment_sum
     response["normalization"]["arithmetic_residual"] = arithmetic_residual
-    # Evidence-effect labels are explanatory metadata authored by the same
-    # model, not a second decision channel.  Preserve and audit a mismatch
-    # instead of discarding an otherwise coherent probability judgement.  The
-    # arithmetic contract and evidence-reference existence remain strict.
-    response["normalization"]["evidence_sign_consistent"] = not evidence_sign_mismatches
-    response["normalization"]["evidence_sign_mismatches"] = evidence_sign_mismatches
+    if evidence_sign_mismatches:
+        raise RoleplayResponseError(
+            "signed adjustments must cite evidence whose effect has the same direction "
+            f"({json.dumps(evidence_sign_mismatches, ensure_ascii=False, sort_keys=True)})"
+        )
+    response["normalization"]["evidence_sign_consistent"] = True
+    response["normalization"]["evidence_sign_mismatches"] = []
     return response
+
+
+_APPLIANCE_CONFLICT_CLAIM_PATTERNS = (
+    re.compile(
+        r"\b(?:washer|dishwasher|dryer|water[\s_-]*heater|ev|vehicle|appliance)\b"
+        r"[^.!?]{0,100}\b(?:runs?|starts?|operates?|charges?|preheats?|is\s+scheduled)\b"
+        r"[^.!?]{0,60}\b(?:during|inside|within)\b"
+        r"[^.!?]{0,50}\b(?:event|window|avoided\s+hour|vpp)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:washer|dishwasher|dryer|water[\s_-]*heater|ev|vehicle|appliance)\b"
+        r"[^.!?]{0,100}\b(?:overlaps?|conflicts?)\b"
+        r"[^.!?]{0,50}\b(?:event|window|vpp)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:move|shift|reschedule|delay)\b[^.!?]{0,100}"
+        r"\b(?:washer|dishwasher|dryer|water[\s_-]*heater|ev|vehicle|appliance)\b"
+        r"[^.!?]{0,80}\b(?:out\s+of|outside|after)\b"
+        r"[^.!?]{0,50}(?:\b(?:event|window|vpp|avoided\s+hour)\b|\d{1,2}:\d{2})",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _claims_appliance_conflict(text: Any) -> bool:
+    value = str(text or "").strip()
+    if not value:
+        return False
+    for index, pattern in enumerate(_APPLIANCE_CONFLICT_CLAIM_PATTERNS):
+        match = pattern.search(value)
+        if match is None:
+            continue
+        # The first two patterns can also match an explicitly negated factual
+        # statement.  The third is a requested move out of the window and is
+        # itself the unsupported counterfactual when the checked conflict set
+        # is empty.
+        if index < 2 and re.search(
+            r"\b(?:does\s+not|doesn't|is\s+not|isn't|did\s+not|didn't)\b",
+            match.group(0),
+            re.IGNORECASE,
+        ):
+            continue
+        return True
+    return False
+
+
+def validate_roleplay_response_against_verified_facts(
+    response: Mapping[str, Any],
+    verified_plan_facts: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Reject factual contradictions without scoring or reshaping consent.
+
+    The role-play model remains responsible for every judgement and signed
+    adjustment.  This validator only prevents an assertion that an appliance
+    overlaps the event after the physical overlap checker has established an
+    empty conflict set.  Invalid answers can therefore be retried by the LLM
+    client instead of becoming benchmark observations.
+    """
+    out = deepcopy(dict(response))
+    facts = _visible_verified_plan_facts(verified_plan_facts)
+    conflicts_known = "vpp_conflicts" in facts
+    conflicts = list(facts.get("vpp_conflicts") or [])
+    contradictions: list[dict[str, str]] = []
+    if conflicts_known and not conflicts:
+        text_fields: list[tuple[str, Any]] = []
+        for index, adjustment in enumerate(out.get("adjustments") or []):
+            if isinstance(adjustment, Mapping) and float(adjustment.get("delta") or 0.0) < 0.0:
+                text_fields.extend((
+                    (f"adjustments[{index}].dimension", adjustment.get("dimension")),
+                    (f"adjustments[{index}].reason", adjustment.get("reason")),
+                ))
+        for index, item in enumerate(out.get("evidence") or []):
+            if not isinstance(item, Mapping):
+                continue
+            if str(item.get("effect") or "") in {"supports_rejection", "requires_change"}:
+                text_fields.append((f"evidence[{index}].fact", item.get("fact")))
+        counterfactual = out.get("counterfactual") or {}
+        if isinstance(counterfactual, Mapping):
+            for index, change in enumerate(counterfactual.get("changes") or []):
+                text_fields.append((f"counterfactual.changes[{index}]", change))
+            text_fields.append(("counterfactual.reason", counterfactual.get("reason")))
+        text_fields.extend((
+            ("reason", out.get("reason")),
+            ("user_feedback", out.get("user_feedback")),
+        ))
+        for field, value in text_fields:
+            if _claims_appliance_conflict(value):
+                contradictions.append({
+                    "field": field,
+                    "claim": _sanitize_identity_text(value, 240),
+                })
+    if contradictions:
+        raise RoleplayResponseError(
+            "role-play response contradicts verified empty appliance-event conflicts "
+            f"({json.dumps(contradictions, ensure_ascii=False, sort_keys=True)})"
+        )
+    out["normalization"] = {
+        **dict(out.get("normalization") or {}),
+        "verified_fact_consistent": True,
+        "verified_fact_checks": (
+            ["empty_appliance_event_conflicts"]
+            if conflicts_known and not conflicts
+            else []
+        ),
+    }
+    return out
 
 
 def _hard_veto_only_response(reasons: Sequence[str], error: Exception | None = None) -> dict[str, Any]:
@@ -1323,4 +1433,5 @@ __all__ = [
     "normalize_roleplay_acceptance_response",
     "sanitize_household_resume_for_roleplay",
     "sanitize_roleplay_text",
+    "validate_roleplay_response_against_verified_facts",
 ]

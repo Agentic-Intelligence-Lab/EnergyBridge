@@ -5568,9 +5568,13 @@ def _call_roleplay_acceptance_gate_llm(
     user_prompt: str,
     *,
     expected_baseline: float | None = None,
+    verified_plan_facts: dict | None = None,
 ) -> tuple[dict, dict]:
     from energybridge.llm.client import LLMClient
-    from energybridge.harness.roleplay import normalize_roleplay_acceptance_response
+    from energybridge.harness.roleplay import (
+        normalize_roleplay_acceptance_response,
+        validate_roleplay_response_against_verified_facts,
+    )
 
     def _validate_json(text: str) -> str:
         data = _extract_json_object(text)
@@ -5583,9 +5587,13 @@ def _call_roleplay_acceptance_gate_llm(
             if "final_acceptance_probability" not in data:
                 raise ValueError("missing final_acceptance_probability")
         else:
-            normalize_roleplay_acceptance_response(
+            normalized = normalize_roleplay_acceptance_response(
                 data,
                 expected_baseline=expected_baseline,
+            )
+            validate_roleplay_response_against_verified_facts(
+                normalized,
+                verified_plan_facts,
             )
         return json.dumps(data, ensure_ascii=False)
 
@@ -5888,6 +5896,7 @@ def _evaluate_adaptive_v2_vpp_plan_acceptance_gate(
     from energybridge.harness.roleplay import (
         build_roleplay_acceptance_prompts,
         normalize_roleplay_acceptance_response,
+        validate_roleplay_response_against_verified_facts,
     )
 
     hard_veto_reasons = _adaptive_v2_hard_veto_reasons(intrusion)
@@ -5956,11 +5965,16 @@ def _evaluate_adaptive_v2_vpp_plan_acceptance_gate(
                 system_prompt,
                 user_prompt,
                 expected_baseline=baseline,
+                verified_plan_facts=prompt_payload.get("verified_offer_facts"),
             )
             roleplay = normalize_roleplay_acceptance_response(
                 raw,
                 hard_veto_reasons=hard_veto_reasons,
                 expected_baseline=baseline,
+            )
+            roleplay = validate_roleplay_response_against_verified_facts(
+                roleplay,
+                prompt_payload.get("verified_offer_facts"),
             )
         except Exception as exc:
             failure_metrics = getattr(exc, "metrics", None)

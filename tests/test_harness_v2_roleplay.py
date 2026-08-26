@@ -13,6 +13,7 @@ from energybridge.harness.roleplay import (
     build_roleplay_acceptance_prompts,
     normalize_roleplay_acceptance_response,
     sanitize_household_resume_for_roleplay,
+    validate_roleplay_response_against_verified_facts,
 )
 from energybridge.llm.roleplay_user import (
     RoleplayUserSimulator,
@@ -902,38 +903,92 @@ def test_normalizer_allows_no_change_but_rejects_mismatch_zero_item_and_unexplai
         )
 
 
-def test_normalizer_audits_adjustment_evidence_sign_contradictions() -> None:
-    positive = normalize_roleplay_acceptance_response(
-        _valid_response(
-            adjustments=[{
-                "dimension": "contradictory positive",
-                "delta": 0.08,
-                "evidence": "E1",
-                "reason": "This cites rejection-labelled evidence as a benefit.",
-            }],
-            final_acceptance_probability=0.45,
-        ),
-        expected_baseline=0.37,
+def test_normalizer_rejects_adjustment_evidence_sign_contradictions() -> None:
+    cases = (
+        ("contradictory positive", 0.08, "E1", 0.45),
+        ("contradictory negative", -0.06, "E2", 0.31),
     )
-    negative = normalize_roleplay_acceptance_response(
-        _valid_response(
-            adjustments=[{
-                "dimension": "contradictory negative",
-                "delta": -0.06,
-                "evidence": "E2",
-                "reason": "This cites acceptance-labelled evidence as a penalty.",
-            }],
-            final_acceptance_probability=0.31,
-        ),
-        expected_baseline=0.37,
-    )
+    for dimension, delta, evidence, probability in cases:
+        with pytest.raises(RoleplayResponseError, match="same direction"):
+            normalize_roleplay_acceptance_response(
+                _valid_response(
+                    adjustments=[{
+                        "dimension": dimension,
+                        "delta": delta,
+                        "evidence": evidence,
+                        "reason": "The cited evidence points the other way.",
+                    }],
+                    final_acceptance_probability=probability,
+                ),
+                expected_baseline=0.37,
+            )
 
-    for result, sign in ((positive, "positive"), (negative, "negative")):
-        assert result["normalization"]["evidence_sign_consistent"] is False
-        assert result["normalization"]["evidence_sign_mismatches"][0]["delta_sign"] == sign
-        # The model-authored probability is preserved; no floor, cap, or
-        # post-hoc sign correction is applied.
-        assert result["normalization"]["arithmetic_residual"] == pytest.approx(0.0)
+
+def test_verified_fact_validator_rejects_false_appliance_overlap_without_reshaping() -> None:
+    response = normalize_roleplay_acceptance_response(
+        _valid_response(
+            adjustments=[{
+                "dimension": "appliance timing",
+                "delta": -0.04,
+                "evidence": "E1",
+                "reason": "The washer runs during the avoided hour.",
+            }],
+            final_acceptance_probability=0.33,
+        ),
+        expected_baseline=0.37,
+    )
+    with pytest.raises(RoleplayResponseError, match="verified empty"):
+        validate_roleplay_response_against_verified_facts(
+            response,
+            {"vpp_conflicts": []},
+        )
+
+
+def test_verified_fact_validator_preserves_truthful_model_judgement() -> None:
+    response = normalize_roleplay_acceptance_response(
+        _valid_response(),
+        expected_baseline=0.37,
+    )
+    validated = validate_roleplay_response_against_verified_facts(
+        response,
+        {"vpp_conflicts": []},
+    )
+    assert validated["final_acceptance_probability"] == 0.32
+    assert validated["adjustments"] == response["adjustments"]
+    assert validated["normalization"]["verified_fact_consistent"] is True
+    assert validated["normalization"]["verified_fact_checks"] == [
+        "empty_appliance_event_conflicts"
+    ]
+
+    explicitly_truthful = _valid_response()
+    explicitly_truthful["reason"] = "The washer does not run during the event window."
+    explicitly_truthful = normalize_roleplay_acceptance_response(
+        explicitly_truthful,
+        expected_baseline=0.37,
+    )
+    assert validate_roleplay_response_against_verified_facts(
+        explicitly_truthful,
+        {"vpp_conflicts": []},
+    )["final_acceptance_probability"] == 0.32
+
+
+def test_verified_fact_validator_rejects_unneeded_move_out_counterfactual() -> None:
+    response = _valid_response()
+    response["counterfactual"] = {
+        "changes": ["Shift the washer out of 18:00-19:00."],
+        "decision_if_changed": "accept",
+        "acceptance_probability_if_changed": 0.72,
+        "reason": "That would avoid the event window.",
+    }
+    normalized = normalize_roleplay_acceptance_response(
+        response,
+        expected_baseline=0.37,
+    )
+    with pytest.raises(RoleplayResponseError, match="verified empty"):
+        validate_roleplay_response_against_verified_facts(
+            normalized,
+            {"vpp_conflicts": []},
+        )
 
 
 def test_normalizer_rejects_duplicate_evidence_ids() -> None:
