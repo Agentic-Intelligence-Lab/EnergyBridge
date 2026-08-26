@@ -12,6 +12,7 @@ from energybridge.harness.energy_tools_v3 import ENERGY_IMPACT_SCHEMA_VERSION
 from energybridge.harness.memory_v3 import MEMORY_V3_VERSION
 from energybridge.harness.planning import PLANNING_SCHEMA_VERSION
 from energybridge.harness.profile_v3 import HOUSEHOLD_MODEL_VERSION
+from energybridge.llm.client import STRUCTURED_OUTPUT_TRANSPORT_VERSION
 from experiments.benchmark.run_baseline_matrix import (
     Job,
     _command_for,
@@ -110,6 +111,7 @@ def test_manifest_changes_with_model_profile_and_roleplay_gate(monkeypatch) -> N
         "memory": MEMORY_V3_VERSION,
         "planning": PLANNING_SCHEMA_VERSION,
         "impact_evidence": ENERGY_IMPACT_SCHEMA_VERSION,
+        "structured_output_transport": STRUCTURED_OUTPUT_TRANSPORT_VERSION,
     }
     assert baseline["harness"]["agent_memory_warm_start_enabled"] is False
     assert baseline["llm"]["controller"]["model"] == "controller-model-a"
@@ -131,6 +133,7 @@ def test_manifest_changes_with_model_profile_and_roleplay_gate(monkeypatch) -> N
         "memory": None,
         "planning": None,
         "impact_evidence": None,
+        "structured_output_transport": None,
     }
     assert paper["harness"]["agent_memory_warm_start_enabled"] is False
     assert paper["fingerprint"] != baseline["fingerprint"]
@@ -143,6 +146,7 @@ def test_manifest_changes_with_model_profile_and_roleplay_gate(monkeypatch) -> N
         "memory": None,
         "planning": None,
         "impact_evidence": None,
+        "structured_output_transport": None,
     }
     assert legacy["harness"]["agent_memory_warm_start_enabled"] is False
     assert legacy["fingerprint"] != baseline["fingerprint"]
@@ -192,6 +196,7 @@ def test_non_agent_methods_do_not_claim_adaptive_agent_components(monkeypatch) -
         "memory": None,
         "planning": None,
         "impact_evidence": None,
+        "structured_output_transport": None,
     }
     assert manifest["harness"]["agent_memory_warm_start_enabled"] is False
 

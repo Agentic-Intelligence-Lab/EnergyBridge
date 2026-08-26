@@ -1069,14 +1069,23 @@ def format_strategy_explanation_lines(explanation: dict | None, *, indent: str =
         return []
     benefit = explanation.get("expected_benefit") or {}
     alternatives = explanation.get("alternatives") or []
-    alt_names = " | ".join(str(item.get("name", "")) for item in alternatives if isinstance(item, dict))
+    benefit_text = (
+        str(benefit.get("message", ""))
+        if isinstance(benefit, dict)
+        else str(benefit)
+    )
+    alt_names = " | ".join(
+        str(item.get("name", "")) if isinstance(item, dict) else str(item)
+        for item in alternatives
+        if item not in (None, "", {})
+    )
     lines = [
         f"{indent}Strategy explanation:",
         f"{indent}  Why      : {explanation.get('why_request', '')}",
         f"{indent}  Plan     : {explanation.get('natural_language', '')}",
     ]
-    if benefit.get("message"):
-        lines.append(f"{indent}  Benefit  : {benefit.get('message')}")
+    if benefit_text:
+        lines.append(f"{indent}  Benefit  : {benefit_text}")
     if alt_names:
         lines.append(f"{indent}  Options  : {alt_names}")
     return [line for line in lines if line.strip()]

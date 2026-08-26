@@ -831,6 +831,23 @@ def test_adaptive_ev_mode_contract_matches_the_appliance_simulator() -> None:
     )
 
 
+def test_adaptive_contract_replans_required_service_skip_instead_of_executing_it() -> None:
+    required = {"dishwasher": {"present": True}}
+    errors = fr._adaptive_v3_appliance_action_contract_errors(
+        {"dishwasher_skip": True},
+        required,
+    )
+    assert any("cancel a required daily service" in item for item in errors)
+
+    explicitly_not_required = {
+        "dishwasher": {"present": True, "service_required_today": False},
+    }
+    assert fr._adaptive_v3_appliance_action_contract_errors(
+        {"dishwasher_skip": True},
+        explicitly_not_required,
+    ) == []
+
+
 def test_adaptive_v3_numeric_contract_rejects_json_booleans(monkeypatch) -> None:
     monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")
     config = {

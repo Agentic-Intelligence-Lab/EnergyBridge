@@ -578,6 +578,8 @@ def test_acceptance_prompt_penalizes_generic_explanations_without_method_targets
     assert "in 100 comparable situations" in instruction
     assert "prior is a starting point, not a floor" in instruction
     assert "do not apply hidden clipping or canned deltas" in instruction
+    assert "decimal probability unit" in instruction
+    assert "never as a percentage or percentage-point" in instruction
     assert "explanation specificity" not in instruction
     assert "one explicit negative" not in instruction
     assert "largest-magnitude" not in instruction
@@ -1187,3 +1189,27 @@ def test_v2_feedback_prompt_sanitizes_resume_provenance_and_keeps_household_fact
     assert "secret_feedback_model_sentinel" not in lowered
     assert "ideal dr candidate" not in lowered
     assert "controller_context_source" not in lowered
+
+
+def test_roleplay_json_transport_is_adaptive_only(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    class FakeClient:
+        def chat_with_metrics(self, system_prompt, user_prompt, **kwargs):
+            calls.append({
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                **kwargs,
+            })
+            return {"text": '{"ok":true}', "metrics": {}}
+
+    simulator = object.__new__(RoleplayUserSimulator)
+    simulator.client = FakeClient()
+
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")
+    assert simulator._call_json("system", "user")["data"] == {"ok": True}
+    assert calls[-1]["response_format"] == {"type": "json_object"}
+
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "legacy_v1")
+    assert simulator._call_json("system", "user")["data"] == {"ok": True}
+    assert calls[-1]["response_format"] is None

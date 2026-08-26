@@ -96,6 +96,17 @@ the confirm-or-revise decision.
 Schema: `energybridge.open_portfolio_planning.v3`.
 Impact evidence schema: `energybridge.candidate_impact.v3`.
 
+Adaptive controller and role-play calls that require an object use the
+provider's JSON-object response mode when available, followed by the existing
+semantic validator. This is a transport constraint only: it does not prescribe
+candidate count, objectives, adjustment values, or the selected plan. If an
+OpenAI-compatible endpoint explicitly reports that response mode is
+unsupported, the client retries the identical prompt without that transport
+option and records the downgrade. Run telemetry separates provider failures,
+empty responses, JSON/schema validation failures, and successful structured
+calls so protocol reliability can be evaluated independently of strategy
+quality.
+
 ### Consent, execution, and outcome
 
 The role-play LLM remains active in `adaptive_v2`. It judges the concrete plan

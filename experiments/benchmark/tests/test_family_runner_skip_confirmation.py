@@ -334,6 +334,50 @@ def test_vpp_rejection_can_use_roleplay_manual_override(monkeypatch) -> None:
     assert "rule_milp" not in captured["user_prompt"]
 
 
+def test_adaptive_rejection_executes_the_stored_ordinary_plan_without_rebound(monkeypatch) -> None:
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")
+    monkeypatch.setenv("ENERGYBRIDGE_VPP_ACCEPTANCE_GATE", "adaptive_roleplay_v2")
+    monkeypatch.setattr(
+        fr,
+        "_roleplay_manual_vpp_rejection_override",
+        lambda **_kwargs: pytest.fail("adaptive stored ordinary plan must not be regenerated"),
+    )
+    ordinary = {
+        "setpoint": 26.0,
+        "appliance_actions": {
+            "washer_skip": False,
+            "washer_start_h": 19.0,
+            "dishwasher_skip": False,
+            "dishwasher_start_h": 21.0,
+            "water_heater_preheat": True,
+            "water_heater_preheat_start_h": 14.0,
+            "water_heater_preheat_end_h": 18.0,
+            "water_heater_preheat_temp_c": 60.0,
+        },
+        "objective_source": "observable_ordinary_routine_v3",
+    }
+
+    fallback = _fallback_plan_after_vpp_rejection(
+        default_plan=ordinary,
+        current_setpoint=24.0,
+        event={"id": "vpp1", "trigger_h": 18.0, "end_h": 19.0, "day": 1},
+        persona_config={"id": "household"},
+        appliance_config={
+            "ac": {"setpoint_preferred_min_c": 24.0, "setpoint_preferred_max_c": 26.0},
+            "washer": {"present": True, "preferred_h": 18.0},
+            "dishwasher": {"present": True, "preferred_h": 18.0},
+            "water_heater": {"present": True, "normal_start_h": 18.0, "normal_end_h": 20.0},
+        },
+        current_hod=18.0,
+    )
+
+    assert fallback["setpoint"] == 26.0
+    assert fallback["appliance_actions"] == ordinary["appliance_actions"]
+    assert fallback["fallback_mode"] == "stored_ordinary_plan"
+    assert fallback["fallback_manual_rebound"] is False
+    assert fallback["objective_source"] == "vpp_acceptance_gate_user_rejected_stored_ordinary_plan"
+
+
 def test_adaptive_manual_rejection_roleplay_is_private_and_prompt_invariant(monkeypatch) -> None:
     captured = []
 

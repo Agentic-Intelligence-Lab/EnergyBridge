@@ -261,6 +261,7 @@ _ADAPTIVE_V3_DEVICE_CAPABILITY_FIELDS = frozenset({
     "power_kw",
     "rated_kw",
     "rated_power_kw",
+    "service_required_today",
 })
 
 
@@ -550,6 +551,10 @@ def _adaptive_v3_observable_planning_inputs(
             for key, value in raw.items()
             if str(key) in _ADAPTIVE_V3_DEVICE_CAPABILITY_FIELDS
         }
+        if str(name) in {"washer", "dishwasher", "dryer"} and bool(raw.get("present", False)):
+            devices[str(name)]["service_required_today"] = bool(
+                raw.get("service_required_today", True)
+            )
     required_action_fields = _missing_explicit_appliance_actions(
         {}, appliance_config, adaptive_contract=True
     )
@@ -1542,6 +1547,7 @@ class BenchmarkResult:
     llm_latency_total_s: float = 0.0
     llm_tokens_prompt: int = 0; llm_tokens_completion: int = 0
     daily_llm_usage: List[dict] = field(default_factory=list)
+    llm_protocol_metrics: dict = field(default_factory=dict)
     # Appliance rule-based indicators
     appliance_vpp_avoidance_rate: float = 0.0   # fraction of completed shiftable tasks that ran outside VPP
     appliance_task_completion_rate: float = 1.0  # fraction of present non-AC appliance services with emitted policy actions
@@ -1645,10 +1651,18 @@ def _init_daily_llm_usage(loop, sim_days: int) -> None:
         {
             "day": idx + 1,
             "llm_calls": 0,
+            "llm_exhausted_calls": 0,
             "prompt_tokens": 0,
             "completion_tokens": 0,
             "total_tokens": 0,
             "api_latency_s": 0.0,
+            "protocol_retries": 0,
+            "validation_failures": 0,
+            "provider_failures": 0,
+            "empty_response_failures": 0,
+            "length_truncation_failures": 0,
+            "structured_output_calls": 0,
+            "structured_output_fallbacks": 0,
         }
         for idx in range(max(1, int(sim_days or 1)))
     ]
@@ -1666,11 +1680,61 @@ def _record_daily_llm_usage(loop, sim_days: int, sim_h: float, metrics: dict | N
     completion = int(token_usage.get("completion_tokens", 0) or 0)
     latency = float(metrics.get("latency_seconds", 0.0) or 0.0)
     row = loop.daily_llm_usage[day_i]
-    row["llm_calls"] = int(row.get("llm_calls", 0) or 0) + 1
+    if metrics.get("used", True):
+        row["llm_calls"] = int(row.get("llm_calls", 0) or 0) + 1
+    if metrics.get("exhausted"):
+        row["llm_exhausted_calls"] = int(row.get("llm_exhausted_calls", 0) or 0) + 1
     row["prompt_tokens"] = int(row.get("prompt_tokens", 0) or 0) + prompt
     row["completion_tokens"] = int(row.get("completion_tokens", 0) or 0) + completion
     row["total_tokens"] = int(row.get("total_tokens", 0) or 0) + prompt + completion
     row["api_latency_s"] = round(float(row.get("api_latency_s", 0.0) or 0.0) + latency, 3)
+    row["protocol_retries"] = int(row.get("protocol_retries", 0) or 0) + int(
+        metrics.get("retries", 0) or 0
+    )
+    row["validation_failures"] = int(row.get("validation_failures", 0) or 0) + int(
+        metrics.get("validation_failures", 0) or 0
+    )
+    row["provider_failures"] = int(row.get("provider_failures", 0) or 0) + int(
+        metrics.get("provider_failures", 0) or 0
+    )
+    row["empty_response_failures"] = int(
+        row.get("empty_response_failures", 0) or 0
+    ) + int(metrics.get("empty_response_failures", 0) or 0)
+    row["length_truncation_failures"] = int(
+        row.get("length_truncation_failures", 0) or 0
+    ) + int(metrics.get("length_truncation_failures", 0) or 0)
+    if metrics.get("response_format_requested"):
+        row["structured_output_calls"] = int(
+            row.get("structured_output_calls", 0) or 0
+        ) + 1
+    if metrics.get("response_format_fallback"):
+        row["structured_output_fallbacks"] = int(
+            row.get("structured_output_fallbacks", 0) or 0
+        ) + 1
+
+
+def _aggregate_gate_protocol_metrics(rows: list[dict] | None) -> dict:
+    """Aggregate every consent-model call, including superseded proposals."""
+    metric_keys = (
+        "exhausted_calls",
+        "retries",
+        "validation_failures",
+        "provider_failures",
+        "empty_response_failures",
+        "length_truncation_failures",
+    )
+    valid_rows = [item for item in (rows or []) if isinstance(item, dict)]
+    out = {
+        key: sum(int(item.get(key, 0) or 0) for item in valid_rows)
+        for key in metric_keys
+    }
+    out["structured_output_calls"] = sum(
+        1 for item in valid_rows if item.get("response_format_requested")
+    )
+    out["structured_output_fallbacks"] = sum(
+        1 for item in valid_rows if item.get("response_format_fallback")
+    )
+    return out
 
 
 def _is_weather_run_period(ex, state) -> bool:
@@ -1748,6 +1812,11 @@ class _FamilyLoop:
         self.no_dr_routine_actions: List[dict] = []
         self.no_vpp_daily_plan_by_day: Dict[int, dict] = {}
         self.vpp_plan_gate_by_id: Dict[str, dict] = {}
+        # Keep protocol telemetry for every household-consent call. The final
+        # accepted/rejected gate remains one record per event, but an earlier
+        # rejected proposal must not disappear from retry/failure accounting
+        # when the controller later proposes a materially different plan.
+        self.vpp_prompt_gate_metrics_history: List[dict] = []
         self.agent_preference_memory: Dict[str, Any] = {}
         self.agent_household_model: Dict[str, Any] = {}
         self.agent_profile_capsule_by_event_id: Dict[str, dict] = {}
@@ -2408,6 +2477,12 @@ def _adaptive_v3_appliance_action_contract_errors(
         skip_key = f"{name}_skip"
         if skip_key in actions and not isinstance(actions.get(skip_key), bool):
             errors.append(f"{skip_key} must be an exact boolean")
+        service_required = bool(device.get("service_required_today", True))
+        if actions.get(skip_key) is True and service_required:
+            errors.append(
+                f"{skip_key}=true would cancel a required daily service; "
+                "schedule it inside the declared executable window instead"
+            )
         if actions.get(skip_key) is not True:
             finite_hour(f"{name}_start_h")
 
@@ -5182,6 +5257,11 @@ def _call_roleplay_acceptance_gate_llm(
         max_retries=3,
         retry_base_delay=1.0,
         validate_fn=_validate_json,
+        response_format=(
+            {"type": "json_object"}
+            if expected_baseline is not None
+            else None
+        ),
     )
     return json.loads(result.get("text", "{}")), dict(result.get("metrics") or {})
 
@@ -5505,6 +5585,9 @@ def _evaluate_adaptive_v2_vpp_plan_acceptance_gate(
             expected_baseline=baseline,
         )
     except Exception as exc:
+        failure_metrics = getattr(exc, "metrics", None)
+        if isinstance(failure_metrics, dict):
+            metrics = dict(failure_metrics)
         if _acceptance_fallback_disabled():
             raise
         source = "roleplay_model_unavailable_fail_closed"
@@ -6124,6 +6207,32 @@ def _fallback_plan_after_vpp_rejection(
         persona_config=persona_config,
         appliance_config=appliance_config,
     )
+    if (
+        _adaptive_harness_v2()
+        and _vpp_acceptance_gate_mode() == "adaptive_roleplay_v2"
+        and default_plan.get("setpoint") is not None
+        and isinstance(default_plan.get("appliance_actions"), dict)
+    ):
+        # The adaptive harness explicitly constructs and audits the ordinary
+        # counterfactual before offering event-specific changes. Rejection
+        # must execute that same snapshot. Re-generating a fresh routine at
+        # the event boundary can move already-planned 19:00/21:00 tasks to
+        # "now" (18:00), falsely attributing an event-window rebound to the
+        # household and breaking proposal -> consent -> execution causality.
+        ordinary = {
+            "setpoint": default_plan.get("setpoint"),
+            "next_check_hour": float(event.get("end_h", 0.0)) if event else None,
+            "reason": "VPP dispatch rejected; execute the previously established ordinary household plan",
+            "appliance_actions": deepcopy(default_plan.get("appliance_actions") or {}),
+            "objective_source": "vpp_acceptance_gate_user_rejected_stored_ordinary_plan",
+            "fallback_after_vpp_rejection": True,
+            "fallback_is_vpp_aware": False,
+            "fallback_mode": "stored_ordinary_plan",
+            "fallback_manual_rebound": False,
+            "fallback_default_plan": _plan_snapshot_for_gate(default_plan),
+            "fallback_daily_plan_gate": daily_gate,
+        }
+        return ordinary
     manual_plan = _manual_no_vpp_user_plan(
         persona_config=persona_config,
         appliance_config=appliance_config,
@@ -10138,6 +10247,11 @@ These fields are for auditability and may differ across capable models; do not i
                 max_retries=5,
                 retry_base_delay=2.0,
                 validate_fn=_validate_json,
+                response_format=(
+                    {"type": "json_object"}
+                    if adaptive_agent
+                    else None
+                ),
             )
             _m = _llm_r.get("metrics", {})
             _tu = _m.get("token_usage", {})
@@ -10993,6 +11107,23 @@ These fields are for auditability and may differ across capable models; do not i
                 }
             return result
         except Exception as e:
+            failure_metrics = getattr(e, "metrics", None)
+            if isinstance(failure_metrics, dict):
+                _record_daily_llm_usage(loop, sim_days, sim_h, failure_metrics)
+                failure_usage = (
+                    failure_metrics.get("token_usage")
+                    if isinstance(failure_metrics.get("token_usage"), dict)
+                    else {}
+                )
+                loop.llm_latency_s += float(
+                    failure_metrics.get("latency_seconds", 0.0) or 0.0
+                )
+                loop.llm_tokens_prompt += int(
+                    failure_usage.get("prompt_tokens", 0) or 0
+                )
+                loop.llm_tokens_comp += int(
+                    failure_usage.get("completion_tokens", 0) or 0
+                )
             error_detail = (
                 _adaptive_exception_audit_text(e, limit=500)
                 if _adaptive_harness_v2()
@@ -12660,6 +12791,9 @@ These fields are for auditability and may differ across capable models; do not i
                                     _plan_snapshot_for_gate(res)
                                 )
                             loop.vpp_plan_gate_by_id[planning_vid] = dict(_vpp_acceptance_gate)
+                            _gate_metrics = _vpp_acceptance_gate.get("prompt_gate_metrics")
+                            if isinstance(_gate_metrics, dict):
+                                loop.vpp_prompt_gate_metrics_history.append(dict(_gate_metrics))
                     if disable_acceptance_fallback:
                         if method == "agent" and _adaptive_harness_v2():
                             _lifecycle = _adaptive_v2_record_plan_stage(
@@ -13288,6 +13422,73 @@ These fields are for auditability and may differ across capable models; do not i
         if _gate_events else None
     )
     _gate_rejected_count = sum(1 for item in _gate_events if item and not item.get("accepted"))
+    _protocol_metric_keys = (
+        "exhausted_calls",
+        "retries",
+        "validation_failures",
+        "provider_failures",
+        "empty_response_failures",
+        "length_truncation_failures",
+    )
+    _controller_protocol = {
+        "exhausted_calls": sum(
+            int(item.get("llm_exhausted_calls", 0) or 0)
+            for item in list(getattr(loop, "daily_llm_usage", []) or [])
+        ),
+        "retries": sum(
+            int(item.get("protocol_retries", 0) or 0)
+            for item in list(getattr(loop, "daily_llm_usage", []) or [])
+        ),
+        "validation_failures": sum(
+            int(item.get("validation_failures", 0) or 0)
+            for item in list(getattr(loop, "daily_llm_usage", []) or [])
+        ),
+        "provider_failures": sum(
+            int(item.get("provider_failures", 0) or 0)
+            for item in list(getattr(loop, "daily_llm_usage", []) or [])
+        ),
+        "empty_response_failures": sum(
+            int(item.get("empty_response_failures", 0) or 0)
+            for item in list(getattr(loop, "daily_llm_usage", []) or [])
+        ),
+        "length_truncation_failures": sum(
+            int(item.get("length_truncation_failures", 0) or 0)
+            for item in list(getattr(loop, "daily_llm_usage", []) or [])
+        ),
+        "structured_output_calls": sum(
+            int(item.get("structured_output_calls", 0) or 0)
+            for item in list(getattr(loop, "daily_llm_usage", []) or [])
+        ),
+        "structured_output_fallbacks": sum(
+            int(item.get("structured_output_fallbacks", 0) or 0)
+            for item in list(getattr(loop, "daily_llm_usage", []) or [])
+        ),
+    }
+    _gate_protocol_rows = list(
+        getattr(loop, "vpp_prompt_gate_metrics_history", []) or []
+    )
+    if not _gate_protocol_rows:
+        # Compatibility for callers/tests that construct a minimal loop and
+        # for historical profiles that only retain the final event gate.
+        _gate_protocol_rows = [
+            item.get("prompt_gate_metrics")
+            for item in _gate_events
+            if isinstance(item.get("prompt_gate_metrics"), dict)
+        ]
+    _gate_protocol = _aggregate_gate_protocol_metrics(_gate_protocol_rows)
+    _llm_protocol_metrics = {
+        "controller": _controller_protocol,
+        "acceptance_gate": _gate_protocol,
+        "combined": {
+            key: int(_controller_protocol.get(key, 0) or 0)
+            + int(_gate_protocol.get(key, 0) or 0)
+            for key in (
+                *_protocol_metric_keys,
+                "structured_output_calls",
+                "structured_output_fallbacks",
+            )
+        },
+    }
     _effective_penalty = _accepted_effective_vpp_penalty(
         appliance_config=appliance_config or {},
         event_log=loop.vpp_event_log,
@@ -13349,6 +13550,7 @@ These fields are for auditability and may differ across capable models; do not i
         llm_latency_total_s=round(loop.llm_latency_s, 2),
         llm_tokens_prompt=loop.llm_tokens_prompt, llm_tokens_completion=loop.llm_tokens_comp,
         daily_llm_usage=list(getattr(loop, "daily_llm_usage", [])),
+        llm_protocol_metrics=_llm_protocol_metrics,
         appliance_vpp_avoidance_rate=round(appl_vpp_avoid_rate, 3),
         appliance_task_completion_rate=round(appl_task_complete_rate, 3),
         physical_appliance_task_completion_rate=round(physical_appl_task_complete_rate, 3),

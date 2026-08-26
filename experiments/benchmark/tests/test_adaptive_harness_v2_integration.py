@@ -129,6 +129,36 @@ def test_v2_gate_preserves_roleplay_probability_and_direct_decision(monkeypatch)
     assert "cap" not in " ".join(rejected["factors"]).lower()
 
 
+def test_acceptance_transport_uses_json_mode_only_for_adaptive_contract(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def chat_with_metrics(self, _system, _user, **kwargs):
+            calls.append(dict(kwargs))
+            raw = (
+                json.dumps(_response(decision="accept", probability=0.54, delta=0.04))
+                if kwargs.get("response_format")
+                else json.dumps({"final_acceptance_probability": 0.54})
+            )
+            validate = kwargs.get("validate_fn")
+            return {
+                "text": validate(raw) if validate else raw,
+                "metrics": {"used": True},
+            }
+
+    from energybridge.llm import client as llm_client
+
+    monkeypatch.setattr(llm_client, "LLMClient", FakeClient)
+    fr._call_roleplay_acceptance_gate_llm("system", "user", expected_baseline=0.5)
+    fr._call_roleplay_acceptance_gate_llm("system", "user", expected_baseline=None)
+
+    assert calls[0]["response_format"] == {"type": "json_object"}
+    assert calls[1]["response_format"] is None
+
+
 def test_v2_roleplay_prompt_is_method_blind(monkeypatch) -> None:
     persona, event, appliances, ordinary, offered = _fixture()
     monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")

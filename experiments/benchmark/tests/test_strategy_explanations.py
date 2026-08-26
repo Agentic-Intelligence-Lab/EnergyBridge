@@ -7,6 +7,7 @@ from pathlib import Path
 from experiments.benchmark.strategy_explanations import (
     build_vpp_strategy_explanation,
     collect_strategy_explanation_records,
+    format_strategy_explanation_lines,
     normalize_vpp_strategy_explanation,
     write_strategy_explanation_artifacts,
 )
@@ -193,3 +194,16 @@ def test_normalize_strategy_explanation_drops_cjk_llm_fields() -> None:
     assert explanation["llm_raw_explanation"] == {"omitted": "non_english_text_detected"}
     assert explanation["agent_reason"] == ""
     assert CJK_RE.search(json.dumps(explanation, ensure_ascii=False)) is None
+
+
+def test_summary_formatter_preserves_model_authored_string_benefit_and_options() -> None:
+    lines = format_strategy_explanation_lines({
+        "why_request": "Protect the event window without missing household service.",
+        "natural_language": "Run the washer after the event and keep hot water ready.",
+        "expected_benefit": "A small tariff saving is plausible; exact payment is unknown.",
+        "alternatives": ["keep the ordinary plan", {"name": "opt out"}],
+    })
+
+    rendered = "\n".join(lines)
+    assert "A small tariff saving is plausible; exact payment is unknown." in rendered
+    assert "keep the ordinary plan | opt out" in rendered

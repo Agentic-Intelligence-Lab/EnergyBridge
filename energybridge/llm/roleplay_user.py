@@ -244,7 +244,15 @@ class RoleplayUserSimulator:
         )
 
     def _call_json(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
-        result = self.client.chat_with_metrics(system_prompt, user_prompt)
+        result = self.client.chat_with_metrics(
+            system_prompt,
+            user_prompt,
+            response_format=(
+                {"type": "json_object"}
+                if _adaptive_harness_v2()
+                else None
+            ),
+        )
         payload = _extract_json_payload(result["text"])
         data = json.loads(payload)
         if not isinstance(data, dict):

@@ -255,6 +255,7 @@ def _fixed_device_card(
     power = _finite(capability.get("power_kw", capability.get("rated_power_kw")))
     card: dict[str, Any] = {
         "present": bool(capability.get("present", False)),
+        "service_required_today": bool(capability.get("service_required_today", True)),
         "scheduled": start is not None and skipped is not True,
         "explicitly_skipped": skipped is True,
         "start_hod": _round(start % 24.0, 3) if start is not None else None,
@@ -675,6 +676,17 @@ def evaluate_candidate_impact(
         if card.get("within_service_window") is False or card.get("ready_by_declared_deadline") is False or card.get("energy_requirement_feasible") is False:
             findings.append({
                 "code": "declared_service_requirement_not_met",
+                "device": name,
+                "severity": "hard_service_risk",
+                "evidence_paths": card.get("evidence_paths", []),
+            })
+        if (
+            name in _SHIFTABLE_DEVICES
+            and card.get("service_required_today") is True
+            and card.get("task_completed") is False
+        ):
+            findings.append({
+                "code": "required_daily_service_cancelled",
                 "device": name,
                 "severity": "hard_service_risk",
                 "evidence_paths": card.get("evidence_paths", []),

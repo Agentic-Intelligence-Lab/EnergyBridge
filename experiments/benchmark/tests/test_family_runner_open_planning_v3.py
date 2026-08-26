@@ -269,6 +269,51 @@ def test_runtime_contract_error_replans_once_instead_of_patching_choice() -> Non
     assert resolution["attempts"][0]["runtime_contract_errors"] == ["washer command missing"]
 
 
+def test_required_service_skip_triggers_model_semantic_replan() -> None:
+    first = {
+        "candidate_plans": [{
+            "candidate_id": "cancel_service",
+            "plan": {
+                "setpoint": 25.0,
+                "appliances": {"dishwasher_skip": True},
+            },
+        }],
+        "selected_candidate_id": "cancel_service",
+    }
+    config = {"dishwasher": {"present": True, "service_required_today": True}}
+
+    resolution = fr._adaptive_v3_resolve_planning_response(
+        first,
+        planning_inputs=_planning_inputs(),
+        policy_error_fn=lambda plan: fr._adaptive_v3_appliance_action_contract_errors(
+            plan.get("appliances", {}),
+            config,
+        ),
+        replan_fn=lambda feedback: {
+            "candidate_plans": [{
+                "candidate_id": "complete_service",
+                "plan": {
+                    "setpoint": 25.0,
+                    "appliances": {
+                        "dishwasher_skip": False,
+                        "dishwasher_start_h": 21.0,
+                    },
+                },
+            }],
+            "selected_candidate_id": "complete_service",
+            "selection_reason": "The daily service remains required.",
+        },
+    )
+
+    assert resolution["status"] == "selected"
+    assert resolution["selected_candidate_id"] == "complete_service"
+    assert resolution["selected_executable_plan"]["appliances"]["dishwasher_skip"] is False
+    assert resolution["semantic_replan_attempted"] is True
+    assert "cancel a required daily service" in " ".join(
+        resolution["attempts"][0]["runtime_contract_errors"]
+    )
+
+
 def test_final_planning_prompt_anonymizes_identity_and_target_fields() -> None:
     inputs = _planning_inputs()
     inputs["observable_profile"].update({
@@ -341,6 +386,9 @@ def test_observable_adapter_prefers_session_capsules_and_lists_live_requirements
         "washer_skip",
     ]
     assert "hidden_persona" not in inputs["observable_state"]["device_capabilities"]["washer"]
+    assert inputs["observable_state"]["device_capabilities"]["washer"][
+        "service_required_today"
+    ] is True
     assert inputs["observable_state"]["hourly_tariff"]["hours"][0]["price"] == 2.4
     assert inputs["observable_state"]["ordinary_plan"] == {
         "setpoint": 25.0,
@@ -438,3 +486,87 @@ def test_observable_ordinary_plan_is_event_free_and_device_derived() -> None:
     assert ordinary["appliance_actions"]["water_heater_preheat_start_h"] == 18.0
     assert ordinary["objective_source"] == "observable_ordinary_routine_v3"
     assert "vpp" not in ordinary["reason"].lower()
+
+
+def test_daily_llm_usage_separates_transport_and_validation_failures() -> None:
+    loop = SimpleNamespace()
+    fr._init_daily_llm_usage(loop, 1)
+
+    fr._record_daily_llm_usage(
+        loop,
+        1,
+        0.25,
+        {
+            "latency_seconds": 1.2,
+            "token_usage": {"prompt_tokens": 100, "completion_tokens": 20},
+            "retries": 2,
+            "validation_failures": 1,
+            "provider_failures": 1,
+            "empty_response_failures": 0,
+            "length_truncation_failures": 1,
+            "response_format_requested": "json_object",
+            "response_format_fallback": False,
+        },
+    )
+    fr._record_daily_llm_usage(
+        loop,
+        1,
+        0.5,
+        {
+            "used": False,
+            "exhausted": True,
+            "latency_seconds": 3.0,
+            "token_usage": {"prompt_tokens": 200, "completion_tokens": 40},
+            "retries": 4,
+            "validation_failures": 5,
+            "provider_failures": 0,
+            "length_truncation_failures": 5,
+            "response_format_requested": "json_object",
+            "response_format_fallback": False,
+        },
+    )
+
+    row = loop.daily_llm_usage[0]
+    assert row["llm_calls"] == 1
+    assert row["llm_exhausted_calls"] == 1
+    assert row["protocol_retries"] == 6
+    assert row["validation_failures"] == 6
+    assert row["provider_failures"] == 1
+    assert row["length_truncation_failures"] == 6
+    assert row["structured_output_calls"] == 2
+    assert row["structured_output_fallbacks"] == 0
+
+
+def test_gate_protocol_metrics_keep_superseded_proposal_retries() -> None:
+    metrics = fr._aggregate_gate_protocol_metrics([
+        {
+            "retries": 2,
+            "validation_failures": 2,
+            "response_format_requested": "json_object",
+            "response_format_fallback": False,
+        },
+        {
+            "retries": 0,
+            "provider_failures": 0,
+            "response_format_requested": "json_object",
+            "response_format_fallback": False,
+        },
+        {
+            "used": False,
+            "exhausted_calls": 1,
+            "provider_failures": 3,
+            "response_format_requested": "json_object",
+            "response_format_fallback": True,
+        },
+    ])
+
+    assert metrics == {
+        "exhausted_calls": 1,
+        "retries": 2,
+        "validation_failures": 2,
+        "provider_failures": 3,
+        "empty_response_failures": 0,
+        "length_truncation_failures": 0,
+        "structured_output_calls": 3,
+        "structured_output_fallbacks": 1,
+    }

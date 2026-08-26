@@ -895,7 +895,8 @@ def build_roleplay_acceptance_prompts(
         "The final probability is how often this household would accept the unchanged offer in 100 comparable situations. The prior "
         "is a starting point, not a floor. Use short signed adjustments only for facts that really change willingness—usually 2-4, "
         "or an empty list when nothing does. Baseline plus adjustments must equal the final probability; do not apply hidden clipping "
-        "or canned deltas. Keep decision, probability, first-person reason, and feedback consistent. A counteroffer names the concrete "
+        "or canned deltas. Write every probability and delta as a decimal probability unit, never as a percentage or percentage-point "
+        "number. Keep decision, probability, first-person reason, and feedback consistent. A counteroffer names the concrete "
         "change required and credits it only in the counterfactual. Cite 2-4 concise, non-duplicate evidence items by E1, E2, and so "
         "on. A hard safety veto cannot be waived. Return valid JSON only."
     )

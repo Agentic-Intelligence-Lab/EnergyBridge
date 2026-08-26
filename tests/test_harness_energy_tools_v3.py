@@ -206,6 +206,27 @@ def test_completed_service_cannot_receive_incremental_savings_credit() -> None:
     assert comparison["fixed_load_scheduled_cost_delta_vs_ordinary"] == 0
 
 
+def test_required_service_skip_is_reported_as_hard_risk() -> None:
+    state = _state()
+    state["device_capabilities"]["washer"]["service_required_today"] = True
+
+    result = evaluate_candidate_impact(
+        {"plan": {"setpoint": 25, "appliances": {"washer_skip": True}}},
+        observable_state=state,
+        event={"trigger_h": 18, "end_h": 19},
+        ordinary_plan={
+            "setpoint": 25,
+            "appliances": {"washer_start_h": 19, "washer_skip": False},
+        },
+    )
+
+    assert result["device_impacts"]["washer"]["service_required_today"] is True
+    assert {
+        (item["code"], item["device"], item["severity"])
+        for item in result["findings"]
+    } == {("required_daily_service_cancelled", "washer", "hard_service_risk")}
+
+
 def test_offer_specific_paths_do_not_credit_inherited_ordinary_actions() -> None:
     ordinary = {"setpoint": 25, "appliances": {"washer_start_h": 19, "washer_skip": False}}
     result = evaluate_candidate_impact(
