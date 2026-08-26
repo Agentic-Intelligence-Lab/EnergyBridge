@@ -430,6 +430,11 @@ def _sanitize_identity_text(value: Any, limit: int) -> str:
     return _compact_text(text, limit)
 
 
+def sanitize_roleplay_text(value: Any, limit: int = 600) -> str:
+    """Apply the role-play privacy boundary to externally authored text."""
+    return _sanitize_identity_text(value, max(0, int(limit)))
+
+
 def _normalize_structured_key(value: Any) -> str:
     """Canonicalize snake/kebab/camel-case keys for recursive privacy checks."""
     text = str(value or "").strip()
@@ -1317,4 +1322,5 @@ __all__ = [
     "build_roleplay_acceptance_prompts",
     "normalize_roleplay_acceptance_response",
     "sanitize_household_resume_for_roleplay",
+    "sanitize_roleplay_text",
 ]

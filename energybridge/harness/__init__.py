@@ -13,6 +13,7 @@ from .roleplay import (
     build_roleplay_acceptance_prompts,
     normalize_roleplay_acceptance_response,
     sanitize_household_resume_for_roleplay,
+    sanitize_roleplay_text,
 )
 from .memory_v3 import (
     EVENT_CONTEXT_V3_VERSION,
@@ -33,6 +34,7 @@ from .planning import (
     analyze_pareto,
     build_planning_prompts,
     evaluate_planning_response,
+    normalize_information_requests,
     parse_planning_response,
     validate_plan_candidate,
 )
@@ -85,6 +87,7 @@ __all__ = [
     "build_roleplay_acceptance_prompts",
     "normalize_roleplay_acceptance_response",
     "sanitize_household_resume_for_roleplay",
+    "sanitize_roleplay_text",
     "EVENT_CONTEXT_V3_VERSION",
     "MEMORY_V3_VERSION",
     "build_event_context_v3",
@@ -101,6 +104,7 @@ __all__ = [
     "analyze_pareto",
     "build_planning_prompts",
     "evaluate_planning_response",
+    "normalize_information_requests",
     "parse_planning_response",
     "validate_plan_candidate",
     "DECISION_EVIDENCE_LEDGER_VERSION",

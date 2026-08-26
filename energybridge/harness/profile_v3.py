@@ -1405,10 +1405,6 @@ def _capsule_sentences(model: Mapping[str, Any], context: Mapping[str, Any]) -> 
             context_text = ", ".join(f"{key}={value}" for key, value in item.get("context", {}).items())
             sentences.append((100, f"In a similar context ({context_text}), the recorded experience was {label}; treat this as contextual rather than universal.", refs))
 
-    questions = list(model.get("active_questions") or [])
-    if questions:
-        question_text = " ".join(item["question"] for item in questions[:2])
-        sentences.append((62, f"Still worth learning: {question_text}", []))
     return sorted(sentences, key=lambda item: item[0], reverse=True)
 
 
@@ -1437,6 +1433,9 @@ def build_profile_capsule(
     its own planning capability while grounding it in household-specific facts.
     """
     safe_model = _validated_model_copy(model)
+    # Unknowns are derived state. Recompute them after the strict top-level
+    # projection instead of trusting caller-supplied question metadata.
+    _derive_unknowns_and_questions(safe_model)
     budget = int(token_budget)
     if budget < _MIN_TOKEN_BUDGET:
         raise ValueError(f"token_budget must be at least {_MIN_TOKEN_BUDGET}")
@@ -1444,6 +1443,7 @@ def build_profile_capsule(
     candidates = _capsule_sentences(safe_model, safe_context)
     chosen: list[str] = []
     evidence_refs: list[str] = []
+    decision_unknowns: list[dict[str, str]] = []
     omitted = 0
 
     def make_capsule() -> dict[str, Any]:
@@ -1454,11 +1454,36 @@ def build_profile_capsule(
             "schema_version": PROFILE_CAPSULE_VERSION,
             "text": text,
             "evidence_refs": list(dict.fromkeys(evidence_refs)),
+            "decision_unknowns": deepcopy(decision_unknowns),
             "token_budget": budget,
             "estimated_tokens": 0,
             "omitted_items": omitted,
             "privacy_scope": "controller_observable_only",
         }
+
+    # Reserve room for the single highest-priority unresolved question. The
+    # full model retains every active question; the prompt capsule surfaces one
+    # rather than crowding out observed evidence with a questionnaire.
+    for raw in list(safe_model.get("active_questions") or [])[:1]:
+        if not isinstance(raw, Mapping):
+            continue
+        question = " ".join(str(raw.get("question") or "").split())[:320]
+        if not question:
+            continue
+        item = {
+            "question_id": _safe_identifier(raw.get("question_id"), "question"),
+            "dimension": _safe_identifier(raw.get("dimension"), "unknown"),
+            "question": question,
+            "reason": _safe_identifier(raw.get("reason"), "limited_evidence"),
+        }
+        decision_unknowns.append(item)
+        trial = make_capsule()
+        trial["estimated_tokens"] = estimate_prompt_tokens(trial)
+        if trial["estimated_tokens"] > budget or (
+            candidates and budget - trial["estimated_tokens"] < 120
+        ):
+            decision_unknowns.pop()
+            omitted += 1
 
     for _, sentence, refs in candidates:
         trial_sentences = chosen + [sentence]
@@ -1467,6 +1492,7 @@ def build_profile_capsule(
             "schema_version": PROFILE_CAPSULE_VERSION,
             "text": "What this household has actually told or shown us: " + " ".join(trial_sentences),
             "evidence_refs": trial_refs,
+            "decision_unknowns": deepcopy(decision_unknowns),
             "token_budget": budget,
             "estimated_tokens": 9999,
             "omitted_items": 0,
@@ -1494,6 +1520,7 @@ def build_profile_capsule(
     if capsule["estimated_tokens"] > budget:
         capsule["text"] = "Observable household evidence is limited; retain uncertainty."
         capsule["evidence_refs"] = []
+        capsule["decision_unknowns"] = []
         capsule["estimated_tokens"] = estimate_prompt_tokens(capsule)
     return capsule
 

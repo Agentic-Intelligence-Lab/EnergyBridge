@@ -50,6 +50,16 @@ resolve through ordinary interaction. A bounded profile capsule presents only
 evidence relevant to the current decision; it is context, not a prescribed
 action recipe.
 
+The capsule reserves bounded space for the highest-priority unresolved
+household question without crowding out observed evidence. During a decision,
+the base model may ask one natural clarification only when plausible answers
+could materially change its plan. It may also proceed directly with a safe,
+reversible plan. The harness does not rank questions, reward asking, or choose
+an action from the answer. The role-play boundary returns only the household's
+natural reply and a coarse certainty label; hidden resume content, prompts, and
+raw provider output never become controller evidence. A valid reply is both
+current-event evidence and a provenance-carrying update to the household model.
+
 Schema: `energybridge.observable_household_model.v3`.
 
 ### Stage-aware causal memory
@@ -82,6 +92,11 @@ edits are preserved as JSON Patch audit records. An invalid selection requests
 one semantic replan before the normal safe fallback path.
 Evidence and constraint references use JSON Pointers, avoiding the ambiguity
 between dotted field paths and private DNS names at the model boundary.
+
+Optional portfolio `information_requests` are preserved in a separate
+information-value audit. The audit records whether a request cited a supplied
+unknown and explained how the answer affects the decision, but assigns no
+score, target, or preferred question count and never changes the model's plan.
 
 After a model proposes a portfolio, a method-blind accounting tool evaluates
 each candidate independently. It can integrate fixed-power appliance schedules

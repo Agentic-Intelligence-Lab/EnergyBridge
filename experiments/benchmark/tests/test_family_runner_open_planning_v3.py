@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from experiments.benchmark import family_runner as fr
@@ -90,6 +91,89 @@ def test_resolution_audits_the_bounded_calibration_memory_seen_by_model() -> Non
     assert resolution["calibration_memory_used"] == calibration
     assert resolution["calibration_memory_used"]["policy_update_performed"] is False
     assert resolution["calibration_memory_used"]["ranking_performed"] is False
+
+
+def test_model_can_request_one_decision_relevant_clarification_without_forcing_it() -> None:
+    request = fr._adaptive_v3_requested_clarification({
+        "clarification_request": {
+            "question": "Is the 21:00 shower fixed tonight?",
+            "decision_relevance": "A fixed shower changes the hot-water window.",
+            "evidence_gap": "/observable_profile/decision_unknowns/0",
+        }
+    })
+
+    assert request is not None
+    assert request["question"] == "Is the 21:00 shower fixed tonight?"
+    assert request["evidence_gap_citations"] == [
+        "/observable_profile/decision_unknowns/0"
+    ]
+    assert fr._adaptive_v3_requested_clarification({
+        "clarification_request": {"question": "What do you prefer?"}
+    }) is None
+    assert fr._adaptive_v3_requested_clarification({
+        "candidate_plans": [_candidate("ready", 26.0)],
+        "selected_candidate_id": "ready",
+        "information_requests": ["Optional future question"],
+    }) is None
+    assert fr._adaptive_v3_requested_clarification({
+        "skill_calls": ["forecast_control"],
+        "clarification_request": {
+            "question": "Ask too?",
+            "decision_relevance": "Ambiguous request types.",
+        },
+    }) is None
+
+
+def test_direct_clarification_reply_becomes_observable_current_evidence(monkeypatch) -> None:
+    from energybridge.llm import roleplay_user
+
+    captured: dict = {}
+
+    class FakeRoleplayUserSimulator:
+        def answer_context_question(self, persona, question, scenario):
+            captured.update({"persona": persona, "question": question, "scenario": scenario})
+            return {
+                "data": {
+                    "answer": "The 21:00 shower is fixed, but laundry can move later.",
+                    "certainty": "known",
+                    "conditions": "Keep hot water ready by 21:00.",
+                },
+                "metrics": {"used": True, "token_usage": {"prompt_tokens": 10}},
+                "privacy": {"hidden_resume_returned": False},
+            }
+
+    monkeypatch.setattr(roleplay_user, "RoleplayUserSimulator", FakeRoleplayUserSimulator)
+    inputs = _planning_inputs()
+    inputs["observable_profile"]["decision_unknowns"] = [{
+        "question_id": "shower_time",
+        "dimension": "routine_protection",
+        "question": "Is the shower time fixed?",
+        "reason": "limited_evidence",
+    }]
+    request = {
+        "request_id": "information_request_01",
+        "question": "Is the 21:00 shower fixed tonight?",
+        "decision_relevance": "It changes the hot-water schedule.",
+        "linked_question_id": "shower_time",
+        "evidence_gap_citations": ["/observable_profile/decision_unknowns/0"],
+    }
+
+    updated, audit, metrics = fr._adaptive_v3_answer_clarification(
+        inputs,
+        request,
+        persona_config={"description": "I shower at 21:00."},
+    )
+    reply = updated["observable_profile"]["event_clarification"]
+
+    assert inputs["observable_profile"].get("event_clarification") is None
+    assert reply["source"] == "direct_household_clarification"
+    assert reply["certainty"] == "known"
+    assert "laundry can move later" in reply["answer"]
+    assert audit["status"] == "answered"
+    assert audit["question_selected_or_scored_by_harness"] is False
+    assert metrics["used"] is True
+    assert captured["scenario"]["event"]["event_id"] == "event-1"
+    assert "persona" not in json.dumps(updated, ensure_ascii=False).lower()
 
 
 def test_candidate_level_explanation_reaches_selected_raw_and_executable_plan() -> None:

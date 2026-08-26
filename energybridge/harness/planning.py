@@ -249,6 +249,9 @@ _CANDIDATE_METADATA_KEYS = {
     "tradeoff",
     "strategy_explanation",
     "explanation",
+    "information_requests",
+    "clarification_requests",
+    "clarification_request",
 }
 _EXECUTABLE_KEYS = {
     "setpoint",
@@ -661,7 +664,9 @@ Anonymous advisor candidates are optional evidence. You may adapt, combine, or r
 
 For each candidate, keep the executable control in `plan`. Add evidence citations as JSON Pointers into the supplied payload (for example `/observable_state/device_capabilities/washer/earliest_h`), objective estimates with units/direction/confidence when supportable, important uncertainty, and counterfactual conditions that could change the choice. Use null or omit an estimate when evidence is insufficient; do not invent precision. Professional calibration memory reports prior forecast/result agreement; use it to calibrate confidence, never as a reward, ranking, policy, or action recommendation. Compare objectives directly instead of hiding tradeoffs in one unexplained score. Do not predict or optimize an acceptance probability.
 
-Return JSON only with `candidate_plans` (a list), `selected_candidate_id`, and a concise `selection_reason`. Candidate IDs only need to be unique. The plan itself is open-ended: use the executable fields supported by the payload rather than a fixed action template. The selected ID must name one of your candidate plans, not an anonymous advisor reference."""
+The observable profile may contain `decision_unknowns`. They are possible information gaps, not mandatory questions or implicit preferences. When an unanswered household fact could materially reverse the choice, you may include natural `information_requests` describing what to ask, why the answer matters, and which supplied gap or evidence it concerns. Decide whether any request is worthwhile; do not ask for facts that cannot change the plan, do not use questions to postpone an otherwise safe reversible decision, and do not turn this into a checklist. Still select an executable plan for the evidence currently available.
+
+Return JSON only with `candidate_plans` (a list), `selected_candidate_id`, a concise `selection_reason`, and optional `information_requests`. Candidate IDs only need to be unique. The plan itself is open-ended: use the executable fields supported by the payload rather than a fixed action template. The selected ID must name one of your candidate plans, not an anonymous advisor reference."""
     user_prompt = (
         "Develop an executable portfolio, compare its real tradeoffs, and select the plan you judge best "
         "for this observed household and event.\n\n[PLANNING PAYLOAD]\n"
@@ -704,6 +709,108 @@ def _looks_executable(plan: Mapping[str, Any]) -> bool:
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)) and bool(value):
             return True
     return False
+
+
+def normalize_information_requests(raw: Any) -> list[dict[str, Any]]:
+    """Normalize optional model-owned questions without prescribing their count.
+
+    This is an audit projection, not a question-ranking policy.  A request may
+    be a natural string or a structured object; unsupported metadata is simply
+    omitted from the model-visible/persisted boundary.
+    """
+    if isinstance(raw, Mapping) and any(
+        key in raw for key in ("information_requests", "clarification_requests", "clarification_request")
+    ):
+        raw = raw.get(
+            "information_requests",
+            raw.get("clarification_requests", raw.get("clarification_request")),
+        )
+    if raw is None:
+        return []
+    supplied = list(raw) if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes, bytearray)) else [raw]
+    result: list[dict[str, Any]] = []
+    for index, value in enumerate(supplied[:16], start=1):
+        if isinstance(value, str):
+            question = _sanitize_model_visible_text(value).strip()[:600]
+            item: Mapping[str, Any] = {}
+        elif isinstance(value, Mapping):
+            safe = _sanitize_planning_input(value)
+            if not isinstance(safe, Mapping):
+                continue
+            item = safe
+            question = _sanitize_model_visible_text(
+                item.get("question", item.get("ask", item.get("information_needed", "")))
+            ).strip()[:600]
+        else:
+            continue
+        if not question:
+            continue
+        citations = []
+        raw_citations = item.get(
+            "evidence_gap_citations",
+            item.get("evidence_citations", item.get("evidence_gap", [])),
+        )
+        citation_values = (
+            [raw_citations]
+            if isinstance(raw_citations, str)
+            else _as_sequence(raw_citations)
+        )
+        for citation in citation_values[:12]:
+            text = _sanitize_model_visible_text(citation).strip()[:500]
+            if text.startswith("/"):
+                citations.append(text)
+        result.append({
+            "request_id": f"information_request_{index:02d}",
+            "question": question,
+            "decision_relevance": _sanitize_model_visible_text(
+                item.get("decision_relevance", item.get("why_it_matters", item.get("impact", "")))
+            ).strip()[:1000],
+            "linked_question_id": _sanitize_model_visible_text(
+                item.get("question_id", item.get("linked_question_id", ""))
+            ).strip()[:160],
+            "evidence_gap_citations": list(dict.fromkeys(citations)),
+        })
+    return result
+
+
+def _information_acquisition_audit(
+    requests: Sequence[Mapping[str, Any]],
+    observable_profile: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    unknowns = (
+        list((observable_profile or {}).get("decision_unknowns") or [])
+        if isinstance(observable_profile, Mapping)
+        else []
+    )
+    question_ids = {
+        str(item.get("question_id"))
+        for item in unknowns
+        if isinstance(item, Mapping) and item.get("question_id")
+    }
+    reviewed: list[dict[str, Any]] = []
+    for request in requests:
+        citations = list(request.get("evidence_gap_citations") or [])
+        linked = str(request.get("linked_question_id") or "")
+        grounded = bool(
+            (linked and linked in question_ids)
+            or any(
+                citation.startswith("/observable_profile/decision_unknowns/")
+                for citation in citations
+            )
+        )
+        reviewed.append({
+            **deepcopy(dict(request)),
+            "grounded_in_supplied_unknown": grounded,
+            "decision_relevance_stated": bool(str(request.get("decision_relevance") or "").strip()),
+        })
+    return {
+        "policy": "model_owned_nonblocking_information_value_audit",
+        "available_unknown_count": len(unknowns),
+        "requested_count": len(reviewed),
+        "requests": reviewed,
+        "questions_ranked_or_scored_by_harness": False,
+        "plan_selection_changed_by_harness": False,
+    }
 
 
 def _candidate_plan(raw: Mapping[str, Any]) -> dict[str, Any]:
@@ -808,6 +915,7 @@ def parse_planning_response(raw: Any) -> dict[str, Any]:
         "candidate_plans": candidates,
         "selected_candidate_id": selected_id,
         "selection_reason": str(response.get("selection_reason", response.get("reason", "")))[:4000],
+        "information_requests": normalize_information_requests(response),
         "legacy_single_plan": legacy,
         "selection_inference": selection_inference,
         "parse_errors": errors,
@@ -1628,6 +1736,10 @@ def evaluate_planning_response(
         "candidate_lifecycles": lifecycles,
         "pareto": pareto,
         "advisor_provenance": advisor_provenance,
+        "information_acquisition": _information_acquisition_audit(
+            parsed.get("information_requests") or [],
+            observable_profile,
+        ),
     }
     return {
         "schema_version": PLANNING_SCHEMA_VERSION,
@@ -1644,6 +1756,7 @@ __all__ = [
     "anonymize_advisor_candidates",
     "derive_planning_constraints",
     "build_planning_prompts",
+    "normalize_information_requests",
     "parse_planning_response",
     "validate_plan_candidate",
     "analyze_pareto",

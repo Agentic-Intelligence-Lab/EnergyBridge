@@ -305,6 +305,12 @@ def test_unknowns_drive_natural_active_questions() -> None:
     questions = " ".join(item["question"] for item in model["active_questions"])
     assert "automatically" in questions or "routines" in questions
     assert all(item["reason"] == "not_yet_observed" for item in model["active_questions"])
+    capsule = build_profile_capsule(model, token_budget=480)
+    assert capsule["decision_unknowns"]
+    assert all(
+        set(item) == {"question_id", "dimension", "question", "reason"}
+        for item in capsule["decision_unknowns"]
+    )
 
 
 def test_capsule_is_natural_contextual_evidence_cited_and_bounded() -> None:
@@ -343,6 +349,7 @@ def test_capsule_is_natural_contextual_evidence_cited_and_bounded() -> None:
     assert capsule["estimated_tokens"] == estimate_prompt_tokens(capsule)
     assert capsule["estimated_tokens"] <= 220
     assert capsule["evidence_refs"]
+    assert "decision_unknowns" in capsule
     assert "actually told or shown" in capsule["text"]
     assert "archetype" not in capsule["text"].lower()
     assert "accept" not in capsule["text"].lower()

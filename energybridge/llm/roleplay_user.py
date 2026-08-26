@@ -397,6 +397,61 @@ class RoleplayUserSimulator:
         )
         return self._call_json(system_prompt, user_prompt)
 
+    def answer_context_question(
+        self,
+        persona: dict[str, Any],
+        question: str,
+        scenario: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Answer one decision-relevant clarification without returning hidden context."""
+        from energybridge.harness.profile_v3 import sanitize_observable_payload
+        from energybridge.harness.roleplay import sanitize_roleplay_text
+
+        resume = _household_resume(persona)
+        safe_question = sanitize_roleplay_text(question, 600).strip()
+        safe_scenario = sanitize_observable_payload(scenario or {})
+        if not safe_question:
+            raise ValueError("clarification question is empty after privacy projection")
+        system_prompt = (
+            "You are the household described by the supplied resume, answering one timely clarification from "
+            "a home-energy assistant. Answer naturally and directly from the household facts. If the resume "
+            "does not establish the answer, say you are unsure instead of inventing a preference. Do not discuss "
+            "controller methods, models, evaluation, or acceptance scoring. Return valid JSON only."
+        )
+        user_prompt = (
+            f"Household resume (role-play evidence only):\n{json.dumps(resume, ensure_ascii=False)}\n\n"
+            f"Current observable situation:\n{json.dumps(safe_scenario, ensure_ascii=False)}\n\n"
+            f"Question:\n{safe_question}\n\n"
+            "Return one object with `answer`, `certainty` (known, conditional, or unsure), and optional "
+            "`conditions`. Keep the answer to one or two natural sentences."
+        )
+        trace = self._call_json(system_prompt, user_prompt)
+        raw = trace.get("data") if isinstance(trace.get("data"), Mapping) else {}
+        answer = sanitize_roleplay_text(
+            raw.get("answer", raw.get("user_input", "")),
+            700,
+        ).strip()
+        certainty = str(raw.get("certainty") or "unsure").strip().lower()
+        if certainty not in {"known", "conditional", "unsure"}:
+            certainty = "unsure"
+        conditions = sanitize_roleplay_text(raw.get("conditions", ""), 500).strip()
+        if not answer:
+            answer = "I am not sure enough to give you a reliable answer yet."
+            certainty = "unsure"
+        return {
+            "data": {
+                "answer": answer,
+                "certainty": certainty,
+                "conditions": conditions,
+            },
+            "metrics": dict(trace.get("metrics") or {}),
+            "privacy": {
+                "hidden_resume_returned": False,
+                "raw_roleplay_response_returned": False,
+                "prompt_returned": False,
+            },
+        }
+
     def choose_strategy(
         self,
         persona: dict[str, Any],

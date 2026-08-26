@@ -11,6 +11,7 @@ from energybridge.harness.planning import (
     build_planning_prompts,
     derive_planning_constraints,
     evaluate_planning_response,
+    normalize_information_requests,
     parse_planning_response,
     validate_plan_candidate,
 )
@@ -744,6 +745,69 @@ def test_unsupported_action_envelopes_require_semantic_replan() -> None:
         "appliances": {"washer_start_h": 20.0},
     })
     assert canonical["feasible"] is True
+
+
+def test_information_requests_are_optional_model_owned_and_audited_without_ranking() -> None:
+    response = {
+        "candidate_plans": [{
+            "candidate_id": "reversible",
+            "plan": {"setpoint": 26.0, "appliances": {}},
+        }],
+        "selected_candidate_id": "reversible",
+        "selection_reason": "Safe while the routine detail is unresolved.",
+        "information_requests": [{
+            "question_id": "routine_confirmation",
+            "question": "Would shifting the washer past 19:00 disrupt tonight's routine?",
+            "why_it_matters": "A yes would keep the ordinary start; a no permits the later start.",
+            "evidence_gap": "/observable_profile/decision_unknowns/0",
+        }],
+    }
+    profile = {
+        "decision_unknowns": [{
+            "question_id": "routine_confirmation",
+            "dimension": "routine_protection",
+            "question": "Which routines should not move automatically?",
+            "reason": "limited_evidence",
+        }]
+    }
+
+    result = evaluate_planning_response(
+        response,
+        observable_state={},
+        observable_profile=profile,
+        memory={},
+        event={},
+    )
+    audit = result["portfolio_audit"]["information_acquisition"]
+
+    assert result["selection_status"] == "selected"
+    assert audit["requested_count"] == 1
+    assert audit["requests"][0]["grounded_in_supplied_unknown"] is True
+    assert audit["requests"][0]["decision_relevance_stated"] is True
+    assert audit["questions_ranked_or_scored_by_harness"] is False
+    assert audit["plan_selection_changed_by_harness"] is False
+
+
+def test_information_request_normalizer_accepts_natural_shapes_and_cleans_private_text() -> None:
+    requests = normalize_information_requests({
+        "clarification_requests": [
+            "Is the shower time fixed tonight?",
+            {
+                "ask": "Use key sk-ABCDEFGHIJKLMNOPQRSTUV at endpoint private.service.xyz?",
+                "impact": "It could change hot-water timing.",
+                "evidence_citations": ["/observable_profile/decision_unknowns/1", "not-a-pointer"],
+            },
+        ]
+    })
+    rendered = json.dumps(requests, ensure_ascii=False).lower()
+
+    assert len(requests) == 2
+    assert requests[0]["question"] == "Is the shower time fixed tonight?"
+    assert requests[1]["evidence_gap_citations"] == [
+        "/observable_profile/decision_unknowns/1"
+    ]
+    assert "abcdefghijkl" not in rendered
+    assert "private.service.xyz" not in rendered
 
 
 def test_preferences_are_not_silently_promoted_to_hard_constraints() -> None:

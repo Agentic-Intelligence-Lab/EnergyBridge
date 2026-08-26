@@ -1138,6 +1138,57 @@ def test_v2_onboarding_drops_hidden_prompt_and_llm_authored_profile(monkeypatch)
     assert "SECRET" not in serialized
 
 
+def test_v2_context_clarification_returns_only_sanitized_natural_answer(monkeypatch) -> None:
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")
+    captured: dict[str, str] = {}
+    simulator = object.__new__(RoleplayUserSimulator)
+
+    def fake_call(system_prompt: str, user_prompt: str) -> dict:
+        captured["system"] = system_prompt
+        captured["user"] = user_prompt
+        return {
+            "data": {
+                "answer": (
+                    "Please keep the 21:00 shower. provider zetacorp model fooxyz "
+                    "key sk-ABCDEFGHIJKLMNOPQRSTUV endpoint internalbox:8443/v1"
+                ),
+                "certainty": "conditional",
+                "conditions": "I can shift laundry if hot water remains ready.",
+            },
+            "raw_response": "SECRET_RAW_CONTEXT_REPLY",
+            "system_prompt": "SECRET_CONTEXT_SYSTEM",
+            "user_prompt": "SECRET_CONTEXT_USER",
+            "metrics": {"used": True},
+        }
+
+    monkeypatch.setattr(simulator, "_call_json", fake_call)
+    result = simulator.answer_context_question(
+        persona={
+            "id": "hidden-household-id",
+            "description": "I shower at 21:00 and usually wash clothes after dinner.",
+            "preferences": {
+                "scoring_weights": {"comfort": 0.9},
+                "api_key": "sk-HIDDENPERSONAKEY123456",
+            },
+        },
+        question="Would shifting laundry past 19:00 disrupt tonight?",
+        scenario={"event_window": "18:00-19:00", "providerName": "hidden-provider"},
+    )
+    serialized = json.dumps(result, ensure_ascii=False).lower()
+    prompt = (captured["system"] + captured["user"]).lower()
+
+    assert set(result) == {"data", "metrics", "privacy"}
+    assert result["data"]["certainty"] == "conditional"
+    assert "21:00 shower" in result["data"]["answer"]
+    assert "zetacorp" not in serialized
+    assert "fooxyz" not in serialized
+    assert "abcdefghijkl" not in serialized
+    assert "internalbox" not in serialized
+    assert "hidden-provider" not in prompt
+    assert "scoring_weights" not in prompt
+    assert result["privacy"]["raw_roleplay_response_returned"] is False
+
+
 def test_v2_feedback_prompt_sanitizes_resume_provenance_and_keeps_household_facts(
     monkeypatch,
 ) -> None:

@@ -750,7 +750,7 @@ def _adaptive_v3_planning_prompts(
     if allow_skill_request:
         system_prompt += """
 
-Before planning, you may request optional analysis tools if their evidence would materially help. If so, return only a JSON object with `skill_calls` and a brief `reason`. Otherwise return the planning portfolio now. This is an optional evidence-gathering step, not a required recipe."""
+Before planning, you may request either one timely household clarification or optional analysis tools when the missing evidence could materially change the plan. A clarification response is `{"clarification_request":{"question":"natural question","decision_relevance":"how different answers could change this decision","evidence_gap":"optional JSON Pointer"}}`. A tool response contains `skill_calls` and a brief `reason`. Return only one request type, or return the planning portfolio now. Evidence gathering is optional, not a required recipe; do not ask a question merely to postpone a safe reversible decision."""
         skill_catalog = {
             "forecast_control": "predictive trajectory and executable-control evidence",
             "constraint_scheduler": "constraint-aware appliance and HVAC scheduling evidence",
@@ -769,6 +769,86 @@ For a demand-response proposal or another material household change, the selecte
 
 The professional flexible-load opportunity table is nonbinding evidence, not a recommendation. It enumerates feasible starts and separate tariff, event-overlap, and routine-shift dimensions without combining them into a score. Use it when it reveals a real alternative, but keep the final timing and tradeoff judgment your own. If an exact fixed-load cost delta versus the ordinary plan is available, you may explain that normalized tariff difference with its unit; never relabel it as a bill payment or incentive. Do not claim offer-specific savings or event benefit when the selected physical plan is unchanged from the ordinary plan."""
     return system_prompt, user_prompt
+
+
+def _adaptive_v3_requested_clarification(raw: Any) -> dict | None:
+    """Return one well-formed model-authored clarification request, if any."""
+    if not isinstance(raw, dict):
+        return None
+    if any(key in raw for key in ("candidate_plans", "candidates", "plan", "setpoint", "appliances")):
+        return None
+    if raw.get("skill_calls") or raw.get("skills_to_call") or raw.get("requested_skills"):
+        return None
+    from energybridge.harness.planning import normalize_information_requests
+
+    requests = normalize_information_requests(raw)
+    if not requests:
+        return None
+    request = requests[0]
+    if not str(request.get("decision_relevance") or "").strip():
+        return None
+    return request
+
+
+def _adaptive_v3_answer_clarification(
+    planning_inputs: dict,
+    request: dict,
+    *,
+    persona_config: dict,
+) -> tuple[dict, dict, dict]:
+    """Obtain one role-play household reply and expose only its observable projection."""
+    from energybridge.llm.roleplay_user import RoleplayUserSimulator
+
+    updated = deepcopy(planning_inputs)
+    scenario = {
+        "event": deepcopy(updated.get("event") or {}),
+        "time": deepcopy(((updated.get("observable_state") or {}).get("time") or {})),
+        "current_household_statement": str(
+            ((updated.get("event") or {}).get("user_input") or "")
+        )[:800],
+    }
+    metrics: dict = {}
+    error = ""
+    try:
+        trace = RoleplayUserSimulator().answer_context_question(
+            persona_config,
+            str(request.get("question") or ""),
+            scenario,
+        )
+        answer_data = trace.get("data") if isinstance(trace.get("data"), dict) else {}
+        metrics = dict(trace.get("metrics") or {})
+        answer = _sanitize_manual_roleplay_text(answer_data.get("answer"), limit=700)
+        certainty = str(answer_data.get("certainty") or "unsure").strip().lower()
+        if certainty not in {"known", "conditional", "unsure"}:
+            certainty = "unsure"
+        conditions = _sanitize_manual_roleplay_text(answer_data.get("conditions"), limit=500)
+    except Exception as exc:
+        answer = "The household could not provide a reliable clarification; keep the plan reversible."
+        certainty = "unsure"
+        conditions = ""
+        error = _adaptive_exception_audit_text(exc, limit=300)
+    direct_reply = {
+        "question": str(request.get("question") or "")[:600],
+        "answer": answer,
+        "certainty": certainty,
+        "conditions": conditions,
+        "source": "direct_household_clarification",
+        "decision_relevance": str(request.get("decision_relevance") or "")[:1000],
+        "evidence_gap_citations": list(request.get("evidence_gap_citations") or [])[:12],
+    }
+    profile = deepcopy(updated.get("observable_profile") or {})
+    profile["event_clarification"] = direct_reply
+    updated["observable_profile"] = profile
+    audit = {
+        "status": "answered" if not error else "unavailable",
+        "request": deepcopy(request),
+        "observable_reply": direct_reply,
+        "error": error,
+        "hidden_resume_returned": False,
+        "raw_roleplay_response_returned": False,
+        "question_selected_or_scored_by_harness": False,
+    }
+    return updated, audit, metrics
 
 
 def _adaptive_v3_replan_feedback(evaluation: dict, policy_errors: list[str] | None = None) -> dict:
@@ -10721,6 +10801,7 @@ These fields are for auditability and may differ across capable models; do not i
             adaptive_advisor_candidates: list[dict] = []
             adaptive_planning_resolution: dict = {}
             adaptive_selected_raw_plan: dict | None = None
+            adaptive_clarification_audit: dict = {}
             force_mpc_primary = (
                 method == "agent"
                 and str(
@@ -10803,6 +10884,72 @@ These fields are for auditability and may differ across capable models; do not i
                     initial_prompt,
                     system_prompt=initial_system_prompt,
                 )
+                clarification_request = (
+                    _adaptive_v3_requested_clarification(initial_data)
+                    if adaptive_agent
+                    else None
+                )
+                if clarification_request is not None:
+                    (
+                        adaptive_planning_inputs,
+                        adaptive_clarification_audit,
+                        clarification_metrics,
+                    ) = _adaptive_v3_answer_clarification(
+                        adaptive_planning_inputs,
+                        clarification_request,
+                        persona_config=persona_config,
+                    )
+                    if adaptive_clarification_audit.get("status") == "answered":
+                        from energybridge.harness.profile_v3 import update_household_model
+
+                        clarification_observed_at = (
+                            _datetime.combine(run_start_date, _datetime.min.time())
+                            + _timedelta(hours=float(sim_h))
+                        ).isoformat() if run_start_date is not None else f"simulation-hour:{float(sim_h):.6f}"
+                        reply = adaptive_clarification_audit.get("observable_reply") or {}
+                        loop.agent_household_model = update_household_model(
+                            getattr(loop, "agent_household_model", {}) or {},
+                            event_context=memory_event,
+                            feedback={
+                                "event_id": str(memory_event.get("id", "")),
+                                "comment": str(reply.get("answer") or ""),
+                            },
+                            observed_at=clarification_observed_at,
+                        )
+                        adaptive_clarification_audit["profile_revision_after_reply"] = (
+                            loop.agent_household_model.get("revision")
+                        )
+                    if clarification_metrics.get("used"):
+                        clarification_usage = (
+                            clarification_metrics.get("token_usage")
+                            if isinstance(clarification_metrics.get("token_usage"), dict)
+                            else {}
+                        )
+                        loop.llm_calls += 1
+                        loop.llm_latency_s += float(
+                            clarification_metrics.get("latency_seconds", 0.0) or 0.0
+                        )
+                        loop.llm_tokens_prompt += int(
+                            clarification_usage.get("prompt_tokens", 0) or 0
+                        )
+                        loop.llm_tokens_comp += int(
+                            clarification_usage.get("completion_tokens", 0) or 0
+                        )
+                        _record_daily_llm_usage(loop, sim_days, sim_h, clarification_metrics)
+                    clarified_system, clarified_prompt = _adaptive_v3_planning_prompts(
+                        adaptive_planning_inputs,
+                        allow_skill_request=True,
+                    )
+                    clarified_system += (
+                        "\n\nThe requested household clarification is now present in "
+                        "`observable_profile.event_clarification`. Do not ask another household question "
+                        "during this decision; use the reply according to its certainty, optionally request "
+                        "analysis tools, or return the portfolio."
+                    )
+                    initial_data = _call_llm_json(
+                        clarified_prompt,
+                        system_prompt=clarified_system,
+                    )
                 requested_skill_names = (
                     _requested_agent_skill_names(initial_data)
                     if method == "agent"
@@ -10975,6 +11122,10 @@ These fields are for auditability and may differ across capable models; do not i
                     replan_fn=_semantic_replan,
                     impact_review_fn=impact_review_fn,
                 )
+                if adaptive_clarification_audit:
+                    adaptive_planning_resolution["interactive_clarification"] = deepcopy(
+                        adaptive_clarification_audit
+                    )
                 selected_plan = adaptive_planning_resolution.get("selected_executable_plan")
                 if not isinstance(selected_plan, dict):
                     loop.llm_failures += 1
