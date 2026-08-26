@@ -8,6 +8,7 @@ from energybridge.harness.energy_tools_v3 import (
     FLEXIBLE_LOAD_OPPORTUNITY_VERSION,
     build_flexible_load_opportunity_snapshot,
     build_hourly_tariff_snapshot,
+    compact_flexible_load_opportunities_for_prompt,
     evaluate_candidate_impact,
     evaluate_portfolio_impacts,
 )
@@ -146,6 +147,33 @@ def test_flexible_load_opportunity_snapshot_preserves_distinct_base_model_choice
     starts = {item["start_hod"] for item in opportunity["devices"]["washer"]["options"]}
     assert 8.0 in starts and 19.0 in starts
     assert opportunity["devices"]["washer"]["selection_performed"] is False
+
+
+def test_flexible_load_prompt_capsule_is_lossless_columnar_and_smaller() -> None:
+    state = _state()
+    state["device_capabilities"]["washer"]["preferred_h"] = 19
+    snapshot = build_flexible_load_opportunity_snapshot(
+        observable_state=state,
+        event={"trigger_h": 18, "end_h": 19},
+        ordinary_plan={"appliances": {"washer_start_h": 19, "washer_skip": False}},
+        tariff=build_hourly_tariff_snapshot(
+            {hour: 1 + hour / 10 for hour in range(24)}
+        ),
+    )
+
+    capsule = compact_flexible_load_opportunities_for_prompt(snapshot)
+    washer = capsule["devices"]["washer"]
+    start_index = washer["option_columns"].index("start_hod")
+    compact_starts = [row[start_index] for row in washer["option_rows"]]
+    original_starts = [row["start_hod"] for row in snapshot["devices"]["washer"]["options"]]
+
+    assert compact_starts == original_starts
+    assert washer["option_count"] == len(original_starts)
+    assert capsule["selection_performed"] is False
+    assert capsule["ranking_performed"] is False
+    assert len(json.dumps(capsule, sort_keys=True)) < 0.7 * len(
+        json.dumps(snapshot, sort_keys=True)
+    )
 
 
 def test_flexible_load_opportunities_exclude_starts_before_decision_clock() -> None:

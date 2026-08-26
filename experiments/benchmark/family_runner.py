@@ -634,15 +634,17 @@ def _adaptive_v3_observable_planning_inputs(
     try:
         from energybridge.harness.energy_tools_v3 import (
             build_flexible_load_opportunity_snapshot,
+            compact_flexible_load_opportunities_for_prompt,
         )
 
+        full_opportunity_snapshot = build_flexible_load_opportunity_snapshot(
+            observable_state=observable_state,
+            event=observable_event,
+            ordinary_plan=observable_state.get("ordinary_plan") or {},
+            tariff=observable_state.get("hourly_tariff") or {},
+        )
         observable_state["professional_flexible_load_opportunities"] = (
-            build_flexible_load_opportunity_snapshot(
-                observable_state=observable_state,
-                event=observable_event,
-                ordinary_plan=observable_state.get("ordinary_plan") or {},
-                tariff=observable_state.get("hourly_tariff") or {},
-            )
+            compact_flexible_load_opportunities_for_prompt(full_opportunity_snapshot)
         )
     except Exception:
         # Planning remains available when evidence is incomplete; the model

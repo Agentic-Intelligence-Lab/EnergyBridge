@@ -148,6 +148,10 @@ dimensions plus the ordinary-plan comparison. It does not combine them into a
 score, recommend a start, or select a plan. The base model can therefore use
 traditional scheduling arithmetic without being collapsed into a fixed MPC or
 rule policy, and different models can still make different household tradeoffs.
+The model-visible version uses a lossless columnar option capsule: every start
+and every dimension remains available in its original order, while repeated
+JSON field names are emitted once. This reduces context cost without pruning
+alternatives or changing their trade-offs.
 
 Adaptive controller and role-play calls that require an object use the
 provider's JSON-object response mode when available, followed by the existing

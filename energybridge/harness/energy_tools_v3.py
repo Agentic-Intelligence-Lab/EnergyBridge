@@ -21,6 +21,7 @@ from typing import Any, Mapping, Sequence
 ENERGY_IMPACT_SCHEMA_VERSION = "energybridge.candidate_impact.v3"
 TARIFF_SNAPSHOT_VERSION = "energybridge.hourly_tariff.v1"
 FLEXIBLE_LOAD_OPPORTUNITY_VERSION = "energybridge.flexible_load_opportunities.v1"
+FLEXIBLE_LOAD_PROMPT_CAPSULE_VERSION = "energybridge.flexible_load_prompt_capsule.v1"
 
 _SHIFTABLE_DEVICES = ("washer", "dishwasher", "dryer")
 _ACTION_KEYS = {
@@ -383,6 +384,61 @@ def build_flexible_load_opportunity_snapshot(
             "routine_shift is exposed as a tradeoff and is not converted into a penalty",
             "the base model retains final portfolio and timing authority",
         ],
+    }, ensure_ascii=False, allow_nan=False))
+
+
+def compact_flexible_load_opportunities_for_prompt(
+    snapshot: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Return a lossless, columnar prompt view of flexible-start options.
+
+    The full evidence artifact remains human-readable.  Repeating the same
+    option keys dozens of times in an LLM prompt adds tokens but no planning
+    information, so the prompt capsule carries one column declaration and all
+    rows in their original order.  No option is ranked, pruned, or selected.
+    """
+    source = snapshot if isinstance(snapshot, Mapping) else {}
+    columns = (
+        "start_hod",
+        "finish_hod",
+        "scheduled_energy_kwh",
+        "scheduled_cost",
+        "cost_delta_vs_ordinary",
+        "event_overlap_h",
+        "event_overlap_delta_vs_ordinary_h",
+        "routine_shift_h",
+        "missing_tariff_hours",
+    )
+    devices: dict[str, Any] = {}
+    for name, raw in (source.get("devices") or {}).items():
+        if not isinstance(raw, Mapping):
+            continue
+        row = {
+            str(key): deepcopy(value)
+            for key, value in raw.items()
+            if key != "options"
+        }
+        options = [item for item in list(raw.get("options") or []) if isinstance(item, Mapping)]
+        row["option_columns"] = list(columns)
+        row["option_rows"] = [
+            [deepcopy(item.get(column)) for column in columns]
+            for item in options
+        ]
+        row["option_count"] = len(options)
+        row["option_semantics"] = (
+            "Each option_rows item matches option_columns by position; rows remain unranked."
+        )
+        devices[str(name)] = row
+    return json.loads(json.dumps({
+        "schema_version": FLEXIBLE_LOAD_PROMPT_CAPSULE_VERSION,
+        "source_schema_version": source.get("schema_version"),
+        "event_window": deepcopy(source.get("event_window") or {}),
+        "tariff_coverage_hours": source.get("tariff_coverage_hours"),
+        "devices": devices,
+        "selection_performed": False,
+        "ranking_performed": False,
+        "projection": "lossless_columnar_option_encoding",
+        "limitations": deepcopy(list(source.get("limitations") or [])),
     }, ensure_ascii=False, allow_nan=False))
 
 
@@ -1076,8 +1132,10 @@ def evaluate_portfolio_impacts(
 __all__ = [
     "ENERGY_IMPACT_SCHEMA_VERSION",
     "FLEXIBLE_LOAD_OPPORTUNITY_VERSION",
+    "FLEXIBLE_LOAD_PROMPT_CAPSULE_VERSION",
     "TARIFF_SNAPSHOT_VERSION",
     "build_flexible_load_opportunity_snapshot",
+    "compact_flexible_load_opportunities_for_prompt",
     "build_hourly_tariff_snapshot",
     "evaluate_candidate_impact",
     "evaluate_portfolio_impacts",

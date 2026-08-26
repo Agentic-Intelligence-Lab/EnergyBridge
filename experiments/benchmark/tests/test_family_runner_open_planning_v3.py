@@ -709,7 +709,13 @@ def test_observable_adapter_prefers_session_capsules_and_lists_live_requirements
     opportunity = inputs["observable_state"]["professional_flexible_load_opportunities"]
     assert opportunity["selection_performed"] is False
     assert opportunity["ranking_performed"] is False
-    washer_options = {item["start_hod"]: item for item in opportunity["devices"]["washer"]["options"]}
+    washer = opportunity["devices"]["washer"]
+    washer_options = {
+        dict(zip(washer["option_columns"], values))["start_hod"]: dict(
+            zip(washer["option_columns"], values)
+        )
+        for values in washer["option_rows"]
+    }
     assert washer_options[18.0]["event_overlap_h"] == 1.0
     assert washer_options[19.0]["event_overlap_h"] == 0.0
 
