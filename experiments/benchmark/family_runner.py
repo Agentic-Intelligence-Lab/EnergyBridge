@@ -467,6 +467,22 @@ def _adaptive_v3_realtime_device_state(loop, sim_h: float) -> dict:
     }
 
 
+def _adaptive_v3_completed_services(realtime_device_state: dict | None) -> set[str]:
+    """Return services observably completed for the current simulation day."""
+    state = realtime_device_state if isinstance(realtime_device_state, dict) else {}
+    current_day = state.get("current_day_service_state")
+    current_day = current_day if isinstance(current_day, dict) else {}
+    return {
+        str(name)
+        for name, observed in current_day.items()
+        if isinstance(observed, dict)
+        and (
+            observed.get("completed") is True
+            or str(observed.get("status") or "").strip().lower() in {"completed", "finished"}
+        )
+    }
+
+
 def _adaptive_v3_observable_planning_inputs(
     loop,
     *,
@@ -555,10 +571,14 @@ def _adaptive_v3_observable_planning_inputs(
             devices[str(name)]["service_required_today"] = bool(
                 raw.get("service_required_today", True)
             )
-    required_action_fields = _missing_explicit_appliance_actions(
-        {}, appliance_config, adaptive_contract=True
-    )
     realtime_device_state = _adaptive_v3_realtime_device_state(loop, sim_h)
+    completed_services = _adaptive_v3_completed_services(realtime_device_state)
+    required_action_fields = _missing_explicit_appliance_actions(
+        {},
+        appliance_config,
+        adaptive_contract=True,
+        completed_services=completed_services,
+    )
     observable_state = {
         "time": {"simulation_hour": sim_h, "hour_of_day": hod},
         "environment": {"indoor_temp_c": temp, "outdoor_temp_c": out_t},
@@ -645,7 +665,9 @@ def _adaptive_v3_observable_planning_inputs(
             "constraint_id": "future_next_check_when_present",
             "kind": "range",
             "path": "/next_check_hour",
-            "min": round(float(sim_h) + (1.0 / 6.0), 6),
+            # Match the actuator/runtime contract exactly: callbacks at or
+            # within 15 minutes are not a meaningful future replan.
+            "min": round(float(sim_h) + 0.250001, 6),
             "nullable": True,
             "severity": "hard",
             "evidence_paths": ["/observable_state/time/simulation_hour"],
@@ -3852,13 +3874,15 @@ def _missing_explicit_appliance_actions(
     appliance_config: dict | None,
     *,
     adaptive_contract: bool = False,
+    completed_services: set[str] | None = None,
 ) -> List[str]:
     """Return fields missing from an Agent response for present controllable appliances."""
     actions = actions or {}
     missing: List[str] = []
     present = set(_present_agent_controlled_appliances(appliance_config))
+    completed = {str(value) for value in (completed_services or set())}
     for name in ("washer", "dishwasher", "dryer"):
-        if name in present:
+        if name in present and name not in completed:
             start_key = f"{name}_start_h"
             skip_key = f"{name}_skip"
             if actions.get(skip_key) is True:
@@ -10706,10 +10730,18 @@ These fields are for auditability and may differ across capable models; do not i
 
         def _hard_policy_errors(actions: dict | None) -> list[str]:
             errors: list[str] = []
+            completed_services = (
+                _adaptive_v3_completed_services(
+                    _adaptive_v3_realtime_device_state(loop, sim_h)
+                )
+                if adaptive_agent
+                else set()
+            )
             missing = _missing_explicit_appliance_actions(
                 actions or {},
                 appliance_config,
                 adaptive_contract=adaptive_agent,
+                completed_services=completed_services,
             )
             if missing:
                 errors.append("missing explicit appliance commands: " + ", ".join(missing))
@@ -11307,6 +11339,13 @@ These fields are for auditability and may differ across capable models; do not i
                 data.get("appliances", {}),
                 appliance_config,
                 adaptive_contract=adaptive_agent,
+                completed_services=(
+                    _adaptive_v3_completed_services(
+                        _adaptive_v3_realtime_device_state(loop, sim_h)
+                    )
+                    if adaptive_agent
+                    else set()
+                ),
             )
             if missing_explicit:
                 print(
@@ -12973,16 +13012,63 @@ These fields are for auditability and may differ across capable models; do not i
                         facility_w=fac,
                     )
                 else:
-                    res = _llm_trigger(temp, out_t, hod, sim_h, total_sim_hours - sim_h,
-                                       vpp_active=bool(is_vpp or active_vpp is not None),
-                                       vpp_id=vid or planning_vid or (str(active_vpp.get("id", "")) if active_vpp else ""),
-                                       user_pref_input=loop.vpp_user_input,
-                                       facility_w=fac,
-                                       suppress_vpp_context=bool(
-                                           triggered_daily_plan
-                                           and planning_vpp_event is None
-                                           and not is_vpp
-                                       ))
+                    res = None
+                    if (
+                        method == "agent"
+                        and _adaptive_harness_v2()
+                        and planning_vpp_event is not None
+                        and not disable_acceptance_fallback
+                    ):
+                        existing_commitment = loop.vpp_plan_gate_by_id.get(planning_vid)
+                        if isinstance(existing_commitment, dict) and bool(
+                            existing_commitment.get("accepted")
+                        ):
+                            committed_plan = (
+                                existing_commitment.get("accepted_execution_plan")
+                                or existing_commitment.get("proposed_plan")
+                                or {}
+                            )
+                            retained, reused, commitment_errors = (
+                                _adaptive_v3_retain_feasible_accepted_commitment(
+                                    existing_commitment,
+                                    committed_plan,
+                                    action_validator=lambda actions: _adaptive_v3_commitment_action_errors(
+                                        actions,
+                                        appliance_config=appliance_config,
+                                        vpp_event=planning_vpp_event,
+                                        current_hod=hod,
+                                    ),
+                                    setpoint_min_c=_run_sp_min,
+                                    setpoint_max_c=_run_sp_max,
+                                )
+                            )
+                            if reused:
+                                res = retained
+                                res["commitment_execution_audit"] = {
+                                    "status": "retained_after_current_hard_validation",
+                                    "controller_replan_called": False,
+                                    "renewed_consent_required": False,
+                                }
+                                print(
+                                    "  [VPP Commitment] current hard state unchanged; "
+                                    "execute the accepted plan without a redundant model call"
+                                )
+                            elif commitment_errors:
+                                print(
+                                    "  [VPP Commitment] current hard state invalidated the accepted plan; "
+                                    "requesting a fresh model plan"
+                                )
+                    if res is None:
+                        res = _llm_trigger(temp, out_t, hod, sim_h, total_sim_hours - sim_h,
+                                           vpp_active=bool(is_vpp or active_vpp is not None),
+                                           vpp_id=vid or planning_vid or (str(active_vpp.get("id", "")) if active_vpp else ""),
+                                           user_pref_input=loop.vpp_user_input,
+                                           facility_w=fac,
+                                           suppress_vpp_context=bool(
+                                               triggered_daily_plan
+                                               and planning_vpp_event is None
+                                               and not is_vpp
+                                           ))
                     if "objective_terms_posthoc" not in res:
                         try:
                             res["objective_terms_posthoc"] = _compute_posthoc_decision_objective(
@@ -13235,20 +13321,27 @@ These fields are for auditability and may differ across capable models; do not i
                         and isinstance(_existing_gate, dict)
                         and bool(_existing_gate.get("accepted"))
                     ):
-                        _committed_res, _commitment_reused, _commitment_errors = (
-                            _adaptive_v3_retain_feasible_accepted_commitment(
-                                _existing_gate,
+                        if res.get("accepted_commitment_reused"):
+                            _committed_res, _commitment_reused, _commitment_errors = (
                                 res,
-                                action_validator=lambda actions: _adaptive_v3_commitment_action_errors(
-                                    actions,
-                                    appliance_config=appliance_config,
-                                    vpp_event=planning_vpp_event,
-                                    current_hod=hod,
-                                ),
-                                setpoint_min_c=_run_sp_min,
-                                setpoint_max_c=_run_sp_max,
+                                True,
+                                [],
                             )
-                        )
+                        else:
+                            _committed_res, _commitment_reused, _commitment_errors = (
+                                _adaptive_v3_retain_feasible_accepted_commitment(
+                                    _existing_gate,
+                                    res,
+                                    action_validator=lambda actions: _adaptive_v3_commitment_action_errors(
+                                        actions,
+                                        appliance_config=appliance_config,
+                                        vpp_event=planning_vpp_event,
+                                        current_hod=hod,
+                                    ),
+                                    setpoint_min_c=_run_sp_min,
+                                    setpoint_max_c=_run_sp_max,
+                                )
+                            )
                         if _commitment_reused:
                             res = _committed_res
                             print(

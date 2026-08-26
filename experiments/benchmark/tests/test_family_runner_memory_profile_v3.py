@@ -1242,7 +1242,7 @@ def test_planning_inputs_expose_machine_checked_event_timing_constraints() -> No
         "constraint_id": "future_next_check_when_present",
         "kind": "range",
         "path": "/next_check_hour",
-        "min": 40.666667,
+        "min": 40.750001,
         "nullable": True,
         "severity": "hard",
         "evidence_paths": ["/observable_state/time/simulation_hour"],
@@ -1260,6 +1260,70 @@ def test_planning_inputs_expose_machine_checked_event_timing_constraints() -> No
             "/event/end_h",
         ],
     }
+
+
+def test_completed_shiftable_service_is_not_required_again_but_cannot_be_rescheduled() -> None:
+    class CompletedWasherSuite:
+        _last_powers = {"washer": 0.0, "dishwasher": 0.0}
+
+        @staticmethod
+        def status_lines(sim_h):
+            return ["washer completed at 08:00", "dishwasher pending"]
+
+        @staticmethod
+        def all_results():
+            return {
+                "washer": [{"day": 0, "completed": True, "start_h": 8.0}],
+                "dishwasher": [{"day": 0, "completed": False, "status": "pending"}],
+            }
+
+    loop = SimpleNamespace(
+        appliance_suite=CompletedWasherSuite(),
+        current_occupied=True,
+        current_occupancy_count=1.0,
+        current_occupancy_source="shared_calendar",
+        agent_profile_capsule_by_event_id={"e": {"text": "Visible facts only."}},
+        agent_memory_capsule_by_event_id={"e": {}},
+        agent_preference_memory={},
+    )
+    appliance_config = {
+        "washer": {"present": True, "shiftable": True, "duration_h": 2.0},
+        "dishwasher": {"present": True, "shiftable": True, "duration_h": 1.5},
+    }
+
+    inputs = fr._adaptive_v3_observable_planning_inputs(
+        loop,
+        event_id="e",
+        sim_h=16.5,
+        hod=16.5,
+        temp=25.0,
+        out_t=30.0,
+        facility_w=1000.0,
+        observable_calendar={"occupied": True},
+        memory_event={"id": "e", "trigger_h": 18.0, "end_h": 19.0},
+        vpp_event={"id": "e", "trigger_h": 18.0, "end_h": 19.0},
+        user_input="Keep completed tasks unchanged.",
+        appliance_config=appliance_config,
+        setpoint_min_c=22.0,
+        setpoint_max_c=28.0,
+    )
+
+    required = inputs["observable_state"]["required_appliance_action_fields"]
+    constraint_ids = {
+        item["constraint_id"] for item in inputs["explicit_constraints"]
+    }
+    assert "washer_start_h" not in required
+    assert "washer_skip" not in required
+    assert "dishwasher_start_h" in required
+    assert "dishwasher_skip" in required
+    assert "washer_outside_vpp_window" not in constraint_ids
+    assert "dishwasher_outside_vpp_window" in constraint_ids
+    assert fr._missing_explicit_appliance_actions(
+        {"dishwasher_start_h": 20.0, "dishwasher_skip": False},
+        appliance_config,
+        adaptive_contract=True,
+        completed_services={"washer"},
+    ) == []
 
 
 def test_acceptance_gate_is_reused_only_for_the_same_concrete_plan() -> None:
