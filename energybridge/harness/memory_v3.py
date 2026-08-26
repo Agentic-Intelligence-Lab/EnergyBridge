@@ -319,6 +319,7 @@ _OUTCOME_FIELDS = {
     "observed_preferences",
     "measurements",
     "planning_evidence",
+    "planning_calibration",
 }
 
 _NEGATIVE_TERMS = (
@@ -2143,6 +2144,9 @@ def _compact_episode(episode: Mapping[str, Any]) -> dict[str, Any]:
             )
             if key in planning_evidence
         })
+    planning_calibration = observations.get("planning_calibration")
+    if isinstance(planning_calibration, Mapping):
+        compact_outcome["planning_calibration"] = _safe(planning_calibration)
     return {
         "episode_id": episode.get("episode_id"),
         "context_signature": (episode.get("context") or {}).get("context_signature"),
@@ -2197,6 +2201,30 @@ def compact_memory_context_v3(
         if item["status"] in {"conflicted", "provisional", "stale"}
         or item["contradiction_count"] > 0
     ]
+    # Calibration is intentionally restricted to outcomes causally attributed
+    # to observed execution.  Consent-only or proposal-only episodes must not
+    # teach the controller that a forecast was right or wrong.
+    calibration_records = []
+    for episode in relevant:
+        attribution = (
+            episode.get("causal_attribution")
+            if isinstance(episode.get("causal_attribution"), Mapping)
+            else {}
+        )
+        if attribution.get("outcome_attribution") != "observational_executed_plan":
+            continue
+        stages = episode.get("stages") if isinstance(episode.get("stages"), Mapping) else {}
+        outcome = stages.get("outcome") if isinstance(stages.get("outcome"), Mapping) else {}
+        observations = (
+            outcome.get("observations")
+            if isinstance(outcome.get("observations"), Mapping)
+            else {}
+        )
+        record = observations.get("planning_calibration")
+        if isinstance(record, Mapping):
+            calibration_records.append(record)
+    from .calibration_v3 import build_calibration_capsule
+
     capsule: dict[str, Any] = {
         "memory_version": MEMORY_V3_VERSION,
         "privacy_scope": "controller_observable_only",
@@ -2205,11 +2233,13 @@ def compact_memory_context_v3(
             "Beliefs are evidence-linked hypotheses, not commands or hard constraints.",
             "Consent evidence describes the offered plan; physical outcomes describe only the executed plan.",
             "Conflicted, stale, or weak beliefs should remain uncertain.",
+            "Forecast/result agreement calibrates confidence only; it is not a reward, ranking, policy, or action.",
         ],
         "stable_beliefs": stable[:18],
         "contextual_beliefs": contextual[:10],
         "unresolved_beliefs": unresolved[:10],
         "relevant_episodes": [_compact_episode(episode) for episode in relevant],
+        "professional_calibration": build_calibration_capsule(calibration_records),
     }
     budget = max(900, int(max_chars))
 

@@ -868,6 +868,14 @@ def _adaptive_v3_resolve_planning_response(
                         selected_raw_plan["strategy_explanation"] = explanation.strip()
                 break
     status = "selected" if selected_plan is not None else "fallback_required"
+    memory_capsule = planning_inputs.get("memory")
+    memory_capsule = memory_capsule if isinstance(memory_capsule, dict) else {}
+    calibration_memory_used = memory_capsule.get("professional_calibration")
+    calibration_memory_used = (
+        deepcopy(calibration_memory_used)
+        if isinstance(calibration_memory_used, dict)
+        else {}
+    )
     return {
         "version": "energybridge.open_portfolio_resolution.v3",
         "status": status,
@@ -886,6 +894,9 @@ def _adaptive_v3_resolve_planning_response(
         "final_portfolio_audit": deepcopy(final.get("portfolio_audit") or {}),
         "final_runtime_contract_errors": final_policy_errors,
         "advisor_override_allowed": False,
+        # Persist the bounded, model-visible calibration capsule so repeated
+        # event studies can verify what evidence the base model actually saw.
+        "calibration_memory_used": calibration_memory_used,
     }
 
 
@@ -1202,6 +1213,28 @@ def _adaptive_v3_append_execution_exposure(
         "status": str(executed_stage.get("status") or "executed"),
         "application_report": deepcopy(executed_stage.get("application_report") or {}),
     }
+    portfolio = updated.get("portfolio_planning")
+    portfolio = portfolio if isinstance(portfolio, dict) else {}
+    selected_id = portfolio.get("selected_candidate_id")
+    portfolio_audit = portfolio.get("final_portfolio_audit")
+    portfolio_audit = portfolio_audit if isinstance(portfolio_audit, dict) else {}
+    professional = portfolio_audit.get("professional_impact_evidence")
+    professional = professional if isinstance(professional, dict) else {}
+    selected_evidence = next(
+        (
+            deepcopy(item)
+            for item in list(professional.get("candidate_impacts") or [])
+            if isinstance(item, dict)
+            and selected_id is not None
+            and str(item.get("candidate_id")) == str(selected_id)
+        ),
+        {},
+    )
+    if selected_evidence:
+        # Bind the accounting forecast to the actuator exposure while both are
+        # still present. A later event-time replan must not silently reassign a
+        # day-ahead forecast to a different executed plan.
+        exposure["planning_evidence"] = selected_evidence
     if (
         history
         and history[-1].get("simulation_hour") == exposure["simulation_hour"]
@@ -8950,6 +8983,57 @@ def _update_agent_v3_memory(loop, event_result: dict, feedback_text: str) -> Non
         ),
         {},
     )
+    exposure_evidence_by_fingerprint: dict[str, dict] = {}
+    for exposure in execution_exposures:
+        evidence = exposure.get("planning_evidence")
+        if not isinstance(evidence, dict) or not evidence:
+            continue
+        fingerprint = str(
+            evidence.get("plan_fingerprint")
+            or evidence.get("candidate_id")
+            or ""
+        )
+        if fingerprint:
+            exposure_evidence_by_fingerprint[fingerprint] = deepcopy(evidence)
+    calibration_evidence: dict = {}
+    if len(exposure_evidence_by_fingerprint) == 1:
+        selected_planning_evidence = deepcopy(
+            next(iter(exposure_evidence_by_fingerprint.values()))
+        )
+        calibration_evidence = deepcopy(selected_planning_evidence)
+    elif not execution_exposures and selected_planning_evidence:
+        # A direct single-dispatch caller may not use the exposure ledger. In
+        # that narrow case, accept the lifecycle forecast only when the exact
+        # selected executable snapshot equals the actuator-facing snapshot.
+        selected_executable = portfolio_resolution.get("selected_executable_plan")
+        if (
+            isinstance(selected_executable, dict)
+            and _adaptive_v2_plan_snapshot(selected_executable)
+            == _adaptive_v2_plan_snapshot(actual_executed)
+        ):
+            calibration_evidence = deepcopy(selected_planning_evidence)
+
+    planning_calibration: dict = {}
+    calibration_status = "not_available"
+    if not execution_observed:
+        calibration_status = "not_calibrated_without_execution_evidence"
+    elif len(exposure_evidence_by_fingerprint) > 1:
+        calibration_status = "not_calibrated_multiple_forecast_exposures"
+    elif calibration_evidence:
+        from energybridge.harness.calibration_v3 import build_outcome_calibration_record
+
+        planning_calibration = build_outcome_calibration_record(
+            calibration_evidence,
+            {
+                "appliance_summary": deepcopy(event_result.get("appliance_summary") or {}),
+                "comfort_violation_minutes": event_result.get("comfort_violation_minutes"),
+                "target_achieved": event_result.get("target_achieved"),
+                "actual_kwh": event_result.get("actual_kwh"),
+            },
+        )
+        calibration_status = "observational_execution_calibrated"
+    else:
+        calibration_status = "not_calibrated_without_bound_planning_evidence"
     outcome = {
         "accepted": gate.get("accepted") if "accepted" in gate else event_result.get("accepted"),
         "score": event_result.get("score"),
@@ -8967,6 +9051,8 @@ def _update_agent_v3_memory(loop, event_result: dict, feedback_text: str) -> Non
         "preference_observations": deepcopy(event_result.get("preference_observations") or []),
         "planning_evidence": selected_planning_evidence,
     }
+    if planning_calibration:
+        outcome["planning_calibration"] = planning_calibration
     context_event = cached_context.get("event") or {
         "id": event_id,
         "day": event_result.get("day"),
@@ -9057,6 +9143,12 @@ def _update_agent_v3_memory(loop, event_result: dict, feedback_text: str) -> Non
         "profile_revision": loop.agent_household_model.get("revision"),
         "memory_revision": updated_memory.get("revision"),
         "episode_stage_separation": deepcopy(lifecycle["memory_attribution"]),
+    }
+    event_result["adaptive_decision_audit"]["planning_calibration"] = {
+        "status": calibration_status,
+        "record": deepcopy(planning_calibration),
+        "policy_update_performed": False,
+        "ranking_performed": False,
     }
 
 

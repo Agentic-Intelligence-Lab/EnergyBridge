@@ -13,6 +13,7 @@ from energybridge.harness.energy_tools_v3 import (
     FLEXIBLE_LOAD_OPPORTUNITY_VERSION,
 )
 from energybridge.harness.decision_evidence_v3 import DECISION_EVIDENCE_LEDGER_VERSION
+from energybridge.harness.calibration_v3 import OUTCOME_CALIBRATION_VERSION
 from energybridge.harness.memory_v3 import MEMORY_V3_VERSION
 from energybridge.harness.planning import PLANNING_SCHEMA_VERSION
 from energybridge.harness.profile_v3 import HOUSEHOLD_MODEL_VERSION
@@ -117,6 +118,7 @@ def test_manifest_changes_with_model_profile_and_roleplay_gate(monkeypatch) -> N
         "impact_evidence": ENERGY_IMPACT_SCHEMA_VERSION,
         "flexible_load_opportunities": FLEXIBLE_LOAD_OPPORTUNITY_VERSION,
         "decision_evidence_ledger": DECISION_EVIDENCE_LEDGER_VERSION,
+        "outcome_calibration": OUTCOME_CALIBRATION_VERSION,
         "structured_output_transport": STRUCTURED_OUTPUT_TRANSPORT_VERSION,
     }
     assert baseline["harness"]["agent_memory_warm_start_enabled"] is False
@@ -141,6 +143,7 @@ def test_manifest_changes_with_model_profile_and_roleplay_gate(monkeypatch) -> N
         "impact_evidence": None,
         "flexible_load_opportunities": None,
         "decision_evidence_ledger": None,
+        "outcome_calibration": None,
         "structured_output_transport": None,
     }
     assert paper["harness"]["agent_memory_warm_start_enabled"] is False
@@ -156,6 +159,7 @@ def test_manifest_changes_with_model_profile_and_roleplay_gate(monkeypatch) -> N
         "impact_evidence": None,
         "flexible_load_opportunities": None,
         "decision_evidence_ledger": None,
+        "outcome_calibration": None,
         "structured_output_transport": None,
     }
     assert legacy["harness"]["agent_memory_warm_start_enabled"] is False
@@ -208,6 +212,7 @@ def test_non_agent_methods_do_not_claim_adaptive_agent_components(monkeypatch) -
         "impact_evidence": None,
         "flexible_load_opportunities": None,
         "decision_evidence_ledger": None,
+        "outcome_calibration": None,
         "structured_output_transport": None,
     }
     assert manifest["harness"]["agent_memory_warm_start_enabled"] is False

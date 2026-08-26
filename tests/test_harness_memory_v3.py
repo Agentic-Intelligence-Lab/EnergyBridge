@@ -688,6 +688,80 @@ def test_compact_memory_links_professional_planning_evidence_to_outcome() -> Non
     assert "provider" not in evidence
 
 
+def test_compact_memory_calibrates_only_attributed_executed_outcomes() -> None:
+    memory = initialize_memory_v3(_questionnaire(), household_id="home-calibration")
+    context = _context("calibrated-event")
+    calibration = {
+        "schema_version": "energybridge.outcome_calibration.v1",
+        "candidate_id": "household_choice",
+        "plan_fingerprint": "forecast-1",
+        "observations": [
+            {
+                "signal": "non_ac_event_overlap",
+                "forecast": {"overlapping_devices": []},
+                "measurement": {"overlapping_devices": []},
+                "agreement": True,
+                "evidence_paths": [
+                    "/planning_evidence/device_impacts",
+                    "/outcome/appliance_summary",
+                ],
+            },
+            {
+                "signal": "service_completion",
+                "device": "washer",
+                "forecast": True,
+                "measurement": False,
+                "agreement": False,
+                "evidence_paths": [
+                    "/planning_evidence/device_impacts/washer",
+                    "/outcome/appliance_summary/washer",
+                ],
+            },
+        ],
+        "observation_count": 2,
+        "policy_update_performed": False,
+        "ranking_performed": False,
+    }
+    memory = update_memory_v3(
+        memory,
+        context,
+        {"overall_score": 3, "planning_calibration": calibration},
+    )
+
+    capsule = compact_memory_context_v3(memory, context, k=1, max_chars=6000)
+    aggregate = capsule["professional_calibration"]
+    assert aggregate["signal_summaries"]["non_ac_event_overlap"]["agreement_count"] == 1
+    assert aggregate["signal_summaries"]["service_completion"]["disagreement_count"] == 1
+    assert aggregate["policy_update_performed"] is False
+    assert aggregate["ranking_performed"] is False
+    assert capsule["relevant_episodes"][0]["outcome"]["planning_calibration"][
+        "plan_fingerprint"
+    ] == "forecast-1"
+    serialized = json.dumps(capsule, sort_keys=True)
+    assert "action_recommendation" not in serialized
+    assert "policy_weight" not in serialized
+
+
+def test_compact_memory_does_not_calibrate_unexecuted_outcome() -> None:
+    memory = initialize_memory_v3(_questionnaire(), household_id="home-no-execution")
+    context = _context("not-executed", executed_setpoint=None)
+    memory = update_memory_v3(
+        memory,
+        context,
+        {
+            "accepted": False,
+            "planning_calibration": {
+                "schema_version": "energybridge.outcome_calibration.v1",
+                "observations": [{"signal": "service_completion", "agreement": False}],
+            },
+        },
+    )
+
+    capsule = compact_memory_context_v3(memory, context, k=1, max_chars=6000)
+    assert capsule["professional_calibration"]["source_record_count"] == 0
+    assert capsule["professional_calibration"]["signal_summaries"] == {}
+
+
 def test_v2_migration_rebuilds_contextual_attribution_and_drops_method() -> None:
     v2 = initialize_memory_v2(_questionnaire(), persona_id="private-namespace", method="secret-method")
     context = build_event_context_v2(

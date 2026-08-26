@@ -61,6 +61,37 @@ def test_portfolio_keeps_model_choice_across_distinct_candidates() -> None:
     assert impact["selected_candidate_id"] is None
 
 
+def test_resolution_audits_the_bounded_calibration_memory_seen_by_model() -> None:
+    inputs = _planning_inputs()
+    calibration = {
+        "schema_version": "energybridge.calibration_capsule.v1",
+        "source_record_count": 1,
+        "signal_summaries": {
+            "service_completion": {
+                "observation_count": 2,
+                "agreement_count": 2,
+                "disagreement_count": 0,
+            }
+        },
+        "recent_disagreements": [],
+        "policy_update_performed": False,
+        "ranking_performed": False,
+    }
+    inputs["memory"]["professional_calibration"] = calibration
+
+    resolution = fr._adaptive_v3_resolve_planning_response(
+        {
+            "candidate_plans": [_candidate("model-owned", 26.0)],
+            "selected_candidate_id": "model-owned",
+        },
+        planning_inputs=inputs,
+    )
+
+    assert resolution["calibration_memory_used"] == calibration
+    assert resolution["calibration_memory_used"]["policy_update_performed"] is False
+    assert resolution["calibration_memory_used"]["ranking_performed"] is False
+
+
 def test_candidate_level_explanation_reaches_selected_raw_and_executable_plan() -> None:
     explanation = {
         "natural_language": "Use a household-specific schedule with a supported tradeoff.",

@@ -146,6 +146,15 @@ tradeoff claim, the actual actuator exposure, and the household response. This
 supports calibration from evidence without converting one score into a fixed
 household rule.
 
+`energybridge.outcome_calibration.v1` compares that bound forecast with later
+physical appliance, service, and comfort measurements only when execution was
+observed and causally attributed. Relevant records are summarized as
+`energybridge.calibration_capsule.v1`. The capsule reports agreement and
+disagreement by signal plus evidence paths; it deliberately contains no
+learned controller weight, scalar reward, method rank, or recommended action.
+The base model remains responsible for interpreting how much confidence those
+observations warrant in the current context.
+
 Consent is also treated as a commitment. A feasible pre-event plan that the
 household accepted is retained at event start instead of being silently
 replaced by a fresh model proposal. Replanning and renewed consent occur only

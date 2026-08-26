@@ -252,6 +252,86 @@ def test_v3_event_memory_attributes_outcome_to_the_full_execution_sequence(
     )
 
 
+def test_v3_execution_binds_professional_forecast_and_calibrates_outcome(
+    monkeypatch, tmp_path
+) -> None:
+    loop = _init_v3(monkeypatch, tmp_path)
+    event_id = "event-calibrated-forecast"
+    fr._agent_preference_memory_prompt_text(
+        loop,
+        event={"id": event_id, "event_type": "demand_response", "trigger_h": 18.0, "end_h": 19.0},
+        calendar={"occupied": True},
+        home_state={"indoor_temp_c": 25.0, "occupied": True},
+        user_input="Keep the washer outside the event.",
+    )
+    plan = {
+        "setpoint": 26.0,
+        "appliance_actions": {"washer_start_h": 20.0, "washer_skip": False},
+    }
+    candidate_id = "model-plan"
+    planning_evidence = {
+        "schema_version": "energybridge.candidate_impact.v3",
+        "candidate_id": candidate_id,
+        "plan_fingerprint": "professional-forecast-1",
+        "device_impacts": {
+            "washer": {
+                "task_completed": True,
+                "vpp_overlap_h": 0.0,
+                "vpp_overlap_energy_kwh": 0.0,
+            }
+        },
+        "hvac_impact": {"comfort_violation_c": 0.0},
+    }
+    lifecycle = fr._adaptive_v2_new_plan_lifecycle(plan)
+    lifecycle["portfolio_planning"] = {
+        "selected_candidate_id": candidate_id,
+        "final_portfolio_audit": {
+            "professional_impact_evidence": {"candidate_impacts": [planning_evidence]}
+        },
+    }
+    lifecycle = fr._adaptive_v2_record_plan_stage(
+        lifecycle, "consented_plan", plan, status="accepted"
+    )
+    lifecycle = fr._adaptive_v2_record_plan_stage(
+        lifecycle, "executed_plan", plan, status="executed"
+    )
+    lifecycle = fr._adaptive_v3_append_execution_exposure(
+        loop, event_id, 17.0, lifecycle, plan
+    )
+    loop.agent_plan_lifecycle_by_event_id[event_id] = lifecycle
+    result = {
+        "id": event_id,
+        "day": 1,
+        "trigger_h": 18.0,
+        "end_h": 19.0,
+        "setpoint": 26.0,
+        "vpp_trigger_actions": plan["appliance_actions"],
+        "vpp_acceptance_gate": {"accepted": True, "proposed_plan": plan},
+        "score": 4,
+        "comfort_score": 4,
+        "energy_score": 4,
+        "vpp_score": 5,
+        "actual_kwh": 1.0,
+        "comfort_violation_minutes": 0.0,
+        "appliance_summary": {
+            "washer": {"present": True, "completed": True, "ran_during_vpp": False}
+        },
+        "comment": "The schedule worked.",
+    }
+
+    fr._update_agent_preference_memory(loop, result, persona_config={})
+
+    audit = result["adaptive_decision_audit"]["planning_calibration"]
+    assert audit["status"] == "observational_execution_calibrated"
+    assert audit["record"]["observation_count"] == 3
+    assert all(item["agreement"] for item in audit["record"]["observations"])
+    episode = loop.agent_preference_memory["episodes"][-1]
+    stored = episode["stages"]["outcome"]["observations"]["planning_calibration"]
+    assert stored["plan_fingerprint"] == "professional-forecast-1"
+    assert stored["policy_update_performed"] is False
+    assert stored["ranking_performed"] is False
+
+
 def test_v3_explicit_store_warm_load_reconciles_current_onboarding(monkeypatch, tmp_path) -> None:
     store_file = tmp_path / "shared-memory.json"
     cold_dir = tmp_path / "cold-run"

@@ -40,6 +40,12 @@ from .decision_evidence_v3 import (
     DECISION_EVIDENCE_LEDGER_VERSION,
     build_decision_evidence_ledger,
 )
+from .calibration_v3 import (
+    CALIBRATION_CAPSULE_VERSION,
+    OUTCOME_CALIBRATION_VERSION,
+    build_calibration_capsule,
+    build_outcome_calibration_record,
+)
 from .energy_tools_v3 import (
     ENERGY_IMPACT_SCHEMA_VERSION,
     FLEXIBLE_LOAD_OPPORTUNITY_VERSION,
@@ -98,6 +104,10 @@ __all__ = [
     "validate_plan_candidate",
     "DECISION_EVIDENCE_LEDGER_VERSION",
     "build_decision_evidence_ledger",
+    "CALIBRATION_CAPSULE_VERSION",
+    "OUTCOME_CALIBRATION_VERSION",
+    "build_calibration_capsule",
+    "build_outcome_calibration_record",
     "ENERGY_IMPACT_SCHEMA_VERSION",
     "FLEXIBLE_LOAD_OPPORTUNITY_VERSION",
     "TARIFF_SNAPSHOT_VERSION",
