@@ -549,6 +549,73 @@ def test_adaptive_water_heater_false_disables_and_never_uses_attached_schedule()
     )
 
 
+def test_adaptive_shiftable_schedule_cannot_be_moved_into_the_past() -> None:
+    config = {
+        "washer": {
+            "present": True,
+            "earliest_h": 8.0,
+            "latest_h": 22.0,
+            "preferred_h": 19.0,
+            "duration_h": 2.0,
+            "shiftable": True,
+            "dr_adjustable": True,
+        }
+    }
+    suite = ApplianceSuite(config, sim_days=1, explicit_only=True)
+    assert suite.shift_appliance("washer", 0, 19.0)
+
+    errors = fr._adaptive_v3_shiftable_runtime_errors(
+        {"washer_start_h": 15.0, "washer_skip": False},
+        suite,
+        sim_h=16.5,
+    )
+    report = fr._adaptive_v3_apply_appliance_actions(
+        suite,
+        {"washer_start_h": 15.0, "washer_skip": False},
+        sim_h=16.5,
+    )
+
+    assert any("before the current decision clock" in item for item in errors)
+    assert report["applied_actions"] == {}
+    assert report["rejections"] == [{"service": "washer", "reason": "runtime_past"}]
+    assert suite._shiftable["washer"]._days[0].scheduled_abs_h == 19.0
+
+
+def test_adaptive_reapply_of_same_started_schedule_is_idempotent() -> None:
+    config = {
+        "washer": {
+            "present": True,
+            "earliest_h": 8.0,
+            "latest_h": 22.0,
+            "preferred_h": 15.0,
+            "duration_h": 2.0,
+            "shiftable": True,
+            "dr_adjustable": True,
+        }
+    }
+    suite = ApplianceSuite(config, sim_days=1, explicit_only=True)
+    assert suite.shift_appliance("washer", 0, 15.0)
+    suite.step(15.0, 1 / 6)
+
+    errors = fr._adaptive_v3_shiftable_runtime_errors(
+        {"washer_start_h": 15.0, "washer_skip": False},
+        suite,
+        sim_h=16.5,
+    )
+    report = fr._adaptive_v3_apply_appliance_actions(
+        suite,
+        {"washer_start_h": 15.0, "washer_skip": False},
+        sim_h=16.5,
+    )
+
+    assert errors == []
+    assert report["rejections"] == []
+    assert report["applied_actions"] == {
+        "washer_start_h": 15.0,
+        "washer_skip": False,
+    }
+
+
 def test_adaptive_actual_execution_records_bounded_actions_and_fingerprint() -> None:
     config = {
         "water_heater": {

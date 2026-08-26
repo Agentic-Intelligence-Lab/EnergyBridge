@@ -605,6 +605,26 @@ def _adaptive_v3_observable_planning_inputs(
         "demand_context": deepcopy(demand_context or {}),
         "price_context": str(price_context or "")[:8000],
     })
+    try:
+        from energybridge.harness.energy_tools_v3 import (
+            build_flexible_load_opportunity_snapshot,
+        )
+
+        observable_state["professional_flexible_load_opportunities"] = (
+            build_flexible_load_opportunity_snapshot(
+                observable_state=observable_state,
+                event=observable_event,
+                ordinary_plan=observable_state.get("ordinary_plan") or {},
+                tariff=observable_state.get("hourly_tariff") or {},
+            )
+        )
+    except Exception:
+        # Planning remains available when evidence is incomplete; the model
+        # must not infer an opportunity table that the tool could not build.
+        observable_state["professional_flexible_load_opportunities"] = {
+            "available": False,
+            "selection_performed": False,
+        }
     explicit_constraints = [
         {
             "constraint_id": "family_setpoint_required",
@@ -687,6 +707,9 @@ Before planning, you may request optional analysis tools if their evidence would
     system_prompt += """
 
 For a demand-response proposal or another material household change, the selected plan may carry a `strategy_explanation`. Make it brief, natural, household-specific, and traceable to the observed action, profile, event, or memory. Explain meaningful protections, tradeoffs, uncertainty, and user control; quantify a benefit only when the payload supports it. A fluent explanation does not excuse an infeasible or contradictory action."""
+    system_prompt += """
+
+The professional flexible-load opportunity table is nonbinding evidence, not a recommendation. It enumerates feasible starts and separate tariff, event-overlap, and routine-shift dimensions without combining them into a score. Use it when it reveals a real alternative, but keep the final timing and tradeoff judgment your own. If an exact fixed-load cost delta versus the ordinary plan is available, you may explain that normalized tariff difference with its unit; never relabel it as a bill payment or incentive. Do not claim offer-specific savings or event benefit when the selected physical plan is unchanged from the ordinary plan."""
     return system_prompt, user_prompt
 
 
@@ -837,6 +860,12 @@ def _adaptive_v3_resolve_planning_response(
                 and str(item.get("candidate_id")) == str(selected_id)
             ):
                 selected_raw_plan = deepcopy(item.get("raw_snapshot"))
+                explanation = item.get("strategy_explanation")
+                if isinstance(selected_raw_plan, dict):
+                    if isinstance(explanation, dict) and explanation:
+                        selected_raw_plan["strategy_explanation"] = deepcopy(explanation)
+                    elif isinstance(explanation, str) and explanation.strip():
+                        selected_raw_plan["strategy_explanation"] = explanation.strip()
                 break
     status = "selected" if selected_plan is not None else "fallback_required"
     return {
@@ -1346,6 +1375,46 @@ def _adaptive_v3_observable_ordinary_plan(
         "appliance_actions": dict(ordinary.get("appliance_actions", {}) or {}),
         "objective_source": "observable_ordinary_routine_v3",
     }
+
+
+def _adaptive_v3_ensure_observable_ordinary_plan(
+    loop: Any,
+    day_idx: int,
+    appliance_config: dict | None,
+    *,
+    current_setpoint: float | None,
+    current_hod: float | None,
+) -> dict:
+    """Materialize the counterfactual before an event-aware offer is planned."""
+    store = getattr(loop, "no_vpp_daily_plan_by_day", None)
+    if not isinstance(store, dict):
+        store = {}
+        setattr(loop, "no_vpp_daily_plan_by_day", store)
+    existing = store.get(int(day_idx))
+    if isinstance(existing, dict) and existing.get("setpoint") is not None:
+        return existing
+    ordinary = _adaptive_v3_observable_ordinary_plan(
+        appliance_config or {},
+        current_setpoint=current_setpoint,
+        current_hod=current_hod,
+    )
+    store[int(day_idx)] = deepcopy(ordinary)
+    return store[int(day_idx)]
+
+
+def _adaptive_v3_household_explanation_from_gate(
+    gate: dict | None,
+    plan: dict | None,
+) -> dict:
+    """Return the consented offer explanation, preferring the gate snapshot."""
+    proposed = (gate or {}).get("proposed_plan") if isinstance(gate, dict) else None
+    for source in (proposed, plan):
+        if not isinstance(source, dict):
+            continue
+        explanation = source.get("strategy_explanation")
+        if isinstance(explanation, dict) and explanation:
+            return deepcopy(explanation)
+    return {}
 
 
 def _event_preheat_safe_end_hod(event: dict | None) -> float:
@@ -2540,6 +2609,61 @@ def _adaptive_v3_plan_control_errors(
     return errors
 
 
+def _adaptive_v3_shiftable_runtime_errors(
+    actions: dict | None,
+    suite: Any,
+    *,
+    sim_h: float,
+) -> list[str]:
+    """Reject schedules that cannot be newly applied at the decision clock."""
+    if suite is None or not isinstance(actions, dict):
+        return []
+    errors: list[str] = []
+    day_idx = int(float(sim_h) // 24)
+    for name in ("washer", "dishwasher", "dryer"):
+        raw = actions.get(f"{name}_start_h")
+        if raw is None or actions.get(f"{name}_skip") is True:
+            continue
+        try:
+            if isinstance(raw, bool):
+                raise ValueError("boolean hour")
+            hod = float(raw)
+            app = (getattr(suite, "_shiftable", {}) or {}).get(name)
+            absolute_h = day_idx * 24.0 + hod
+            if (
+                app is not None
+                and bool(getattr(app, "_overnight", False))
+                and hod < float(getattr(app, "earliest_h", 0.0))
+            ):
+                absolute_h += 24.0
+            rec = (
+                (getattr(app, "_days", {}) or {}).get(day_idx)
+                if app is not None else None
+            )
+            scheduled = getattr(rec, "scheduled_abs_h", None) if rec is not None else None
+            locked = bool(
+                rec is not None
+                and (
+                    bool(getattr(rec, "completed", False))
+                    or getattr(rec, "run_start_abs_h", None) is not None
+                )
+            )
+            if locked:
+                if scheduled is None or abs(float(scheduled) - absolute_h) > 1e-6:
+                    errors.append(
+                        f"{name}: service already started or completed and cannot be rescheduled"
+                    )
+            elif absolute_h < float(sim_h) - 1e-6:
+                errors.append(
+                    f"{name}: requested start {_fmt_clock_h(hod)} is before the "
+                    f"current decision clock {_fmt_clock_h(float(sim_h) % 24.0)}"
+                )
+        except (TypeError, ValueError):
+            # The schema validator reports malformed hours separately.
+            continue
+    return errors
+
+
 def _adaptive_v3_apply_appliance_actions(
     suite: Any,
     actions: dict | None,
@@ -2593,12 +2717,35 @@ def _adaptive_v3_apply_appliance_actions(
                 and hod < float(getattr(app, "earliest_h", 0.0))
             ):
                 absolute_h += 24.0
-            ok = bool(suite.shift_appliance(name, day_idx, absolute_h))
+            rec = (
+                (getattr(app, "_days", {}) or {}).get(day_idx)
+                if app is not None else None
+            )
+            scheduled = getattr(rec, "scheduled_abs_h", None) if rec is not None else None
+            locked = bool(
+                rec is not None
+                and (
+                    bool(getattr(rec, "completed", False))
+                    or getattr(rec, "run_start_abs_h", None) is not None
+                )
+            )
+            if locked and scheduled is not None and abs(float(scheduled) - absolute_h) <= 1e-6:
+                # Re-applying an accepted commitment after its service started
+                # is an idempotent acknowledgement, not a failed reschedule.
+                ok = True
+            elif locked:
+                ok = False
+                rejections.append({"service": name, "reason": "service_already_started_or_completed"})
+            elif absolute_h < float(sim_h) - 1e-6:
+                ok = False
+                rejections.append({"service": name, "reason": "runtime_past"})
+            else:
+                ok = bool(suite.shift_appliance(name, day_idx, absolute_h))
             if ok:
                 applied[start_key] = round(hod, 3)
                 if requested.get(skip_key) is False:
                     applied[skip_key] = False
-            else:
+            elif not any(item["service"] == name for item in rejections):
                 rejections.append({"service": name, "reason": "simulator_rejected_schedule"})
             print(f"    [Appliance] shift {name} day={day_idx} hod={hod:.1f} -> {'ok' if ok else 'rejected'}")
         except (TypeError, ValueError) as exc:
@@ -10282,6 +10429,14 @@ These fields are for auditability and may differ across capable models; do not i
                         actions or {}, appliance_config
                     )
                 )
+                errors.extend(
+                    "adaptive runtime contract: " + item
+                    for item in _adaptive_v3_shiftable_runtime_errors(
+                        actions or {},
+                        getattr(loop, "appliance_suite", None),
+                        sim_h=sim_h,
+                    )
+                )
             errors.extend(
                 "shiftable service infeasible: " + item
                 for item in _shiftable_service_window_errors(actions or {}, appliance_config)
@@ -10582,7 +10737,12 @@ These fields are for auditability and may differ across capable models; do not i
                         "and explicit uncertainty; it does not rank or choose a candidate. Reconsider your own "
                         "selection using this evidence. If it changes a material claim or tradeoff, revise the "
                         "portfolio. Otherwise return a complete confirmed portfolio. Keep unsupported energy or "
-                        "savings claims null and preserve your own decision authority.\n"
+                        "savings claims null and preserve your own decision authority. A zero changed-path count "
+                        "means the candidate is physically the ordinary plan: do not describe inherited timing or "
+                        "cost as an offer-specific benefit. When exact fixed-load cost deltas are present, use their "
+                        "reported normalized tariff unit rather than inventing a currency payment or incentive. If "
+                        "the household-facing explanation states a numeric cost change, it must match a listed "
+                        "supported_benefit_claim amount and unit; otherwise correct it or remove the number.\n"
                         + _j.dumps(evidence_payload, ensure_ascii=False, default=str)
                     )
                     reviewed = _call_llm_json(review_prompt, system_prompt=review_system)
@@ -12400,6 +12560,22 @@ These fields are for auditability and may differ across capable models; do not i
                         loop.vpp_strategy_trace_by_id[planning_vid] = {}
                 else:
                     loop.vpp_user_input = ""
+                if (
+                    method == "agent"
+                    and _adaptive_harness_v2()
+                    and planning_vpp_event is not None
+                ):
+                    # The event-free counterfactual must exist before the
+                    # planner sees an event-aware offer. This lets professional
+                    # evidence compute truthful offer-specific deltas and keeps
+                    # a later rejection fallback independent of the proposal.
+                    _adaptive_v3_ensure_observable_ordinary_plan(
+                        loop,
+                        min(sim_days - 1, int(sim_h // 24)),
+                        appliance_config or {},
+                        current_setpoint=loop.sp,
+                        current_hod=hod,
+                    )
                 if method == "no_dr":
                     res = {
                         "setpoint": round(float(_ac_sp_default), 1),
@@ -12628,12 +12804,13 @@ These fields are for auditability and may differ across capable models; do not i
                         # from the event-aware model offer.  This snapshot uses
                         # only observable device settings/current setpoint and
                         # is created before any event action can execute.
-                        _default_plan = _adaptive_v3_observable_ordinary_plan(
+                        _default_plan = _adaptive_v3_ensure_observable_ordinary_plan(
+                            loop,
+                            _day_i,
                             appliance_config or {},
                             current_setpoint=loop.sp,
                             current_hod=hod,
                         )
-                        loop.no_vpp_daily_plan_by_day[_day_i] = deepcopy(_default_plan)
                     if _default_plan is None:
                         _default_plan = {
                             "setpoint": _ac_sp_default,
@@ -12864,6 +13041,14 @@ These fields are for auditability and may differ across capable models; do not i
                         res["vpp_acceptance_gate"] = _vpp_acceptance_gate
                         if _vpp_acceptance_gate.get("adaptability_diagnostics"):
                             res["adaptability_diagnostics"] = _vpp_acceptance_gate.get("adaptability_diagnostics")
+                        _consent_explanation = _adaptive_v3_household_explanation_from_gate(
+                            _vpp_acceptance_gate,
+                            res,
+                        )
+                        if _consent_explanation:
+                            loop.vpp_strategy_explanation_by_id[planning_vid] = (
+                                _consent_explanation
+                            )
                 if (
                     method == "agent"
                     and not _agent_model_owns_valid_plan(method)

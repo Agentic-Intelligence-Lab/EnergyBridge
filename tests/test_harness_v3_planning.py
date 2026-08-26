@@ -14,6 +14,7 @@ from energybridge.harness.planning import (
     parse_planning_response,
     validate_plan_candidate,
 )
+from energybridge.harness.decision_evidence_v3 import DECISION_EVIDENCE_LEDGER_VERSION
 
 
 def _inputs() -> dict:
@@ -77,6 +78,82 @@ def test_prompt_is_method_blind_but_keeps_observable_evidence_provenance() -> No
     assert "choose how many are useful" in system
     assert "canned strategy grid" in system
     assert "acceptance probability" in system
+
+
+def test_prompt_exposes_epistemic_precedence_without_prescribing_an_action() -> None:
+    inputs = _inputs()
+    inputs["event"]["current_user_message"] = (
+        "You may shift laundry if it finishes today; tell me the supported savings."
+    )
+    system, user = build_planning_prompts(**inputs)
+    payload = json.loads(user.split("[PLANNING PAYLOAD]\n", 1)[1])
+    ledger = payload["decision_evidence_ledger"]
+
+    assert ledger["schema_version"] == DECISION_EVIDENCE_LEDGER_VERSION
+    assert ledger["entries"][0]["evidence_path"] == "/event/current_user_message"
+    assert ledger["selection_performed"] is False
+    assert ledger["action_recommendation"] is None
+    assert "acceptance_probability" not in ledger
+    assert "current statement governs the same topic" in system
+    assert "washer_start_h" not in json.dumps(ledger)
+
+
+def test_selected_candidate_explanation_survives_portfolio_boundary() -> None:
+    explanation = {
+        "natural_language": "Move the washer earlier while preserving today's deadline.",
+        "expected_benefit": "The supplied evidence supports a lower normalized tariff cost.",
+        "protected_constraints": "The cycle still finishes today.",
+    }
+    result = evaluate_planning_response(
+        {
+            "candidate_plans": [
+                {
+                    "candidate_id": "earlier_washer",
+                    "plan": {
+                        "setpoint": 26.0,
+                        "appliances": {"washer_start_h": 8.0},
+                    },
+                    "strategy_explanation": explanation,
+                }
+            ],
+            "selected_candidate_id": "earlier_washer",
+        },
+        observable_state={},
+        observable_profile={},
+        memory={},
+        event={},
+    )
+
+    assert result["selection_status"] == "selected"
+    assert result["selected_executable_plan"]["strategy_explanation"] == explanation
+    lifecycle = result["portfolio_audit"]["candidate_lifecycles"][0]
+    assert lifecycle["strategy_explanation"] == explanation
+    assert "strategy_explanation" not in lifecycle["raw_snapshot"]
+
+
+def test_one_candidate_without_selected_id_is_unambiguous_model_selection() -> None:
+    result = evaluate_planning_response(
+        {
+            "candidate_plans": [
+                {
+                    "candidate_id": "only_model_candidate",
+                    "plan": {"setpoint": 26.0, "appliances": {}},
+                }
+            ]
+        },
+        observable_state={},
+        observable_profile={},
+        memory={},
+        event={},
+    )
+
+    assert result["selection_status"] == "selected"
+    assert result["selected_candidate_id"] == "only_model_candidate"
+    assert result["selected_executable_plan"]["setpoint"] == 26.0
+    assert (
+        result["portfolio_audit"]["selection_inference"]
+        == "single_candidate_unambiguous"
+    )
 
 
 def test_prompt_recursively_redacts_private_fields_credentials_and_identity_text() -> None:

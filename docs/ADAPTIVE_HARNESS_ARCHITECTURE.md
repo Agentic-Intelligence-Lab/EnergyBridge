@@ -95,6 +95,24 @@ the confirm-or-revise decision.
 
 Schema: `energybridge.open_portfolio_planning.v3`.
 Impact evidence schema: `energybridge.candidate_impact.v3`.
+Flexible-load opportunity schema: `energybridge.flexible_load_opportunities.v1`.
+
+Decision-evidence schema: `energybridge.decision_evidence_ledger.v1`. The
+ledger distinguishes a direct household statement made for the current event
+from inferred profile beliefs and older observations. A current statement
+governs the same topic for that event, while its conditions still require
+evidence. It copies no free text, chooses no action, assigns no score, and
+predicts no acceptance probability; it prevents uncertain historical traits
+from silently overriding what the household just said without narrowing the
+base model's planning space.
+
+Before the base model chooses a portfolio, a method-blind appliance scheduling
+primitive enumerates tariff-relevant feasible starts inside each declared
+service window. It exposes separate cost, VPP-overlap, and routine-deviation
+dimensions plus the ordinary-plan comparison. It does not combine them into a
+score, recommend a start, or select a plan. The base model can therefore use
+traditional scheduling arithmetic without being collapsed into a fixed MPC or
+rule policy, and different models can still make different household tradeoffs.
 
 Adaptive controller and role-play calls that require an object use the
 provider's JSON-object response mode when available, followed by the existing

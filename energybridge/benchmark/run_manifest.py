@@ -17,7 +17,11 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
-from energybridge.harness.energy_tools_v3 import ENERGY_IMPACT_SCHEMA_VERSION
+from energybridge.harness.energy_tools_v3 import (
+    ENERGY_IMPACT_SCHEMA_VERSION,
+    FLEXIBLE_LOAD_OPPORTUNITY_VERSION,
+)
+from energybridge.harness.decision_evidence_v3 import DECISION_EVIDENCE_LEDGER_VERSION
 from energybridge.harness.memory_v3 import MEMORY_V3_VERSION
 from energybridge.harness.planning import PLANNING_SCHEMA_VERSION
 from energybridge.harness.profile_v3 import HOUSEHOLD_MODEL_VERSION
@@ -84,6 +88,8 @@ def _agent_component_schemas(profile: str, method: str) -> dict[str, str | None]
             "memory": None,
             "planning": None,
             "impact_evidence": None,
+            "flexible_load_opportunities": None,
+            "decision_evidence_ledger": None,
             "structured_output_transport": None,
         }
     return {
@@ -91,6 +97,8 @@ def _agent_component_schemas(profile: str, method: str) -> dict[str, str | None]
         "memory": MEMORY_V3_VERSION,
         "planning": PLANNING_SCHEMA_VERSION,
         "impact_evidence": ENERGY_IMPACT_SCHEMA_VERSION,
+        "flexible_load_opportunities": FLEXIBLE_LOAD_OPPORTUNITY_VERSION,
+        "decision_evidence_ledger": DECISION_EVIDENCE_LEDGER_VERSION,
         "structured_output_transport": STRUCTURED_OUTPUT_TRANSPORT_VERSION,
     }
 

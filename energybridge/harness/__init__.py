@@ -36,9 +36,15 @@ from .planning import (
     parse_planning_response,
     validate_plan_candidate,
 )
+from .decision_evidence_v3 import (
+    DECISION_EVIDENCE_LEDGER_VERSION,
+    build_decision_evidence_ledger,
+)
 from .energy_tools_v3 import (
     ENERGY_IMPACT_SCHEMA_VERSION,
+    FLEXIBLE_LOAD_OPPORTUNITY_VERSION,
     TARIFF_SNAPSHOT_VERSION,
+    build_flexible_load_opportunity_snapshot,
     build_hourly_tariff_snapshot,
     evaluate_candidate_impact,
     evaluate_portfolio_impacts,
@@ -90,8 +96,12 @@ __all__ = [
     "evaluate_planning_response",
     "parse_planning_response",
     "validate_plan_candidate",
+    "DECISION_EVIDENCE_LEDGER_VERSION",
+    "build_decision_evidence_ledger",
     "ENERGY_IMPACT_SCHEMA_VERSION",
+    "FLEXIBLE_LOAD_OPPORTUNITY_VERSION",
     "TARIFF_SNAPSHOT_VERSION",
+    "build_flexible_load_opportunity_snapshot",
     "build_hourly_tariff_snapshot",
     "evaluate_candidate_impact",
     "evaluate_portfolio_impacts",

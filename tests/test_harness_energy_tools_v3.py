@@ -5,6 +5,8 @@ import json
 
 from energybridge.harness.energy_tools_v3 import (
     ENERGY_IMPACT_SCHEMA_VERSION,
+    FLEXIBLE_LOAD_OPPORTUNITY_VERSION,
+    build_flexible_load_opportunity_snapshot,
     build_hourly_tariff_snapshot,
     evaluate_candidate_impact,
     evaluate_portfolio_impacts,
@@ -97,6 +99,102 @@ def test_fixed_load_cost_integrates_across_hourly_prices() -> None:
     assert result["aggregate"]["fixed_load_scheduled_cost"] == 15
 
 
+def test_flexible_load_opportunities_expose_cost_overlap_and_routine_tradeoffs_without_selecting() -> None:
+    state = _state()
+    state["device_capabilities"]["washer"]["preferred_h"] = 19
+    tariff = build_hourly_tariff_snapshot({hour: (0.4 if hour in {8, 9} else 1.6) for hour in range(24)}, unit="normalized/kWh")
+    ordinary = {
+        "setpoint": 26,
+        "appliances": {"washer_start_h": 19, "washer_skip": False},
+    }
+
+    result = build_flexible_load_opportunity_snapshot(
+        observable_state=state,
+        event={"trigger_h": 18, "end_h": 19},
+        ordinary_plan=ordinary,
+        tariff=tariff,
+    )
+
+    washer = result["devices"]["washer"]
+    by_start = {item["start_hod"]: item for item in washer["options"]}
+    assert result["schema_version"] == FLEXIBLE_LOAD_OPPORTUNITY_VERSION
+    assert result["selection_performed"] is False
+    assert result["ranking_performed"] is False
+    assert by_start[8.0]["scheduled_cost"] == 1.2
+    assert by_start[8.0]["cost_delta_vs_ordinary"] == -3.6
+    assert by_start[8.0]["routine_shift_h"] == 11
+    assert by_start[18.0]["event_overlap_h"] == 1
+    assert by_start[19.0]["event_overlap_h"] == 0
+    assert washer["dimension_extrema"] == {
+        "minimum_scheduled_cost": 1.2,
+        "minimum_event_overlap_h": 0.0,
+        "minimum_routine_shift_h": 0.0,
+        "interpretation": "extrema are separate dimensions, not a selected or recommended start",
+    }
+
+
+def test_flexible_load_opportunity_snapshot_preserves_distinct_base_model_choices() -> None:
+    state = _state()
+    state["device_capabilities"]["washer"]["preferred_h"] = 19
+    opportunity = build_flexible_load_opportunity_snapshot(
+        observable_state=state,
+        event={"trigger_h": 18, "end_h": 19},
+        ordinary_plan={"appliances": {"washer_start_h": 19, "washer_skip": False}},
+        tariff=build_hourly_tariff_snapshot({hour: 1 + hour / 10 for hour in range(24)}),
+    )
+
+    starts = {item["start_hod"] for item in opportunity["devices"]["washer"]["options"]}
+    assert 8.0 in starts and 19.0 in starts
+    assert opportunity["devices"]["washer"]["selection_performed"] is False
+
+
+def test_flexible_load_opportunities_exclude_starts_before_decision_clock() -> None:
+    state = _state()
+    state["time"] = {"hour_of_day": 16.5}
+    state["realtime_device_state"] = {
+        "current_day_service_state": {
+            "washer": {"completed": False, "scheduled_abs_h": 19.0},
+        },
+        "current_power_kw": {"washer": 0.0},
+    }
+    opportunity = build_flexible_load_opportunity_snapshot(
+        observable_state=state,
+        event={"trigger_h": 18, "end_h": 19},
+        ordinary_plan={"appliances": {"washer_start_h": 19, "washer_skip": False}},
+        tariff=_tariff(),
+    )
+
+    washer = opportunity["devices"]["washer"]
+    starts = {item["start_hod"] for item in washer["options"]}
+    assert washer["decision_hour_hod"] == 16.5
+    assert washer["excluded_past_start_count"] > 0
+    assert starts
+    assert min(starts) >= 17.0
+    assert 15.0 not in starts
+
+
+def test_flexible_load_opportunities_do_not_reschedule_completed_service() -> None:
+    state = _state()
+    state["time"] = {"hour_of_day": 16.5}
+    state["realtime_device_state"] = {
+        "current_day_service_state": {
+            "washer": {"completed": True, "scheduled_abs_h": 8.0},
+        },
+        "current_power_kw": {"washer": 0.0},
+    }
+    opportunity = build_flexible_load_opportunity_snapshot(
+        observable_state=state,
+        event={"trigger_h": 18, "end_h": 19},
+        ordinary_plan={"appliances": {"washer_start_h": 19, "washer_skip": False}},
+        tariff=_tariff(),
+    )
+
+    washer = opportunity["devices"]["washer"]
+    assert washer["status"] == "service_already_completed"
+    assert washer["service_state_locked_before_decision"] is True
+    assert washer["options"] == []
+
+
 def test_cooling_direction_is_physical_and_never_invents_kwh() -> None:
     lower = evaluate_candidate_impact(
         {"plan": {"setpoint": 24, "appliances": {}}},
@@ -169,6 +267,10 @@ def test_offer_specific_comparison_reports_zero_for_unchanged_schedule() -> None
     )
     comparison = result["offer_specific_comparison"]
     assert comparison["changed_path_count"] == 0
+    assert comparison["offer_materiality"] == "no_observable_physical_change"
+    assert comparison["supported_benefit_claims"] == []
+    assert comparison["benefit_claim_status"] == "no_offer_specific_claim_supported"
+    assert result["findings"][-1]["code"] == "no_observable_offer_change"
     assert comparison["candidate_minus_ordinary"]["fixed_load_scheduled_cost_delta_vs_ordinary"] == 0
     assert comparison["candidate_minus_ordinary"]["fixed_load_vpp_overlap_energy_kwh_delta_vs_ordinary"] == 0
 
@@ -236,6 +338,30 @@ def test_offer_specific_paths_do_not_credit_inherited_ordinary_actions() -> None
         ordinary_plan=ordinary,
     )
     assert result["offer_specific_changed_paths"] == ["/setpoint"]
+
+
+def test_exact_fixed_load_tariff_delta_becomes_a_supported_offer_claim() -> None:
+    state = _state()
+    tariff = build_hourly_tariff_snapshot({hour: (0.4 if hour in {8, 9} else 1.6) for hour in range(24)}, unit="normalized/kWh")
+    result = evaluate_candidate_impact(
+        {"plan": {"setpoint": 25, "appliances": {"washer_start_h": 8, "washer_skip": False}}},
+        observable_state=state,
+        event={"trigger_h": 18, "end_h": 19},
+        ordinary_plan={"setpoint": 25, "appliances": {"washer_start_h": 19, "washer_skip": False}},
+        tariff=tariff,
+    )
+
+    comparison = result["offer_specific_comparison"]
+    assert comparison["offer_materiality"] == "observable_physical_change"
+    assert comparison["supported_benefit_claims"] == [{
+        "kind": "normalized_fixed_load_cost_reduction",
+        "amount": 3.6,
+        "unit": "normalized/kWh",
+        "estimate_class": "exact_fixed_power_tariff_integration",
+        "evidence_paths": [
+            "/offer_specific_comparison/candidate_minus_ordinary/fixed_load_scheduled_cost_delta_vs_ordinary"
+        ],
+    }]
 
 
 def test_ev_feasibility_uses_only_observable_requirement_and_capacity() -> None:

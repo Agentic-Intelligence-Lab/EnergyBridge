@@ -61,6 +61,30 @@ def test_portfolio_keeps_model_choice_across_distinct_candidates() -> None:
     assert impact["selected_candidate_id"] is None
 
 
+def test_candidate_level_explanation_reaches_selected_raw_and_executable_plan() -> None:
+    explanation = {
+        "natural_language": "Use a household-specific schedule with a supported tradeoff.",
+        "expected_benefit": "A measured comparison is available.",
+    }
+    raw = {
+        "candidate_plans": [
+            {
+                **_candidate("explained", 26.0),
+                "strategy_explanation": explanation,
+            }
+        ],
+        "selected_candidate_id": "explained",
+    }
+
+    resolution = fr._adaptive_v3_resolve_planning_response(
+        raw,
+        planning_inputs=_planning_inputs(),
+    )
+
+    assert resolution["selected_executable_plan"]["strategy_explanation"] == explanation
+    assert resolution["selected_raw_plan"]["strategy_explanation"] == explanation
+
+
 def test_model_can_revise_its_own_choice_after_professional_evidence() -> None:
     inputs = _planning_inputs()
     inputs["observable_state"].update({
@@ -366,7 +390,15 @@ def test_observable_adapter_prefers_session_capsules_and_lists_live_requirements
         vpp_event=None,
         user_input="Please preserve dinner.",
         appliance_config={
-            "washer": {"present": True, "duration_h": 1.0, "hidden_persona": "do not copy"},
+            "washer": {
+                "present": True,
+                "earliest_h": 8.0,
+                "latest_h": 22.0,
+                "preferred_h": 19.0,
+                "duration_h": 1.0,
+                "power_kw": 1.5,
+                "hidden_persona": "do not copy",
+            },
         },
         setpoint_min_c=22.0,
         setpoint_max_c=28.0,
@@ -397,6 +429,12 @@ def test_observable_adapter_prefers_session_capsules_and_lists_live_requirements
     assert inputs["observable_state"]["professional_hvac_rollout"]["candidate_setpoints"][0][
         "hvac_energy_kwh"
     ] == 1.2
+    opportunity = inputs["observable_state"]["professional_flexible_load_opportunities"]
+    assert opportunity["selection_performed"] is False
+    assert opportunity["ranking_performed"] is False
+    washer_options = {item["start_hod"]: item for item in opportunity["devices"]["washer"]["options"]}
+    assert washer_options[18.0]["event_overlap_h"] == 1.0
+    assert washer_options[19.0]["event_overlap_h"] == 0.0
 
 
 def test_hvac_rollout_snapshot_extends_through_visible_event(monkeypatch) -> None:
@@ -486,6 +524,52 @@ def test_observable_ordinary_plan_is_event_free_and_device_derived() -> None:
     assert ordinary["appliance_actions"]["water_heater_preheat_start_h"] == 18.0
     assert ordinary["objective_source"] == "observable_ordinary_routine_v3"
     assert "vpp" not in ordinary["reason"].lower()
+
+
+def test_observable_ordinary_plan_is_materialized_once_before_offer() -> None:
+    loop = SimpleNamespace(no_vpp_daily_plan_by_day={})
+    config = {
+        "washer": {
+            "present": True,
+            "preferred_h": 19.0,
+            "earliest_h": 8.0,
+            "latest_h": 22.0,
+            "duration_h": 2.0,
+        }
+    }
+
+    first = fr._adaptive_v3_ensure_observable_ordinary_plan(
+        loop,
+        0,
+        config,
+        current_setpoint=26.0,
+        current_hod=0.0,
+    )
+    second = fr._adaptive_v3_ensure_observable_ordinary_plan(
+        loop,
+        0,
+        config,
+        current_setpoint=24.0,
+        current_hod=16.5,
+    )
+
+    assert first is second
+    assert second["setpoint"] == 26.0
+    assert second["appliance_actions"]["washer_start_h"] == 19.0
+    assert second["objective_source"] == "observable_ordinary_routine_v3"
+
+
+def test_consent_explanation_prefers_the_exact_offered_plan_snapshot() -> None:
+    offered = {"natural_language": "The offered washer schedule saves a supported amount."}
+    later = {"natural_language": "A later controller draft must not replace the offer."}
+
+    result = fr._adaptive_v3_household_explanation_from_gate(
+        {"proposed_plan": {"strategy_explanation": offered}},
+        {"strategy_explanation": later},
+    )
+
+    assert result == offered
+    assert result is not offered
 
 
 def test_daily_llm_usage_separates_transport_and_validation_failures() -> None:

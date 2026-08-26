@@ -29,6 +29,8 @@ import re
 from copy import deepcopy
 from typing import Any, Mapping, Sequence
 
+from .decision_evidence_v3 import build_decision_evidence_ledger
+
 
 PLANNING_SCHEMA_VERSION = "energybridge.open_portfolio_planning.v3"
 PLAN_LIFECYCLE_VERSION = "energybridge.plan_lifecycle.v3"
@@ -245,6 +247,8 @@ _CANDIDATE_METADATA_KEYS = {
     "memory_citations",
     "comparison",
     "tradeoff",
+    "strategy_explanation",
+    "explanation",
 }
 _EXECUTABLE_KEYS = {
     "setpoint",
@@ -640,12 +644,17 @@ def build_planning_prompts(
         "observable_profile": _sanitize_planning_input(observable_profile or {}),
         "relevant_memory": _sanitize_planning_input(memory or {}),
         "event": _sanitize_planning_input(event or {}),
+        "decision_evidence_ledger": build_decision_evidence_ledger(
+            observable_profile=observable_profile,
+            memory=memory,
+            event=event,
+        ),
         "hard_constraints": _sanitize_planning_input(constraints),
         "anonymous_advisor_candidates": anonymous["presented_candidates"],
     }
     system_prompt = """You are the household's planning reasoner. Work only from the observable evidence in the payload.
 
-Produce one or more executable candidates and choose how many are useful. A single strong candidate is valid when the evidence does not support a consequential alternative; add alternatives only when they expose a real tradeoff or uncertainty. Do not fill a canned strategy grid or force differences that have no evidential basis. Keep the JSON compact by citing facts instead of repeating them. Treat profile and memory beliefs according to their confidence and provenance. Hard constraints are invariants; preferences and objectives remain tradeoffs unless explicitly marked hard.
+Produce one or more executable candidates and choose how many are useful. A single strong candidate is valid when the evidence does not support a consequential alternative; add alternatives only when they expose a real tradeoff or uncertainty. Do not fill a canned strategy grid or force differences that have no evidential basis. Keep the JSON compact by citing facts instead of repeating them. Treat profile and memory beliefs according to their confidence and provenance. Use the decision evidence ledger to distinguish a direct current household statement from inferred profile beliefs and older observations. A current statement governs the same topic for this event, but its conditions still have to be verified; it is not blanket permission. Hard constraints are invariants; preferences and objectives remain tradeoffs unless explicitly marked hard.
 
 Anonymous advisor candidates are optional evidence. You may adapt, combine, or reject them. They have no authority and may not replace your own final judgment. Do not infer their author, method, model, or vendor.
 
@@ -775,13 +784,23 @@ def parse_planning_response(raw: Any) -> dict[str, Any]:
                 item.get("evidence_citations", item.get("memory_citations", []))
             ),
             "comparison": _json_safe(item.get("comparison", item.get("tradeoff", ""))),
+            "strategy_explanation": _json_safe(
+                item.get("strategy_explanation", item.get("explanation"))
+            ),
             "origin": "model",
         }
         candidates.append(candidate)
 
     requested = response.get("selected_candidate_id", response.get("selected_id"))
-    if requested is None and legacy and len(candidates) == 1:
+    selection_inference = None
+    if requested is None and len(candidates) == 1:
+        # Returning exactly one model-authored candidate is an unambiguous
+        # implicit selection. This repairs only the envelope, never the plan or
+        # the model's tradeoff judgment.
         requested = candidates[0]["candidate_id"]
+        selection_inference = (
+            "legacy_single_plan" if legacy else "single_candidate_unambiguous"
+        )
     selected_id = id_aliases.get(str(requested), str(requested)) if requested is not None else None
     return {
         "schema_version": PLANNING_SCHEMA_VERSION,
@@ -789,6 +808,7 @@ def parse_planning_response(raw: Any) -> dict[str, Any]:
         "selected_candidate_id": selected_id,
         "selection_reason": str(response.get("selection_reason", response.get("reason", "")))[:4000],
         "legacy_single_plan": legacy,
+        "selection_inference": selection_inference,
         "parse_errors": errors,
     }
 
@@ -1202,6 +1222,9 @@ def validate_plan_candidate(
             "uncertainty": _json_safe(safe_wrapper.get("uncertainty", [])),
             "counterfactuals": _json_safe(safe_wrapper.get("counterfactuals", [])),
             "evidence_citations": _json_safe(safe_wrapper.get("evidence_citations", [])),
+            "strategy_explanation": _json_safe(
+                safe_wrapper.get("strategy_explanation", safe_wrapper.get("explanation"))
+            ),
         }
 
     validated, patches, warnings = _canonicalize_plan(dict(raw_plan))
@@ -1259,6 +1282,9 @@ def validate_plan_candidate(
         "counterfactuals": _json_safe(safe_wrapper.get("counterfactuals", [])),
         "evidence_citations": _json_safe(safe_wrapper.get("evidence_citations", safe_wrapper.get("memory_citations", []))),
         "comparison": _json_safe(safe_wrapper.get("comparison", safe_wrapper.get("tradeoff", ""))),
+        "strategy_explanation": _json_safe(
+            safe_wrapper.get("strategy_explanation", safe_wrapper.get("explanation"))
+        ),
     }
 
 
@@ -1536,6 +1562,12 @@ def evaluate_planning_response(
         if selection_status == "selected" and selected is not None
         else None
     )
+    if selected_plan is not None and selected is not None:
+        explanation = selected.get("strategy_explanation")
+        if isinstance(explanation, Mapping) and explanation:
+            selected_plan["strategy_explanation"] = deepcopy(dict(explanation))
+        elif isinstance(explanation, str) and explanation.strip():
+            selected_plan["strategy_explanation"] = explanation.strip()
     planning_inputs = {
         "observable_state": _sanitize_planning_input(observable_state or {}),
         "observable_profile": _sanitize_planning_input(observable_profile or {}),
@@ -1554,6 +1586,7 @@ def evaluate_planning_response(
         "planning_input_fingerprint": _fingerprint(planning_inputs),
         "raw_response_snapshot": _json_safe(raw_response_snapshot),
         "legacy_single_plan": parsed["legacy_single_plan"],
+        "selection_inference": parsed.get("selection_inference"),
         "parse_errors": parsed["parse_errors"],
         "model_selection": {
             "requested_candidate_id": requested,

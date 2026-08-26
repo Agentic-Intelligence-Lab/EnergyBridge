@@ -20,6 +20,7 @@ from typing import Any, Mapping, Sequence
 
 ENERGY_IMPACT_SCHEMA_VERSION = "energybridge.candidate_impact.v3"
 TARIFF_SNAPSHOT_VERSION = "energybridge.hourly_tariff.v1"
+FLEXIBLE_LOAD_OPPORTUNITY_VERSION = "energybridge.flexible_load_opportunities.v1"
 
 _SHIFTABLE_DEVICES = ("washer", "dishwasher", "dryer")
 _ACTION_KEYS = {
@@ -173,6 +174,216 @@ def _interval_cost(
                 total += power_kw * span * tariff[hour]
             cursor = boundary
     return (None if missing else total), sorted(missing)
+
+
+def _window_start_options(
+    earliest_h: float,
+    latest_h: float,
+    duration_h: float,
+    *,
+    preferred_h: float | None = None,
+    ordinary_h: float | None = None,
+) -> list[tuple[float, float]]:
+    """Enumerate tariff-relevant starts without selecting one.
+
+    The first tuple item is the local HOD exposed to the model; the second is
+    an unwrapped hour used only for distance within an overnight service
+    window. Hour boundaries are sufficient for an hourly tariff, while the
+    declared endpoints, preferred start, and ordinary start preserve feasible
+    fractional choices.
+    """
+    start_abs = float(earliest_h) % 24.0
+    end_abs = float(latest_h) % 24.0
+    if end_abs <= start_abs + 1e-9:
+        end_abs += 24.0
+    latest_start_abs = end_abs - float(duration_h)
+    if latest_start_abs < start_abs - 1e-9:
+        return []
+    values = {start_abs, latest_start_abs}
+    first_boundary = int(math.ceil(start_abs - 1e-9))
+    last_boundary = int(math.floor(latest_start_abs + 1e-9))
+    values.update(float(hour) for hour in range(first_boundary, last_boundary + 1))
+    for raw in (preferred_h, ordinary_h):
+        if raw is None:
+            continue
+        candidate = float(raw) % 24.0
+        if candidate < start_abs - 1e-9:
+            candidate += 24.0
+        if start_abs - 1e-9 <= candidate <= latest_start_abs + 1e-9:
+            values.add(candidate)
+    return [
+        (round(value % 24.0, 6), value)
+        for value in sorted(values)
+    ]
+
+
+def build_flexible_load_opportunity_snapshot(
+    *,
+    observable_state: Mapping[str, Any] | None,
+    event: Mapping[str, Any] | None,
+    ordinary_plan: Mapping[str, Any] | None,
+    tariff: Mapping[str, Any] | None,
+    max_options_per_device: int = 32,
+) -> dict[str, Any]:
+    """Expose feasible fixed-load timing tradeoffs without choosing a plan.
+
+    This is a traditional appliance-scheduling primitive: enumerate the
+    service window, integrate the tariff for each relevant start, measure VPP
+    overlap, and retain routine deviation. It deliberately performs no scalar
+    weighting or overall ranking, so a base model still decides whether cost,
+    event support, or routine fit matters most for this household.
+    """
+    devices = _device_capabilities(observable_state)
+    ordinary = _physical_plan(ordinary_plan)
+    ordinary_actions = (
+        ordinary.get("appliances")
+        if isinstance(ordinary.get("appliances"), Mapping)
+        else {}
+    )
+    event_start, event_duration, event_card = _event_window(event)
+    tariff_map, tariff_unit = _tariff_map(tariff)
+    state = observable_state if isinstance(observable_state, Mapping) else {}
+    time_card = state.get("time") if isinstance(state.get("time"), Mapping) else {}
+    decision_hod = _finite(time_card.get("hour_of_day"))
+    live_card = (
+        state.get("realtime_device_state")
+        if isinstance(state.get("realtime_device_state"), Mapping)
+        else {}
+    )
+    live_services = (
+        live_card.get("current_day_service_state")
+        if isinstance(live_card.get("current_day_service_state"), Mapping)
+        else {}
+    )
+    live_power = (
+        live_card.get("current_power_kw")
+        if isinstance(live_card.get("current_power_kw"), Mapping)
+        else {}
+    )
+    device_rows: dict[str, dict[str, Any]] = {}
+    for name in _SHIFTABLE_DEVICES:
+        capability = devices.get(name) if isinstance(devices.get(name), Mapping) else {}
+        if not bool(capability.get("present", False)):
+            continue
+        earliest = _finite(capability.get("earliest_h"))
+        latest = _finite(capability.get("latest_h"))
+        duration = _finite(capability.get("duration_h"))
+        power = _finite(capability.get("power_kw", capability.get("rated_power_kw")))
+        preferred = _finite(capability.get("preferred_h", capability.get("preferred_start_h")))
+        ordinary_start = _finite(ordinary_actions.get(f"{name}_start_h"))
+        row: dict[str, Any] = {
+            "present": True,
+            "service_required_today": bool(capability.get("service_required_today", True)),
+            "earliest_hod": _round(earliest % 24.0, 3) if earliest is not None else None,
+            "latest_finish_hod": _round(latest % 24.0, 3) if latest is not None else None,
+            "duration_h": _round(duration, 3),
+            "power_kw": _round(power),
+            "preferred_start_hod": _round(preferred % 24.0, 3) if preferred is not None else None,
+            "ordinary_start_hod": _round(ordinary_start % 24.0, 3) if ordinary_start is not None else None,
+            "tariff_unit": tariff_unit,
+            "selection_performed": False,
+            "decision_hour_hod": _round(decision_hod % 24.0, 3)
+            if decision_hod is not None else None,
+            "options": [],
+        }
+        service_state = (
+            live_services.get(name)
+            if isinstance(live_services.get(name), Mapping)
+            else {}
+        )
+        if bool(service_state.get("completed", False)):
+            row["status"] = "service_already_completed"
+            row["service_state_locked_before_decision"] = True
+            device_rows[name] = row
+            continue
+        current_power = _finite(live_power.get(name))
+        if current_power is not None and current_power > 1e-9:
+            row["status"] = "service_already_running"
+            row["service_state_locked_before_decision"] = True
+            device_rows[name] = row
+            continue
+        if earliest is None or latest is None or duration is None or duration <= 0.0:
+            row["status"] = "insufficient_service_window_evidence"
+            device_rows[name] = row
+            continue
+        option_starts = _window_start_options(
+            earliest,
+            latest,
+            duration,
+            preferred_h=preferred,
+            ordinary_h=ordinary_start,
+        )
+        excluded_past = 0
+        if decision_hod is not None:
+            current_unwrapped = decision_hod % 24.0
+            filtered = []
+            for start_hod, start_abs in option_starts:
+                if start_abs + 1e-9 < current_unwrapped:
+                    excluded_past += 1
+                else:
+                    filtered.append((start_hod, start_abs))
+            option_starts = filtered
+        option_starts = option_starts[: max(1, int(max_options_per_device))]
+        row["excluded_past_start_count"] = excluded_past
+        ordinary_cost, _ = (
+            _interval_cost(ordinary_start, duration, power, tariff_map)
+            if ordinary_start is not None
+            else (None, [])
+        )
+        ordinary_overlap = (
+            _overlap_hours(ordinary_start, duration, event_start, event_duration)
+            if ordinary_start is not None
+            else None
+        )
+        options = []
+        for start_hod, start_abs in option_starts:
+            cost, missing_hours = _interval_cost(start_hod, duration, power, tariff_map)
+            overlap = _overlap_hours(start_hod, duration, event_start, event_duration)
+            preferred_abs = None
+            if preferred is not None:
+                preferred_abs = preferred % 24.0
+                if preferred_abs < (earliest % 24.0) - 1e-9:
+                    preferred_abs += 24.0
+            options.append({
+                "start_hod": _round(start_hod, 3),
+                "finish_hod": _round((start_hod + duration) % 24.0, 3),
+                "scheduled_energy_kwh": _round(power * duration) if power is not None else None,
+                "scheduled_cost": _round(cost),
+                "cost_delta_vs_ordinary": _round(cost - ordinary_cost)
+                if cost is not None and ordinary_cost is not None else None,
+                "event_overlap_h": _round(overlap),
+                "event_overlap_delta_vs_ordinary_h": _round(overlap - ordinary_overlap)
+                if overlap is not None and ordinary_overlap is not None else None,
+                "routine_shift_h": _round(abs(start_abs - preferred_abs), 3)
+                if preferred_abs is not None else None,
+                "missing_tariff_hours": missing_hours,
+            })
+        row["status"] = "enumerated" if options else "no_feasible_start"
+        row["options"] = options
+        cost_values = [item["scheduled_cost"] for item in options if item.get("scheduled_cost") is not None]
+        overlap_values = [item["event_overlap_h"] for item in options if item.get("event_overlap_h") is not None]
+        shift_values = [item["routine_shift_h"] for item in options if item.get("routine_shift_h") is not None]
+        row["dimension_extrema"] = {
+            "minimum_scheduled_cost": min(cost_values) if cost_values else None,
+            "minimum_event_overlap_h": min(overlap_values) if overlap_values else None,
+            "minimum_routine_shift_h": min(shift_values) if shift_values else None,
+            "interpretation": "extrema are separate dimensions, not a selected or recommended start",
+        }
+        device_rows[name] = row
+    return json.loads(json.dumps({
+        "schema_version": FLEXIBLE_LOAD_OPPORTUNITY_VERSION,
+        "event_window": event_card,
+        "tariff_coverage_hours": len(tariff_map),
+        "devices": device_rows,
+        "selection_performed": False,
+        "ranking_performed": False,
+        "limitations": [
+            "fixed-power arithmetic only; measured execution remains authoritative",
+            "starts earlier than the observable decision clock are excluded",
+            "routine_shift is exposed as a tradeoff and is not converted into a penalty",
+            "the base model retains final portfolio and timing authority",
+        ],
+    }, ensure_ascii=False, allow_nan=False))
 
 
 def _event_window(event: Mapping[str, Any] | None) -> tuple[float | None, float | None, dict[str, Any]]:
@@ -764,6 +975,70 @@ def evaluate_candidate_impact(
                 "negative deltas indicate less modeled energy, event overlap, or cost than the ordinary plan"
             ),
         }
+        comparison = result["offer_specific_comparison"]
+        supported_claims: list[dict[str, Any]] = []
+        fixed_cost_delta = deltas.get("fixed_load_scheduled_cost_delta_vs_ordinary")
+        if fixed_cost_delta is not None and fixed_cost_delta < -1e-9:
+            supported_claims.append({
+                "kind": "normalized_fixed_load_cost_reduction",
+                "amount": _round(-fixed_cost_delta),
+                "unit": tariff_unit,
+                "estimate_class": "exact_fixed_power_tariff_integration",
+                "evidence_paths": [
+                    "/offer_specific_comparison/candidate_minus_ordinary/fixed_load_scheduled_cost_delta_vs_ordinary"
+                ],
+            })
+        fixed_overlap_delta = deltas.get(
+            "fixed_load_vpp_overlap_energy_kwh_delta_vs_ordinary"
+        )
+        if fixed_overlap_delta is not None and fixed_overlap_delta < -1e-9:
+            supported_claims.append({
+                "kind": "fixed_load_event_overlap_energy_reduction",
+                "amount_kwh": _round(-fixed_overlap_delta),
+                "estimate_class": "exact_fixed_power_interval_overlap",
+                "evidence_paths": [
+                    "/offer_specific_comparison/candidate_minus_ordinary/fixed_load_vpp_overlap_energy_kwh_delta_vs_ordinary"
+                ],
+            })
+        hvac_cost_delta = comparison.get("hvac_cost_delta_vs_ordinary")
+        if hvac_cost_delta is not None and hvac_cost_delta < -1e-9:
+            supported_claims.append({
+                "kind": "modeled_hvac_cost_reduction",
+                "amount": _round(-hvac_cost_delta),
+                "unit": comparison.get("hvac_cost_unit"),
+                "estimate_class": "regional_thermal_rollout_estimate",
+                "evidence_paths": ["/offer_specific_comparison/hvac_cost_delta_vs_ordinary"],
+            })
+        hvac_overlap_delta = comparison.get("hvac_vpp_energy_delta_vs_ordinary_kwh")
+        if hvac_overlap_delta is not None and hvac_overlap_delta < -1e-9:
+            supported_claims.append({
+                "kind": "modeled_hvac_event_energy_reduction",
+                "amount_kwh": _round(-hvac_overlap_delta),
+                "estimate_class": "regional_thermal_rollout_estimate",
+                "evidence_paths": [
+                    "/offer_specific_comparison/hvac_vpp_energy_delta_vs_ordinary_kwh"
+                ],
+            })
+        comparison["offer_materiality"] = (
+            "no_observable_physical_change"
+            if not changed
+            else "observable_physical_change"
+        )
+        comparison["supported_benefit_claims"] = supported_claims
+        comparison["benefit_claim_status"] = (
+            "no_offer_specific_claim_supported"
+            if not supported_claims
+            else "offer_specific_claims_available"
+        )
+        if not changed:
+            result["findings"].append({
+                "code": "no_observable_offer_change",
+                "severity": "offer_readiness",
+                "evidence_paths": ["/offer_specific_changed_paths"],
+                "interpretation": (
+                    "the physical candidate is the ordinary plan and cannot support an incremental offer claim"
+                ),
+            })
     return json.loads(json.dumps(result, ensure_ascii=False, allow_nan=False))
 
 
@@ -800,7 +1075,9 @@ def evaluate_portfolio_impacts(
 
 __all__ = [
     "ENERGY_IMPACT_SCHEMA_VERSION",
+    "FLEXIBLE_LOAD_OPPORTUNITY_VERSION",
     "TARIFF_SNAPSHOT_VERSION",
+    "build_flexible_load_opportunity_snapshot",
     "build_hourly_tariff_snapshot",
     "evaluate_candidate_impact",
     "evaluate_portfolio_impacts",
