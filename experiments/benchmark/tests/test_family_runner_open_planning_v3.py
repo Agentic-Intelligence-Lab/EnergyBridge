@@ -229,9 +229,16 @@ def test_model_can_revise_its_own_choice_after_professional_evidence() -> None:
     )
 
     assert len(reviews) == 1
-    cards = reviews[0]["professional_impact_evidence"]["candidate_impacts"]
-    assert cards[0]["hvac_impact"]["expected_demand_direction"] == "higher_cooling_demand"
-    assert cards[1]["hvac_impact"]["expected_demand_direction"] == "lower_cooling_demand"
+    review_evidence = reviews[0]["professional_impact_evidence"]
+    assert review_evidence["schema_version"] == "energybridge.impact_review_capsule.v1"
+    assert review_evidence["candidate_count"] == 2
+    assert "evidence_paths" not in json.dumps(review_evidence)
+    cards = review_evidence["candidate_impacts"]
+    direction_index = review_evidence["hvac_impact_columns"].index(
+        "expected_demand_direction"
+    )
+    assert cards[0]["hvac_impact_values"][direction_index] == "higher_cooling_demand"
+    assert cards[1]["hvac_impact_values"][direction_index] == "lower_cooling_demand"
     assert reviews[0]["professional_impact_evidence"]["selected_candidate_id"] is None
     assert resolution["selected_candidate_id"] == "warmer"
     assert resolution["evidence_review_attempted"] is True
@@ -239,6 +246,17 @@ def test_model_can_revise_its_own_choice_after_professional_evidence() -> None:
         "initial_model_response",
         "model_evidence_deliberation",
     ]
+    projection = resolution["attempts"][1]["review_evidence_projection"]
+    assert projection == {
+        "schema_version": "energybridge.impact_review_capsule.v1",
+        "source_schema_version": resolution["attempts"][0]["evaluation"][
+            "professional_impact_evidence"
+        ]["schema_version"],
+        "candidate_count": 2,
+        "ranking_performed": False,
+    }
+    full_audit = resolution["final_portfolio_audit"]["professional_impact_evidence"]
+    assert full_audit["schema_version"] != review_evidence["schema_version"]
 
 
 def test_deferred_clarification_preserves_model_question_only_for_material_choice() -> None:

@@ -119,6 +119,14 @@ not invent whole-home or HVAC kWh. The tool neither scalarizes objectives nor
 selects a plan. The same base model sees the resulting evidence cards and owns
 the confirm-or-revise decision.
 
+The confirm-or-revise call receives a compact review projection rather than a
+second copy of the verbose audit tree. Every model candidate and every checked
+device/HVAC dimension remains present in columnar form, along with service
+risks, event overlap, cost comparisons, uncertainty, supported offer claims,
+and limitations. Repeated evidence-path strings move out of the model-visible
+copy but remain intact in the lifecycle audit. This is context budgeting, not
+candidate pruning, scoring, or a harness-authored choice.
+
 At event start, a separate state-physical capacity estimator combines current
 device state, deadlines, thermal comfort headroom, measured facility power,
 device reliability, and an explicit safety margin. When the external A3
@@ -130,6 +138,7 @@ deliverability calculation, not a planner reward or a method-specific bonus.
 
 Schema: `energybridge.open_portfolio_planning.v3`.
 Impact evidence schema: `energybridge.candidate_impact.v3`.
+Impact review schema: `energybridge.impact_review_capsule.v1`.
 Flexible-load opportunity schema: `energybridge.flexible_load_opportunities.v1`.
 
 Decision-evidence schema: `energybridge.decision_evidence_ledger.v1`. The

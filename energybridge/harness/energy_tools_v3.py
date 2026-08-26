@@ -442,6 +442,158 @@ def compact_flexible_load_opportunities_for_prompt(
     }, ensure_ascii=False, allow_nan=False))
 
 
+def compact_portfolio_impacts_for_review(
+    report: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Project post-proposal impact cards to decision-relevant review facts.
+
+    The full report remains in the lifecycle audit.  A second model pass needs
+    the checked measurements and limitations, not thousands of repeated
+    evidence-path strings already available in the initial payload.  This
+    projection removes no candidate and performs no ranking or selection.
+    """
+    source = report if isinstance(report, Mapping) else {}
+
+    def without_repeated_paths(value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {
+                str(key): without_repeated_paths(item)
+                for key, item in value.items()
+                if str(key) != "evidence_paths"
+            }
+        if isinstance(value, (list, tuple)):
+            return [without_repeated_paths(item) for item in value]
+        return deepcopy(value)
+
+    raw_impacts = [
+        raw
+        for raw in list(source.get("candidate_impacts") or [])[:24]
+        if isinstance(raw, Mapping)
+    ]
+    impacts: list[dict[str, Any]] = []
+    preferred_device_fields = (
+        "present",
+        "service_required_today",
+        "scheduled",
+        "explicitly_skipped",
+        "start_hod",
+        "finish_hod",
+        "within_service_window",
+        "ready_by_declared_deadline",
+        "energy_requirement_feasible",
+        "task_completed",
+        "scheduled_energy_kwh",
+        "energy_upper_bound_kwh",
+        "vpp_overlap_h",
+        "vpp_overlap_energy_kwh",
+        "vpp_overlap_energy_upper_bound_kwh",
+        "scheduled_cost",
+        "cost_upper_bound",
+        "cost_unit",
+        "estimate_class",
+        "uncertainty",
+    )
+    preferred_hvac_fields = (
+        "mode",
+        "candidate_setpoint_c",
+        "ordinary_setpoint_c",
+        "setpoint_delta_c",
+        "expected_demand_direction",
+        "energy_kwh_estimate",
+        "energy_delta_vs_ordinary_kwh",
+        "vpp_energy_delta_vs_ordinary_kwh",
+        "horizon_cost_delta_vs_ordinary",
+        "cost_unit",
+        "predicted_final_temp_c",
+        "comfort_violation_c",
+        "estimate_class",
+        "rollout_uncertainty",
+    )
+    observed_device_fields = {
+        str(key)
+        for raw in raw_impacts
+        for card in (raw.get("device_impacts") or {}).values()
+        if isinstance(card, Mapping)
+        for key in card
+        if str(key) not in {"device", "evidence_paths"}
+    }
+    observed_hvac_fields = {
+        str(key)
+        for raw in raw_impacts
+        if isinstance(raw.get("hvac_impact"), Mapping)
+        for key in raw["hvac_impact"]
+        if str(key) != "evidence_paths"
+    }
+    device_fields = tuple(
+        key for key in preferred_device_fields if key in observed_device_fields
+    ) + tuple(sorted(observed_device_fields - set(preferred_device_fields)))
+    hvac_fields = tuple(
+        key for key in preferred_hvac_fields if key in observed_hvac_fields
+    ) + tuple(sorted(observed_hvac_fields - set(preferred_hvac_fields)))
+    common_event_window: dict[str, Any] = {}
+    common_limitations: list[Any] = []
+    for raw in raw_impacts:
+        if not common_event_window:
+            common_event_window = deepcopy(raw.get("event_window") or {})
+        for limitation in without_repeated_paths(list(raw.get("limitations") or [])):
+            if limitation not in common_limitations:
+                common_limitations.append(limitation)
+        devices = [
+            [str(name), *[deepcopy(card.get(key)) for key in device_fields]]
+            for name, card in (raw.get("device_impacts") or {}).items()
+            if isinstance(card, Mapping)
+        ]
+        hvac = raw.get("hvac_impact") if isinstance(raw.get("hvac_impact"), Mapping) else {}
+        comparison = (
+            raw.get("offer_specific_comparison")
+            if isinstance(raw.get("offer_specific_comparison"), Mapping)
+            else {}
+        )
+        impacts.append({
+            "candidate_id": raw.get("candidate_id"),
+            "plan_fingerprint": raw.get("plan_fingerprint"),
+            "offer_specific_changed_paths": deepcopy(
+                list(raw.get("offer_specific_changed_paths") or [])
+            ),
+            "device_impact_rows": devices,
+            "hvac_impact_values": [deepcopy(hvac.get(key)) for key in hvac_fields],
+            "aggregate": deepcopy(raw.get("aggregate") or {}),
+            "findings": without_repeated_paths(list(raw.get("findings") or [])),
+            "offer_specific_comparison": without_repeated_paths({
+                key: comparison.get(key)
+                for key in (
+                    "changed_path_count",
+                    "candidate_minus_ordinary",
+                    "hvac_energy_delta_vs_ordinary_kwh",
+                    "hvac_vpp_energy_delta_vs_ordinary_kwh",
+                    "hvac_cost_delta_vs_ordinary",
+                    "hvac_cost_unit",
+                    "offer_materiality",
+                    "supported_benefit_claims",
+                    "benefit_claim_status",
+                )
+                if key in comparison
+            }),
+        })
+    return json.loads(json.dumps({
+        "schema_version": "energybridge.impact_review_capsule.v1",
+        "source_schema_version": source.get("schema_version"),
+        "candidate_impacts": impacts,
+        "candidate_count": len(impacts),
+        "event_window": common_event_window,
+        "device_impact_columns": ["device", *device_fields],
+        "hvac_impact_columns": list(hvac_fields),
+        "row_semantics": (
+            "Each device_impact_rows and hvac_impact_values item matches the "
+            "corresponding columns by position; no candidate or evidence dimension is ranked."
+        ),
+        "limitations": common_limitations,
+        "ranking_performed": False,
+        "selected_candidate_id": None,
+        "projection": "decision_relevant_post_proposal_evidence",
+    }, ensure_ascii=False, allow_nan=False))
+
+
 def _event_window(event: Mapping[str, Any] | None) -> tuple[float | None, float | None, dict[str, Any]]:
     event = event if isinstance(event, Mapping) else {}
     start = _finite(event.get("trigger_hod", event.get("start_hod")))
@@ -1136,6 +1288,7 @@ __all__ = [
     "TARIFF_SNAPSHOT_VERSION",
     "build_flexible_load_opportunity_snapshot",
     "compact_flexible_load_opportunities_for_prompt",
+    "compact_portfolio_impacts_for_review",
     "build_hourly_tariff_snapshot",
     "evaluate_candidate_impact",
     "evaluate_portfolio_impacts",

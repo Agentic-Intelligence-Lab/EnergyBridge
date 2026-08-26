@@ -1011,7 +1011,10 @@ def _adaptive_v3_resolve_planning_response(
     Crucially, this function never chooses a feasible advisor or another model
     candidate on the base model's behalf.
     """
-    from energybridge.harness.energy_tools_v3 import evaluate_portfolio_impacts
+    from energybridge.harness.energy_tools_v3 import (
+        compact_portfolio_impacts_for_review,
+        evaluate_portfolio_impacts,
+    )
     from energybridge.harness.planning import evaluate_planning_response
 
     def evaluate(raw: Any) -> tuple[dict, list[str]]:
@@ -1068,10 +1071,11 @@ def _adaptive_v3_resolve_planning_response(
     ):
         try:
             first_audit = first.get("portfolio_audit") or {}
+            full_impact_evidence = first_audit.get("professional_impact_evidence") or {}
             review_payload = {
                 "original_model_response": deepcopy(first_audit.get("raw_response_snapshot") or {}),
-                "professional_impact_evidence": deepcopy(
-                    first_audit.get("professional_impact_evidence") or {}
+                "professional_impact_evidence": compact_portfolio_impacts_for_review(
+                    full_impact_evidence
                 ),
             }
             reviewed_raw = impact_review_fn(review_payload)
@@ -1082,6 +1086,18 @@ def _adaptive_v3_resolve_planning_response(
                 "evaluation": deepcopy(final.get("portfolio_audit") or {}),
                 "selection_status": final.get("selection_status"),
                 "runtime_contract_errors": final_policy_errors,
+                "review_evidence_projection": {
+                    "schema_version": review_payload[
+                        "professional_impact_evidence"
+                    ].get("schema_version"),
+                    "source_schema_version": review_payload[
+                        "professional_impact_evidence"
+                    ].get("source_schema_version"),
+                    "candidate_count": review_payload[
+                        "professional_impact_evidence"
+                    ].get("candidate_count"),
+                    "ranking_performed": False,
+                },
             })
         except Exception as exc:
             review_error = _adaptive_exception_audit_text(exc, limit=500)

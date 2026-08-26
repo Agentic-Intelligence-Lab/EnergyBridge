@@ -9,6 +9,7 @@ from energybridge.harness.energy_tools_v3 import (
     build_flexible_load_opportunity_snapshot,
     build_hourly_tariff_snapshot,
     compact_flexible_load_opportunities_for_prompt,
+    compact_portfolio_impacts_for_review,
     evaluate_candidate_impact,
     evaluate_portfolio_impacts,
 )
@@ -426,6 +427,87 @@ def test_portfolio_preserves_candidates_and_never_selects_or_scores() -> None:
     assert result["ranking_performed"] is False
     assert all(card["aggregate"]["scalar_utility_score"] is None for card in result["candidate_impacts"])
     assert json.loads(json.dumps(result))["schema_version"] == ENERGY_IMPACT_SCHEMA_VERSION
+
+
+def test_impact_review_capsule_keeps_every_candidate_and_checked_tradeoff() -> None:
+    state = _state()
+    state["professional_hvac_rollout"] = {
+        "horizon_h": 2,
+        "candidate_setpoints": [
+            {
+                "setpoint_c": 25,
+                "hvac_energy_kwh": 2.4,
+                "vpp_hvac_energy_kwh": 0.8,
+                "predicted_final_temp_c": 25.1,
+                "comfort_violation_c": 0,
+            },
+            {
+                "setpoint_c": 27,
+                "hvac_energy_kwh": 1.4,
+                "vpp_hvac_energy_kwh": 0.25,
+                "predicted_final_temp_c": 26.4,
+                "comfort_violation_c": 0.4,
+            },
+        ],
+    }
+    full = evaluate_portfolio_impacts(
+        [
+            {
+                "candidate_id": "service_first",
+                "plan": {
+                    "setpoint": 25,
+                    "appliances": {"washer_start_h": 18, "washer_skip": False},
+                },
+            },
+            {
+                "candidate_id": "event_first",
+                "plan": {
+                    "setpoint": 27,
+                    "appliances": {"washer_start_h": 19, "washer_skip": False},
+                },
+            },
+        ],
+        observable_state=state,
+        event={"trigger_h": 18, "end_h": 19},
+        ordinary_plan={
+            "setpoint": 25,
+            "appliances": {"washer_start_h": 18, "washer_skip": False},
+        },
+        tariff=_tariff(),
+    )
+
+    capsule = compact_portfolio_impacts_for_review(full)
+
+    assert capsule["schema_version"] == "energybridge.impact_review_capsule.v1"
+    assert capsule["source_schema_version"] == ENERGY_IMPACT_SCHEMA_VERSION
+    assert capsule["candidate_count"] == 2
+    assert [item["candidate_id"] for item in capsule["candidate_impacts"]] == [
+        "service_first",
+        "event_first",
+    ]
+    assert capsule["ranking_performed"] is False
+    assert capsule["selected_candidate_id"] is None
+    first, second = capsule["candidate_impacts"]
+    device_columns = capsule["device_impact_columns"]
+    hvac_columns = capsule["hvac_impact_columns"]
+    first_devices = {
+        row[0]: dict(zip(device_columns[1:], row[1:]))
+        for row in first["device_impact_rows"]
+    }
+    second_devices = {
+        row[0]: dict(zip(device_columns[1:], row[1:]))
+        for row in second["device_impact_rows"]
+    }
+    second_hvac = dict(zip(hvac_columns, second["hvac_impact_values"]))
+    assert first_devices["washer"]["vpp_overlap_h"] == 1
+    assert second_devices["washer"]["vpp_overlap_h"] == 0
+    assert second_hvac["energy_delta_vs_ordinary_kwh"] == -1
+    assert second_hvac["comfort_violation_c"] == 0.4
+    assert second["offer_specific_comparison"]["changed_path_count"] > 0
+    compact_text = json.dumps(capsule, sort_keys=True)
+    full_text = json.dumps(full, sort_keys=True)
+    assert "evidence_paths" not in compact_text
+    assert len(compact_text) < 0.75 * len(full_text)
 
 
 def test_method_and_model_metadata_do_not_enter_evidence_card() -> None:
