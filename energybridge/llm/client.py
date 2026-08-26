@@ -101,7 +101,9 @@ class LLMClient:
         for attempt in range(max_retries):
             pool_idx = (start_idx + attempt) % n_pool
             key = pool[pool_idx]
-            key_hint = f"pool[{pool_idx}]...{key[-6:]}" if len(key) > 6 else f"pool[{pool_idx}]"
+            # A pool index is enough to diagnose rotation. Never expose any
+            # part of an API credential in logs, even a suffix.
+            key_hint = f"pool[{pool_idx}]"
             client = self._get_client_for_key(key)
             try:
                 start_time = time.perf_counter()

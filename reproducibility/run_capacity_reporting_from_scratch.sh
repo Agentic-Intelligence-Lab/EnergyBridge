@@ -15,9 +15,16 @@ workers="${ENERGYBRIDGE_WORKERS:-5}"
 methods=(no_dr EnergyBridge hema_agent mpc_dynamic rule_milp rl_ppo_pref_v2)
 
 cd "${repo_root}"
-export ENERGYBRIDGE_VPP_ACCEPTANCE_GATE=method_neutral_v1
-export ENERGYBRIDGE_ROLEPLAY_ACCEPTANCE_GATE_USE_LLM=0
-export ENERGYBRIDGE_PERSIST_AGENT_MEMORY=0
+export ENERGYBRIDGE_HARNESS_PROFILE="${ENERGYBRIDGE_HARNESS_PROFILE:-adaptive_v2}"
+if [[ "${ENERGYBRIDGE_HARNESS_PROFILE}" == "paper_v1" ]]; then
+  export ENERGYBRIDGE_VPP_ACCEPTANCE_GATE=method_neutral_v1
+  export ENERGYBRIDGE_ROLEPLAY_ACCEPTANCE_GATE_USE_LLM=0
+  export ENERGYBRIDGE_PERSIST_AGENT_MEMORY=0
+else
+  export ENERGYBRIDGE_VPP_ACCEPTANCE_GATE=adaptive_roleplay_v2
+  export ENERGYBRIDGE_ROLEPLAY_ACCEPTANCE_GATE_USE_LLM=1
+  export ENERGYBRIDGE_PERSIST_AGENT_MEMORY=1
+fi
 
 python experiments/benchmark/run_daily_dr_memory_matrix.py \
   --methods "${methods[@]}" \

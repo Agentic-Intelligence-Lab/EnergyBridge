@@ -31,6 +31,7 @@ if str(_BENCH_DIR) not in sys.path:
 
 import family_runner as fr
 import user_pref_scorer as _ups
+from energybridge.benchmark.run_manifest import build_run_manifest
 from energybridge.data.vpp_events import describe_vpp_events, load_vpp_events_config, make_daily_vpp_events
 from energybridge.roleplay.calendar import calendar_context_for_event
 from energybridge.roleplay.households import (
@@ -847,7 +848,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vpp-start-hour", type=float, default=18.0)
     parser.add_argument("--vpp-duration-hours", type=float, default=1.0)
     parser.add_argument("--vpp-events-json", default="")
-    parser.add_argument("--mpc-horizon", type=int, default=6)
+    parser.add_argument(
+        "--mpc-horizon",
+        type=int,
+        default=6,
+        help="MPC prediction horizon used by EnergyBridge advisory and mpc_dynamic (default: 6).",
+    )
     parser.add_argument("--idf", default="")
     parser.add_argument("--epw", default="")
     parser.add_argument("--weather-csv", default="")
@@ -907,6 +913,27 @@ def main() -> None:
         args.city,
         days,
         mpc_horizon,
+    )
+    run_manifest = build_run_manifest(
+        runner="run_multi_user_household",
+        subject_kind="household",
+        subject_id=physical_persona["id"],
+        subject_reference=args.household,
+        method=method,
+        city=args.city,
+        days=days,
+        start_date=start_date,
+        price_csv=args.price_csv,
+        vpp_start_hour=vpp_start_hour,
+        vpp_duration_hours=vpp_duration_hours,
+        vpp_events_json=args.vpp_events_json,
+        mpc_horizon=mpc_horizon,
+        idf=args.idf,
+        epw=args.epw,
+        weather_csv=args.weather_csv,
+        regenerate_epw=args.regenerate_epw,
+        max_memory_items=args.max_memory_items,
+        dr_memory_library=args.dr_memory_library,
     )
     idf_path, epw_path, price_profile = _prepare_run_assets(args, output_dir, days, start_date, physical_persona)
 
@@ -977,7 +1004,9 @@ def main() -> None:
 
     output_dir.mkdir(parents=True, exist_ok=True)
     result_path = output_dir / "benchmark_result.json"
-    result_path.write_text(json.dumps(result.as_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+    result_dict = result.as_dict()
+    result_dict["run_manifest"] = run_manifest
+    result_path.write_text(json.dumps(result_dict, indent=2, ensure_ascii=False), encoding="utf-8")
     meta_path = output_dir / "multi_user_roleplay.json"
     meta_path.write_text(
         json.dumps(

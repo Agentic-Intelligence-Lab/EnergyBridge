@@ -39,6 +39,11 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from energybridge.roleplay.loader import list_personas  # noqa: E402
 from energybridge.data.day_ahead import DEFAULT_TIANJIN_TOU_PRICE_CSV  # noqa: E402
+from energybridge.benchmark.run_manifest import (  # noqa: E402
+    build_run_manifest,
+    result_manifest_fingerprint,
+    result_matches_manifest,
+)
 
 
 ENERGYBRIDGE_METHOD_ID = "EnergyBridge"
@@ -137,9 +142,40 @@ def _read_json(path: Path) -> dict[str, Any]:
         return {}
 
 
-def _result_success(output_dir: Path) -> bool:
+def _result_success(
+    output_dir: Path,
+    expected_manifest_or_fingerprint: dict[str, Any] | str | None = None,
+) -> bool:
+    """Check result success, optionally requiring an exact V2 manifest.
+
+    Omitting ``expected_manifest_or_fingerprint`` preserves the historical V1
+    helper behavior for callers that only need to inspect ``exit_code``. Matrix
+    resume paths always provide an expected V2 manifest.
+    """
     data = _read_json(output_dir / "benchmark_result.json")
-    return bool(data) and data.get("exit_code") == 0
+    if not data or data.get("exit_code") != 0:
+        return False
+    if expected_manifest_or_fingerprint is None:
+        return True
+    return result_matches_manifest(data, expected_manifest_or_fingerprint)
+
+
+def _manifest_for_job(job: Job) -> dict[str, Any]:
+    return build_run_manifest(
+        runner="run_persona_json",
+        subject_kind="persona",
+        subject_id=job.persona_id,
+        subject_reference=job.persona_id,
+        method=job.method,
+        city=job.city,
+        days=job.days,
+        start_date=job.start_date,
+        price_csv=job.price_csv,
+        vpp_start_hour=job.vpp_start_hour,
+        vpp_duration_hours=job.vpp_duration_hours,
+        vpp_events_json=job.vpp_events_json,
+        mpc_horizon=job.mpc_horizon,
+    )
 
 
 def _metric(data: dict[str, Any], key: str, default: Any = "") -> Any:
@@ -239,13 +275,17 @@ def _command_for(job: Job) -> list[str]:
     ]
     if job.vpp_events_json:
         cmd += ["--vpp-events-json", job.vpp_events_json]
-    if job.method == "mpc_dynamic":
+    if job.method in {ENERGYBRIDGE_METHOD_ID, "mpc_dynamic"}:
         cmd += ["--mpc-horizon", str(job.mpc_horizon)]
     return cmd
 
 
 def _summarize_job(job: Job, status: str, return_code: int | None, elapsed_s: float = 0.0) -> dict[str, Any]:
     data = _read_json(job.output_dir / "benchmark_result.json")
+    manifest = data.get("run_manifest") if isinstance(data.get("run_manifest"), dict) else {}
+    llm = manifest.get("llm") if isinstance(manifest.get("llm"), dict) else {}
+    controller_llm = llm.get("controller") if isinstance(llm.get("controller"), dict) else {}
+    roleplay_llm = llm.get("roleplay") if isinstance(llm.get("roleplay"), dict) else {}
     return {
         "persona_id": job.persona_id,
         "method": job.method,
@@ -256,12 +296,16 @@ def _summarize_job(job: Job, status: str, return_code: int | None, elapsed_s: fl
         "vpp_start_hour": round(job.vpp_start_hour, 6),
         "vpp_duration_hours": round(job.vpp_duration_hours, 6),
         "vpp_events_json": job.vpp_events_json,
-        "mpc_horizon": job.mpc_horizon if job.method == "mpc_dynamic" else "",
+        "mpc_horizon": job.mpc_horizon if job.method in {ENERGYBRIDGE_METHOD_ID, "mpc_dynamic"} else "",
         "status": status,
         "return_code": return_code,
         "elapsed_s": round(elapsed_s, 1),
         "output_dir": str(job.output_dir),
         "log_file": str(job.log_file),
+        "run_fingerprint": result_manifest_fingerprint(data),
+        "harness_profile": manifest.get("harness_profile", ""),
+        "controller_llm_model": controller_llm.get("model", ""),
+        "roleplay_llm_model": roleplay_llm.get("model", ""),
         "exit_code": _metric(data, "exit_code"),
         "energy_kwh": _first_metric(data, ("energy_kwh", "energy_kwh_total")),
         "energy_kwh_per_day": _metric(data, "energy_kwh_per_day"),
@@ -348,9 +392,20 @@ def _write_summaries(summary_rows: list[dict[str, Any]], summary_json: Path, sum
 
 
 def _run_job(job: Job, *, resume: bool) -> dict[str, Any]:
-    if resume and _result_success(job.output_dir):
-        print(f"[SKIP] {job.output_dir.name} already has exit_code=0", flush=True)
-        return _summarize_job(job, "skipped_done", 0, 0.0)
+    expected_manifest = _manifest_for_job(job)
+    if resume:
+        if _result_success(job.output_dir, expected_manifest):
+            print(
+                f"[SKIP] {job.output_dir.name} has matching successful manifest "
+                f"{expected_manifest['fingerprint'][:12]}",
+                flush=True,
+            )
+            return _summarize_job(job, "skipped_done", 0, 0.0)
+        if _result_success(job.output_dir):
+            print(
+                f"[RERUN] {job.output_dir.name} is successful but its manifest is missing or stale",
+                flush=True,
+            )
 
     if job.output_dir.exists():
         shutil.rmtree(job.output_dir)
@@ -391,7 +446,11 @@ def _run_job(job: Job, *, resume: bool) -> dict[str, Any]:
         return_code = proc.wait()
 
     elapsed = time.time() - start
-    status = "completed" if return_code == 0 and _result_success(job.output_dir) else "failed"
+    status = (
+        "completed"
+        if return_code == 0 and _result_success(job.output_dir, expected_manifest)
+        else "failed"
+    )
     print(f"[{status.upper()}] {job.output_dir.name} return_code={return_code} elapsed={elapsed:.1f}s", flush=True)
     return _summarize_job(job, status, return_code, elapsed)
 
@@ -456,7 +515,7 @@ def parse_args() -> argparse.Namespace:
         "--mpc-horizon",
         type=int,
         default=6,
-        help="MPC horizon in 10-minute steps for mpc_dynamic. Default: 6.",
+        help="MPC horizon in 10-minute steps for EnergyBridge advisory and mpc_dynamic. Default: 6.",
     )
     parser.add_argument(
         "--results-root",
@@ -471,7 +530,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Skip jobs whose benchmark_result.json already has exit_code=0.",
+        help="Skip only successful jobs whose V2 run-manifest fingerprint exactly matches current inputs/config.",
     )
     parser.add_argument(
         "--dry-run",

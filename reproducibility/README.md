@@ -88,12 +88,18 @@ export ENERGYBRIDGE_HEMA_ROOT="$PWD/../reference/HEMA"
 Create the local runtime configuration:
 
 ```bash
-cp reproducibility/paper.env.example .env
+cp reproducibility/v2.env.example .env
 ```
 
-Edit `.env` and supply the API credentials for the configured
-OpenAI-compatible endpoint. `.env` and key files are ignored and must not be
-committed.
+Edit `.env` and supply both the controller `LLM_*` fields and the simulated
+household `ROLEPLAY_LLM_*` fields for the configured OpenAI-compatible
+endpoint. The V2 wrappers keep the role-play acceptance model enabled: it
+starts from a household baseline and returns event-specific signed
+adjustments. `.env` and key files are ignored and must not be committed.
+
+`reproducibility/paper.env.example` is retained only as an explicit frozen-V1
+compatibility profile. It is not the default V2 harness used by the launch
+wrappers.
 
 The benchmark configuration uses `--mpc-horizon 6`. In the implementation this
 means six 10-minute control steps, or one hour; it does not mean six hours.

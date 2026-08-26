@@ -28,7 +28,7 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-cp reproducibility/paper.env.example .env
+cp reproducibility/v2.env.example .env
 ```
 
 For the simulator-backed experiments, set the EnergyPlus installation path in
@@ -38,12 +38,55 @@ For the simulator-backed experiments, set the EnergyPlus installation path in
 EPLUS_ROOT=/opt/EnergyPlus-24-1-0
 ```
 
-EnergyBridge and HEMA require an OpenAI-compatible API configuration. HEMA is
+EnergyBridge and HEMA require an OpenAI-compatible API configuration. Put the
+controller URL/key/model in `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL`;
+put the simulated-household configuration in the corresponding
+`ROLEPLAY_LLM_*` fields. The URL is the compatible API root (normally ending
+in `/v1`), not the full `/chat/completions` path. Optional comma-separated key
+pools go in `LLM_API_KEY_POOL` and `ROLEPLAY_LLM_API_KEY_POOL`, while the
+primary key fields must remain non-empty. HEMA is
 kept as a pinned external checkout rather than copied into this repository.
 The exact revision and setup commands are in
 [`reproducibility/README.md`](reproducibility/README.md#environment).
 
 Do not commit `.env`, API keys, or generated outputs.
+
+## EnergyBridge V2 adaptive harness
+
+The V2 profile keeps household and controller model behavior observable rather
+than normalizing it into one deterministic plan. Each simulated household gets
+a distinct role-play resume; consent starts from a household prior and the
+role-play LLM proposes evidence-based positive/negative adjustments. Code only
+validates structure, numeric range, baseline/adjustment arithmetic, and hard
+safety/service vetoes; it does not impose a quality floor or cap. The controller sees
+an observable onboarding profile plus context-matched interaction memory, and
+MPC is an advisory candidate rather than an invisible action override.
+
+Every result stores a key-free harness manifest and fingerprint. Resume mode
+reuses a result only when model IDs, prompt bundle, harness profile, inputs, and
+run configuration match. This prevents a model change from silently reusing an
+older run.
+
+The launch wrappers use `adaptive_v2` by default. To reproduce the historical
+frozen V1 consent path explicitly:
+
+```bash
+export ENERGYBRIDGE_HARNESS_PROFILE=paper_v1
+bash reproducibility/run_main_benchmark_from_scratch.sh --run
+```
+
+Validate the configured endpoint first, then run one inexpensive Tianjin day
+before starting a matrix job:
+
+```bash
+python examples/run_llm_test.py
+python experiments/benchmark/run_persona_json.py \
+  basic_role_a_commuter_price_cooperative \
+  --method EnergyBridge --city Tianjin --days 1 --start-date 2025-06-01 \
+  --price-csv experiments/real_data/tianjin_tou_price_normalized.csv \
+  --output generated_results/v2_quick_1day \
+  --no-agent-capacity-report
+```
 
 ## Verify the release
 

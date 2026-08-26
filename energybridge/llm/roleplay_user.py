@@ -3,9 +3,219 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+import os
+import re
+from typing import Any, Mapping, Sequence
 
 from energybridge.llm.client import LLMClient
+
+
+_ONBOARDING_QUESTION_IDS = frozenset({
+    "vpp_priority",
+    "thermostat_flexibility",
+    "appliance_shift_consent",
+    "calendar_routine_constraints",
+})
+_PUBLIC_ONBOARDING_OPTION_IDS = frozenset({
+    "comfort_routine_first",
+    "bill_savings_first",
+    "grid_support_first",
+    "balanced_tradeoff",
+    "confirm_before_changes",
+    "almost_none_0_5c",
+    "small_1c_short",
+    "moderate_1_2c_with_benefit",
+    "larger_when_unoccupied",
+    "do_not_move_without_approval",
+    "shift_1_2h_deadline_protected",
+    "shift_to_cheaper_periods",
+    "automatic_optimization_ok",
+    "arrival_comfort",
+    "meals_chores",
+    "shower_hot_water",
+    "caregiving_sleep_work",
+    "irregular_confirm_same_day",
+})
+_HIDDEN_PROFILE_TERM_RE = re.compile(
+    r"\b(?:scoring_weights|vpp_override_prob|agent_context|system_prompt|persona_prompt|"
+    r"roleplay_user_prompt|comfort_tag|price_tag|control_tag|grid_value_tag|"
+    r"high_trust_auto|suggestion_first|confirm_required|privacy_sensitive|low_auto_accept|"
+    r"temp_tolerant|normal_comfort|temp_sensitive|low_control_tolerance|"
+    r"regular_commuter|stay_at_home|night_owl|event_fatigue|uncertain_flex|"
+    r"SECRET(?:[_-][A-Z0-9]+)+)\b",
+    re.IGNORECASE,
+)
+
+
+def _compact_answer_text(value: Any, limit: int = 600) -> str:
+    text = " ".join(str(value or "").split())
+    if _HIDDEN_PROFILE_TERM_RE.search(text):
+        return (
+            "I selected the option that best matches my preference; "
+            "please ask a natural follow-up if more detail is needed."
+        )
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _observable_onboarding_answers(raw: Any) -> list[dict[str, Any]]:
+    """Keep only public questionnaire selections and natural answer text."""
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
+        return []
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in raw[:8]:
+        if not isinstance(item, Mapping):
+            continue
+        question_id = str(item.get("id") or "").strip()
+        if question_id not in _ONBOARDING_QUESTION_IDS or question_id in seen:
+            continue
+        selected_raw = item.get("selected_option_ids") or []
+        if isinstance(selected_raw, str):
+            selected_raw = [selected_raw]
+        selected = [
+            str(option).strip()
+            for option in selected_raw
+            if str(option).strip() in _PUBLIC_ONBOARDING_OPTION_IDS
+        ] if isinstance(selected_raw, Sequence) else []
+        answer = _compact_answer_text(item.get("answer"))
+        result.append({
+            "id": question_id,
+            "selected_option_ids": selected[:3],
+            "answer": answer or "I do not have a strong preference yet.",
+        })
+        seen.add(question_id)
+    return result
+
+
+def infer_observable_profile_from_answers(answers: Sequence[Mapping[str, Any]] | None) -> dict[str, Any]:
+    """Infer a conservative controller profile from public onboarding answers only.
+
+    This helper has no persona/resume parameter by design. It maps questionnaire
+    selections the controller actually observed and records that provenance.
+    """
+    clean_answers = _observable_onboarding_answers(list(answers or []))
+    choices = {
+        item["id"]: set(item.get("selected_option_ids") or [])
+        for item in clean_answers
+    }
+    profile: dict[str, Any] = {
+        "comfort_priority": "unknown",
+        "cost_grid_priority": "unknown",
+        "automation_preference": "ask_when_uncertain",
+        "thermostat_flexibility_c": None,
+        "appliance_flexibility": "ask_when_uncertain",
+        "calendar_routine_sensitivity": "unknown",
+        "strategy_bias": "observable_answers_inconclusive",
+    }
+    rules: list[str] = []
+
+    vpp = choices.get("vpp_priority", set())
+    if "comfort_routine_first" in vpp:
+        profile.update(
+            comfort_priority="high",
+            cost_grid_priority="low",
+            strategy_bias="comfort_calendar_protective",
+        )
+        rules.append("Protect comfort and routine before seeking event savings.")
+    elif vpp & {"bill_savings_first", "grid_support_first"}:
+        profile.update(
+            comfort_priority="medium",
+            cost_grid_priority="high",
+            strategy_bias="cost_grid_oriented",
+        )
+        rules.append("Prefer low-disruption event actions with a concrete savings or grid benefit.")
+    elif "balanced_tradeoff" in vpp:
+        profile.update(
+            comfort_priority="medium",
+            cost_grid_priority="medium",
+            strategy_bias="balanced_middle",
+        )
+        rules.append("Balance comfort, routine, and event benefit rather than optimizing one alone.")
+    elif "confirm_before_changes" in vpp:
+        profile.update(
+            comfort_priority="high",
+            cost_grid_priority="medium",
+            strategy_bias="comfort_calendar_protective",
+        )
+        profile["automation_preference"] = "ask_before_vpp_specific_changes"
+        rules.append("Explain and confirm material event-specific changes before acting.")
+
+    thermostat = choices.get("thermostat_flexibility", set())
+    thermostat_values = {
+        "almost_none_0_5c": 0.5,
+        "small_1c_short": 1.0,
+        "moderate_1_2c_with_benefit": 1.5,
+        "larger_when_unoccupied": 2.0,
+    }
+    for option_id, flexibility in thermostat_values.items():
+        if option_id in thermostat:
+            profile["thermostat_flexibility_c"] = flexibility
+            rules.append(
+                f"Keep temporary thermostat changes within about {flexibility:.1f} C of the agreed setting."
+            )
+            break
+
+    appliance = choices.get("appliance_shift_consent", set())
+    if "do_not_move_without_approval" in appliance:
+        profile["automation_preference"] = "ask_before_vpp_specific_changes"
+        profile["appliance_flexibility"] = "limited_by_explicit_approval"
+        rules.append("Ask before moving appliance, hot-water, or EV service times.")
+    elif "shift_1_2h_deadline_protected" in appliance:
+        profile["automation_preference"] = "suggestion_first_with_deadline_protection"
+        profile["appliance_flexibility"] = "shift_1_2h_if_deadlines_protected"
+        rules.append("Limit automatic service shifts to 1-2 hours and preserve deadlines.")
+    elif "shift_to_cheaper_periods" in appliance:
+        profile["automation_preference"] = "automatic_when_readiness_protected"
+        profile["appliance_flexibility"] = "price_shift_if_readiness_protected"
+        rules.append("Cheaper-period shifts are acceptable only when readiness is protected.")
+    elif "automatic_optimization_ok" in appliance:
+        profile["automation_preference"] = "automatic_when_deadlines_protected"
+        profile["appliance_flexibility"] = "automatic_if_deadlines_protected"
+        rules.append("Automatic flexible-load scheduling is acceptable when deadlines remain protected.")
+
+    calendar = choices.get("calendar_routine_constraints", set())
+    if calendar & {"caregiving_sleep_work", "irregular_confirm_same_day"}:
+        profile["calendar_routine_sensitivity"] = "high"
+        rules.append("Re-check same-day caregiving, sleep, work, and schedule changes before acting.")
+    elif calendar:
+        profile["calendar_routine_sensitivity"] = "medium"
+        if "arrival_comfort" in calendar:
+            rules.append("Protect return-home comfort.")
+        if "meals_chores" in calendar:
+            rules.append("Avoid disrupting meals and household chores.")
+        if "shower_hot_water" in calendar:
+            rules.append("Protect shower and hot-water readiness.")
+
+    if not rules:
+        rules.append("Treat unstated preferences as uncertain and ask before material event changes.")
+    return {
+        "inferred_profile": profile,
+        "preference_rules": list(dict.fromkeys(rules))[:8],
+        "inference_audit": {
+            "source": "observable_onboarding_answers_v2",
+            "answer_ids": [item["id"] for item in clean_answers],
+            "selected_option_ids": sorted({
+                option
+                for item in clean_answers
+                for option in item.get("selected_option_ids") or []
+            }),
+            "hidden_resume_fields_used": False,
+        },
+    }
+
+
+def _adaptive_harness_v2() -> bool:
+    value = str(os.getenv("ENERGYBRIDGE_HARNESS_PROFILE", "legacy_v1")).strip().lower()
+    return value in {"v2", "adaptive", "adaptive_v2", "energybridge_v2"}
+
+
+def _household_resume(persona: dict[str, Any]) -> dict[str, Any]:
+    from energybridge.harness.profile import build_household_resume
+
+    return build_household_resume(
+        persona,
+        appliance_config=(persona.get("appliances") if isinstance(persona, dict) else None),
+    )
 
 
 def _extract_json_payload(text: str) -> str:
@@ -69,6 +279,24 @@ class RoleplayUserSimulator:
         memory_snapshot: dict[str, Any],
         history_summary: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        if _adaptive_harness_v2():
+            resume = _household_resume(persona)
+            system_prompt = (
+                "You are the specific household member described by this resume, continuing a real conversation "
+                "with a home-energy assistant. Speak naturally in that person's voice. Mention only what matters "
+                "right now; do not recite a profile, rubric, or list of energy keywords. Return valid JSON only."
+            )
+            user_prompt = (
+                f"Household resume:\n{json.dumps(resume, ensure_ascii=False)}\n\n"
+                f"Turn: {turn_index}\n"
+                f"What is happening now:\n{json.dumps(scenario, ensure_ascii=False)}\n\n"
+                f"What the assistant currently believes:\n{json.dumps(memory_snapshot, ensure_ascii=False)}\n\n"
+                f"Recent interaction history:\n{json.dumps(history_summary, ensure_ascii=False)}\n\n"
+                "Reply with one or two natural sentences that this household would actually say now. Reveal a "
+                "preference only when the situation makes it relevant, especially if the assistant has misunderstood it. "
+                "Return JSON with fields user_input, hidden_goal, and reveal_focus."
+            )
+            return self._call_json(system_prompt, user_prompt)
         system_prompt = (
             "You are role-playing a single residential user consistently across multiple turns. "
             "Stay faithful to the hidden persona. Return only valid JSON."
@@ -100,6 +328,39 @@ class RoleplayUserSimulator:
         persona: dict[str, Any],
         questions: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        if _adaptive_harness_v2():
+            resume = _household_resume(persona)
+            system_prompt = (
+                "You are the household described by the supplied resume, answering a short home-energy onboarding "
+                "conversation. Answer in your own everyday voice. Be honest about uncertainty and conditional consent; "
+                "do not expose hidden profile fields or imitate a stock persona. Return valid JSON only."
+            )
+            user_prompt = (
+                f"Household resume (role-play evidence only):\n{json.dumps(resume, ensure_ascii=False)}\n\n"
+                f"Questions:\n{json.dumps(questions, ensure_ascii=False)}\n\n"
+                "Return exactly one object with only `answers`: "
+                "[{id, selected_option_ids, answer}]. Give one concise, natural answer per question. "
+                "Do not return inferred_profile, preference_rules, tags, weights, hidden field names, or analysis; "
+                "the controller will infer cautiously from the visible answers in a separate step."
+            )
+            trace = self._call_json(system_prompt, user_prompt)
+            raw_data = trace.get("data") if isinstance(trace.get("data"), dict) else {}
+            answers = _observable_onboarding_answers(raw_data.get("answers"))
+            observable_inference = infer_observable_profile_from_answers(answers)
+            # Rebuild the returned trace so neither the hidden resume prompt nor
+            # an LLM-authored hidden profile can reach the controller caller.
+            return {
+                "data": {
+                    "answers": answers,
+                    **observable_inference,
+                },
+                "metrics": dict(trace.get("metrics") or {}),
+                "privacy": {
+                    "hidden_resume_returned": False,
+                    "raw_roleplay_response_returned": False,
+                    "profile_inference_source": "observable_onboarding_answers_v2",
+                },
+            }
         system_prompt = (
             "You are role-playing the same residential user during controller onboarding. "
             "Answer a very short questionnaire honestly and consistently with the hidden persona. "
@@ -132,6 +393,23 @@ class RoleplayUserSimulator:
         scenario: dict[str, Any],
         strategy_options: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        if _adaptive_harness_v2():
+            resume = _household_resume(persona)
+            system_prompt = (
+                "You are this particular household deciding what, if anything, to authorize for one grid event. "
+                "Choose from lived priorities, today's routine, prior experience, and the concrete consequences of "
+                "each option. You are free to prefer a narrow or conditional option; there is no preferred energy "
+                "archetype. Explain the choice briefly in the household's voice. Return valid JSON only."
+            )
+            user_prompt = (
+                f"Household resume:\n{json.dumps(resume, ensure_ascii=False)}\n\n"
+                f"Turn: {turn_index}\n"
+                f"Current event and relationship history:\n{json.dumps(scenario, ensure_ascii=False)}\n\n"
+                f"Options:\n{json.dumps(strategy_options, ensure_ascii=False)}\n\n"
+                "Return selected_index (1-based), approved (whether the option is genuinely authorized), and a "
+                "concise first-person reason grounded in one or two specific facts."
+            )
+            return self._call_json(system_prompt, user_prompt)
         system_prompt = (
             "You are role-playing the same residential user, not the grid operator and not the controller. "
             "Choose the VPP response strategy that this user would realistically approve before the event. "
@@ -167,6 +445,35 @@ class RoleplayUserSimulator:
         projected_safety_report: dict[str, Any],
         zone_group_context: dict | None = None,
     ) -> dict[str, Any]:
+        if _adaptive_harness_v2():
+            resume = _household_resume(persona)
+            system_prompt = (
+                "You are the household described by this resume reflecting on one completed or projected home-energy "
+                "event. Judge the experience as that household would: what felt comfortable, useful, disruptive, "
+                "trustworthy, or unresolved. Safety and service facts are factual constraints, but there is no fixed "
+                "score recipe. Keep the feedback natural, specific, and concise. Return valid JSON only."
+            )
+            context_payload = {
+                "turn": turn_index,
+                "household_resume": resume,
+                "household_authorized_strategy": selected_strategy,
+                "experienced_plan_and_outcome": projected_control_plan,
+                "safety_and_service_facts": projected_safety_report,
+                "zone_group_context": zone_group_context or {},
+            }
+            user_prompt = (
+                json.dumps(context_payload, ensure_ascii=False)
+                + "\n\nGive integer scores from 1 to 5 for satisfaction_score, comfort_score, energy_score, "
+                "and vpp_score. Scores should follow from this household's own explanation, not a generic household. "
+                "Also return satisfaction_label (very_satisfied/satisfied/neutral/dissatisfied/very_dissatisfied) "
+                "and a <=240-character comment naming the most important evidence and, if needed, one concrete next change."
+                + (
+                    " Return zone_comfort_scores for Core, Bottom, Middle, and Top as integers 1-5."
+                    if zone_group_context
+                    else ""
+                )
+            )
+            return self._call_json(system_prompt, user_prompt)
         system_prompt = (
             "You are role-playing the same residential/office user. Judge satisfaction realistically. "
             "Return only valid JSON."
@@ -217,3 +524,6 @@ class RoleplayUserSimulator:
             + "All score fields must be integers 1-5."
         )
         return self._call_json(system_prompt, user_prompt)
+
+
+__all__ = ["RoleplayUserSimulator", "infer_observable_profile_from_answers"]

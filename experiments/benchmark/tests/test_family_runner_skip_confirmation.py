@@ -702,6 +702,9 @@ def test_roleplay_prompt_gate_is_default_and_legacy_is_env_selectable(monkeypatc
         },
     }
 
+    # Pin the historical default explicitly so a developer's repository-local
+    # V2 .env cannot change this V1 compatibility assertion.
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "legacy_v1")
     monkeypatch.delenv("ENERGYBRIDGE_VPP_ACCEPTANCE_GATE", raising=False)
     monkeypatch.setenv("ENERGYBRIDGE_ROLEPLAY_ACCEPTANCE_GATE_USE_LLM", "0")
     prompt_gate = _evaluate_vpp_plan_acceptance_gate(

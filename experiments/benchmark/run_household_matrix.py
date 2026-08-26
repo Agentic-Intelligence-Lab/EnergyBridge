@@ -31,6 +31,10 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from energybridge.roleplay.households import list_household_ids  # noqa: E402
 from energybridge.data.day_ahead import DEFAULT_TIANJIN_TOU_PRICE_CSV  # noqa: E402
+from energybridge.benchmark.run_manifest import (  # noqa: E402
+    build_run_manifest,
+    result_manifest_fingerprint,
+)
 from experiments.benchmark.run_baseline_matrix import (  # noqa: E402
     ENERGYBRIDGE_METHOD_ID,
     METHOD_CHOICES,
@@ -127,6 +131,25 @@ def _price_display(args: argparse.Namespace) -> str:
     return "N/A"
 
 
+def _manifest_for_job(job: HouseholdJob) -> dict[str, Any]:
+    return build_run_manifest(
+        runner="run_multi_user_household",
+        subject_kind="household",
+        subject_id=job.household_id,
+        subject_reference=job.household_id,
+        method=job.method,
+        city=job.city,
+        days=job.days,
+        start_date=job.start_date,
+        price_csv=job.price_csv,
+        vpp_start_hour=job.vpp_start_hour,
+        vpp_duration_hours=job.vpp_duration_hours,
+        vpp_events_json=job.vpp_events_json,
+        mpc_horizon=job.mpc_horizon,
+        dr_memory_library=job.dr_memory_library,
+    )
+
+
 def _command_for(job: HouseholdJob) -> list[str]:
     cmd = [
         sys.executable,
@@ -153,7 +176,7 @@ def _command_for(job: HouseholdJob) -> list[str]:
         cmd += ["--price-csv", job.price_csv]
     if job.vpp_events_json:
         cmd += ["--vpp-events-json", job.vpp_events_json]
-    if job.method == "mpc_dynamic":
+    if job.method in {ENERGYBRIDGE_METHOD_ID, "mpc_dynamic"}:
         cmd += ["--mpc-horizon", str(job.mpc_horizon)]
     if job.dr_memory_library:
         cmd += ["--dr-memory-library", job.dr_memory_library]
@@ -162,6 +185,10 @@ def _command_for(job: HouseholdJob) -> list[str]:
 
 def _summarize_job(job: HouseholdJob, status: str, return_code: int | None, elapsed_s: float = 0.0) -> dict[str, Any]:
     data = _read_json(job.output_dir / "benchmark_result.json")
+    manifest = data.get("run_manifest") if isinstance(data.get("run_manifest"), dict) else {}
+    llm = manifest.get("llm") if isinstance(manifest.get("llm"), dict) else {}
+    controller_llm = llm.get("controller") if isinstance(llm.get("controller"), dict) else {}
+    roleplay_llm = llm.get("roleplay") if isinstance(llm.get("roleplay"), dict) else {}
     return {
         "persona_id": job.household_id,
         "household_id": job.household_id,
@@ -173,13 +200,17 @@ def _summarize_job(job: HouseholdJob, status: str, return_code: int | None, elap
         "vpp_start_hour": round(job.vpp_start_hour, 6),
         "vpp_duration_hours": round(job.vpp_duration_hours, 6),
         "vpp_events_json": job.vpp_events_json,
-        "mpc_horizon": job.mpc_horizon if job.method == "mpc_dynamic" else "",
+        "mpc_horizon": job.mpc_horizon if job.method in {ENERGYBRIDGE_METHOD_ID, "mpc_dynamic"} else "",
         "status": status,
         "return_code": return_code,
         "elapsed_s": round(elapsed_s, 1),
         "output_dir": str(job.output_dir),
         "log_file": str(job.log_file),
         "run_summary_path": str(job.output_dir / "run_summary.txt"),
+        "run_fingerprint": result_manifest_fingerprint(data),
+        "harness_profile": manifest.get("harness_profile", ""),
+        "controller_llm_model": controller_llm.get("model", ""),
+        "roleplay_llm_model": roleplay_llm.get("model", ""),
         "exit_code": _metric(data, "exit_code"),
         "energy_kwh": _first_metric(data, ("energy_kwh", "energy_kwh_total")),
         "energy_kwh_per_day": _metric(data, "energy_kwh_per_day"),
@@ -252,9 +283,20 @@ def _summarize_job(job: HouseholdJob, status: str, return_code: int | None, elap
 
 
 def _run_job(job: HouseholdJob, *, resume: bool) -> dict[str, Any]:
-    if resume and _result_success(job.output_dir):
-        print(f"[SKIP] {job.output_dir.name} already has exit_code=0", flush=True)
-        return _summarize_job(job, "skipped_done", 0, 0.0)
+    expected_manifest = _manifest_for_job(job)
+    if resume:
+        if _result_success(job.output_dir, expected_manifest):
+            print(
+                f"[SKIP] {job.output_dir.name} has matching successful manifest "
+                f"{expected_manifest['fingerprint'][:12]}",
+                flush=True,
+            )
+            return _summarize_job(job, "skipped_done", 0, 0.0)
+        if _result_success(job.output_dir):
+            print(
+                f"[RERUN] {job.output_dir.name} is successful but its manifest is missing or stale",
+                flush=True,
+            )
     if job.output_dir.exists():
         shutil.rmtree(job.output_dir)
 
@@ -287,7 +329,11 @@ def _run_job(job: HouseholdJob, *, resume: bool) -> dict[str, Any]:
         return_code = proc.wait()
 
     elapsed = time.time() - start
-    status = "completed" if return_code == 0 and _result_success(job.output_dir) else "failed"
+    status = (
+        "completed"
+        if return_code == 0 and _result_success(job.output_dir, expected_manifest)
+        else "failed"
+    )
     print(f"[{status.upper()}] {job.output_dir.name} return_code={return_code} elapsed={elapsed:.1f}s", flush=True)
     return _summarize_job(job, status, return_code, elapsed)
 
@@ -303,10 +349,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vpp-start-hour", type=float, default=18.0)
     parser.add_argument("--vpp-duration-hours", type=float, default=1.0)
     parser.add_argument("--vpp-events-json", default="")
-    parser.add_argument("--mpc-horizon", type=int, default=6)
+    parser.add_argument(
+        "--mpc-horizon",
+        type=int,
+        default=6,
+        help="MPC horizon for EnergyBridge advisory and mpc_dynamic. Default: 6.",
+    )
     parser.add_argument("--results-root", default=str(DEFAULT_RESULTS_ROOT))
     parser.add_argument("--date", default=date.today().isoformat())
-    parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip only successful jobs whose V2 run-manifest fingerprint exactly matches current inputs/config.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--fail-fast", action="store_true")
     parser.add_argument("--max-runs", type=int, default=0)

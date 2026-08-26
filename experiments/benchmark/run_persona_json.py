@@ -60,6 +60,7 @@ from energybridge.data.vpp_events import (
     load_vpp_events_config,
     make_daily_vpp_events,
 )
+from energybridge.benchmark.run_manifest import build_run_manifest
 from energybridge.quantification.agent_capacity_reporter import apply_agent_capacity_reporting
 from energybridge.roleplay.calendar import attach_calendar, hourly_occupancy_from_persona
 from experiments.benchmark.strategy_explanations import (
@@ -607,7 +608,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--mpc-horizon", type=int, default=6,
-        help="MPC prediction horizon in 10-minute steps; used by mpc_dynamic (default: 6).",
+        help="MPC prediction horizon in 10-minute steps; used by EnergyBridge advisory and mpc_dynamic (default: 6).",
     )
     parser.add_argument(
         "--capacity-memory-json",
@@ -667,6 +668,31 @@ def main() -> None:
         else _prepare_default_output_dir(
             pid, result_method, args.city, days=days, mpc_horizon=mpc_horizon, human_name=human_name
         )
+    )
+    run_manifest = build_run_manifest(
+        runner="run_persona_json",
+        subject_kind="persona",
+        subject_id=pid,
+        subject_reference=args.persona,
+        method=result_method,
+        city=args.city,
+        days=days,
+        start_date=start_date,
+        price_csv=args.price_csv,
+        vpp_start_hour=vpp_start_hour,
+        vpp_duration_hours=vpp_duration_hours,
+        vpp_events_json=args.vpp_events_json,
+        mpc_horizon=mpc_horizon,
+        idf=args.idf,
+        epw=args.epw,
+        weather_csv=args.weather_csv,
+        regenerate_epw=args.regenerate_epw,
+        user_mode="human" if human_mode else "roleplay",
+        human_name=human_name,
+        capacity_report_enabled=not args.no_agent_capacity_report,
+        capacity_memory_json=args.capacity_memory_json,
+        capacity_memory_top_k=args.capacity_memory_top_k,
+        capacity_report_dry_run=args.capacity_report_dry_run,
     )
     idf_path, epw_path, price_profile = _prepare_run_assets(args, output_dir, days, start_date, persona)
 
@@ -735,6 +761,7 @@ def main() -> None:
             top_k=args.capacity_memory_top_k,
             dry_run=args.capacity_report_dry_run,
         )
+    result_dict["run_manifest"] = run_manifest
     json_path.write_text(json.dumps(result_dict, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\n[Saved] benchmark_result.json → {json_path}")
 

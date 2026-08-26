@@ -16,7 +16,7 @@ M2 — zone_group_scores: office only, per-group comfort scores {Core, Bottom, M
 L3 — past_events included so Day 3 agent sees Day 1+2 feedback.
 """
 from __future__ import annotations
-import sys, json, random, datetime
+import os, sys, json, random, datetime
 from pathlib import Path
 from energybridge.roleplay.calendar import calendar_brief_for_prompt, calendar_context_for_event
 
@@ -27,6 +27,11 @@ if str(PROJECT_ROOT) not in sys.path:
 BENCH_DIR = Path(__file__).parent
 LOG_DIR   = BENCH_DIR / "logs" / "dialogue"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _adaptive_harness_v2() -> bool:
+    value = str(os.getenv("ENERGYBRIDGE_HARNESS_PROFILE", "legacy_v1")).strip().lower()
+    return value in {"v2", "adaptive", "adaptive_v2", "energybridge_v2"}
 
 class StrategyPreference(str):
     """String preference text with attached candidate/selection trace metadata."""
@@ -252,6 +257,22 @@ def _clamp_score(value: float) -> float:
 def _score_label(value: float) -> str:
     idx = max(1, min(5, int(round(float(value))))) - 1
     return _SCORE_LABELS[idx]
+
+
+def _apply_unserved_service_score_cap(result: dict, devices: list[str]) -> dict:
+    """Apply the required-service failure cap after any scoring backend."""
+    if not devices:
+        return result
+    result["score"] = min(result["score"], 2)
+    result["energy_score"] = min(result["energy_score"], 2)
+    result["vpp_score"] = min(result["vpp_score"], 2)
+    result["label"] = "dissatisfied" if result["score"] == 2 else "very_dissatisfied"
+    result["comment"] = (
+        "Required appliance service target(s) were not met "
+        f"({', '.join(devices)}); "
+        + (result.get("comment", "") or "this violates the user's service rule.")
+    )
+    return result
 
 
 def _persona_score_mode(persona: dict) -> str:
@@ -1131,6 +1152,25 @@ def _align_candidates_to_appliance_profile(
     aligned: list[dict] = []
     for raw in candidates:
         c = dict(raw)
+        if _adaptive_harness_v2():
+            # V1 rewrote every model-generated option into the same A/B/C
+            # sentence templates. V2 retains the simulated household's actual
+            # wording and only appends non-negotiable controllability facts.
+            pref = str(c.get("user_pref", c.get("description", "")) or "").strip()
+            constraint_bits: list[str] = []
+            if fixed:
+                constraint_bits.append("Keep fixed routines unchanged: " + ", ".join(fixed) + ".")
+            if not controllable and fixed:
+                constraint_bits.append("Only comfort-safe AC changes are controllable.")
+            suffix = " ".join(constraint_bits)
+            if suffix and suffix.lower() not in pref.lower():
+                pref = f"{pref} {suffix}".strip()
+            c["user_pref"] = pref[:600]
+            c["description"] = str(c.get("description", ""))[:240]
+            c["tradeoff"] = str(c.get("tradeoff", ""))[:180]
+            c["_profile_aligned"] = "adaptive_v2_constraints_only"
+            aligned.append(c)
+            continue
         c["user_pref"] = _strategy_user_pref_for_profile(c, profile, vpp_context, persona)
         if low_disruption:
             if str(c.get("id", "")).upper() == "A":
@@ -1183,7 +1223,7 @@ def get_user_preference_input(
 
     # VPP override: comfort_sensitive persona may bypass strategy menu
     override_prob = persona.get("vpp_override_prob", 0.0)
-    if override_prob > 0 and random.random() < override_prob:
+    if override_prob > 0 and not _adaptive_harness_v2() and random.random() < override_prob:
         tags = persona.get("tags", {}) or {}
         ac_cfg = (persona.get("appliances", {}) or {}).get("ac", {}) or {}
         pref_max = float(ac_cfg.get("setpoint_preferred_max_c", persona.get("preferred_temp_max", 26.0)))
@@ -1446,34 +1486,75 @@ def generate_vpp_strategy_candidates(
         _learned_notes = build_vpp_preference_memory_notes(past_events, persona)
         _learned_text = " ".join(f"- {note}" for note in _learned_notes) if _learned_notes else "No learned feedback rules yet."
 
-        sys_prompt = (
-            "You are an energy management strategy advisor for a smart home VPP demand-response system. "
-            "Generate 3 distinct response strategies for the upcoming peak-shaving event. "
-            "Strategy A = comfort-first, B = balanced, C = energy-saving. "
-            "Tailor them to the user persona and explicitly include appliance control. "
-            "Use the user's calendar as a hard preference context: do not propose schedules that would miss "
-            "appointments, return-home comfort needs, EV departure readiness, hot-water deadlines, or required chores. "
-            "If appliances are available, mention how to handle washer, dishwasher, dryer, water heater, and EV in strategy text. "
-            "For fixed/non-DR-adjustable appliances, do not imply the controller can move them; describe them as fixed constraints. "
-            'Return ONLY a JSON array of exactly 3 objects, each with keys: '
-            '"id" ("A"/"B"/"C"), '
-            '"label" (short English label), '
-            '"description" (English action summary ≤80 chars), '
-            '"tradeoff" (English tradeoff ≤60 chars), '
-            '"user_pref" (English preference statement ≤140 chars, will be injected into AC agent prompt).'
-        )
-        user_msg = (
-            f"Building={building}. VPP event #{event_index}. "
-            f"Context: {json.dumps(vpp_context, ensure_ascii=False)}. "
-            f"Active appliances: {_active_appliances_text}. "
-            f"{_cal_brief} "
-            f"Style/control notes: {_style_text} "
-            f"Learned feedback rules from past events: {_learned_text} "
-            f"Persona: comfort_priority={sp.get('comfort_priority', 0.5)}, "
-            f"preferred_range={sp.get('preferred_temp_min', 24)}-{sp.get('preferred_temp_max', 26)}°C. "
-            f"Past events: {json.dumps(past_summary, ensure_ascii=False)}."
-        )
-        resp = LLMClient().chat_with_metrics(
+        if _adaptive_harness_v2():
+            household_resume = {
+                "id": persona.get("id"),
+                "display_name": persona.get("display_name"),
+                "description": persona.get("description", persona.get("summary", "")),
+                "communication_brief": (persona.get("llm_prompts") or {}).get("system_prompt", ""),
+                "decision_traits": persona.get("tags", {}),
+                "declared_preferences": persona.get("preferences", persona.get("stable_preferences", {})),
+                "schedule": persona.get("schedule", {}),
+                "calendar_context": _cal,
+            }
+            sys_prompt = (
+                "You are simulating this particular household before a demand-response event. "
+                "Draft three genuinely plausible commitments the household might make after considering its "
+                "current day, prior experience, autonomy expectations, comfort, service deadlines, and grid/cost value. "
+                "Do not force the options into comfort/balanced/savings archetypes and do not reuse stock phrasing. "
+                "Options may include conditional approval, a narrow alternative, or declining discretionary action. "
+                "Only physical safety, fixed routines, and explicit deadlines are hard constraints. Keep the household's "
+                "voice and make each tradeoff concrete enough for a controller to act on. "
+                'Return ONLY a JSON array of exactly 3 objects with ids "A", "B", and "C" and fields '
+                '"id", "label", "description", "tradeoff", and "user_pref".'
+            )
+            user_msg = json.dumps(
+                {
+                    "household_resume": household_resume,
+                    "event_index": event_index,
+                    "event_context": vpp_context,
+                    "appliance_control_boundary": _active_appliances_text,
+                    "recent_events": past_summary,
+                    "learned_feedback": _learned_notes,
+                },
+                ensure_ascii=False,
+                default=str,
+            )
+            prompt_client = LLMClient(
+                config_prefix="ROLEPLAY_LLM",
+                use_key="ROLEPLAY_USE_LLM",
+                fallback_prefix="LLM",
+            )
+        else:
+            sys_prompt = (
+                "You are an energy management strategy advisor for a smart home VPP demand-response system. "
+                "Generate 3 distinct response strategies for the upcoming peak-shaving event. "
+                "Strategy A = comfort-first, B = balanced, C = energy-saving. "
+                "Tailor them to the user persona and explicitly include appliance control. "
+                "Use the user's calendar as a hard preference context: do not propose schedules that would miss "
+                "appointments, return-home comfort needs, EV departure readiness, hot-water deadlines, or required chores. "
+                "If appliances are available, mention how to handle washer, dishwasher, dryer, water heater, and EV in strategy text. "
+                "For fixed/non-DR-adjustable appliances, do not imply the controller can move them; describe them as fixed constraints. "
+                'Return ONLY a JSON array of exactly 3 objects, each with keys: '
+                '"id" ("A"/"B"/"C"), '
+                '"label" (short English label), '
+                '"description" (English action summary ≤80 chars), '
+                '"tradeoff" (English tradeoff ≤60 chars), '
+                '"user_pref" (English preference statement ≤140 chars, will be injected into AC agent prompt).'
+            )
+            user_msg = (
+                f"Building={building}. VPP event #{event_index}. "
+                f"Context: {json.dumps(vpp_context, ensure_ascii=False)}. "
+                f"Active appliances: {_active_appliances_text}. "
+                f"{_cal_brief} "
+                f"Style/control notes: {_style_text} "
+                f"Learned feedback rules from past events: {_learned_text} "
+                f"Persona: comfort_priority={sp.get('comfort_priority', 0.5)}, "
+                f"preferred_range={sp.get('preferred_temp_min', 24)}-{sp.get('preferred_temp_max', 26)}°C. "
+                f"Past events: {json.dumps(past_summary, ensure_ascii=False)}."
+            )
+            prompt_client = LLMClient()
+        resp = prompt_client.chat_with_metrics(
             sys_prompt, user_msg, max_retries=3, retry_base_delay=1.0
         )
         raw = resp["text"].strip()
@@ -2196,16 +2277,6 @@ def score_user_preference(
                     "this violates the user's service rule."
                 ),
             })
-        if unserved_service_devices:
-            result["score"] = min(result["score"], 2)
-            result["energy_score"] = min(result["energy_score"], 2)
-            result["vpp_score"] = min(result["vpp_score"], 2)
-            result["label"] = "dissatisfied" if result["score"] == 2 else "very_dissatisfied"
-            result["comment"] = (
-                "Required appliance service target(s) were not met "
-                f"({', '.join(unserved_service_devices)}); "
-                + (result.get("comment", "") or "this violates the user's service rule.")
-            )
         if (
             _low_disruption_strategy_language(persona)
             and fixed_appliances
@@ -2272,6 +2343,7 @@ def score_user_preference(
             or invalid_ev_windows_hard_failure
         ),
     )
+    result = _apply_unserved_service_score_cap(result, unserved_service_devices)
 
     # Dialogue log
     if log_path:

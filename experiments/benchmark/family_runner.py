@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 import os, sys, json, random, shutil
+from copy import deepcopy
 
 # Fix Windows GBK encoding for Unicode status characters.
 if sys.platform == 'win32':
@@ -54,9 +55,372 @@ def _acceptance_fallback_disabled() -> bool:
     return _env_flag("ENERGYBRIDGE_DISABLE_ACCEPTANCE_FALLBACK")
 
 
+def _harness_profile() -> str:
+    """Return the explicit benchmark harness profile.
+
+    The code-level fallback stays on the historical profile so existing callers
+    do not silently change semantics after upgrading.  The V2 environment
+    template opts new runs into ``adaptive_v2`` and the paper wrappers pin
+    ``paper_v1`` for exact reproduction.
+    """
+    raw = str(os.getenv("ENERGYBRIDGE_HARNESS_PROFILE", "legacy_v1")).strip().lower()
+    aliases = {
+        "v2": "adaptive_v2",
+        "adaptive": "adaptive_v2",
+        "adaptive_v2": "adaptive_v2",
+        "energybridge_v2": "adaptive_v2",
+        "paper": "paper_v1",
+        "paper_v1": "paper_v1",
+        "frozen_v1": "paper_v1",
+        "legacy": "legacy_v1",
+        "legacy_v1": "legacy_v1",
+    }
+    return aliases.get(raw, raw or "legacy_v1")
+
+
+def _adaptive_harness_v2() -> bool:
+    return _harness_profile() == "adaptive_v2"
+
+
+def _agent_model_owns_valid_plan(method: str, *, force_mpc_primary: bool = False) -> bool:
+    """Whether a valid model plan must survive preference-level postprocessing."""
+    return (
+        str(method or "").strip().lower() in {"agent", "energybridge"}
+        and _adaptive_harness_v2()
+        and not bool(force_mpc_primary)
+    )
+
+
+def _agent_observable_ac_bounds(loop) -> tuple[float, float, float]:
+    """Return thermostat bounds inferred only from observable onboarding."""
+    memory = getattr(loop, "agent_preference_memory", {}) or {}
+    onboarding = memory.get("onboarding") if isinstance(memory.get("onboarding"), dict) else {}
+    answers = onboarding.get("answers") if isinstance(onboarding.get("answers"), list) else []
+    preferred_min, preferred_max = 24.0, 26.0
+    for item in answers:
+        if not isinstance(item, dict) or str(item.get("id", "")) != "thermostat_flexibility":
+            continue
+        text = str(item.get("answer", "") or "")
+        match = re.search(
+            r"(\d{2}(?:\.\d+)?)\s*(?:-|–|—|to)\s*(\d{2}(?:\.\d+)?)\s*°?\s*[Cc]",
+            text,
+        )
+        if match:
+            left, right = float(match.group(1)), float(match.group(2))
+            if 15.0 <= left <= right <= 35.0:
+                preferred_min, preferred_max = left, right
+        break
+    profile = _agent_memory_profile(loop)
+    try:
+        tolerance = float(profile.get("thermostat_flexibility_c", 1.0) or 1.0)
+    except (TypeError, ValueError):
+        tolerance = 1.0
+    return preferred_min, preferred_max, max(0.0, min(5.0, tolerance))
+
+
+def _agent_observable_calendar_context(
+    persona_config: dict | None,
+    event: dict | None,
+    *,
+    occupied: bool | None = None,
+    occupancy: float | None = None,
+) -> dict:
+    """Expose only the attached calendar projection, never sibling persona data."""
+    event = dict(event or {})
+    calendar_only = {"calendar": deepcopy((persona_config or {}).get("calendar") or {})}
+    try:
+        from energybridge.roleplay.calendar import calendar_context_for_event
+
+        day = int(event.get("day", 1) or 1)
+        context = calendar_context_for_event(
+            calendar_only,
+            day,
+            {
+                "day": day,
+                "trigger_h": event.get("trigger_h", 18.0),
+                "end_h": event.get("end_h", 19.0),
+                "duration_h": max(
+                    0.0,
+                    float(event.get("end_h", 19.0)) - float(event.get("trigger_h", 18.0)),
+                ),
+            },
+        )
+    except Exception as exc:
+        context = {"available": False, "note": f"calendar projection unavailable: {str(exc)[:120]}"}
+    visible = {
+        key: deepcopy(context.get(key))
+        for key in (
+            "available",
+            "source",
+            "day",
+            "weekday",
+            "day_type",
+            "summary",
+            "events",
+            "vpp_window_h",
+            "vpp_conflicts",
+            "constraints",
+            "appliance_deadlines",
+        )
+        if context.get(key) not in (None, "", [], {})
+    }
+    if occupied is not None:
+        visible["occupied"] = bool(occupied)
+    if occupancy is not None:
+        visible["occupancy"] = float(occupancy)
+    return visible
+
+
+def _agent_observable_return_home_sensitive(
+    calendar_context: dict | None,
+    event: dict | None,
+    *,
+    margin_h: float = 0.5,
+) -> bool:
+    constraints = (calendar_context or {}).get("constraints") or {}
+    if not isinstance(constraints, dict):
+        return False
+    arrival = constraints.get("home_arrival_h")
+    if arrival is None:
+        return False
+    try:
+        arrival_h = float(arrival) % 24.0
+    except (TypeError, ValueError):
+        return False
+    return (_event_start_hod(event) - margin_h) <= arrival_h <= (_event_end_hod(event) + margin_h)
+
+
+def _assert_adaptive_v2_agent_prompt_observable(
+    system_prompt: str,
+    user_prompt: str,
+    persona_config: dict | None,
+) -> None:
+    """Fail before an API call if a hidden-section sentinel crossed the boundary."""
+    prompt = f"{system_prompt}\n{user_prompt}"
+    private_roots = (
+        "tags",
+        "preferences",
+        "acceptance_profiles",
+        "acceptance_profile",
+        "schedule",
+        "llm_prompts",
+        "system_prompt",
+        "hidden_persona",
+        "role_card",
+    )
+
+    def strings(value: Any):
+        if isinstance(value, dict):
+            for nested in value.values():
+                yield from strings(nested)
+        elif isinstance(value, (list, tuple)):
+            for nested in value:
+                yield from strings(nested)
+        elif isinstance(value, str):
+            yield value
+
+    for root in private_roots:
+        value = (persona_config or {}).get(root)
+        for candidate in strings(value):
+            upper = candidate.upper()
+            if any(marker in upper for marker in ("HIDDEN_SENTINEL", "SECRET_", "DO_NOT_EXPOSE")):
+                if candidate and candidate in prompt:
+                    raise RuntimeError(
+                        f"adaptive_v2 observable boundary violation from hidden persona section {root!r}"
+                    )
+
+
+def _adaptive_v2_plan_snapshot(plan: dict | None) -> dict:
+    """Canonical executable/audit view shared by every plan lifecycle stage."""
+    plan = plan if isinstance(plan, dict) else {}
+    appliances = plan.get("appliance_actions")
+    if not isinstance(appliances, dict):
+        appliances = plan.get("appliances") if isinstance(plan.get("appliances"), dict) else {}
+    snapshot = {
+        key: deepcopy(plan.get(key))
+        for key in (
+            "setpoint",
+            "next_check_hour",
+            "reason",
+            "strategy_explanation",
+            "selected_skill",
+            "skill_selection",
+            "control_source",
+            "decision_basis",
+            "memory_citations",
+            "alternatives_considered",
+            "uncertainty",
+            "fallback_after_vpp_rejection",
+            "objective_source",
+        )
+        if plan.get(key) not in (None, "", [], {})
+    }
+    snapshot["appliance_actions"] = deepcopy(appliances)
+    return snapshot
+
+
+def _adaptive_v2_plan_fingerprint(plan: dict | None) -> str:
+    canonical = json.dumps(
+        _adaptive_v2_plan_snapshot(plan),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def _adaptive_v2_plan_patches(before: Any, after: Any, path: str = "") -> list[dict]:
+    """Return a compact deterministic JSON-patch-like audit."""
+    if isinstance(before, dict) and isinstance(after, dict):
+        patches: list[dict] = []
+        for key in sorted(set(before) | set(after)):
+            child = f"{path}/{key}"
+            if key not in before:
+                patches.append({"op": "add", "path": child, "value": deepcopy(after[key])})
+            elif key not in after:
+                patches.append({"op": "remove", "path": child, "old_value": deepcopy(before[key])})
+            else:
+                patches.extend(_adaptive_v2_plan_patches(before[key], after[key], child))
+        return patches[:100]
+    if before != after:
+        return [{"op": "replace", "path": path or "/", "old_value": deepcopy(before), "value": deepcopy(after)}]
+    return []
+
+
+def _adaptive_v2_new_plan_lifecycle(raw_model_plan: dict | None, *, model: str = "") -> dict:
+    snapshot = _adaptive_v2_plan_snapshot(raw_model_plan)
+    return {
+        "version": "energybridge_plan_lifecycle_v2",
+        "model": str(model or ""),
+        "stage_order": ["raw_model_plan"],
+        "stages": {
+            "raw_model_plan": {
+                "plan": snapshot,
+                "fingerprint": _adaptive_v2_plan_fingerprint(snapshot),
+                "status": "model_output_before_validation",
+            }
+        },
+        "validators": [],
+    }
+
+
+def _adaptive_v2_record_plan_stage(
+    lifecycle: dict | None,
+    stage: str,
+    plan: dict | None,
+    *,
+    validator: str = "",
+    status: str = "",
+    reason: str = "",
+) -> dict:
+    """Return a copy with one immutable stage snapshot and its patches."""
+    out = deepcopy(lifecycle or _adaptive_v2_new_plan_lifecycle({}))
+    stages = out.setdefault("stages", {})
+    order = list(out.get("stage_order") or [])
+    previous_name = order[-1] if order else "raw_model_plan"
+    previous = dict((stages.get(previous_name) or {}).get("plan") or {})
+    snapshot = _adaptive_v2_plan_snapshot(plan)
+    patches = _adaptive_v2_plan_patches(previous, snapshot)
+    stages[str(stage)] = {
+        "plan": snapshot,
+        "fingerprint": _adaptive_v2_plan_fingerprint(snapshot),
+        "status": str(status or "recorded"),
+        "from_stage": previous_name,
+        "patches": patches,
+    }
+    if reason:
+        stages[str(stage)]["reason"] = str(reason)[:500]
+    if stage not in order:
+        order.append(str(stage))
+    out["stage_order"] = order
+    if validator:
+        out.setdefault("validators", []).append({
+            "validator": str(validator),
+            "status": str(status or ("patched" if patches else "passed")),
+            "from_stage": previous_name,
+            "to_stage": str(stage),
+            "patches": deepcopy(patches),
+            "reason": str(reason)[:500],
+        })
+    return out
+
+
+def _adaptive_v2_attach_lifecycle(
+    loop,
+    event_id: str,
+    result: dict,
+    lifecycle: dict,
+) -> dict:
+    event_id = str(event_id or "")
+    loop.agent_plan_lifecycle_by_event_id[event_id] = deepcopy(lifecycle)
+    out = dict(result or {})
+    audit = dict(out.get("adaptive_decision_audit") or {})
+    audit.update({
+        "version": "energybridge_adaptive_decision_v2",
+        "harness_profile": _harness_profile(),
+        "plan_lifecycle": deepcopy(lifecycle),
+        "raw_model_plan_fingerprint": (
+            ((lifecycle.get("stages") or {}).get("raw_model_plan") or {}).get("fingerprint")
+        ),
+        "executed_plan_fingerprint": (
+            ((lifecycle.get("stages") or {}).get("executed_plan") or {}).get("fingerprint")
+        ),
+    })
+    out["adaptive_decision_audit"] = audit
+    return out
+
+
+def _adaptive_v2_strategy_explanation(raw: Any) -> dict:
+    """Keep the model-authored household explanation without template completion."""
+    if not isinstance(raw, dict):
+        return {}
+    allowed = (
+        "natural_language",
+        "why_request",
+        "recommended_actions",
+        "protected_constraints",
+        "user_control",
+        "expected_benefit",
+        "alternatives",
+        "structured_control_constraints",
+        "personalization_notes",
+    )
+    out = {
+        key: raw.get(key)
+        for key in allowed
+        if raw.get(key) not in (None, "", [], {})
+    }
+    natural_language = english_only_text(out.get("natural_language"), default="")[:4000]
+    if not natural_language:
+        return {}
+    out["natural_language"] = natural_language
+    out.update({
+        "schema_version": "vpp_strategy_explanation_adaptive_v2",
+        "source": "llm_adaptive_v2_uncompleted",
+        "audience": "household_customer",
+        "speaker": "EnergyBridge",
+        "customer_explanation": natural_language,
+        "score_prompt_text": natural_language,
+        "review_dimensions": {
+            "why_request": bool(out.get("why_request")),
+            "concrete_device_actions": bool(out.get("recommended_actions")),
+            "comfort_or_service_constraints": bool(out.get("protected_constraints")),
+            "user_control_and_opt_out": bool(out.get("user_control")),
+            "benefit_or_compensation": bool(out.get("expected_benefit")),
+            "alternatives_2plus": len(out.get("alternatives") or []) >= 2,
+            "personalized_to_observable_evidence": bool(out.get("personalization_notes")),
+        },
+    })
+    return out
+
+
 def _vpp_acceptance_gate_mode() -> str:
     """Select the VPP consent gate implementation without changing defaults."""
-    return str(os.getenv("ENERGYBRIDGE_VPP_ACCEPTANCE_GATE", "roleplay_prompt_v1")).strip().lower()
+    configured = os.getenv("ENERGYBRIDGE_VPP_ACCEPTANCE_GATE")
+    if configured is not None and str(configured).strip():
+        return str(configured).strip().lower()
+    return "adaptive_roleplay_v2" if _adaptive_harness_v2() else "roleplay_prompt_v1"
 
 
 OCCUPIED_START = 8.0; OCCUPIED_END = 22.0
@@ -489,6 +853,9 @@ class _FamilyLoop:
         self.vpp_strategy_explanation_by_id: Dict[str, dict] = {}
         self.vpp_last_reason: str = ""              # agent reason from last LLM call
         self.vpp_trigger_reason_by_id: Dict[str, str] = {}  # reason from the event-start control action
+        self.agent_plan_lifecycle_by_event_id: Dict[str, dict] = {}
+        self.agent_observable_calendar_by_event_id: Dict[str, dict] = {}
+        self.agent_execution_context_by_event_id: Dict[str, dict] = {}
         # Per-event VPP energy tracking and demand-agent outputs
         self.vpp_event_energy_wh: Dict[str, float] = {}   # {event_id: Wh} accumulated per event
         self.vpp_demand_by_id: Dict[str, dict] = {}        # {event_id: {target_kwh, reason}}
@@ -3451,13 +3818,30 @@ def _normalise_roleplay_prompt_acceptance_response(
     return out
 
 
-def _call_roleplay_acceptance_gate_llm(system_prompt: str, user_prompt: str) -> tuple[dict, dict]:
+def _call_roleplay_acceptance_gate_llm(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    expected_baseline: float | None = None,
+) -> tuple[dict, dict]:
     from energybridge.llm.client import LLMClient
+    from energybridge.harness.roleplay import normalize_roleplay_acceptance_response
 
     def _validate_json(text: str) -> str:
         data = _extract_json_object(text)
-        if "final_acceptance_probability" not in data:
-            raise ValueError("missing final_acceptance_probability")
+        # Validation happens inside the client's retry loop.  A syntactically
+        # valid but incomplete response, a changed persona prior, or arithmetic
+        # that does not add up must therefore be retried rather than silently
+        # becoming the benchmark result.
+        if expected_baseline is None:
+            # Preserve the legacy prompt-gate response contract for V1.
+            if "final_acceptance_probability" not in data:
+                raise ValueError("missing final_acceptance_probability")
+        else:
+            normalize_roleplay_acceptance_response(
+                data,
+                expected_baseline=expected_baseline,
+            )
         return json.dumps(data, ensure_ascii=False)
 
     result = LLMClient(
@@ -3657,6 +4041,226 @@ def _evaluate_roleplay_prompt_vpp_plan_acceptance_gate(
     return gate
 
 
+def _adaptive_v2_hard_veto_reasons(intrusion: dict | None) -> list[str]:
+    """Return only non-waivable safety/service violations.
+
+    Calendar fit, explanation quality, comfort tradeoffs, and VPP performance
+    deliberately remain role-play judgement rather than code-side probability
+    modifiers. Fixed/non-adjustable services are the one legacy intrusion fact
+    that represents an explicit control boundary.
+    """
+    intrusion = intrusion or {}
+    reasons = [
+        str(item)
+        for item in (intrusion.get("hard_safety_violations") or [])
+        if str(item).strip()
+    ]
+    fixed = [str(item) for item in (intrusion.get("fixed_services_modified") or []) if str(item).strip()]
+    if fixed:
+        reasons.append("Fixed or non-DR-adjustable household services were modified: " + ", ".join(fixed))
+    return reasons
+
+
+def _adaptive_v2_fallback_response(
+    *,
+    baseline: float,
+    error: Exception | None = None,
+) -> dict:
+    """Fail closed without importing any legacy floor/cap/band estimate.
+
+    The prior remains visible for audit, while the direct decision rejects the
+    offer because no household judgement was obtained.  A zero adjustment is
+    intentional: model unavailability is not evidence about plan quality.
+    """
+    baseline = max(0.0, min(1.0, float(baseline)))
+    reason = "The household role-play model was unavailable, so consent was not obtained."
+    out = {
+        "schema_version": "energybridge.roleplay_acceptance.v2",
+        "decision": "reject",
+        "baseline_acceptance_probability": baseline,
+        "adjustments": [],
+        "final_acceptance_probability": baseline,
+        "acceptance_probability": baseline,
+        "confidence": 0.0,
+        "evidence": [{
+            "id": "E1",
+            "source": "other",
+            "fact": "No live household role-play judgement was available for this offer.",
+            "effect": "supports_rejection",
+        }],
+        "counterfactual": {
+            "changes": ["Obtain a live household role-play judgement for the same concrete plan."],
+            "decision_if_changed": "uncertain",
+            "acceptance_probability_if_changed": None,
+            "reason": "Consent cannot be inferred from model unavailability.",
+        },
+        "reason": reason,
+        "user_feedback": "Please ask again when a live household judgement is available.",
+        "hard_veto_applied": False,
+        "hard_veto_reasons": [],
+        "fallback_source": "roleplay_model_unavailable_fail_closed",
+        "normalization": {
+            "source": "roleplay_unavailable_fail_closed",
+            "adjustment_sum": 0.0,
+            "arithmetic_residual": 0.0,
+        },
+    }
+    if error is not None:
+        out["fallback_error"] = str(error)[:200]
+    return out
+
+
+def _evaluate_adaptive_v2_vpp_plan_acceptance_gate(
+    *,
+    method: str,
+    persona_config: dict | None,
+    appliance_config: dict | None,
+    event: dict,
+    proposed_plan: dict,
+    default_plan: dict | None,
+    rule_milp_plan: dict | None,
+    past_events: list[dict] | None,
+    user_preference_text: str,
+    current_hod: float | None,
+    intrusion: dict,
+    adaptability: dict,
+    strategy_quality: dict,
+) -> dict:
+    """V2 consent: persona prior + role-play LLM adjustments, without code bands."""
+    from energybridge.harness.roleplay import (
+        build_roleplay_acceptance_prompts,
+        normalize_roleplay_acceptance_response,
+    )
+
+    hard_veto_reasons = _adaptive_v2_hard_veto_reasons(intrusion)
+    event_for_prompt = dict(event or {})
+    event_for_prompt["current_hod"] = current_hod
+    system_prompt, user_prompt, prompt_payload = build_roleplay_acceptance_prompts(
+        persona_config=persona_config,
+        appliance_config=appliance_config,
+        event=event_for_prompt,
+        proposed_plan=proposed_plan,
+        default_plan=default_plan,
+        past_events=past_events,
+        user_preference_text=user_preference_text,
+        hard_veto_reasons=hard_veto_reasons,
+        # Let the V2 role-play harness derive its transparent prior directly
+        # (explicit prior, 1-override probability, normalized weights, or the
+        # documented neutral default).  Do not feed it the legacy 0.06-0.24
+        # benchmark clamp.
+        baseline_acceptance_probability=None,
+    )
+    baseline = float(prompt_payload["persona_baseline_acceptance_probability"])
+    metrics: dict = {"used": False}
+    raw: dict = {}
+    source = "roleplay_llm"
+    use_llm = _env_flag("ENERGYBRIDGE_ROLEPLAY_ACCEPTANCE_GATE_USE_LLM", "1")
+    try:
+        if not use_llm:
+            raise RuntimeError("adaptive V2 role-play acceptance LLM disabled")
+        raw, metrics = _call_roleplay_acceptance_gate_llm(
+            system_prompt,
+            user_prompt,
+            expected_baseline=baseline,
+        )
+        roleplay = normalize_roleplay_acceptance_response(
+            raw,
+            hard_veto_reasons=hard_veto_reasons,
+            expected_baseline=baseline,
+        )
+    except Exception as exc:
+        if _acceptance_fallback_disabled():
+            raise
+        source = "roleplay_model_unavailable_fail_closed"
+        fallback_raw = _adaptive_v2_fallback_response(
+            baseline=baseline,
+            error=exc,
+        )
+        roleplay = fallback_raw
+        if hard_veto_reasons:
+            roleplay["final_acceptance_probability"] = 0.0
+            roleplay["acceptance_probability"] = 0.0
+            roleplay["hard_veto_applied"] = True
+            roleplay["hard_veto_reasons"] = list(hard_veto_reasons)
+            roleplay["normalization"]["hard_veto_override"] = True
+
+    probability = float(roleplay["acceptance_probability"])
+    roleplay_decision = str(roleplay.get("decision", "reject"))
+    accepted = roleplay_decision == "accept" and not bool(roleplay.get("hard_veto_applied"))
+    prompt_fingerprint = hashlib.sha256(
+        (system_prompt + "\n" + user_prompt).encode("utf-8")
+    ).hexdigest()[:16]
+    response_fingerprint = (
+        hashlib.sha256(
+            json.dumps(raw, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+        ).hexdigest()[:16]
+        if raw
+        else None
+    )
+    factors = [
+        "adaptive_roleplay_v2",
+        f"persona_baseline={baseline:.3f}",
+        f"roleplay_final={probability:.3f}",
+        f"roleplay_decision={roleplay_decision}",
+        f"roleplay_source={source}",
+    ]
+    if hard_veto_reasons:
+        factors.append("nonwaivable_safety_or_fixed_service_veto")
+    method_key = str(method or "")
+    gate = {
+        "version": "vpp_plan_acceptance_gate_adaptive_roleplay_v2",
+        "harness_profile": _harness_profile(),
+        "event_id": event.get("id", ""),
+        "method": method_key,
+        "accepted": accepted,
+        "decision": "accept_vpp_plan" if accepted else "reject_fallback_to_no_vpp_daily_plan",
+        "roleplay_decision": roleplay_decision,
+        "acceptance_probability": round(probability, 6),
+        "stable_draw": None,
+        "decision_source": "direct_roleplay_household_judgement",
+        "high_confidence_accept": bool(accepted and float(roleplay.get("confidence", 0.0) or 0.0) >= 0.8),
+        "base_override_probability": round(_persona_vpp_override_prob(persona_config), 6),
+        "baseline_acceptance_probability": round(float(roleplay.get("baseline_acceptance_probability", baseline)), 6),
+        "factors": factors,
+        "roleplay_acceptance_reasoning": str(roleplay.get("reason", ""))[:1200],
+        "primary_complaint": (
+            str(roleplay.get("reason", ""))[:300] if not accepted else ""
+        ),
+        "energybridge_feedback": str(roleplay.get("user_feedback", ""))[:700],
+        "roleplay_probability_adjustments": list(roleplay.get("adjustments") or [])[:12],
+        "roleplay_evidence": list(roleplay.get("evidence") or [])[:12],
+        "roleplay_counterfactual": dict(roleplay.get("counterfactual") or {}),
+        "roleplay_confidence": roleplay.get("confidence"),
+        "roleplay_source": source,
+        "fallback_source": roleplay.get("fallback_source"),
+        "fallback_error": roleplay.get("fallback_error"),
+        "roleplay_normalization": dict(roleplay.get("normalization") or {}),
+        "hard_veto_applied": bool(roleplay.get("hard_veto_applied")),
+        "hard_veto_reasons": list(roleplay.get("hard_veto_reasons") or []),
+        "intrusion": intrusion,
+        "strategy_quality": strategy_quality,
+        "acceptance_learning": {
+            "adjustment": 0.0,
+            "factors": ["persona prior and adjustments are judged inside the role-play prompt"],
+        },
+        "adaptability_diagnostics": adaptability,
+        "prompt_gate_metrics": metrics,
+        "prompt_audit": {
+            "schema_version": prompt_payload.get("schema_version"),
+            "household_resume_id": (prompt_payload.get("household_resume") or {}).get("resume_id"),
+            "household_resume_fingerprint": (
+                ((prompt_payload.get("household_resume") or {}).get("audit") or {}).get("resume_fingerprint")
+            ),
+            "prompt_fingerprint": prompt_fingerprint,
+            "model_response_fingerprint": response_fingerprint,
+            "roleplay_model": metrics.get("model") or str(os.getenv("ROLEPLAY_LLM_MODEL", "")),
+        },
+        "proposed_plan": _plan_snapshot_for_gate(proposed_plan),
+        "default_plan": _plan_snapshot_for_gate(default_plan),
+    }
+    return gate
+
+
 def _eb_acceptance_learning_adjustment(
     *,
     method: str,
@@ -3741,20 +4345,25 @@ def _evaluate_vpp_plan_acceptance_gate(
     tags = persona_config.get("tags", {}) or {}
     schedule = persona_config.get("schedule", {}) or {}
     method_key = str(method or "")
-    household_gate = _evaluate_household_vpp_plan_acceptance_gate(
-        method=method_key,
-        persona_config=persona_config,
-        appliance_config=appliance_config,
-        event=event,
-        proposed_plan=proposed_plan,
-        default_plan=default_plan,
-        rule_milp_plan=rule_milp_plan,
-        past_events=past_events,
-        user_preference_text=user_preference_text,
-        current_hod=current_hod,
-    )
-    if household_gate is not None:
-        return household_gate
+    gate_mode = _vpp_acceptance_gate_mode()
+    # V2 lets one role-play model reason over the household resume, including
+    # member roles and relationship dynamics. V1 keeps its fixed weighted-member
+    # aggregation for exact compatibility.
+    if gate_mode != "adaptive_roleplay_v2":
+        household_gate = _evaluate_household_vpp_plan_acceptance_gate(
+            method=method_key,
+            persona_config=persona_config,
+            appliance_config=appliance_config,
+            event=event,
+            proposed_plan=proposed_plan,
+            default_plan=default_plan,
+            rule_milp_plan=rule_milp_plan,
+            past_events=past_events,
+            user_preference_text=user_preference_text,
+            current_hod=current_hod,
+        )
+        if household_gate is not None:
+            return household_gate
     override_prob = _persona_vpp_override_prob(persona_config)
     intrusion = _vpp_plan_intrusion_metrics(
         proposed_plan=proposed_plan,
@@ -3779,7 +4388,23 @@ def _evaluate_vpp_plan_acceptance_gate(
         adaptability=adaptability,
         intrusion=intrusion,
     )
-    if _vpp_acceptance_gate_mode() == "roleplay_prompt_v1":
+    if gate_mode == "adaptive_roleplay_v2":
+        return _evaluate_adaptive_v2_vpp_plan_acceptance_gate(
+            method=method_key,
+            persona_config=persona_config,
+            appliance_config=appliance_config,
+            event=event,
+            proposed_plan=proposed_plan,
+            default_plan=default_plan,
+            rule_milp_plan=rule_milp_plan,
+            past_events=past_events,
+            user_preference_text=user_preference_text,
+            current_hod=current_hod,
+            intrusion=intrusion,
+            adaptability=adaptability,
+            strategy_quality=strategy_quality,
+        )
+    if gate_mode == "roleplay_prompt_v1":
         return _evaluate_roleplay_prompt_vpp_plan_acceptance_gate(
             method=method_key,
             persona_config=persona_config,
@@ -4974,7 +5599,43 @@ def _normalize_agent_onboarding_result(
     }
 
 
-def _fallback_agent_onboarding_questionnaire(persona_config: dict | None) -> dict:
+def _observable_agent_onboarding_projection(questionnaire: dict | None) -> dict:
+    """Project a role-play interview to facts the controller actually heard."""
+    questionnaire = questionnaire if isinstance(questionnaire, dict) else {}
+    answers = []
+    for item in list(questionnaire.get("answers") or [])[:4]:
+        if not isinstance(item, dict):
+            continue
+        answers.append({
+            "id": str(item.get("id", ""))[:100],
+            "question": str(item.get("question", ""))[:500],
+            "selected_option_ids": [
+                str(value)[:100]
+                for value in list(item.get("selected_option_ids") or [])[:8]
+                if str(value).strip()
+            ],
+            "answer": str(item.get("answer", ""))[:1200],
+        })
+    return {
+        "version": "agent_onboarding_questionnaire_observable_v2",
+        "source": str(questionnaire.get("source", "roleplay_questionnaire"))[:100],
+        "question_count": len(answers),
+        "answers": answers,
+        # Deliberately empty at this boundary.  V2 memory derives its profile
+        # from the visible answer text/option IDs; it never accepts the
+        # role-player's hidden-persona-derived summary or rules.
+        "inferred_profile": {},
+        "preference_rules": [],
+        "metrics": dict(questionnaire.get("metrics") or {}),
+        "controller_projection": "answers_and_selected_option_ids_only",
+    }
+
+
+def _fallback_agent_onboarding_questionnaire(
+    persona_config: dict | None,
+    *,
+    controller_observable_only: bool = False,
+) -> dict:
     """Role-play a compact onboarding questionnaire without exposing hidden persona fields."""
     persona_config = persona_config or {}
     tags = persona_config.get("tags", {}) or {}
@@ -5145,10 +5806,16 @@ def _fallback_agent_onboarding_questionnaire(persona_config: dict | None) -> dic
     )
     for answer in normalized["answers"]:
         answer["question"] = _question_by_id(questions, answer["id"])
+    if controller_observable_only:
+        return _observable_agent_onboarding_projection(normalized)
     return normalized
 
 
-def _run_agent_onboarding_questionnaire(persona_config: dict | None) -> dict:
+def _run_agent_onboarding_questionnaire(
+    persona_config: dict | None,
+    *,
+    controller_observable_only: bool = False,
+) -> dict:
     questions = _agent_onboarding_questions()
     try:
         from energybridge.llm.roleplay_user import RoleplayUserSimulator
@@ -5164,12 +5831,17 @@ def _run_agent_onboarding_questionnaire(persona_config: dict | None) -> dict:
             source="roleplay_questionnaire_llm",
             metrics=response.get("metrics") or {},
         )
-        if not normalized.get("preference_rules"):
+        if not controller_observable_only and not normalized.get("preference_rules"):
             fallback = _fallback_agent_onboarding_questionnaire(persona_config)
             normalized["preference_rules"] = fallback.get("preference_rules", [])
+        if controller_observable_only:
+            return _observable_agent_onboarding_projection(normalized)
         return normalized
     except Exception as exc:
-        fallback = _fallback_agent_onboarding_questionnaire(persona_config)
+        fallback = _fallback_agent_onboarding_questionnaire(
+            persona_config,
+            controller_observable_only=controller_observable_only,
+        )
         fallback["source"] = "roleplay_questionnaire_fallback_after_error"
         fallback["error"] = str(exc)[:200]
         return fallback
@@ -5210,22 +5882,62 @@ def _init_agent_preference_memory(
         "1", "true", "yes", "on"
     }
     persona_id = (persona_config or {}).get("id", "unknown_persona")
-    questionnaire = _run_agent_onboarding_questionnaire(persona_config)
-    memory = {
-        "version": "agent_preference_memory_v1",
-        "method": method,
-        "persona_id": persona_id,
-        "purpose": (
-            "Run-local memory for EnergyBridge agent methods. It starts from a short "
-            "role-play user questionnaire and records later feedback so decisions can "
-            "learn user preferences. File persistence is optional and disabled by default."
-        ),
-        "onboarding_questionnaire": questionnaire,
-        "events": [],
-        "learned_preference_rules": list(questionnaire.get("preference_rules") or [])[:8],
-        "latest_summary": _agent_onboarding_summary_text(questionnaire),
-    }
+    if _adaptive_harness_v2():
+        # Keep compatibility with tests/extensions that monkeypatch the older
+        # one-argument helper while making the production V2 boundary explicit.
+        import inspect
+
+        onboarding_fn = _run_agent_onboarding_questionnaire
+        if "controller_observable_only" in inspect.signature(onboarding_fn).parameters:
+            questionnaire = onboarding_fn(
+                persona_config,
+                controller_observable_only=True,
+            )
+        else:
+            questionnaire = onboarding_fn(persona_config)
+        questionnaire = _observable_agent_onboarding_projection(questionnaire)
+    else:
+        questionnaire = _run_agent_onboarding_questionnaire(persona_config)
+    if _adaptive_harness_v2():
+        from energybridge.harness.memory import initialize_memory
+
+        memory = initialize_memory(
+            questionnaire,
+            persona_id=str(persona_id),
+            method=method,
+        )
+        # Compatibility aliases keep existing dashboards readable; planning
+        # consumes the observable-only V2 structures below, not hidden persona.
+        memory.update({
+            "method": method,
+            "persona_id": persona_id,
+            "purpose": (
+                "EnergyBridge V2 observable-profile memory with evidence confidence, "
+                "contradiction tracking, and context-similar episode retrieval."
+            ),
+            "onboarding_questionnaire": memory.get("onboarding", {}),
+            "learned_preference_rules": list(
+                (memory.get("onboarding") or {}).get("preference_rules") or []
+            )[:12],
+            "latest_summary": _agent_onboarding_summary_text(questionnaire),
+        })
+    else:
+        memory = {
+            "version": "agent_preference_memory_v1",
+            "method": method,
+            "persona_id": persona_id,
+            "purpose": (
+                "Run-local memory for EnergyBridge agent methods. It starts from a short "
+                "role-play user questionnaire and records later feedback so decisions can "
+                "learn user preferences. File persistence is optional and disabled by default."
+            ),
+            "onboarding_questionnaire": questionnaire,
+            "events": [],
+            "learned_preference_rules": list(questionnaire.get("preference_rules") or [])[:8],
+            "latest_summary": _agent_onboarding_summary_text(questionnaire),
+        }
     loop.agent_preference_memory = memory
+    loop.agent_memory_context_by_event_id = {}
     loop.persist_agent_preference_memory = persist_memory
     if persist_memory:
         loop.agent_memory_path = Path(output_dir) / "agent_preference_memory.json"
@@ -5244,10 +5956,58 @@ def _init_agent_preference_memory(
         )
 
 
-def _agent_preference_memory_prompt_text(loop) -> str:
+def _agent_preference_memory_prompt_text(
+    loop,
+    *,
+    event: dict | None = None,
+    calendar: dict | None = None,
+    home_state: dict | None = None,
+    user_input: str = "",
+) -> str:
     memory = getattr(loop, "agent_preference_memory", {}) or {}
     if not memory:
         return ""
+    if str(memory.get("version", "")) == "energybridge_observable_profile_memory_v2":
+        from energybridge.harness.memory import build_event_context, compact_memory_context
+
+        current_context = build_event_context(
+            event or {},
+            calendar=calendar or {},
+            home_state=home_state or {},
+            user_input=user_input,
+        )
+        event_id = str(current_context.get("event_id") or "")
+        if event_id:
+            loop.agent_memory_context_by_event_id[event_id] = current_context
+        capsule = compact_memory_context(memory, current_context, k=4, max_chars=6500)
+        prompt_memory = {
+            "version": memory.get("version"),
+            "privacy_scope": "agent_observable_only",
+            "observable_user_resume": {
+                "onboarding_answers": (memory.get("onboarding") or {}).get("answers", []),
+                "inferred_beliefs": capsule.get("profile_beliefs", []),
+                "unresolved_or_conflicting_beliefs": capsule.get(
+                    "unresolved_or_conflicting_beliefs", []
+                ),
+            },
+            "current_observable_context": {
+                "event": current_context.get("event", {}),
+                "calendar": current_context.get("calendar", {}),
+                "home_state": current_context.get("home_state", {}),
+                "user_input": current_context.get("user_input", ""),
+            },
+            "current_context_signature": capsule.get("current_context_signature"),
+            "relevant_interaction_memory": capsule.get("relevant_events", []),
+            "contextual_beliefs": capsule.get("contextual_beliefs", []),
+            "planner_guidance": capsule.get("planner_guidance", []),
+        }
+        return (
+            "\n[ENERGYBRIDGE V2 OBSERVABLE USER RESUME + RELEVANT MEMORY]\n"
+            "This is an evidence record, not a persona label or a fixed action recipe. Cite onboarding IDs or "
+            "event evidence_ref values that materially affect the plan. Prefer context-similar negative feedback, "
+            "surface contradictions, and choose reversible behavior when confidence is low.\n"
+            f"{json.dumps(prompt_memory, ensure_ascii=False, default=str)}"
+        )
     questionnaire = memory.get("onboarding_questionnaire") if isinstance(memory.get("onboarding_questionnaire"), dict) else {}
     compact_questionnaire = {
         "source": questionnaire.get("source"),
@@ -5270,7 +6030,10 @@ def _agent_preference_memory_prompt_text(loop) -> str:
 
 def _agent_memory_profile(loop) -> dict:
     memory = getattr(loop, "agent_preference_memory", {}) or {}
-    questionnaire = memory.get("onboarding_questionnaire") if isinstance(memory.get("onboarding_questionnaire"), dict) else {}
+    if str(memory.get("version", "")) == "energybridge_observable_profile_memory_v2":
+        questionnaire = memory.get("onboarding") if isinstance(memory.get("onboarding"), dict) else {}
+    else:
+        questionnaire = memory.get("onboarding_questionnaire") if isinstance(memory.get("onboarding_questionnaire"), dict) else {}
     profile = questionnaire.get("inferred_profile") if isinstance(questionnaire.get("inferred_profile"), dict) else {}
     return dict(profile or {})
 
@@ -5620,8 +6383,46 @@ def _write_agent_preference_memory(loop) -> None:
         ])
         rules = list(memory.get("learned_preference_rules") or [])
         lines.extend([f"- {rule}" for rule in rules] or ["- No learned rules yet."])
+        if str(memory.get("version", "")) == "energybridge_observable_profile_memory_v2":
+            lines.extend(["", "## Evidence-Calibrated Profile", ""])
+            beliefs = memory.get("beliefs") or {}
+            for key, belief in sorted(beliefs.items()):
+                if not isinstance(belief, dict):
+                    continue
+                lines.append(
+                    f"- `{key}` = {belief.get('value')!r}; confidence={belief.get('confidence')}; "
+                    f"evidence={belief.get('evidence_count')}; contradictions={belief.get('contradiction_count')}"
+                )
+            lines.extend(["", "## Profile Revision Ledger", ""])
+            for revision in list(memory.get("profile_revision_ledger") or [])[-20:]:
+                if not isinstance(revision, dict):
+                    continue
+                lines.append(
+                    f"- r{revision.get('revision')}: `{revision.get('belief_key')}` "
+                    f"{revision.get('previous_value')!r} → {revision.get('new_value')!r} "
+                    f"({revision.get('reason')}, source={revision.get('source')})"
+                )
         lines.extend(["", "## Event Feedback", ""])
         for event in memory.get("events") or []:
+            if str(memory.get("version", "")) == "energybridge_observable_profile_memory_v2":
+                outcome = event.get("outcome") if isinstance(event.get("outcome"), dict) else {}
+                plan = event.get("executed_plan") if isinstance(event.get("executed_plan"), dict) else {}
+                lines.extend(
+                    [
+                        f"### {event.get('event_id', '?')}",
+                        "",
+                        f"- Context: `{event.get('context_signature', '')}`",
+                        f"- Accepted / score: {outcome.get('accepted')} / {outcome.get('score')}",
+                        f"- Comfort/Energy/VPP: {outcome.get('comfort_score')}/"
+                        f"{outcome.get('energy_score')}/{outcome.get('vpp_score')}",
+                        f"- Executed plan: {json.dumps(plan, ensure_ascii=False, default=str)[:1000]}",
+                        f"- Feedback signal: {event.get('feedback_signal')} "
+                        f"(negative severity={event.get('negative_severity')})",
+                        f"- Feedback: {event.get('feedback_text', '')}",
+                        "",
+                    ]
+                )
+                continue
             lines.extend(
                 [
                     f"### {event.get('event_id', '?')}",
@@ -5660,6 +6461,110 @@ def _update_agent_preference_memory(
         _gate_feedback = str(_gate.get("energybridge_feedback", "") or "")
     if _gate_feedback:
         _feedback_text = (_feedback_text + " | Gate feedback: " + _gate_feedback).strip(" |")
+    if str(memory.get("version", "")) == "energybridge_observable_profile_memory_v2":
+        from energybridge.harness.memory import build_event_context, update_memory
+
+        event_id = str(event_result.get("id") or event_result.get("event_id") or "")
+        cached_context = dict(
+            (getattr(loop, "agent_execution_context_by_event_id", {}) or {}).get(event_id)
+            or (getattr(loop, "agent_memory_context_by_event_id", {}) or {}).get(event_id)
+            or {}
+        )
+        lifecycle = deepcopy(
+            (getattr(loop, "agent_plan_lifecycle_by_event_id", {}) or {}).get(event_id)
+            or cached_context.get("plan_lifecycle")
+            or {}
+        )
+        if not lifecycle:
+            lifecycle = _adaptive_v2_new_plan_lifecycle({})
+            lifecycle["stages"]["raw_model_plan"]["status"] = "model_output_unavailable"
+        previous_executed = dict(
+            (((lifecycle.get("stages") or {}).get("executed_plan") or {}).get("plan") or {})
+        )
+        actual_executed = dict(previous_executed)
+        actual_executed.update({
+            "setpoint": event_result.get("setpoint"),
+            "reason": event_result.get("reason", previous_executed.get("reason", "")),
+            "appliance_actions": dict(event_result.get("vpp_trigger_actions") or {}),
+        })
+        prior_executed_stage = dict(
+            ((lifecycle.get("stages") or {}).get("executed_plan") or {})
+        )
+        if prior_executed_stage.get("fingerprint") == _adaptive_v2_plan_fingerprint(actual_executed):
+            lifecycle.setdefault("validators", []).append({
+                "validator": "observed_execution_attribution",
+                "status": "matched_actuator_facing_execution",
+                "from_stage": "executed_plan",
+                "to_stage": "executed_plan",
+                "patches": [],
+                "reason": "event score matched the recorded actuator-facing setpoint and event-start actions",
+            })
+        else:
+            lifecycle = _adaptive_v2_record_plan_stage(
+                lifecycle,
+                "executed_plan",
+                actual_executed,
+                validator="observed_execution_attribution",
+                status=(
+                    str(prior_executed_stage.get("status") or "executed")
+                    + "_observed_correction"
+                ),
+                reason="event score corrected execution attribution from actuator-facing observations",
+            )
+        loop.agent_plan_lifecycle_by_event_id[event_id] = deepcopy(lifecycle)
+        event_result.update(
+            _adaptive_v2_attach_lifecycle(loop, event_id, event_result, lifecycle)
+        )
+        stages = lifecycle.get("stages") or {}
+        stage_plan = lambda name: dict(((stages.get(name) or {}).get("plan") or {}))
+        proposed_plan = stage_plan("proposed_plan")
+        if not proposed_plan and isinstance(_gate, dict):
+            proposed_plan = dict(_gate.get("proposed_plan") or {})
+        event_context = build_event_context(
+            cached_context.get("event") or {
+                "id": event_id,
+                "day": event_result.get("day"),
+                "trigger_h": event_result.get("trigger_h"),
+                "end_h": event_result.get("end_h"),
+            },
+            calendar=cached_context.get("calendar") or {},
+            home_state=cached_context.get("home_state") or {},
+            user_input=str(event_result.get("user_input", "") or cached_context.get("user_input", "")),
+            raw_model_plan=stage_plan("raw_model_plan"),
+            validated_plan=stage_plan("validated_plan"),
+            proposed_plan=proposed_plan,
+            consented_plan=stage_plan("consented_plan"),
+            executed_plan=actual_executed,
+            plan_lifecycle=lifecycle,
+        )
+        outcome = {
+            "accepted": _gate.get("accepted") if isinstance(_gate, dict) else None,
+            "score": event_result.get("score"),
+            "comfort_score": event_result.get("comfort_score"),
+            "energy_score": event_result.get("energy_score"),
+            "vpp_score": event_result.get("vpp_score"),
+            "target_achieved": event_result.get("target_achieved"),
+            "actual_kwh": event_result.get("actual_kwh"),
+            "user_feedback": _feedback_text,
+            "controller_feedback": event_result.get("controller_feedback"),
+            "member_feedback_summary": event_result.get("member_feedback_summary"),
+            "comment": event_result.get("comment"),
+        }
+        updated_memory = update_memory(memory, event_context, outcome)
+        updated_memory["method"] = memory.get("method", "agent")
+        updated_memory["persona_id"] = memory.get("persona_id", "unknown_persona")
+        updated_memory["purpose"] = memory.get("purpose", "")
+        updated_memory["onboarding_questionnaire"] = updated_memory.get("onboarding", {})
+        updated_memory["learned_preference_rules"] = list(
+            (updated_memory.get("onboarding") or {}).get("preference_rules") or []
+        )[:12]
+        updated_memory["latest_summary"] = (
+            f"Latest observable outcome {event_id}: accepted={outcome.get('accepted')}, "
+            f"score={outcome.get('score')}, feedback={_feedback_text[:240]}"
+        )
+        loop.agent_preference_memory = updated_memory
+        _write_agent_preference_memory(loop)
+        return
     event_entry = {
         "event_id": event_result.get("id"),
         "day": event_result.get("day"),
@@ -6005,6 +6910,23 @@ def _agent_primary_mpc_guidance_text(bundle: dict | None) -> str:
     )
 
 
+def _agent_adaptive_v2_mpc_guidance_text(bundle: dict | None) -> str:
+    """Present MPC as evidence, never as an invisible action override."""
+    if not bundle:
+        return ""
+    return (
+        "\n[ENERGYBRIDGE V2 ADVISORY PLAN]\n"
+        "MPC is one auditable candidate, not the controller of record. Compare its predicted "
+        "energy/VPP value against the observable user profile, current calendar, service deadlines, "
+        "and relevant feedback memories. You may adopt, combine, or reject it. Your final JSON is "
+        "the executed plan unless a hard safety or service validator rejects it. Preserve meaningful "
+        "model judgment: briefly identify the evidence used, the main tradeoff, and why the chosen "
+        "plan is preferable to the MPC candidate in `decision_basis`, `memory_citations`, and "
+        "`alternatives_considered`. Never claim access to hidden persona labels.\n"
+        + _agent_skill_guidance_text(bundle)
+    )
+
+
 def _agent_primary_rule_milp_guidance_text(bundle: dict | None) -> str:
     return _agent_primary_mpc_guidance_text(bundle)
 
@@ -6312,20 +7234,36 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
 
     # ── Read persona AC config (from appliances.ac field in persona JSON) ──────
     _ac_cfg   = (appliance_config or {}).get("ac", {})
-    _ac_sp_min    = float(_ac_cfg.get("setpoint_preferred_min_c", 24.0))
-    _ac_sp_max    = float(_ac_cfg.get("setpoint_preferred_max_c", 26.0))
-    _ac_sp_tol    = float(_ac_cfg.get("temp_tolerance_c", 1.0))
+    if method == "agent" and _adaptive_harness_v2():
+        _ac_sp_min, _ac_sp_max, _ac_sp_tol = _agent_observable_ac_bounds(loop)
+    else:
+        _ac_sp_min = float(_ac_cfg.get("setpoint_preferred_min_c", 24.0))
+        _ac_sp_max = float(_ac_cfg.get("setpoint_preferred_max_c", 26.0))
+        _ac_sp_tol = float(_ac_cfg.get("temp_tolerance_c", 1.0))
     _ac_sp_default = round((_ac_sp_min + _ac_sp_max) / 2, 1)
-    _protective_mode = method == "agent" and _protective_control_mode(persona_config)
-    _agent_multi_user_comfort_first = (
-        method == "agent" and _multi_user_household_comfort_first_mode(persona_config)
-    )
-    if method == "agent":
+    if method == "agent" and _adaptive_harness_v2():
+        # V2 controller protection comes from observable onboarding evidence,
+        # never hidden persona tags or evaluator-only household profiles.
+        _protective_mode = _agent_memory_is_protective(loop)
+        _agent_multi_user_comfort_first = bool(
+            _protective_mode
+            and _agent_memory_comfort_priority(loop) == "high"
+        )
+    else:
+        _protective_mode = method == "agent" and _protective_control_mode(persona_config)
+        _agent_multi_user_comfort_first = (
+            method == "agent" and _multi_user_household_comfort_first_mode(persona_config)
+        )
+    if method == "agent" and not _adaptive_harness_v2():
         _member_strict_max = _household_member_min_preferred_max_c(persona_config)
         if _member_strict_max is not None:
             _ac_sp_max = min(_ac_sp_max, float(_member_strict_max))
             _ac_sp_default = round(min(_ac_sp_default, _ac_sp_max), 1)
-    _auto_saving_mode = _price_sensitive_auto_saving_mode(persona_config)
+    _auto_saving_mode = (
+        False
+        if method == "agent" and _adaptive_harness_v2()
+        else _price_sensitive_auto_saving_mode(persona_config)
+    )
     _ac_sp_vpp_min = round(_ac_sp_max + 0.5, 1)   # minimum raise during VPP
     _ac_sp_vpp_max = round(_ac_sp_max + 1.5, 1)   # typical VPP raise ceiling
     # Override global SP_MIN based on persona comfort floor
@@ -6342,12 +7280,17 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
         _run_sp_max = min(_run_sp_max, _ac_sp_max)
         _ac_sp_vpp_min = _ac_sp_default
         _ac_sp_vpp_max = _ac_sp_max
-        if (persona_config.get("tags", {}) or {}).get("control") in {"low_auto_accept", "privacy_sensitive"}:
+        if (
+            not (method == "agent" and _adaptive_harness_v2())
+            and (persona_config.get("tags", {}) or {}).get("control") in {"low_auto_accept", "privacy_sensitive"}
+        ):
             # Protective users value stability, but stability should not mean
             # unnecessary over-cooling. Stay near the warm half of the approved
             # comfort band unless the user explicitly asks for colder air.
             _energy_saving_sp_floor = max(_energy_saving_sp_floor, min(_ac_sp_max, _ac_sp_max - 0.5))
     elif (
+        not (method == "agent" and _adaptive_harness_v2())
+        and
         (persona_config.get("tags", {}) or {}).get("control") == "high_trust_auto"
         and (persona_config.get("tags", {}) or {}).get("comfort") == "normal_comfort"
     ):
@@ -6510,6 +7453,29 @@ For every PRESENT appliance, appliance fields must be explicit and non-null as d
 Use null only for appliances that are absent from the home, or for optional ev_mode metadata.
 All times are hour-of-day (0–23.9)."""
 
+    if method == "agent" and _adaptive_harness_v2():
+        _LLM_SYS_FAM += """
+
+[ENERGYBRIDGE V2 ADAPTIVE DECISION CONTRACT]
+Separate invariants from preferences. Physical bounds, safety, already-observed calendar facts, fixed-service
+deadlines, and explicit user limits are invariants. MPC outputs, typical schedules, suggested setpoints,
+and earlier successful actions are evidence, not commands.
+
+Form a fresh hypothesis for this decision from the observable user resume and context-matched memories.
+Do not use a fixed persona template, a model-independent setpoint recipe, or an acceptance-probability rubric.
+When evidence conflicts, favor the newer and more context-similar observation and state the uncertainty.
+The final plan should reflect your own comparison of at least one conservative and one flexible alternative.
+Your valid final control is executed as written; it will not be silently replaced by the MPC candidate.
+Only hard safety/service/physical validation may reject or minimally repair it.
+
+Alongside the required control fields, include:
+  "decision_basis": [{"evidence": "observable fact or memory", "implication": "effect on this plan"}],
+  "memory_citations": ["onboarding:<answer id>" or "event:<event id>"],
+  "alternatives_considered": [{"name": "short name", "why_not": "specific tradeoff"}],
+  "uncertainty": "what is still unknown and how the plan remains reversible".
+These fields are for auditability and may differ across capable models; do not imitate a stock answer.
+"""
+
     def _llm_trigger(temp, out_t, hod, sim_h, remaining_h, vpp_active=False, vpp_id="",
                      user_pref_input="", facility_w=None, suppress_vpp_context: bool = False):
         import json as _j
@@ -6602,8 +7568,32 @@ All times are hour-of-day (0–23.9)."""
                                     f" ({_ac_sp_min:.1f}-{_ac_sp_max:.1f}\u00b0C) immediately."
                                     f" Normal operations resume. ***")
                     break
+        memory_event = dict(vpp_event or {})
+        memory_event.setdefault("id", f"daily_plan_day_{int(sim_h // 24) + 1}")
+        memory_event.setdefault("day", int(sim_h // 24) + 1)
+        memory_event.setdefault("trigger_h", hod)
+        adaptive_agent = bool(method == "agent" and _adaptive_harness_v2())
+        observable_calendar = (
+            _agent_observable_calendar_context(
+                persona_config,
+                memory_event,
+                occupied=bool(loop.current_occupied),
+                occupancy=float(loop.current_occupancy_count),
+            )
+            if adaptive_agent
+            else {}
+        )
+        if adaptive_agent:
+            loop.agent_observable_calendar_by_event_id[str(memory_event.get("id", ""))] = deepcopy(
+                observable_calendar
+            )
+        return_home_sensitive = (
+            _agent_observable_return_home_sensitive(observable_calendar, vpp_event)
+            if adaptive_agent
+            else _calendar_return_home_sensitive(persona_config, vpp_event)
+        )
         return_home_tag = ""
-        if vpp_event and _calendar_return_home_sensitive(persona_config, vpp_event):
+        if vpp_event and return_home_sensitive:
             demand_kw = prompt_vpp_demand_kw
             if _low_vpp_target_kw(demand_kw):
                 comfort_target = max(_ac_sp_min, min(_ac_sp_max, max(_ac_sp_default, _ac_sp_max - 0.5)))
@@ -6615,7 +7605,9 @@ All times are hour-of-day (0–23.9)."""
                 f"{return_home_action}, "
                 "and restore comfort immediately when the event ends. ***"
             )
-        mem_tag = loop.vpp_mem_ctx  # contains past event scores + user feedback
+        # Legacy compressed memory was partly regenerated from hidden persona
+        # scoring metadata.  V2 uses only its evidence-backed memory capsule.
+        mem_tag = "" if adaptive_agent else loop.vpp_mem_ctx
         price_tag = "\nDAY_AHEAD_PRICE: unavailable."
         if run_start_date is not None and day_ahead_price_profile is not None:
             try:
@@ -6628,14 +7620,32 @@ All times are hour-of-day (0–23.9)."""
         agent_memory_tag = ""
         if method == "agent":
             agent_skill_tag = _agent_skill_catalog_text()
-            agent_memory_tag = _agent_preference_memory_prompt_text(loop)
-        benefit_tag = _benefit_explanation_prompt_text(
+            memory_calendar = observable_calendar if adaptive_agent else {
+                "day": int(sim_h // 24) + 1,
+                "occupied": bool(loop.current_occupied),
+                "occupancy": float(loop.current_occupancy_count),
+                "routines": (persona_config or {}).get("schedule", {}),
+            }
+            agent_memory_tag = _agent_preference_memory_prompt_text(
+                loop,
+                event=memory_event,
+                calendar=memory_calendar,
+                home_state={
+                    "indoor_temp_c": temp,
+                    "outdoor_temp_c": out_t,
+                    "occupied": bool(loop.current_occupied),
+                    "occupancy": float(loop.current_occupancy_count),
+                    "facility_w": facility_w,
+                },
+                user_input=user_pref_input,
+            )
+        benefit_tag = "" if adaptive_agent else _benefit_explanation_prompt_text(
             persona_config,
             appliance_config,
             vpp_event,
             prompt_vpp_demand_kw,
         )
-        learned_efficiency_tag = _learned_efficiency_prompt_text(
+        learned_efficiency_tag = "" if adaptive_agent else _learned_efficiency_prompt_text(
             loop.vpp_event_log,
             persona_config,
             default_sp_c=_ac_sp_default,
@@ -6661,11 +7671,16 @@ All times are hour-of-day (0–23.9)."""
             f"people_count={loop.current_occupancy_count:.2f} "
             f"source={loop.current_occupancy_source}\n"
         )
+        prompt_user_pref = (
+            "Use the observable onboarding answers and event-time messages below."
+            if adaptive_agent
+            else user_pref
+        )
         prompt = (f"sim_hour={sim_h:.1f}  clock={hh:02d}:00{vpp_tag}{upcoming_vpp_tag}{post_vpp_tag}{return_home_tag}\n"
                   f"{occupancy_tag}"
                   f"zone_temp={temp:.1f}C  outdoor={out_t:.1f}C\n"
                   f"remaining_sim_hours={remaining_h:.0f}\n"
-                  f"user_pref: {user_pref}{user_now_tag}{price_tag}{benefit_tag}{learned_efficiency_tag}{intensity_tag}{appl_tag}{fixed_appliance_tag}{explicit_appliance_tag}{agent_skill_tag}{agent_memory_tag}{mem_tag}")
+                  f"user_pref: {prompt_user_pref}{user_now_tag}{price_tag}{benefit_tag}{learned_efficiency_tag}{intensity_tag}{appl_tag}{fixed_appliance_tag}{explicit_appliance_tag}{agent_skill_tag}{agent_memory_tag}{mem_tag}")
         if vpp_active:
             fb_sp = min(_run_sp_max, _ac_sp_default if agent_memory_protective or _protective_mode else 26.5)
             fb_nch = None
@@ -6689,6 +7704,12 @@ All times are hour-of-day (0–23.9)."""
             return t
 
         def _call_llm_json(prompt_text: str):
+            if adaptive_agent:
+                _assert_adaptive_v2_agent_prompt_observable(
+                    _LLM_SYS_FAM,
+                    prompt_text,
+                    persona_config,
+                )
             _client = LLMClient()
             # The EnergyBridge controller returns executable JSON plus a short
             # strategy explanation. The default 1024-token project setting can
@@ -6745,7 +7766,7 @@ All times are hour-of-day (0–23.9)."""
 
         try:
             from energybridge.llm.client import LLMClient
-            if method == "agent":
+            if method == "agent" and not _adaptive_harness_v2():
                 try:
                     agent_skill_bundle = _build_agent_skill_bundle(
                         loop,
@@ -6765,7 +7786,11 @@ All times are hour-of-day (0–23.9)."""
                         sp_max=_rule_milp_sp_max,
                         requested_skills=["mpc_dynamic"],
                     )
-                    prompt = prompt + _agent_primary_mpc_guidance_text(agent_skill_bundle)
+                    prompt = prompt + (
+                        _agent_adaptive_v2_mpc_guidance_text(agent_skill_bundle)
+                        if _adaptive_harness_v2()
+                        else _agent_primary_mpc_guidance_text(agent_skill_bundle)
+                    )
                 except Exception as _ase:
                     agent_skill_bundle = {
                         "version": "energybridge_agent_skills_v1",
@@ -6773,7 +7798,11 @@ All times are hour-of-day (0–23.9)."""
                         "requested_skills": ["mpc_dynamic"],
                         "errors": [str(_ase)[:200]],
                     }
-                    prompt = prompt + _agent_primary_mpc_guidance_text(agent_skill_bundle)
+                    prompt = prompt + (
+                        _agent_adaptive_v2_mpc_guidance_text(agent_skill_bundle)
+                        if _adaptive_harness_v2()
+                        else _agent_primary_mpc_guidance_text(agent_skill_bundle)
+                    )
             if verbose:
                 print(f"  ┌─[PROMPT | h={sim_h:.1f} sim / {int(hod%24):02d}:00]{'─'*40}")
                 for _line in prompt.splitlines():
@@ -6820,7 +7849,11 @@ All times are hour-of-day (0–23.9)."""
                     else []
                 )
             if requested_skill_names:
-                if method == "agent" and "mpc_dynamic" not in requested_skill_names:
+                if (
+                    method == "agent"
+                    and not _adaptive_harness_v2()
+                    and "mpc_dynamic" not in requested_skill_names
+                ):
                     requested_skill_names = ["mpc_dynamic", *requested_skill_names]
                 print(
                     "  [Agent Skill Call] active skills: "
@@ -6858,9 +7891,20 @@ All times are hour-of-day (0–23.9)."""
                     prompt
                     + "\n\n[YOUR SKILL REQUEST]\n"
                     + _j.dumps(initial_data, ensure_ascii=False, default=str)
-                    + _agent_primary_mpc_guidance_text(agent_skill_bundle)
-                    + "\n\nReturn the final control JSON now. You may choose one skill output, combine skill output with your own appliance plan, "
-                    "or make small user-feedback adjustments to the MPC base plan. Do not return another skill request."
+                    + (
+                        _agent_adaptive_v2_mpc_guidance_text(agent_skill_bundle)
+                        if _adaptive_harness_v2()
+                        else _agent_primary_mpc_guidance_text(agent_skill_bundle)
+                    )
+                    + (
+                        "\n\nReturn the final control JSON now. Treat every skill result as advisory: "
+                        "adopt, combine, or reject any candidate based on observable evidence and return your own "
+                        "executable plan. Do not return another skill request."
+                        if _adaptive_harness_v2()
+                        else
+                        "\n\nReturn the final control JSON now. You may choose one skill output, combine skill output with your own appliance plan, "
+                        "or make small user-feedback adjustments to the MPC base plan. Do not return another skill request."
+                    )
                 )
                 data = _call_llm_json(skill_result_prompt)
                 agent_skill_trace = _agent_skill_trace_from_bundle(
@@ -6875,7 +7919,11 @@ All times are hour-of-day (0–23.9)."""
                 if method == "agent" and agent_skill_bundle is not None:
                     agent_skill_trace = _agent_skill_trace_from_bundle(
                         agent_skill_bundle,
-                        source="energybridge_agent_primary_mpc",
+                        source=(
+                            "energybridge_agent_adaptive_v2_with_mpc_advisory"
+                            if _adaptive_harness_v2()
+                            else "energybridge_agent_primary_mpc"
+                        ),
                         initial_request={"skill_calls": ["mpc_dynamic"], "reason": "default EnergyBridge primary plan"},
                         final_data=data,
                         memory_path=str(getattr(loop, "agent_memory_path", "") or ""),
@@ -6936,8 +7984,17 @@ All times are hour-of-day (0–23.9)."""
 
             if method == "agent":
                 mpc_skill = ((agent_skill_bundle or {}).get("skills") or {}).get("mpc_dynamic") or {}
-                if mpc_skill.get("status") == "available":
+                if mpc_skill.get("status") == "available" and not _agent_model_owns_valid_plan(
+                    method, force_mpc_primary=force_mpc_primary
+                ):
                     data = _apply_agent_mpc_primary(data)
+                elif _agent_model_owns_valid_plan(method, force_mpc_primary=force_mpc_primary):
+                    # In V2 the model's valid executable plan is the controller
+                    # output. MPC remains visible in the strategy trace as an
+                    # advisory candidate and is never silently substituted.
+                    data["control_source"] = "llm_adaptive_v2"
+                    data["harness_profile"] = _harness_profile()
+                    data.setdefault("selected_skill", "adaptive_synthesis")
             hard_errors = _hard_policy_errors(data.get("appliances", {}))
             if hard_errors and force_mpc_primary:
                 print(
@@ -6965,8 +8022,26 @@ All times are hour-of-day (0–23.9)."""
                         print("  [Agent Policy Retry] corrected response still has: " + "; ".join(retry_errors))
                     else:
                         print("  [Agent Policy Retry] corrected response passed hard appliance checks")
-                if method == "agent" and mpc_skill.get("status") == "available":
+                if (
+                    method == "agent"
+                    and mpc_skill.get("status") == "available"
+                    and not _agent_model_owns_valid_plan(
+                        method, force_mpc_primary=force_mpc_primary
+                    )
+                ):
                     data = _apply_agent_mpc_primary(data)
+                elif _agent_model_owns_valid_plan(method, force_mpc_primary=force_mpc_primary):
+                    data["control_source"] = "llm_adaptive_v2"
+                    data["harness_profile"] = _harness_profile()
+                    data.setdefault("selected_skill", "adaptive_synthesis")
+            adaptive_lifecycle: dict = {}
+            if _agent_model_owns_valid_plan(method, force_mpc_primary=force_mpc_primary):
+                # This snapshot is deliberately taken before setpoint clamps,
+                # time normalization, appliance filtering, or EV repair.
+                adaptive_lifecycle = _adaptive_v2_new_plan_lifecycle(
+                    deepcopy(data),
+                    model=str(os.getenv("LLM_MODEL", "")),
+                )
             missing_explicit = _missing_explicit_appliance_actions(
                 data.get("appliances", {}), appliance_config
             )
@@ -7014,7 +8089,7 @@ All times are hour-of-day (0–23.9)."""
                         or _tags.get("control") in {"low_auto_accept", "privacy_sensitive"}
                         or bool(_sched.get("vulnerable_members"))
                     )
-                if _calendar_return_home_sensitive(persona_config, vpp_event):
+                if return_home_sensitive:
                     if _low_vpp_target_kw(demand_kw):
                         # Tiny return-home events should avoid noticeable
                         # discomfort.  Fragile users stay near the normal
@@ -7029,7 +8104,11 @@ All times are hour-of-day (0–23.9)."""
                         sp_lower = min(_energy_saving_sp_floor, sp_upper)
                     else:
                         sp_upper = min(sp_upper, _ac_sp_max)
-                elif _low_vpp_target_kw(demand_kw) and not _calendar_occupied_or_return_home_sensitive(persona_config, vpp_event):
+                elif _low_vpp_target_kw(demand_kw) and not (
+                    (bool(observable_calendar.get("occupied")) or return_home_sensitive)
+                    if adaptive_agent
+                    else _calendar_occupied_or_return_home_sensitive(persona_config, vpp_event)
+                ):
                     low_target_unoccupied_warm = True
                     if demand_kw <= 0.0:
                         efficient_target = min(_run_sp_max, _ac_sp_vpp_min)
@@ -7070,6 +8149,15 @@ All times are hour-of-day (0–23.9)."""
                     elif comfort_tag == "normal_comfort" and not _auto_saving_mode:
                         high_trust_cap = max(_ac_sp_min, _ac_sp_max - 0.5)
                     sp_upper = min(sp_upper, high_trust_cap)
+            if _agent_model_owns_valid_plan(method):
+                # V2 validates only the explicit physical/user envelope here.
+                # Event heuristics, economic floors, return-home recipes, and
+                # learned setpoint recipes remain prompt evidence and may not
+                # silently replace a capable model's judgement.
+                sp_lower = _run_sp_min
+                sp_upper = _run_sp_max
+                if agent_memory_protective:
+                    sp_upper = min(sp_upper, _ac_sp_max)
             raw_sp = float(data.get("setpoint", fb_sp))
             sp_lower = locals().get("sp_lower", _energy_saving_sp_floor)
             if mpc_direct_control:
@@ -7110,7 +8198,7 @@ All times are hour-of-day (0–23.9)."""
                     else:
                         efficient_floor = min(_run_sp_max, _ac_sp_max)
                     sp_lower = max(sp_lower, efficient_floor)
-            else:
+            elif not _agent_model_owns_valid_plan(method):
                 learned_floor = _learned_efficiency_floor_c(
                     loop.vpp_event_log,
                     persona_config,
@@ -7134,14 +8222,20 @@ All times are hour-of-day (0–23.9)."""
                 nch = float(nch)
                 if nch <= sim_h + 0.25 or nch > total_sim_hours:
                     nch = None
-            reason = _comfort_reason_for_low_dr_user(str(data.get("reason", "")), persona_config)
-            reason = _ensure_price_sensitive_reason_estimate(
-                reason,
-                persona_config,
-                appliance_config,
-                vpp_event,
-                prompt_vpp_demand_kw,
-            )
+            reason = str(data.get("reason", ""))
+            if not _agent_model_owns_valid_plan(method):
+                # V1 generated a deterministic household-facing explanation here.
+                # V2 keeps the model's own rationale so model/prompt differences
+                # remain observable, while the English/length validator below is
+                # still method-neutral.
+                reason = _comfort_reason_for_low_dr_user(reason, persona_config)
+                reason = _ensure_price_sensitive_reason_estimate(
+                    reason,
+                    persona_config,
+                    appliance_config,
+                    vpp_event,
+                    prompt_vpp_demand_kw,
+                )
             reason = english_only_text(
                 reason,
                 default="VPP control within comfort and service constraints" if vpp_event else "Comfort control within user limits",
@@ -7150,7 +8244,7 @@ All times are hour-of-day (0–23.9)."""
             appl_actions = _filter_controllable_appliance_actions(
                 data.get("appliances", {}), appliance_config
             )
-            if method == "agent" and vpp_event:
+            if method == "agent" and vpp_event and not _agent_model_owns_valid_plan(method):
                 appl_actions = _agent_refine_vpp_appliance_actions(
                     appl_actions,
                     loop,
@@ -7179,22 +8273,27 @@ All times are hour-of-day (0–23.9)."""
                 _raw_strategy_explanation = data.get("strategy_explanation")
                 if method == "agent" and mpc_direct_control:
                     _raw_strategy_explanation = None
-                strategy_explanation = normalize_vpp_strategy_explanation(
-                    _raw_strategy_explanation,
-                    persona_config=persona_config,
-                    appliance_config=appliance_config,
-                    event=vpp_event,
-                    setpoint_c=sp,
-                    reason=reason,
-                    appliance_actions=appl_actions,
-                    day_decisions=loop.day_agent_decisions[min(sim_days - 1, int(sim_h // 24))],
-                    demand_context=prompt_vpp_demand,
-                    capacity_context=_capacity_context,
-                    method=method,
-                    city=weather_label or "",
-                    source="family_energybridge_agent_skills" if agent_skill_trace else "family_llm_agent",
-                )
-                strategy_explanation = finalize_vpp_participation_explanation(strategy_explanation)
+                if _agent_model_owns_valid_plan(method):
+                    strategy_explanation = _adaptive_v2_strategy_explanation(
+                        _raw_strategy_explanation
+                    )
+                else:
+                    strategy_explanation = normalize_vpp_strategy_explanation(
+                        _raw_strategy_explanation,
+                        persona_config=persona_config,
+                        appliance_config=appliance_config,
+                        event=vpp_event,
+                        setpoint_c=sp,
+                        reason=reason,
+                        appliance_actions=appl_actions,
+                        day_decisions=loop.day_agent_decisions[min(sim_days - 1, int(sim_h // 24))],
+                        demand_context=prompt_vpp_demand,
+                        capacity_context=_capacity_context,
+                        method=method,
+                        city=weather_label or "",
+                        source="family_energybridge_agent_skills" if agent_skill_trace else "family_llm_agent",
+                    )
+                    strategy_explanation = finalize_vpp_participation_explanation(strategy_explanation)
             day_num = int(sim_h // 24) + 1
             hh_mm = f"{int(hod % 24):02d}:{int((hod % 1)*60):02d}"
             vpp_tag = f" | VPP-{vpp_id}" if vpp_active else ""
@@ -7208,6 +8307,50 @@ All times are hour-of-day (0–23.9)."""
                 print(f"  └{'─'*56}")
             result = {"setpoint": sp, "next_check_hour": nch, "reason": reason,
                     "appliance_actions": appl_actions if isinstance(appl_actions, dict) else {}}
+            if _agent_model_owns_valid_plan(method):
+                validation_reason = "; ".join(hard_errors)[:500] if hard_errors else "hard checks passed"
+                adaptive_lifecycle = _adaptive_v2_record_plan_stage(
+                    adaptive_lifecycle,
+                    "validated_plan",
+                    result,
+                    validator="hard_safety_service_and_physical_validation",
+                    status=(
+                        "patched_with_remaining_issues"
+                        if hard_errors and _adaptive_v2_plan_patches(
+                            ((adaptive_lifecycle.get("stages") or {}).get("raw_model_plan") or {}).get("plan", {}),
+                            _adaptive_v2_plan_snapshot(result),
+                        )
+                        else "issues_retained"
+                        if hard_errors
+                        else "patched"
+                        if _adaptive_v2_plan_patches(
+                            ((adaptive_lifecycle.get("stages") or {}).get("raw_model_plan") or {}).get("plan", {}),
+                            _adaptive_v2_plan_snapshot(result),
+                        )
+                        else "passed"
+                    ),
+                    reason=validation_reason,
+                )
+                result["adaptive_decision_audit"] = {
+                    "version": "energybridge_adaptive_decision_v2",
+                    "harness_profile": _harness_profile(),
+                    "model": str(os.getenv("LLM_MODEL", "")),
+                    "control_source": data.get("control_source", "llm_adaptive_v2"),
+                    "selected_skill": data.get("selected_skill"),
+                    "decision_basis": list(data.get("decision_basis") or [])[:8],
+                    "memory_citations": list(data.get("memory_citations") or [])[:8],
+                    "alternatives_considered": list(data.get("alternatives_considered") or [])[:6],
+                    "uncertainty": str(data.get("uncertainty", ""))[:500],
+                    "model_response_fingerprint": (
+                        ((adaptive_lifecycle.get("stages") or {}).get("raw_model_plan") or {}).get("fingerprint")
+                    ),
+                }
+                result = _adaptive_v2_attach_lifecycle(
+                    loop,
+                    str(memory_event.get("id", "")),
+                    result,
+                    adaptive_lifecycle,
+                )
             if strategy_explanation:
                 result["strategy_explanation"] = strategy_explanation
             if agent_skill_trace:
@@ -7221,7 +8364,29 @@ All times are hour-of-day (0–23.9)."""
             print(f"  [FamilyAgent] LLM error at h={sim_h:.1f}: {e}")
             loop.llm_failures += 1
             fallback["reason"] = ""
-            if vpp_event:
+            if method == "agent" and _adaptive_harness_v2():
+                fallback["controller_fallback_source"] = "adaptive_v2_model_unavailable"
+                fallback["controller_fallback_error"] = str(e)[:200]
+                _lifecycle = _adaptive_v2_new_plan_lifecycle(
+                    {},
+                    model=str(os.getenv("LLM_MODEL", "")),
+                )
+                _lifecycle["stages"]["raw_model_plan"]["status"] = "model_unavailable"
+                _lifecycle = _adaptive_v2_record_plan_stage(
+                    _lifecycle,
+                    "validated_plan",
+                    fallback,
+                    validator="controller_model_unavailable_fallback",
+                    status="fallback",
+                    reason=str(e)[:500],
+                )
+                fallback = _adaptive_v2_attach_lifecycle(
+                    loop,
+                    str(memory_event.get("id", "")),
+                    fallback,
+                    _lifecycle,
+                )
+            elif vpp_event:
                 fallback["strategy_explanation"] = normalize_vpp_strategy_explanation(
                     None,
                     persona_config=persona_config,
@@ -7986,23 +9151,28 @@ All times are hour-of-day (0–23.9)."""
                     if isinstance(item, dict)
                 ],
             })
-        try:
-            from user_pref_scorer import build_vpp_preference_memory_notes
-            mem_rules = build_vpp_preference_memory_notes(
-                loop.vpp_event_log,
-                persona_config,
+        if method == "agent" and _adaptive_harness_v2():
+            # The V2 controller has its own observable-only episodic memory.
+            # Do not create the legacy persona-aware scorer-note side channel.
+            loop.vpp_mem_ctx = ""
+        else:
+            try:
+                from user_pref_scorer import build_vpp_preference_memory_notes
+                mem_rules = build_vpp_preference_memory_notes(
+                    loop.vpp_event_log,
+                    persona_config,
+                )
+            except Exception:
+                mem_rules = []
+            loop.vpp_mem_ctx = (
+                "\nPast VPP responses (user in the loop): "
+                + json.dumps(mem_entries, ensure_ascii=False)
             )
-        except Exception:
-            mem_rules = []
-        loop.vpp_mem_ctx = (
-            "\nPast VPP responses (user in the loop): "
-            + json.dumps(mem_entries, ensure_ascii=False)
-        )
-        if mem_rules:
-            loop.vpp_mem_ctx += (
-                "\nLearned preference rules for next decisions: "
-                + json.dumps(mem_rules, ensure_ascii=False)
-            )
+            if mem_rules:
+                loop.vpp_mem_ctx += (
+                    "\nLearned preference rules for next decisions: "
+                    + json.dumps(mem_rules, ensure_ascii=False)
+                )
         if method == "agent":
             _update_agent_preference_memory(
                 loop,
@@ -8466,7 +9636,11 @@ All times are hour-of-day (0–23.9)."""
                 if method == "rule_milp" and (is_vpp or active_vpp is not None):
                     res["setpoint"] = AC_OFF_FALLBACK_COOLING_SETPOINT
                     res["reason"] = f"{res.get('reason', method)} | active VPP HVAC-off"
-                elif method == "agent" and (is_vpp or active_vpp is not None):
+                elif (
+                    method == "agent"
+                    and (is_vpp or active_vpp is not None)
+                    and not _agent_model_owns_valid_plan(method)
+                ):
                     _agent_vpp_tradeoff_sp = _agent_vpp_tradeoff_setpoint_c(
                         loop,
                         ac_sp_max_c=_ac_sp_max,
@@ -8517,6 +9691,7 @@ All times are hour-of-day (0–23.9)."""
                     and planning_vpp_event is None
                     and active_vpp is None
                     and not triggered_daily_plan
+                    and not _agent_model_owns_valid_plan(method)
                 ):
                     _stored_day_plan = loop.no_vpp_daily_plan_by_day.get(_day_i)
                     if isinstance(_stored_day_plan, dict) and _stored_day_plan.get("setpoint") is not None:
@@ -8546,6 +9721,7 @@ All times are hour-of-day (0–23.9)."""
                     and triggered_vpp is not None
                     and loop.appliance_suite is not None
                     and not bool(res.get("fallback_after_vpp_rejection"))
+                    and not _agent_model_owns_valid_plan(method)
                 ):
                     _guarded_actions, _vpp_replan_guard = _filter_vpp_event_replan_actions(
                         actions=_raw_appliance_actions,
@@ -8556,14 +9732,25 @@ All times are hour-of-day (0–23.9)."""
                     )
                     res["appliance_actions"] = _guarded_actions
                 if method != "no_dr" and triggered_daily_plan and planning_vpp_event is None:
-                    if disable_acceptance_fallback:
-                        res["acceptance_fallback_disabled"] = True
+                    if disable_acceptance_fallback or _agent_model_owns_valid_plan(method):
+                        if disable_acceptance_fallback:
+                            res["acceptance_fallback_disabled"] = True
+                        if _agent_model_owns_valid_plan(method):
+                            # A no-VPP day-ahead plan does not require event
+                            # consent.  V2 must not run the valid model output
+                            # through the legacy hidden-persona daily gate.
+                            res["no_vpp_daily_plan_gate"] = {
+                                "accepted": True,
+                                "source": "adaptive_v2_model_owned_no_vpp_plan",
+                                "reasons": [],
+                            }
                         loop.no_vpp_daily_plan_by_day[_day_i] = {
                             "setpoint": res.get("setpoint"),
                             "next_check_hour": res.get("next_check_hour"),
                             "reason": res.get("reason", ""),
                             "appliance_actions": dict(res.get("appliance_actions", {}) or {}),
                             "objective_source": res.get("objective_source", ""),
+                            "no_vpp_daily_plan_gate": res.get("no_vpp_daily_plan_gate", {}),
                         }
                     else:
                         _daily_plan_gate = _evaluate_no_vpp_daily_plan_acceptance(
@@ -8617,6 +9804,31 @@ All times are hour-of-day (0–23.9)."""
                                 f"{', '.join(_fixed_preserved)}; VPP capacity reduced to protect consent."
                             ).strip()
                             res["fixed_routine_preserved_for_consent"] = list(_fixed_preserved)
+                    if method == "agent" and _adaptive_harness_v2():
+                        _lifecycle = deepcopy(
+                            loop.agent_plan_lifecycle_by_event_id.get(planning_vid) or {}
+                        )
+                        if not _lifecycle:
+                            _lifecycle = _adaptive_v2_new_plan_lifecycle({})
+                            _lifecycle["stages"]["raw_model_plan"]["status"] = "model_output_unavailable"
+                        _lifecycle = _adaptive_v2_record_plan_stage(
+                            _lifecycle,
+                            "proposed_plan",
+                            res,
+                            validator="post_validation_proposal_assembly",
+                            status=("patched" if _fixed_preserved else "passed"),
+                            reason=(
+                                "fixed service routines preserved: " + ", ".join(_fixed_preserved)
+                                if _fixed_preserved
+                                else "validated model plan offered without preference-level replacement"
+                            ),
+                        )
+                        res = _adaptive_v2_attach_lifecycle(
+                            loop,
+                            planning_vid,
+                            res,
+                            _lifecycle,
+                        )
                     _existing_gate = (
                         None if disable_acceptance_fallback
                         else loop.vpp_plan_gate_by_id.get(planning_vid)
@@ -8694,8 +9906,29 @@ All times are hour-of-day (0–23.9)."""
                                 )
                             loop.vpp_plan_gate_by_id[planning_vid] = dict(_vpp_acceptance_gate)
                     if disable_acceptance_fallback:
-                        pass
+                        if method == "agent" and _adaptive_harness_v2():
+                            _lifecycle = _adaptive_v2_record_plan_stage(
+                                loop.agent_plan_lifecycle_by_event_id.get(planning_vid),
+                                "consented_plan",
+                                res,
+                                status="acceptance_fallback_disabled",
+                                reason="experiment configuration bypassed the household consent gate",
+                            )
+                            res = _adaptive_v2_attach_lifecycle(loop, planning_vid, res, _lifecycle)
                     elif not bool(_vpp_acceptance_gate.get("accepted")):
+                        if method == "agent" and _adaptive_harness_v2():
+                            _lifecycle = _adaptive_v2_record_plan_stage(
+                                loop.agent_plan_lifecycle_by_event_id.get(planning_vid),
+                                "consented_plan",
+                                res,
+                                status="rejected",
+                                reason=str(
+                                    _vpp_acceptance_gate.get("roleplay_acceptance_reasoning")
+                                    or _vpp_acceptance_gate.get("primary_complaint")
+                                    or "household rejected the proposed plan"
+                                )[:500],
+                            )
+                            loop.agent_plan_lifecycle_by_event_id[planning_vid] = _lifecycle
                         print(
                             "  [VPP Acceptance Gate] "
                             f"{planning_vid} rejected p={_vpp_acceptance_gate.get('acceptance_probability')} "
@@ -8723,6 +9956,15 @@ All times are hour-of-day (0–23.9)."""
                                     f"{planning_vid} event-start locked to accepted plan "
                                     f"setpoint={float(res.get('setpoint')):.1f}C"
                                 )
+                        if method == "agent" and _adaptive_harness_v2():
+                            _lifecycle = _adaptive_v2_record_plan_stage(
+                                loop.agent_plan_lifecycle_by_event_id.get(planning_vid),
+                                "consented_plan",
+                                res,
+                                status="accepted",
+                                reason="household accepted the concrete offered plan",
+                            )
+                            res = _adaptive_v2_attach_lifecycle(loop, planning_vid, res, _lifecycle)
                         print(
                             "  [VPP Acceptance Gate] "
                             f"{planning_vid} accepted p={_vpp_acceptance_gate.get('acceptance_probability')} "
@@ -8733,8 +9975,82 @@ All times are hour-of-day (0–23.9)."""
                         res["vpp_acceptance_gate"] = _vpp_acceptance_gate
                         if _vpp_acceptance_gate.get("adaptability_diagnostics"):
                             res["adaptability_diagnostics"] = _vpp_acceptance_gate.get("adaptability_diagnostics")
-                if method == "agent" and not bool(res.get("fallback_after_vpp_rejection")):
+                if (
+                    method == "agent"
+                    and not _agent_model_owns_valid_plan(method)
+                    and not bool(res.get("fallback_after_vpp_rejection"))
+                ):
                     res = _agent_cap_hot_water_preheat_for_energy(res)
+                _execution_event = planning_vpp_event or active_vpp
+                _execution_event_id = str((_execution_event or {}).get("id", ""))
+                if method == "agent" and _adaptive_harness_v2() and _execution_event_id:
+                    _lifecycle = deepcopy(
+                        loop.agent_plan_lifecycle_by_event_id.get(_execution_event_id) or {}
+                    )
+                    if not _lifecycle:
+                        _lifecycle = _adaptive_v2_new_plan_lifecycle({})
+                        _lifecycle["stages"]["raw_model_plan"]["status"] = "model_output_unavailable"
+                    _execution_status = (
+                        "fallback_after_rejection"
+                        if bool(res.get("fallback_after_vpp_rejection"))
+                        else "executed"
+                    )
+                    _lifecycle = _adaptive_v2_record_plan_stage(
+                        _lifecycle,
+                        "executed_plan",
+                        res,
+                        validator="consent_and_execution_resolution",
+                        status=_execution_status,
+                        reason=(
+                            "household rejection selected the no-VPP fallback"
+                            if _execution_status == "fallback_after_rejection"
+                            else "final consented/validated plan passed to actuators"
+                        ),
+                    )
+                    res = _adaptive_v2_attach_lifecycle(
+                        loop,
+                        _execution_event_id,
+                        res,
+                        _lifecycle,
+                    )
+                    try:
+                        from energybridge.harness.memory import build_event_context
+
+                        _stages = _lifecycle.get("stages") or {}
+                        _stage_plan = lambda name: dict((_stages.get(name) or {}).get("plan") or {})
+                        _execution_context = build_event_context(
+                            _execution_event,
+                            calendar=(
+                                loop.agent_observable_calendar_by_event_id.get(_execution_event_id)
+                                or _agent_observable_calendar_context(
+                                    persona_config,
+                                    _execution_event,
+                                    occupied=bool(occ),
+                                    occupancy=float(occ_count),
+                                )
+                            ),
+                            home_state={
+                                "indoor_temp_c": temp,
+                                "outdoor_temp_c": out_t,
+                                "occupied": bool(occ),
+                                "occupancy": float(occ_count),
+                                "facility_w": fac,
+                            },
+                            user_input=loop.vpp_user_input_by_id.get(
+                                _execution_event_id,
+                                loop.vpp_user_input,
+                            ),
+                            raw_model_plan=_stage_plan("raw_model_plan"),
+                            validated_plan=_stage_plan("validated_plan"),
+                            proposed_plan=_stage_plan("proposed_plan"),
+                            consented_plan=_stage_plan("consented_plan"),
+                            executed_plan=_stage_plan("executed_plan"),
+                            plan_lifecycle=_lifecycle,
+                        )
+                        loop.agent_execution_context_by_event_id[_execution_event_id] = _execution_context
+                        loop.agent_memory_context_by_event_id[_execution_event_id] = _execution_context
+                    except Exception as memory_exc:
+                        res.setdefault("adaptive_decision_audit", {})["memory_context_error"] = str(memory_exc)[:200]
                 loop.planned_occupied_sp = res["setpoint"]
                 effective_sp = res["setpoint"] if hvac_control_occupied or hvac_avail_set else AC_OFF_FALLBACK_COOLING_SETPOINT
                 loop.sp = effective_sp
@@ -8792,6 +10108,10 @@ All times are hour-of-day (0–23.9)."""
                     _decision_log["posthoc_objective_source"] = res.get("posthoc_objective_source")
                 if res.get("strategy_trace"):
                     _decision_log["strategy_trace"] = res.get("strategy_trace", {})
+                if res.get("adaptive_decision_audit"):
+                    _decision_log["adaptive_decision_audit"] = res.get(
+                        "adaptive_decision_audit", {}
+                    )
                 if res.get("strategy_explanation"):
                     _decision_log["strategy_explanation"] = res.get("strategy_explanation", {})
                 if res.get("vpp_acceptance_gate"):
