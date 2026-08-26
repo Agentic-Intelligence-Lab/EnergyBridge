@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from types import SimpleNamespace
 
 from experiments.benchmark import family_runner as fr
@@ -238,6 +239,103 @@ def test_model_can_revise_its_own_choice_after_professional_evidence() -> None:
         "initial_model_response",
         "model_evidence_deliberation",
     ]
+
+
+def test_deferred_clarification_preserves_model_question_only_for_material_choice() -> None:
+    resolution = {
+        "status": "selected",
+        "selected_candidate_id": "ordinary",
+        "final_portfolio_audit": {
+            "candidate_lifecycles": [
+                {"candidate_id": "ordinary", "origin": "model", "feasible": True},
+                {"candidate_id": "lower_cost", "origin": "model", "feasible": True},
+            ],
+            "professional_impact_evidence": {
+                "candidate_impacts": [
+                    {
+                        "candidate_id": "ordinary",
+                        "offer_specific_comparison": {
+                            "offer_materiality": "no_observable_physical_change",
+                            "supported_benefit_claims": [],
+                        },
+                    },
+                    {
+                        "candidate_id": "lower_cost",
+                        "offer_specific_comparison": {
+                            "offer_materiality": "observable_physical_change",
+                            "supported_benefit_claims": [{
+                                "kind": "normalized_fixed_load_cost_reduction",
+                                "amount": 2.7,
+                            }],
+                        },
+                    },
+                ],
+            },
+            "information_acquisition": {
+                "requests": [{
+                    "request_id": "information_request_01",
+                    "question": "Would you prioritize routine timing or the measured tariff reduction?",
+                    "decision_relevance": "The answer could change which model candidate is selected.",
+                    "grounded_in_supplied_unknown": True,
+                    "decision_relevance_stated": True,
+                }],
+            },
+        },
+    }
+
+    request = fr._adaptive_v3_deferred_clarification_request(resolution)
+
+    assert request["question"].startswith("Would you prioritize")
+    assert request["selected_candidate_id"] == "ordinary"
+    assert request["material_alternatives"] == [{
+        "candidate_id": "lower_cost",
+        "supported_benefit_kinds": ["normalized_fixed_load_cost_reduction"],
+    }]
+    assert request["question_authored_by_harness"] is False
+    assert request["selection_changed_by_harness"] is False
+
+
+def test_deferred_clarification_does_not_force_question_or_material_choice() -> None:
+    base = {
+        "status": "selected",
+        "selected_candidate_id": "ordinary",
+        "final_portfolio_audit": {
+            "candidate_lifecycles": [
+                {"candidate_id": "ordinary", "origin": "model", "feasible": True},
+                {"candidate_id": "different", "origin": "model", "feasible": True},
+            ],
+            "professional_impact_evidence": {"candidate_impacts": [
+                {
+                    "candidate_id": "ordinary",
+                    "offer_specific_comparison": {
+                        "offer_materiality": "no_observable_physical_change",
+                    },
+                },
+                {
+                    "candidate_id": "different",
+                    "offer_specific_comparison": {
+                        "offer_materiality": "observable_physical_change",
+                        "supported_benefit_claims": [],
+                    },
+                },
+            ]},
+            "information_acquisition": {"requests": [{
+                "question": "Should I change the routine?",
+                "decision_relevance": "It could affect the plan.",
+                "grounded_in_supplied_unknown": True,
+                "decision_relevance_stated": True,
+            }]},
+        },
+    }
+    assert fr._adaptive_v3_deferred_clarification_request(base) is None
+
+    with_benefit = deepcopy(base)
+    alt = with_benefit["final_portfolio_audit"]["professional_impact_evidence"][
+        "candidate_impacts"
+    ][1]["offer_specific_comparison"]
+    alt["supported_benefit_claims"] = [{"kind": "measured_reduction"}]
+    with_benefit["final_portfolio_audit"]["information_acquisition"]["requests"] = []
+    assert fr._adaptive_v3_deferred_clarification_request(with_benefit) is None
 
 
 def test_invalid_evidence_review_gets_semantic_replan_without_tool_selection() -> None:
@@ -490,6 +588,12 @@ def test_observable_adapter_prefers_session_capsules_and_lists_live_requirements
         current_occupancy_source="shared_calendar",
         agent_profile_capsule_by_event_id={"e1": {"text": "Evening comfort matters."}},
         agent_memory_capsule_by_event_id={"e1": {"relevant_episodes": [{"id": "old"}]}},
+        agent_clarification_by_event_id={"e1": {
+            "question": "Can the washer move earlier?",
+            "answer": "Yes, when the measured tariff difference is meaningful.",
+            "certainty": "conditional",
+            "source": "direct_household_clarification",
+        }},
         agent_preference_memory={"persona_id": "must-not-be-needed"},
     )
     inputs = fr._adaptive_v3_observable_planning_inputs(
@@ -525,7 +629,15 @@ def test_observable_adapter_prefers_session_capsules_and_lists_live_requirements
         },
     )
 
-    assert inputs["observable_profile"] == {"text": "Evening comfort matters."}
+    assert inputs["observable_profile"] == {
+        "text": "Evening comfort matters.",
+        "event_clarification": {
+            "question": "Can the washer move earlier?",
+            "answer": "Yes, when the measured tariff difference is meaningful.",
+            "certainty": "conditional",
+            "source": "direct_household_clarification",
+        },
+    }
     assert inputs["memory"] == {"relevant_episodes": [{"id": "old"}]}
     assert inputs["observable_state"]["facility_load_kw"] == 1.2
     assert inputs["observable_state"]["required_appliance_action_fields"] == [

@@ -971,6 +971,19 @@ def test_verified_fact_validator_preserves_truthful_model_judgement() -> None:
         {"vpp_conflicts": []},
     )["final_acceptance_probability"] == 0.32
 
+    preference_statement = _valid_response()
+    preference_statement["evidence"][0]["fact"] = (
+        "The household asks to shift the washer out of 18:00-19:00."
+    )
+    preference_statement = normalize_roleplay_acceptance_response(
+        preference_statement,
+        expected_baseline=0.37,
+    )
+    assert validate_roleplay_response_against_verified_facts(
+        preference_statement,
+        {"vpp_conflicts": []},
+    )["normalization"]["verified_fact_consistent"] is True
+
 
 def test_verified_fact_validator_rejects_unneeded_move_out_counterfactual() -> None:
     response = _valid_response()

@@ -1222,11 +1222,20 @@ _APPLIANCE_CONFLICT_CLAIM_PATTERNS = (
 )
 
 
-def _claims_appliance_conflict(text: Any) -> bool:
+def _claims_appliance_conflict(
+    text: Any,
+    *,
+    include_move_request: bool = False,
+) -> bool:
     value = str(text or "").strip()
     if not value:
         return False
-    for index, pattern in enumerate(_APPLIANCE_CONFLICT_CLAIM_PATTERNS):
+    patterns = (
+        _APPLIANCE_CONFLICT_CLAIM_PATTERNS
+        if include_move_request
+        else _APPLIANCE_CONFLICT_CLAIM_PATTERNS[:2]
+    )
+    for index, pattern in enumerate(patterns):
         match = pattern.search(value)
         if match is None:
             continue
@@ -1284,7 +1293,10 @@ def validate_roleplay_response_against_verified_facts(
             ("user_feedback", out.get("user_feedback")),
         ))
         for field, value in text_fields:
-            if _claims_appliance_conflict(value):
+            if _claims_appliance_conflict(
+                value,
+                include_move_request=field.startswith("counterfactual."),
+            ):
                 contradictions.append({
                     "field": field,
                     "claim": _sanitize_identity_text(value, 240),

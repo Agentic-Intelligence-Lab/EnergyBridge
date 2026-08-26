@@ -558,6 +558,11 @@ def _adaptive_v3_observable_planning_inputs(
                 ),
             }
 
+    prior_clarifications = getattr(loop, "agent_clarification_by_event_id", {}) or {}
+    prior_clarification = prior_clarifications.get(event_id)
+    if isinstance(prior_clarification, dict) and prior_clarification:
+        observable_profile["event_clarification"] = deepcopy(prior_clarification)
+
     devices: dict[str, dict] = {}
     for name, raw in (appliance_config or {}).items():
         if not isinstance(raw, dict):
@@ -901,6 +906,93 @@ def _adaptive_v3_replan_feedback(evaluation: dict, policy_errors: list[str] | No
         ][:16],
         "runtime_contract_errors": [str(error)[:500] for error in list(policy_errors or [])[:16]],
     }
+
+
+def _adaptive_v3_deferred_clarification_request(
+    resolution: dict | None,
+) -> dict | None:
+    """Return a model-authored question when it could unlock a real offer.
+
+    A portfolio may conservatively select the ordinary physical plan while
+    also asking a question whose answer would change the choice between that
+    plan and a feasible, materially different alternative.  This helper does
+    not rank alternatives, score information value, or invent a question.  It
+    simply preserves the first grounded request in model order when the
+    professional evidence proves that the selected candidate is a no-op and at
+    least one feasible model candidate has a supported incremental benefit.
+    """
+    resolution = resolution if isinstance(resolution, dict) else {}
+    if resolution.get("status") != "selected":
+        return None
+    audit = resolution.get("final_portfolio_audit")
+    audit = audit if isinstance(audit, dict) else {}
+    selected_id = str(resolution.get("selected_candidate_id") or "")
+    if not selected_id:
+        return None
+    feasible_ids = {
+        str(item.get("candidate_id") or "")
+        for item in list(audit.get("candidate_lifecycles") or [])
+        if isinstance(item, dict)
+        and item.get("origin") == "model"
+        and item.get("feasible") is True
+    }
+    impacts = (
+        (audit.get("professional_impact_evidence") or {}).get("candidate_impacts")
+        if isinstance(audit.get("professional_impact_evidence"), dict)
+        else []
+    ) or []
+    by_id = {
+        str(item.get("candidate_id") or ""): item
+        for item in impacts
+        if isinstance(item, dict)
+    }
+    selected = by_id.get(selected_id) or {}
+    comparison = selected.get("offer_specific_comparison")
+    comparison = comparison if isinstance(comparison, dict) else {}
+    if comparison.get("offer_materiality") != "no_observable_physical_change":
+        return None
+    material_alternatives = []
+    for candidate_id, impact in by_id.items():
+        if candidate_id == selected_id or candidate_id not in feasible_ids:
+            continue
+        candidate_comparison = impact.get("offer_specific_comparison")
+        candidate_comparison = (
+            candidate_comparison if isinstance(candidate_comparison, dict) else {}
+        )
+        supported = list(candidate_comparison.get("supported_benefit_claims") or [])
+        if (
+            candidate_comparison.get("offer_materiality") == "observable_physical_change"
+            and supported
+        ):
+            material_alternatives.append({
+                "candidate_id": candidate_id,
+                "supported_benefit_kinds": [
+                    str(item.get("kind") or "")
+                    for item in supported
+                    if isinstance(item, dict) and item.get("kind")
+                ],
+            })
+    if not material_alternatives:
+        return None
+    information = audit.get("information_acquisition")
+    information = information if isinstance(information, dict) else {}
+    for request in list(information.get("requests") or []):
+        if not isinstance(request, dict):
+            continue
+        if (
+            request.get("grounded_in_supplied_unknown") is True
+            and request.get("decision_relevance_stated") is True
+            and str(request.get("question") or "").strip()
+        ):
+            return {
+                **deepcopy(request),
+                "trigger": "model_selected_ordinary_plan_with_supported_material_alternative",
+                "selected_candidate_id": selected_id,
+                "material_alternatives": material_alternatives,
+                "selection_changed_by_harness": False,
+                "question_authored_by_harness": False,
+            }
+    return None
 
 
 def _adaptive_v3_resolve_planning_response(
@@ -10898,6 +10990,84 @@ These fields are for auditability and may differ across capable models; do not i
                     adaptive_planning_inputs,
                     allow_skill_request=True,
                 )
+
+            def _answer_adaptive_clarification_once(
+                request: dict,
+                *,
+                stage: str,
+            ) -> bool:
+                """Answer or reuse one household clarification for this event."""
+                nonlocal adaptive_planning_inputs, adaptive_clarification_audit
+                event_key = str(memory_event.get("id", ""))
+                answers = getattr(loop, "agent_clarification_by_event_id", {}) or {}
+                if not isinstance(answers, dict):
+                    answers = {}
+                loop.agent_clarification_by_event_id = answers
+                existing = answers.get(event_key)
+                if isinstance(existing, dict) and existing:
+                    profile = deepcopy(adaptive_planning_inputs.get("observable_profile") or {})
+                    profile["event_clarification"] = deepcopy(existing)
+                    adaptive_planning_inputs["observable_profile"] = profile
+                    adaptive_clarification_audit = {
+                        "status": "reused",
+                        "stage": stage,
+                        "request": deepcopy(request),
+                        "observable_reply": deepcopy(existing),
+                        "hidden_resume_returned": False,
+                        "raw_roleplay_response_returned": False,
+                        "question_selected_or_scored_by_harness": False,
+                    }
+                    return True
+                (
+                    adaptive_planning_inputs,
+                    adaptive_clarification_audit,
+                    clarification_metrics,
+                ) = _adaptive_v3_answer_clarification(
+                    adaptive_planning_inputs,
+                    request,
+                    persona_config=persona_config,
+                )
+                adaptive_clarification_audit["stage"] = stage
+                reply = adaptive_clarification_audit.get("observable_reply") or {}
+                if isinstance(reply, dict) and reply:
+                    answers[event_key] = deepcopy(reply)
+                if adaptive_clarification_audit.get("status") == "answered":
+                    from energybridge.harness.profile_v3 import update_household_model
+
+                    clarification_observed_at = (
+                        _datetime.combine(run_start_date, _datetime.min.time())
+                        + _timedelta(hours=float(sim_h))
+                    ).isoformat() if run_start_date is not None else f"simulation-hour:{float(sim_h):.6f}"
+                    loop.agent_household_model = update_household_model(
+                        getattr(loop, "agent_household_model", {}) or {},
+                        event_context=memory_event,
+                        feedback={
+                            "event_id": event_key,
+                            "comment": str(reply.get("answer") or ""),
+                        },
+                        observed_at=clarification_observed_at,
+                    )
+                    adaptive_clarification_audit["profile_revision_after_reply"] = (
+                        loop.agent_household_model.get("revision")
+                    )
+                if clarification_metrics.get("used"):
+                    clarification_usage = (
+                        clarification_metrics.get("token_usage")
+                        if isinstance(clarification_metrics.get("token_usage"), dict)
+                        else {}
+                    )
+                    loop.llm_calls += 1
+                    loop.llm_latency_s += float(
+                        clarification_metrics.get("latency_seconds", 0.0) or 0.0
+                    )
+                    loop.llm_tokens_prompt += int(
+                        clarification_usage.get("prompt_tokens", 0) or 0
+                    )
+                    loop.llm_tokens_comp += int(
+                        clarification_usage.get("completion_tokens", 0) or 0
+                    )
+                    _record_daily_llm_usage(loop, sim_days, sim_h, clarification_metrics)
+                return True
             if verbose:
                 print(f"  ┌─[PROMPT | h={sim_h:.1f} sim / {int(hod%24):02d}:00]{'─'*40}")
                 for _line in initial_prompt.splitlines():
@@ -10936,52 +11106,10 @@ These fields are for auditability and may differ across capable models; do not i
                     else None
                 )
                 if clarification_request is not None:
-                    (
-                        adaptive_planning_inputs,
-                        adaptive_clarification_audit,
-                        clarification_metrics,
-                    ) = _adaptive_v3_answer_clarification(
-                        adaptive_planning_inputs,
+                    _answer_adaptive_clarification_once(
                         clarification_request,
-                        persona_config=persona_config,
+                        stage="pre_portfolio",
                     )
-                    if adaptive_clarification_audit.get("status") == "answered":
-                        from energybridge.harness.profile_v3 import update_household_model
-
-                        clarification_observed_at = (
-                            _datetime.combine(run_start_date, _datetime.min.time())
-                            + _timedelta(hours=float(sim_h))
-                        ).isoformat() if run_start_date is not None else f"simulation-hour:{float(sim_h):.6f}"
-                        reply = adaptive_clarification_audit.get("observable_reply") or {}
-                        loop.agent_household_model = update_household_model(
-                            getattr(loop, "agent_household_model", {}) or {},
-                            event_context=memory_event,
-                            feedback={
-                                "event_id": str(memory_event.get("id", "")),
-                                "comment": str(reply.get("answer") or ""),
-                            },
-                            observed_at=clarification_observed_at,
-                        )
-                        adaptive_clarification_audit["profile_revision_after_reply"] = (
-                            loop.agent_household_model.get("revision")
-                        )
-                    if clarification_metrics.get("used"):
-                        clarification_usage = (
-                            clarification_metrics.get("token_usage")
-                            if isinstance(clarification_metrics.get("token_usage"), dict)
-                            else {}
-                        )
-                        loop.llm_calls += 1
-                        loop.llm_latency_s += float(
-                            clarification_metrics.get("latency_seconds", 0.0) or 0.0
-                        )
-                        loop.llm_tokens_prompt += int(
-                            clarification_usage.get("prompt_tokens", 0) or 0
-                        )
-                        loop.llm_tokens_comp += int(
-                            clarification_usage.get("completion_tokens", 0) or 0
-                        )
-                        _record_daily_llm_usage(loop, sim_days, sim_h, clarification_metrics)
                     clarified_system, clarified_prompt = _adaptive_v3_planning_prompts(
                         adaptive_planning_inputs,
                         allow_skill_request=True,
@@ -11168,6 +11296,118 @@ These fields are for auditability and may differ across capable models; do not i
                     replan_fn=_semantic_replan,
                     impact_review_fn=impact_review_fn,
                 )
+                deferred_clarification_key = str(memory_event.get("id", ""))
+                deferred_clarification_keys = getattr(
+                    loop,
+                    "agent_deferred_clarification_planning_keys",
+                    set(),
+                )
+                if not isinstance(deferred_clarification_keys, set):
+                    deferred_clarification_keys = set(
+                        deferred_clarification_keys or []
+                    )
+                loop.agent_deferred_clarification_planning_keys = (
+                    deferred_clarification_keys
+                )
+                deferred_request = (
+                    _adaptive_v3_deferred_clarification_request(
+                        adaptive_planning_resolution
+                    )
+                    if (
+                        not adaptive_clarification_audit
+                        and deferred_clarification_key
+                        not in deferred_clarification_keys
+                    )
+                    else None
+                )
+                if deferred_request is not None:
+                    # At most one model-authored deferred household question is
+                    # allowed per event. A failed optional interaction retains
+                    # the initial valid selection instead of retrying forever.
+                    deferred_clarification_keys.add(deferred_clarification_key)
+                    initial_resolution_summary = {
+                        "status": adaptive_planning_resolution.get("status"),
+                        "selected_candidate_id": adaptive_planning_resolution.get(
+                            "selected_candidate_id"
+                        ),
+                        "selection_retained_by_default": True,
+                    }
+                    try:
+                        _answer_adaptive_clarification_once(
+                            deferred_request,
+                            stage="post_evidence_materiality",
+                        )
+                        deferred_system, deferred_prompt = _adaptive_v3_planning_prompts(
+                            adaptive_planning_inputs,
+                            advisor_candidates=adaptive_advisor_candidates,
+                            allow_skill_request=False,
+                        )
+                        deferred_system += (
+                            "\n\nThe household has now answered the question that your portfolio "
+                            "identified as decision-relevant. The direct reply is in "
+                            "`observable_profile.event_clarification`. Reconsider the portfolio "
+                            "using that answer and the prior method-blind impact evidence. You "
+                            "retain full selection authority; a material alternative is not "
+                            "mandatory, and the harness will not choose one for you. Return a "
+                            "complete final portfolio without another question."
+                        )
+                        prior_evidence = (
+                            (adaptive_planning_resolution.get("final_portfolio_audit") or {}).get(
+                                "professional_impact_evidence"
+                            ) or {}
+                        )
+                        deferred_prompt += (
+                            "\n\n[PRIOR PORTFOLIO PHYSICAL AND TARIFF EVIDENCE]\n"
+                            + _j.dumps(prior_evidence, ensure_ascii=False, default=str)
+                        )
+                        clarified_raw = _call_llm_json(
+                            deferred_prompt,
+                            system_prompt=deferred_system,
+                        )
+                        clarified_resolution = _adaptive_v3_resolve_planning_response(
+                            clarified_raw,
+                            planning_inputs=adaptive_planning_inputs,
+                            advisor_candidates=adaptive_advisor_candidates,
+                            policy_error_fn=_portfolio_runtime_errors,
+                            replan_fn=_semantic_replan,
+                            impact_review_fn=None,
+                        )
+                        clarification_resolution_audit = {
+                            "trigger": deepcopy(deferred_request),
+                            "household_interaction": deepcopy(adaptive_clarification_audit),
+                            "initial_resolution": initial_resolution_summary,
+                            "revised_status": clarified_resolution.get("status"),
+                            "revised_selected_candidate_id": clarified_resolution.get(
+                                "selected_candidate_id"
+                            ),
+                            "selection_changed_by_harness": False,
+                            "question_authored_by_harness": False,
+                        }
+                        if isinstance(
+                            clarified_resolution.get("selected_executable_plan"), dict
+                        ):
+                            clarified_resolution["deferred_clarification"] = (
+                                clarification_resolution_audit
+                            )
+                            adaptive_planning_resolution = clarified_resolution
+                        else:
+                            clarification_resolution_audit["revised_plan_retained"] = False
+                            clarification_resolution_audit[
+                                "fallback_to_initial_valid_selection"
+                            ] = True
+                            adaptive_planning_resolution["deferred_clarification"] = (
+                                clarification_resolution_audit
+                            )
+                    except Exception as exc:
+                        adaptive_planning_resolution["deferred_clarification"] = {
+                            "trigger": deepcopy(deferred_request),
+                            "household_interaction": deepcopy(adaptive_clarification_audit),
+                            "initial_resolution": initial_resolution_summary,
+                            "status": "unavailable_initial_valid_selection_retained",
+                            "error": _adaptive_exception_audit_text(exc, limit=500),
+                            "selection_changed_by_harness": False,
+                            "question_authored_by_harness": False,
+                        }
                 if adaptive_clarification_audit:
                     adaptive_planning_resolution["interactive_clarification"] = deepcopy(
                         adaptive_clarification_audit

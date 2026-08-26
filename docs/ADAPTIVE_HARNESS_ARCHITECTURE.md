@@ -98,6 +98,17 @@ information-value audit. The audit records whether a request cited a supplied
 unknown and explained how the answer affects the decision, but assigns no
 score, target, or preferred question count and never changes the model's plan.
 
+A model may also return a conservative executable selection together with a
+deferred question. When independent evidence later establishes that the
+selection is physically identical to the ordinary plan, that another feasible
+model candidate has a supported incremental benefit, and that the model's
+question cites a supplied unknown, the harness may ask that first question
+once. The same base model then reconsiders its own portfolio with the direct
+reply and the prior evidence cards. The harness neither authors the question
+nor selects the material alternative; failure of this optional interaction
+retains the original valid plan. This lets cautious models resolve genuine
+household uncertainty without turning clarification into a mandatory recipe.
+
 After a model proposes a portfolio, a method-blind accounting tool evaluates
 each candidate independently. It can integrate fixed-power appliance schedules
 against the visible hourly tariff, measure half-open event-window overlap,
