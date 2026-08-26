@@ -1203,6 +1203,65 @@ def test_ev_feasibility_inputs_expose_every_parameter_used_by_hard_validation() 
         assert visible[key] == ev[key]
 
 
+def test_planning_inputs_expose_machine_checked_event_timing_constraints() -> None:
+    loop = SimpleNamespace(
+        appliance_suite=None,
+        current_occupied=True,
+        current_occupancy_count=1.0,
+        current_occupancy_source="shared_calendar",
+        agent_profile_capsule_by_event_id={"e": {"text": "Keep chores outside the event."}},
+        agent_memory_capsule_by_event_id={"e": {}},
+        agent_preference_memory={},
+    )
+    inputs = fr._adaptive_v3_observable_planning_inputs(
+        loop,
+        event_id="e",
+        sim_h=40.5,
+        hod=16.5,
+        temp=25.0,
+        out_t=30.0,
+        facility_w=1000.0,
+        observable_calendar={"occupied": True},
+        memory_event={"id": "e", "trigger_h": 42.0, "end_h": 43.0},
+        vpp_event={"id": "e", "trigger_h": 42.0, "end_h": 43.0},
+        user_input="Avoid the event window.",
+        appliance_config={
+            "washer": {
+                "present": True,
+                "shiftable": True,
+                "dr_adjustable": True,
+                "duration_h": 2.0,
+            }
+        },
+        setpoint_min_c=22.0,
+        setpoint_max_c=28.0,
+    )
+
+    by_id = {item["constraint_id"]: item for item in inputs["explicit_constraints"]}
+    assert by_id["future_next_check_when_present"] == {
+        "constraint_id": "future_next_check_when_present",
+        "kind": "range",
+        "path": "/next_check_hour",
+        "min": 40.666667,
+        "nullable": True,
+        "severity": "hard",
+        "evidence_paths": ["/observable_state/time/simulation_hour"],
+    }
+    assert by_id["washer_outside_vpp_window"] == {
+        "constraint_id": "washer_outside_vpp_window",
+        "kind": "disjoint_interval_duration",
+        "path": "/appliances/washer_start_h",
+        "duration_h": 2.0,
+        "forbidden_window": [18.0, 19.0],
+        "severity": "hard",
+        "evidence_paths": [
+            "/observable_state/device_capabilities/washer/duration_h",
+            "/event/trigger_h",
+            "/event/end_h",
+        ],
+    }
+
+
 def test_acceptance_gate_is_reused_only_for_the_same_concrete_plan() -> None:
     gate = {
         "accepted": True,

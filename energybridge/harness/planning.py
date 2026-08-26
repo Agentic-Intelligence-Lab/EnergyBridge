@@ -565,6 +565,7 @@ def derive_planning_constraints(
             "enum",
             "equals",
             "disjoint_interval",
+            "disjoint_interval_duration",
             "within_interval",
         }:
             continue
@@ -1015,6 +1016,9 @@ def _validate_constraint(
                 )
         return violations, patches
 
+    if value is None and bool(constraint.get("nullable", False)):
+        return violations, patches
+
     if value is _MISSING and kind not in {"disjoint_interval", "within_interval"}:
         # Optional paths are not errors.  Pair `required` with another rule when
         # the field must be present.
@@ -1076,6 +1080,32 @@ def _validate_constraint(
             else:
                 violations.append(
                     _violation(constraint, path=path, actual=value, message="value differs from invariant")
+                )
+    elif kind == "disjoint_interval_duration":
+        start = _finite_number(value)
+        duration = _finite_number(constraint.get("duration_h"))
+        reference = _interval(
+            constraint.get("interval", constraint.get("window", constraint.get("forbidden_window")))
+        )
+        if start is None or duration is None or duration <= 0.0 or reference is None:
+            violations.append(
+                _violation(
+                    constraint,
+                    path=path,
+                    actual={"start": start, "duration_h": duration},
+                    message="start, positive duration, and forbidden interval must be finite",
+                )
+            )
+        else:
+            end = start + duration
+            if max(start, reference[0]) < min(end, reference[1]):
+                violations.append(
+                    _violation(
+                        constraint,
+                        path=path,
+                        actual={"start": start, "end": end, "duration_h": duration},
+                        message="duration-derived half-open interval overlaps forbidden window",
+                    )
                 )
     elif kind in {"disjoint_interval", "within_interval"}:
         start_path = str(constraint.get("start_path") or "")

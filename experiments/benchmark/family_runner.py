@@ -558,6 +558,7 @@ def _adaptive_v3_observable_planning_inputs(
     required_action_fields = _missing_explicit_appliance_actions(
         {}, appliance_config, adaptive_contract=True
     )
+    realtime_device_state = _adaptive_v3_realtime_device_state(loop, sim_h)
     observable_state = {
         "time": {"simulation_hour": sim_h, "hour_of_day": hod},
         "environment": {"indoor_temp_c": temp, "outdoor_temp_c": out_t},
@@ -571,7 +572,7 @@ def _adaptive_v3_observable_planning_inputs(
             "setpoint": {"min": float(setpoint_min_c), "max": float(setpoint_max_c)},
         },
         "device_capabilities": devices,
-        "realtime_device_state": _adaptive_v3_realtime_device_state(loop, sim_h),
+        "realtime_device_state": realtime_device_state,
         "required_appliance_action_fields": required_action_fields,
         "supported_plan_fields": {
             "setpoint": "finite thermostat setpoint in degrees C",
@@ -640,7 +641,64 @@ def _adaptive_v3_observable_planning_inputs(
             "severity": "hard",
             "evidence_paths": ["/observable_state/required_appliance_action_fields"],
         },
+        {
+            "constraint_id": "future_next_check_when_present",
+            "kind": "range",
+            "path": "/next_check_hour",
+            "min": round(float(sim_h) + (1.0 / 6.0), 6),
+            "nullable": True,
+            "severity": "hard",
+            "evidence_paths": ["/observable_state/time/simulation_hour"],
+        },
     ]
+    if isinstance(vpp_event, dict):
+        event_start_hod = float(vpp_event.get("trigger_h", 0.0)) % 24.0
+        event_duration_h = max(
+            0.0,
+            float(vpp_event.get("end_h", 0.0)) - float(vpp_event.get("trigger_h", 0.0)),
+        )
+        event_end_hod = event_start_hod + event_duration_h
+        current_day_state = (
+            realtime_device_state.get("current_day_service_state")
+            if isinstance(realtime_device_state.get("current_day_service_state"), dict)
+            else {}
+        )
+        for service in ("washer", "dishwasher", "dryer"):
+            capability = devices.get(service) or {}
+            observed = current_day_state.get(service) or {}
+            service_locked = bool(
+                isinstance(observed, dict)
+                and (
+                    observed.get("completed") is True
+                    or str(observed.get("status") or "").lower() in {"completed", "finished"}
+                )
+            )
+            if (
+                not capability.get("present")
+                or service_locked
+                or not bool(capability.get("shiftable", capability.get("dr_adjustable", False)))
+            ):
+                continue
+            duration_h = capability.get("duration_h")
+            try:
+                duration_h = float(duration_h)
+            except (TypeError, ValueError):
+                continue
+            if duration_h <= 0.0:
+                continue
+            explicit_constraints.append({
+                "constraint_id": f"{service}_outside_vpp_window",
+                "kind": "disjoint_interval_duration",
+                "path": f"/appliances/{service}_start_h",
+                "duration_h": duration_h,
+                "forbidden_window": [event_start_hod, event_end_hod],
+                "severity": "hard",
+                "evidence_paths": [
+                    f"/observable_state/device_capabilities/{service}/duration_h",
+                    "/event/trigger_h",
+                    "/event/end_h",
+                ],
+            })
     return {
         "observable_state": observable_state,
         "observable_profile": observable_profile,

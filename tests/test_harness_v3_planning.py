@@ -568,6 +568,53 @@ def test_explicit_half_open_event_constraint_rejects_overlap() -> None:
     assert adjacent["feasible"] is True
 
 
+def test_duration_derived_interval_rejects_hidden_cycle_overlap() -> None:
+    constraint = {
+        "constraint_id": "washer_outside_event",
+        "kind": "disjoint_interval_duration",
+        "path": "/appliances/washer_start_h",
+        "duration_h": 2.0,
+        "forbidden_window": [18.0, 19.0],
+    }
+
+    overlaps = validate_plan_candidate(
+        {"setpoint": 26.0, "appliances": {"washer_start_h": 17.0}},
+        explicit_constraints=[constraint],
+    )
+    boundary_safe = validate_plan_candidate(
+        {"setpoint": 26.0, "appliances": {"washer_start_h": 19.0}},
+        explicit_constraints=[constraint],
+    )
+
+    assert overlaps["feasible"] is False
+    assert overlaps["violations"][0]["message"] == (
+        "duration-derived half-open interval overlaps forbidden window"
+    )
+    assert boundary_safe["feasible"] is True
+
+
+def test_nullable_future_check_constraint_accepts_none_but_rejects_past() -> None:
+    constraint = {
+        "constraint_id": "future_check",
+        "kind": "range",
+        "path": "/next_check_hour",
+        "min": 42.166667,
+        "nullable": True,
+    }
+
+    no_check = validate_plan_candidate(
+        {"setpoint": 26.0, "appliances": {}, "next_check_hour": None},
+        explicit_constraints=[constraint],
+    )
+    stale_check = validate_plan_candidate(
+        {"setpoint": 26.0, "appliances": {}, "next_check_hour": 19.0},
+        explicit_constraints=[constraint],
+    )
+
+    assert no_check["feasible"] is True
+    assert stale_check["feasible"] is False
+
+
 def test_dotted_constraint_paths_are_canonicalized_before_text_redaction() -> None:
     constraints = derive_planning_constraints(
         observable_state={
