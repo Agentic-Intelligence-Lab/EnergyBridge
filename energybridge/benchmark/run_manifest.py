@@ -17,6 +17,9 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
+from energybridge.harness.memory_v3 import MEMORY_V3_VERSION
+from energybridge.harness.planning import PLANNING_SCHEMA_VERSION
+from energybridge.harness.profile_v3 import HOUSEHOLD_MODEL_VERSION
 from energybridge.utils.config import load_llm_config
 
 
@@ -62,6 +65,33 @@ def _acceptance_gate(profile: str) -> str:
 
 def _method_uses_mpc_horizon(method: str) -> bool:
     return str(method).strip().lower() in {"energybridge", "agent", "mpc_dynamic", "mpc"}
+
+
+def _uses_adaptive_agent_components(profile: str, method: str) -> bool:
+    return profile == "adaptive_v2" and str(method).strip().lower() in {
+        "energybridge",
+        "agent",
+    }
+
+
+def _agent_component_schemas(profile: str, method: str) -> dict[str, str | None]:
+    """Describe the agent stack without exposing its state or storage location."""
+    if not _uses_adaptive_agent_components(profile, method):
+        return {"profile": None, "memory": None, "planning": None}
+    return {
+        "profile": HOUSEHOLD_MODEL_VERSION,
+        "memory": MEMORY_V3_VERSION,
+        "planning": PLANNING_SCHEMA_VERSION,
+    }
+
+
+def _agent_memory_warm_start_enabled(profile: str, method: str) -> bool:
+    """Return configured warm-start state without inspecting or naming the store."""
+    return bool(
+        _uses_adaptive_agent_components(profile, method)
+        and str(os.getenv("ENERGYBRIDGE_AGENT_MEMORY_STORE", "")).strip()
+        and _env_flag("ENERGYBRIDGE_LOAD_AGENT_MEMORY")
+    )
 
 
 def _safe_endpoint(base_url: str) -> str:
@@ -461,6 +491,11 @@ def build_run_manifest(
             "manual_override_uses_llm": _env_flag("ENERGYBRIDGE_ROLEPLAY_MANUAL_OVERRIDE", "1"),
             "acceptance_fallback_disabled": _env_flag("ENERGYBRIDGE_DISABLE_ACCEPTANCE_FALLBACK"),
             "persist_agent_memory": _env_flag("ENERGYBRIDGE_PERSIST_AGENT_MEMORY"),
+            "agent_component_schemas": _agent_component_schemas(profile, method),
+            "agent_memory_warm_start_enabled": _agent_memory_warm_start_enabled(
+                profile,
+                method,
+            ),
             "force_mpc_primary_without_llm": force_primary,
         },
         "runner_options": _runner_options(
@@ -491,6 +526,23 @@ def result_matches_manifest(
     actual = result.get("run_manifest")
     if not isinstance(actual, Mapping):
         return False
+    # A warm-start manifest intentionally omits the private memory path and
+    # contents.  Consequently its fingerprint cannot prove that the result
+    # used the same household state.  Never reuse such a run through --resume;
+    # warm-start studies must execute against the explicitly selected store.
+    actual_harness = actual.get("harness")
+    if (
+        isinstance(actual_harness, Mapping)
+        and bool(actual_harness.get("agent_memory_warm_start_enabled"))
+    ):
+        return False
+    if isinstance(expected_manifest_or_fingerprint, Mapping):
+        expected_harness = expected_manifest_or_fingerprint.get("harness")
+        if (
+            isinstance(expected_harness, Mapping)
+            and bool(expected_harness.get("agent_memory_warm_start_enabled"))
+        ):
+            return False
     stored = actual.get("fingerprint")
     if not isinstance(stored, str) or not stored:
         return False

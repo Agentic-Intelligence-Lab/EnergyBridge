@@ -8,6 +8,9 @@ from energybridge.benchmark.run_manifest import (
     manifest_fingerprint,
     result_matches_manifest,
 )
+from energybridge.harness.memory_v3 import MEMORY_V3_VERSION
+from energybridge.harness.planning import PLANNING_SCHEMA_VERSION
+from energybridge.harness.profile_v3 import HOUSEHOLD_MODEL_VERSION
 from experiments.benchmark.run_baseline_matrix import (
     Job,
     _command_for,
@@ -34,6 +37,8 @@ def _stable_environment(monkeypatch, *, model: str = "controller-model-a") -> No
         "ENERGYBRIDGE_ROLEPLAY_MANUAL_OVERRIDE": "1",
         "ENERGYBRIDGE_DISABLE_ACCEPTANCE_FALLBACK": "0",
         "ENERGYBRIDGE_PERSIST_AGENT_MEMORY": "0",
+        "ENERGYBRIDGE_AGENT_MEMORY_STORE": "",
+        "ENERGYBRIDGE_LOAD_AGENT_MEMORY": "0",
         "ENERGYBRIDGE_FORCE_MPC_PRIMARY_NO_LLM": "0",
         "ENERGYBRIDGE_FORCE_RULE_MILP_PRIMARY_NO_LLM": "0",
         "USE_LLM": "1",
@@ -99,6 +104,12 @@ def test_manifest_changes_with_model_profile_and_roleplay_gate(monkeypatch) -> N
     assert baseline["schema_version"] == SCHEMA_VERSION
     assert baseline["harness_profile"] == "adaptive_v2"
     assert baseline["harness"]["acceptance_gate_uses_llm"] is True
+    assert baseline["harness"]["agent_component_schemas"] == {
+        "profile": HOUSEHOLD_MODEL_VERSION,
+        "memory": MEMORY_V3_VERSION,
+        "planning": PLANNING_SCHEMA_VERSION,
+    }
+    assert baseline["harness"]["agent_memory_warm_start_enabled"] is False
     assert baseline["llm"]["controller"]["model"] == "controller-model-a"
     assert baseline["llm"]["roleplay"]["model"] == "roleplay-model-a"
 
@@ -113,7 +124,71 @@ def test_manifest_changes_with_model_profile_and_roleplay_gate(monkeypatch) -> N
     paper = _persona_manifest()
     assert paper["harness_profile"] == "paper_v1"
     assert paper["harness"]["acceptance_gate_uses_llm"] is False
+    assert paper["harness"]["agent_component_schemas"] == {
+        "profile": None,
+        "memory": None,
+        "planning": None,
+    }
+    assert paper["harness"]["agent_memory_warm_start_enabled"] is False
     assert paper["fingerprint"] != baseline["fingerprint"]
+
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "legacy_v1")
+    legacy = _persona_manifest()
+    assert legacy["harness_profile"] == "legacy_v1"
+    assert legacy["harness"]["agent_component_schemas"] == {
+        "profile": None,
+        "memory": None,
+        "planning": None,
+    }
+    assert legacy["harness"]["agent_memory_warm_start_enabled"] is False
+    assert legacy["fingerprint"] != baseline["fingerprint"]
+
+
+def test_manifest_records_warm_start_without_memory_store_provenance(monkeypatch) -> None:
+    _stable_environment(monkeypatch)
+    cold = _persona_manifest()
+
+    # Loading is not enabled until the operator also names an explicit store.
+    monkeypatch.setenv("ENERGYBRIDGE_LOAD_AGENT_MEMORY", "1")
+    missing_store = _persona_manifest()
+    assert missing_store == cold
+
+    private_store_a = "/private/household-memory-a.json"
+    monkeypatch.setenv("ENERGYBRIDGE_AGENT_MEMORY_STORE", private_store_a)
+    warm_a = _persona_manifest()
+    assert warm_a["harness"]["agent_memory_warm_start_enabled"] is True
+    assert warm_a["fingerprint"] != cold["fingerprint"]
+    assert private_store_a not in json.dumps(warm_a, sort_keys=True)
+
+    # A store location is private runtime state, not run identity.
+    private_store_b = "/another/private/household-memory-b.json"
+    monkeypatch.setenv("ENERGYBRIDGE_AGENT_MEMORY_STORE", private_store_b)
+    warm_b = _persona_manifest()
+    assert warm_b == warm_a
+    serialized = json.dumps(warm_b, sort_keys=True)
+    assert private_store_b not in serialized
+    assert "agent_memory_store" not in serialized.lower()
+
+    # Store contents are deliberately private and absent from the fingerprint,
+    # so a warm-start result can never be proven safe for --resume reuse.
+    warm_result = {"exit_code": 0, "run_manifest": warm_b}
+    assert result_matches_manifest(warm_result, warm_b) is False
+    assert result_matches_manifest(warm_result, warm_b["fingerprint"]) is False
+
+
+def test_non_agent_methods_do_not_claim_adaptive_agent_components(monkeypatch) -> None:
+    _stable_environment(monkeypatch)
+    monkeypatch.setenv("ENERGYBRIDGE_AGENT_MEMORY_STORE", "/private/memory.json")
+    monkeypatch.setenv("ENERGYBRIDGE_LOAD_AGENT_MEMORY", "1")
+
+    manifest = _persona_manifest(method="HEMA")
+
+    assert manifest["harness"]["agent_component_schemas"] == {
+        "profile": None,
+        "memory": None,
+        "planning": None,
+    }
+    assert manifest["harness"]["agent_memory_warm_start_enabled"] is False
 
 
 def test_endpoint_provenance_strips_embedded_credentials_and_query(monkeypatch) -> None:

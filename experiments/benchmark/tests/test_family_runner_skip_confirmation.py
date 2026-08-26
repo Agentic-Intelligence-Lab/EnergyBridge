@@ -334,6 +334,255 @@ def test_vpp_rejection_can_use_roleplay_manual_override(monkeypatch) -> None:
     assert "rule_milp" not in captured["user_prompt"]
 
 
+def test_adaptive_manual_rejection_roleplay_is_private_and_prompt_invariant(monkeypatch) -> None:
+    captured = []
+
+    def fake_manual_override_llm(system_prompt, user_prompt):
+        captured.append((system_prompt, user_prompt))
+        return (
+            {
+                "manual_override": {
+                    "setpoint": 24.5,
+                    "appliance_actions": {
+                        "ev_mode": "delay",
+                        "ev_charge_start_h": 20.0,
+                        "ev_charge_end_h": 7.5,
+                    },
+                    "reason": (
+                        "The utility provider portal utility.example/bill supports our key routine; "
+                        "provider OpenAI model GPT-5 method=mpc_dynamic evaluator=JudgeX "
+                        "api_key=sk-RESPONSESECRET123 endpoint=https://private.example/v1."
+                    ),
+                },
+                "override_type": "mixed provider=SecretOverrideProvider",
+                "user_comment": (
+                    "I will keep my key routine through the utility portal; "
+                    "model=SecretModel evaluator=SecretJudge endpoint=hidden.example/v1."
+                ),
+            },
+            {
+                "latency_seconds": 0.1,
+                "provider": "SECRET_METRIC_PROVIDER",
+                "model": "SECRET_METRIC_MODEL",
+                "key_index": 7,
+                "token_usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 5,
+                    "api_key": "sk-METRICSECRET123",
+                },
+            },
+        )
+
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")
+    monkeypatch.setattr(fr, "_call_roleplay_manual_override_llm", fake_manual_override_llm)
+    visible = {
+        "description": (
+            "We use the utility provider AcmeCloud portal utility.example/bill and protect our key routine "
+            "around the children's evening bath."
+        ),
+        "schedule": {"returns_home_h": 18.0},
+    }
+    left = {
+        **visible,
+        "id": "HIDDEN_LEFT_ID",
+        "display_name": "Hidden Left",
+        "tags": {"latent_group": "left"},
+        "preferences": {
+            "scoring_weights": {"comfort": 0.99, "energy": 0.005, "vpp": 0.005},
+            "vpp_override_prob": 0.01,
+        },
+        "provider": "HIDDEN_LEFT_PROVIDER",
+        "model": "HIDDEN_LEFT_MODEL",
+        "api_key": "sk-HIDDENLEFT123",
+    }
+    right = {
+        **visible,
+        "id": "HIDDEN_RIGHT_ID",
+        "display_name": "Hidden Right",
+        "tags": {"latent_group": "right"},
+        "preferences": {
+            "scoring_weights": {"comfort": 0.01, "energy": 0.49, "vpp": 0.50},
+            "vpp_override_prob": 0.99,
+        },
+        "provider": "HIDDEN_RIGHT_PROVIDER",
+        "model": "HIDDEN_RIGHT_MODEL",
+        "api_key": "sk-HIDDENRIGHT123",
+    }
+    appliances = {
+        "ev": {
+            "present": True,
+            "arrival_h": 18.0,
+            "departure_h": 7.5,
+            "provider": "HIDDEN_DEVICE_PROVIDER",
+            "api_key": "sk-HIDDENDEVICE123",
+        },
+    }
+    event = {
+        "id": "event-1",
+        "day": 1,
+        "trigger_h": 18.0,
+        "end_h": 19.0,
+        "provider": "HIDDEN_EVENT_PROVIDER",
+    }
+    rejected = {
+        "setpoint": 28.0,
+        "reason": "Protect the key routine; provider=HIDDEN_PLAN_PROVIDER endpoint=https://plan.example/v1.",
+        "appliance_actions": {"ev_mode": "smart", "ev_charge_start_h": 21.0},
+        "objective_source": "HIDDEN_METHOD_SOURCE",
+        "model": "HIDDEN_PLAN_MODEL",
+    }
+    ordinary = {
+        "setpoint": 24.5,
+        "reason": "Keep the children's evening bath and ordinary EV routine.",
+        "appliance_actions": {"ev_mode": "normal", "ev_charge_start_h": 18.0},
+    }
+
+    first = fr._roleplay_manual_vpp_rejection_override(
+        persona_config=left,
+        appliance_config=appliances,
+        event=event,
+        rejected_plan=rejected,
+        deterministic_manual_plan=ordinary,
+        current_setpoint=28.0,
+        current_hod=18.0,
+    )
+    second = fr._roleplay_manual_vpp_rejection_override(
+        persona_config=right,
+        appliance_config=appliances,
+        event=event,
+        rejected_plan=rejected,
+        deterministic_manual_plan=ordinary,
+        current_setpoint=28.0,
+        current_hod=18.0,
+    )
+
+    assert captured[0] == captured[1]
+    prompt = captured[0][1]
+    assert "Household resume (visible facts only)" in prompt
+    assert "utility service company" in prompt.lower()
+    assert "key routine" in prompt.lower()
+    assert "children's evening bath" in prompt
+    for hidden in (
+        "HIDDEN_LEFT_ID",
+        "Hidden Left",
+        "HIDDEN_LEFT_PROVIDER",
+        "HIDDEN_LEFT_MODEL",
+        "sk-HIDDENLEFT123",
+        "HIDDEN_DEVICE_PROVIDER",
+        "sk-HIDDENDEVICE123",
+        "HIDDEN_EVENT_PROVIDER",
+        "HIDDEN_PLAN_PROVIDER",
+        "plan.example",
+        "HIDDEN_METHOD_SOURCE",
+        "HIDDEN_PLAN_MODEL",
+        "AcmeCloud",
+        "utility.example",
+    ):
+        assert hidden not in prompt
+
+    assert first == second
+    assert first is not None
+    assert first["appliance_actions"]["ev_mode"] == "delay"
+    serialized = json.dumps(first, ensure_ascii=False)
+    lowered = serialized.lower()
+    assert "utility service company portal [private endpoint]" in lowered
+    assert "key routine" in lowered
+    for hidden in (
+        "openai",
+        "gpt-5",
+        "mpc_dynamic",
+        "judgex",
+        "sk-response",
+        "private.example",
+        "secretmodel",
+        "secretjudge",
+        "hidden.example",
+        "secretmetric",
+        "key_index",
+        "api_key",
+    ):
+        assert hidden not in lowered
+    assert first["manual_override_metrics"] == {
+        "latency_seconds": 0.1,
+        "token_usage": {"prompt_tokens": 10, "completion_tokens": 5},
+    }
+
+
+def test_adaptive_manual_override_ev_enum_and_numeric_bool_contract(monkeypatch) -> None:
+    config = {
+        "washer": {"present": True},
+        "ev": {"present": True},
+    }
+    base = {"setpoint": 25.0, "appliance_actions": {}}
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")
+
+    delay = fr._normalise_roleplay_manual_override(
+        {"manual_override": {"appliance_actions": {"ev_mode": "delay"}}},
+        base_plan=base,
+        appliance_config=config,
+    )
+    assert delay is not None
+    assert delay["appliance_actions"]["ev_mode"] == "delay"
+    assert fr._normalise_roleplay_manual_override(
+        {"manual_override": {"appliance_actions": {"ev_mode": "off"}}},
+        base_plan=base,
+        appliance_config=config,
+    ) is None
+    assert fr._normalise_roleplay_manual_override(
+        {"manual_override": {"setpoint": True}},
+        base_plan=base,
+        appliance_config=config,
+    ) is None
+    assert fr._normalise_roleplay_manual_override(
+        {"manual_override": {"appliance_actions": {"washer_start_h": True}}},
+        base_plan=base,
+        appliance_config=config,
+    ) is None
+
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "legacy_v1")
+    legacy = fr._normalise_roleplay_manual_override(
+        {"manual_override": {"setpoint": True, "appliance_actions": {"ev_mode": "off"}}},
+        base_plan=base,
+        appliance_config=config,
+    )
+    assert legacy is not None
+    assert legacy["setpoint"] == 1.0
+    assert legacy["appliance_actions"]["ev_mode"] == "off"
+
+
+def test_adaptive_manual_override_exception_does_not_persist_raw_error(monkeypatch) -> None:
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")
+
+    def fail_with_private_error(_system_prompt, _user_prompt):
+        raise RuntimeError(
+            "provider=SecretProvider model=SecretModel api_key=sk-EXCEPTIONSECRET123 "
+            "endpoint=https://exception.example/v1"
+        )
+
+    monkeypatch.setattr(fr, "_call_roleplay_manual_override_llm", fail_with_private_error)
+    fallback = fr._roleplay_manual_vpp_rejection_override(
+        persona_config={"description": "Keep dinner unchanged."},
+        appliance_config={},
+        event={"id": "event-1", "trigger_h": 18.0, "end_h": 19.0},
+        rejected_plan={"setpoint": 28.0},
+        deterministic_manual_plan={"setpoint": 25.0, "appliance_actions": {}},
+        current_setpoint=28.0,
+        current_hod=18.0,
+    )
+
+    assert fallback is not None
+    error = fallback["manual_override_error"]
+    assert error.startswith("RuntimeError:")
+    serialized = json.dumps(fallback)
+    for hidden in (
+        "SecretProvider",
+        "SecretModel",
+        "sk-EXCEPTIONSECRET123",
+        "exception.example",
+    ):
+        assert hidden not in serialized
+
+
 def test_manual_rejection_override_uses_strict_household_comfort_for_caregiving() -> None:
     persona = {
         "meta": {"persona_type": "multi_user_household"},

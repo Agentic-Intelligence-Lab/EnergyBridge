@@ -12,6 +12,7 @@ from energybridge.harness.roleplay import (
     RoleplayResponseError,
     build_roleplay_acceptance_prompts,
     normalize_roleplay_acceptance_response,
+    sanitize_household_resume_for_roleplay,
 )
 from energybridge.llm.roleplay_user import (
     RoleplayUserSimulator,
@@ -194,12 +195,11 @@ def test_acceptance_prompt_is_model_blind_and_has_one_compact_response_shape() -
 
     assert payload["schema_version"] == ACCEPTANCE_SCHEMA_VERSION
     assert payload["persona_baseline_acceptance_probability"] == 0.27
-    assert payload["persona_baseline_audit"]["source"] == "caller.baseline_acceptance_probability"
-    assert set(payload["household_resume"]["audit"]) == {
-        "profile_fingerprint",
-        "resume_fingerprint",
-        "roleplay_projection",
-    }
+    assert "persona_baseline_audit" not in payload
+    assert "audit" not in payload["household_resume"]
+    assert "resume_id" not in payload["household_resume"]
+    assert "household_id" not in payload["household_resume"]
+    assert "display_name" not in payload["household_resume"]
     assert "controller_context_source" not in serialized
     assert "the the plan" not in serialized.lower()
     assert "objective_source" not in serialized
@@ -228,6 +228,317 @@ def test_acceptance_prompt_is_model_blind_and_has_one_compact_response_shape() -
     assert "fixed probability band" not in (system + user).lower()
     assert "probability floor" not in (system + user).lower()
     assert "probability cap" not in (system + user).lower()
+
+
+def test_roleplay_privacy_projection_blocks_nested_persona_secrets() -> None:
+    persona = _load_persona("basic_role_a_commuter_price_cooperative")
+    persona["description"] = (
+        "Returns home around 18:30 after the late shift. "
+        "Utility portal https://utility.example/account is used for bills. "
+        "Use https://private.example/v1 with AcmeCloud and CustomSolver. "
+        "The backup host is api.internal.example.net:8443/v1 and 10.0.0.4:8080/v1. "
+        "provider zetacorp model fooxyz planner bazqux controller gizmo42 "
+        "algorithm alphabeta endpoint internalbox:8443/v1 "
+        "endpoint [2001:db8::1]:8443/v1. "
+        "key ABCDEF123456 api key ZYXWVUT987654 "
+        "scoring_weights={comfort:0.99,energy:0.01} "
+        "sk-PERSONAFAKEKEY123 Authorization: Bearer bearer.fake.secret "
+        "Token: token.fake.secret API_KEY=description-api-secret "
+        "endpoint=https://description.private.example/v1 "
+        "secret=description-secret-value "
+        "-----BEGIN PRIVATE KEY-----\nPEM-DESCRIPTION-SECRET\n"
+        "-----END PRIVATE KEY-----"
+    )
+    persona["llm_prompts"]["system_prompt"] = (
+        "I need hot water before 21:00. provider=PRIVATE_PROVIDER_NAME "
+        "model=PRIVATE_MODEL_NAME Token first-person-token-secret"
+    )
+    persona["preferences"].update({
+        "baseline_acceptance_probability": 0.91,
+        "vpp_acceptance_baseline_probability": 0.92,
+        "private": {"note": "PRIVATE_FIELD_SENTINEL"},
+        "developer": {"instruction": "DEVELOPER_FIELD_SENTINEL"},
+        "evaluator": {"rubric": "EVALUATOR_FIELD_SENTINEL"},
+        "APIKey": "sk-NESTEDFAKEKEY123",
+        "accessToken": "NESTED_ACCESS_TOKEN_SENTINEL",
+        "endpoint": "https://nested.private.example/v1",
+        "model": "NESTED_MODEL_SENTINEL",
+        "provider": "NESTED_PROVIDER_SENTINEL",
+        "method": "NESTED_METHOD_SENTINEL",
+        "note_sk-ABCDEFGHIJKLMNO": "ordinary",
+        "https://key.private.example/v1": "ordinary",
+        "normal_family_facts": {
+            "hot_water_note": "Hot water must be ready before 21:00.",
+            "bedtime_note": (
+                "Bedtime remains 23:00; secret=nested-note-secret-value"
+            ),
+            "deep": {
+                "acceptanceProbability": 0.99,
+                "vpp_override_prob": 0.88,
+                "api_key": "sk-DEEPFAKEKEY123",
+                "token": "DEEP_TOKEN_SENTINEL",
+                "base_url": "https://deep.private.example/v1",
+                "host": "deep-private-host.example/v1",
+                "developerInstructions": "DEEP_DEVELOPER_SENTINEL",
+                "evaluatorNotes": "DEEP_EVALUATOR_SENTINEL",
+                "household_fact": "Laundry should finish before 22:00.",
+            },
+        },
+    })
+
+    _, user_prompt, payload = build_roleplay_acceptance_prompts(
+        persona_config=persona,
+        baseline_acceptance_probability=0.37,
+        user_preference_text=(
+            "The utility provider offers a portal at https://live.utility.example/bill, "
+            "and the key routine remains visible. "
+            "The visible evidence refs are /memory/feedback/id, /profile/capabilities/ev, "
+            "and /device_capabilities/washer/earliest_h. Never expose "
+            "private.service.academy, memory.private.academy, profile.secret.com, "
+            "or endpoint tenant.backend.solutions. "
+            "provider livecorp model livexyz planner liveplan controller livecontrol42 "
+            "algorithm livealgo endpoint livebox:9443/v2 "
+            "endpoint [fd00::1234]:9443/v2"
+        ),
+    )
+    resume = payload["household_resume"]
+    serialized_payload = json.dumps(payload, ensure_ascii=False)
+
+    assert payload["persona_baseline_acceptance_probability"] == 0.37
+    assert "persona_baseline_audit" not in payload
+    assert "Returns home around 18:30 after the late shift." in (
+        resume["biography"]["description"]
+    )
+    assert "Utility portal [private endpoint] is used for bills." in (
+        resume["biography"]["description"]
+    )
+    assert "I need hot water before 21:00." in (
+        resume["biography"]["first_person_roleplay_source"]
+    )
+    assert "utility service company offers a portal at [private endpoint]" in (
+        payload["live_household_statement"].lower()
+    )
+    assert "key routine remains visible" in payload["live_household_statement"]
+    assert "/memory/feedback/id" in payload["live_household_statement"]
+    assert "/profile/capabilities/ev" in payload["live_household_statement"]
+    assert "/device_capabilities/washer/earliest_h" in payload["live_household_statement"]
+    for endpoint in (
+        "private.service.academy",
+        "memory.private.academy",
+        "profile.secret.com",
+        "tenant.backend.solutions",
+    ):
+        assert endpoint not in serialized_payload
+    projected_preferences = resume["decision_profile"]["other_preferences"]
+    assert projected_preferences["normal_family_facts"]["hot_water_note"] == (
+        "Hot water must be ready before 21:00."
+    )
+    assert projected_preferences["normal_family_facts"]["deep"]["household_fact"] == (
+        "Laundry should finish before 22:00."
+    )
+
+    leaked_values = (
+        "sk-PERSONAFAKEKEY123",
+        "https://utility.example/account",
+        "https://private.example/v1",
+        "api.internal.example.net:8443/v1",
+        "10.0.0.4:8080/v1",
+        "AcmeCloud",
+        "CustomSolver",
+        "zetacorp",
+        "fooxyz",
+        "bazqux",
+        "gizmo42",
+        "alphabeta",
+        "internalbox:8443/v1",
+        "2001:db8::1",
+        "https://live.utility.example/bill",
+        "livecorp",
+        "livexyz",
+        "liveplan",
+        "livecontrol42",
+        "livealgo",
+        "livebox:9443/v2",
+        "fd00::1234",
+        "ABCDEF123456",
+        "ZYXWVUT987654",
+        "scoring_weights",
+        "bearer.fake.secret",
+        "token.fake.secret",
+        "description-api-secret",
+        "https://description.private.example/v1",
+        "description-secret-value",
+        "PEM-DESCRIPTION-SECRET",
+        "PRIVATE_PROVIDER_NAME",
+        "PRIVATE_MODEL_NAME",
+        "first-person-token-secret",
+        "PRIVATE_FIELD_SENTINEL",
+        "DEVELOPER_FIELD_SENTINEL",
+        "EVALUATOR_FIELD_SENTINEL",
+        "sk-NESTEDFAKEKEY123",
+        "NESTED_ACCESS_TOKEN_SENTINEL",
+        "https://nested.private.example/v1",
+        "NESTED_MODEL_SENTINEL",
+        "NESTED_PROVIDER_SENTINEL",
+        "NESTED_METHOD_SENTINEL",
+        "note_sk-ABCDEFGHIJKLMNO",
+        "key.private.example",
+        "nested-note-secret-value",
+        "sk-DEEPFAKEKEY123",
+        "DEEP_TOKEN_SENTINEL",
+        "https://deep.private.example/v1",
+        "deep-private-host.example/v1",
+        "DEEP_DEVELOPER_SENTINEL",
+        "DEEP_EVALUATOR_SENTINEL",
+    )
+    for leaked in leaked_values:
+        assert leaked not in serialized_payload
+        assert leaked not in user_prompt
+
+    forbidden_resume_keys = {
+        "private",
+        "developer",
+        "evaluator",
+        "acceptance_probability",
+        "vpp_acceptance_baseline_probability",
+        "vpp_override_prob",
+        "api_key",
+        "access_token",
+        "endpoint",
+        "base_url",
+        "host",
+        "audit",
+        "resume_id",
+        "household_id",
+        "display_name",
+        "behavioral_dimensions",
+        "stable_priorities",
+        "scoring_weights",
+        "tags",
+        "model",
+        "provider",
+        "method",
+    }
+
+    def collect_keys(value: object) -> set[str]:
+        if isinstance(value, dict):
+            keys = {
+                str(key).strip().lower().replace("-", "_").replace(" ", "_")
+                for key in value
+            }
+            for nested in value.values():
+                keys.update(collect_keys(nested))
+            return keys
+        if isinstance(value, list):
+            keys: set[str] = set()
+            for nested in value:
+                keys.update(collect_keys(nested))
+            return keys
+        return set()
+
+    assert collect_keys(resume).isdisjoint(forbidden_resume_keys)
+
+    direct_projection = sanitize_household_resume_for_roleplay({
+        "schema_version": "energybridge.household_resume.v2",
+        "household_id": "privacy-test-household",
+        "biography": {"description": "A normal household fact; sk-DIRECTFAKEKEY123"},
+        "private": {"developer": "DIRECT_PRIVATE_SENTINEL"},
+        "nested": {"evaluatorNotes": "DIRECT_EVALUATOR_SENTINEL"},
+    })
+    direct_serialized = json.dumps(direct_projection, ensure_ascii=False)
+    assert "A normal household fact" in direct_serialized
+    assert "sk-DIRECTFAKEKEY123" not in direct_serialized
+    assert "DIRECT_PRIVATE_SENTINEL" not in direct_serialized
+    assert "DIRECT_EVALUATOR_SENTINEL" not in direct_serialized
+    assert "privacy-test-household" not in direct_serialized
+
+
+def test_roleplay_projection_omits_latent_weights_labels_and_hash_side_channels() -> None:
+    persona = _load_persona("basic_role_a_commuter_price_cooperative")
+    source_resume = build_household_resume(persona)
+    _, user_prompt, payload = build_roleplay_acceptance_prompts(
+        persona_config=persona,
+        baseline_acceptance_probability=0.41,
+    )
+    visible_resume = payload["household_resume"]
+    serialized = json.dumps(payload, ensure_ascii=False)
+    lowered = serialized.lower()
+
+    for forbidden_key in (
+        "stable_priorities",
+        "scoring_weights",
+        "behavioral_dimensions",
+        "decision_weight",
+        "audit",
+        "resume_id",
+        "household_id",
+        "display_name",
+    ):
+        assert forbidden_key not in serialized
+        assert forbidden_key not in user_prompt
+    for hidden_value in (
+        source_resume["resume_id"],
+        source_resume["household_id"],
+        source_resume["display_name"],
+        source_resume["audit"]["profile_fingerprint"],
+        source_resume["audit"]["resume_fingerprint"],
+    ):
+        assert hidden_value not in serialized
+        assert hidden_value not in user_prompt
+    assert "basic_role_a" not in lowered
+    assert "price-cooperative" not in lowered
+    assert "cooperative user prototype" not in lowered
+    for latent_tag in (
+        "regular_commuter",
+        "normal_comfort",
+        "price_sensitive",
+        "suggestion_first",
+        "evening_peak",
+    ):
+        assert latent_tag not in lowered
+    assert visible_resume["biography"]["description"]
+    assert visible_resume["biography"]["first_person_roleplay_source"]
+    assert visible_resume["daily_life"]["schedule"]["returns_home_h"] == 18.5
+    assert visible_resume["voice"]["example_utterances"]
+
+    other_persona = _load_persona("basic_role_e_caregiver_low_dr")
+    _, _, other_payload = build_roleplay_acceptance_prompts(
+        persona_config=other_persona,
+        baseline_acceptance_probability=0.41,
+    )
+    assert visible_resume["biography"] != other_payload["household_resume"]["biography"]
+
+
+def test_hidden_weight_and_label_changes_do_not_change_model_visible_prompt() -> None:
+    left = _load_persona("basic_role_a_commuter_price_cooperative")
+    right = json.loads(json.dumps(left))
+    left.update({"id": "hidden-archetype-left", "display_name": "Hidden Label Left"})
+    right.update({"id": "hidden-archetype-right", "display_name": "Hidden Label Right"})
+    left["tags"] = {"latent_group": "left"}
+    right["tags"] = {"latent_group": "right"}
+    left["preferences"].update({
+        "scoring_weights": {"comfort": 0.99, "energy": 0.005, "vpp": 0.005},
+        "vpp_override_prob": 0.01,
+        "scoring_rubric": "HIDDEN_LEFT_RUBRIC",
+    })
+    right["preferences"].update({
+        "scoring_weights": {"comfort": 0.01, "energy": 0.49, "vpp": 0.50},
+        "vpp_override_prob": 0.99,
+        "scoring_rubric": "HIDDEN_RIGHT_RUBRIC",
+    })
+
+    left_system, left_user, left_payload = build_roleplay_acceptance_prompts(
+        persona_config=left,
+        baseline_acceptance_probability=0.43,
+    )
+    right_system, right_user, right_payload = build_roleplay_acceptance_prompts(
+        persona_config=right,
+        baseline_acceptance_probability=0.43,
+    )
+
+    assert left_payload == right_payload
+    assert left_system == right_system
+    assert left_user == right_user
 
 
 def test_acceptance_prompt_penalizes_generic_explanations_without_method_targets() -> None:
@@ -434,15 +745,12 @@ def test_persona_prior_is_neutral_without_relabelling_other_persona_weights() ->
 
     assert payload_a["persona_baseline_acceptance_probability"] == pytest.approx(0.5)
     assert payload_e["persona_baseline_acceptance_probability"] == pytest.approx(0.5)
-    assert payload_a["persona_baseline_audit"]["formula"] == "0.5"
-    assert payload_a["persona_baseline_audit"]["source"] == (
-        "neutral_uninformed_consent_prior"
-    )
-    assert "not relabelled as acceptance probabilities" in payload_a[
-        "persona_baseline_audit"
-    ]["note"]
-    assert payload_a["household_resume"]["audit"]["profile_fingerprint"] != (
-        payload_e["household_resume"]["audit"]["profile_fingerprint"]
+    assert "persona_baseline_audit" not in payload_a
+    assert "persona_baseline_audit" not in payload_e
+    assert "audit" not in payload_a["household_resume"]
+    assert "audit" not in payload_e["household_resume"]
+    assert payload_a["household_resume"]["biography"] != (
+        payload_e["household_resume"]["biography"]
     )
 
 
@@ -463,6 +771,73 @@ def test_normalizer_preserves_arithmetic_model_probability_without_reshaping() -
     assert normalized["normalization"]["arithmetic_residual"] == pytest.approx(0.0)
     assert normalized["normalization"]["expected_baseline"] == 0.37
     assert normalized["hard_veto_applied"] is False
+
+
+def test_normalizer_sanitizes_model_authored_text_and_preserves_evidence_links() -> None:
+    response = _valid_response()
+    response["adjustments"][0].update({
+        "dimension": "arrival comfort planner outputplan",
+        "reason": "Arrival comfort matters; model outputxyz endpoint outputbox:8555/v1.",
+    })
+    response["adjustments"][1]["reason"] = (
+        "The washer remains usable; provider outputcorp."
+    )
+    response["evidence"][0]["fact"] = (
+        "Arrival comfort is important; sk-OUTPUTFAKEKEY123 "
+        "provider evidencecorp endpoint evidencebox:8666/v1."
+    )
+    response["evidence"][1]["fact"] = (
+        "The washer stays scheduled and the key routine remains unchanged."
+    )
+    response["counterfactual"] = {
+        "changes": [
+            "Restore the ordinary setpoint; controller outputcontrol "
+            "endpoint [fd00::77]:8555/v1."
+        ],
+        "decision_if_changed": "accept",
+        "acceptance_probability_if_changed": 0.81,
+        "reason": "That protects hot water; algorithm outputalgo.",
+    }
+    response["reason"] = (
+        "I need arrival comfort. Authorization: Bearer output.bearer.secret"
+    )
+    response["user_feedback"] = (
+        "Keep my utility provider portal utility.output.example/bill and key routine; "
+        "api key OUTPUTKEY123456."
+    )
+
+    normalized = normalize_roleplay_acceptance_response(
+        response,
+        expected_baseline=0.37,
+    )
+    serialized = json.dumps(normalized, ensure_ascii=False)
+    lowered = serialized.lower()
+
+    for leaked in (
+        "sk-OUTPUTFAKEKEY123",
+        "outputplan",
+        "outputxyz",
+        "outputbox:8555/v1",
+        "outputcorp",
+        "evidencecorp",
+        "evidencebox:8666/v1",
+        "outputcontrol",
+        "fd00::77",
+        "outputalgo",
+        "output.bearer.secret",
+        "utility.output.example/bill",
+        "OUTPUTKEY123456",
+    ):
+        assert leaked.lower() not in lowered
+    assert [item["id"] for item in normalized["evidence"]] == ["E1", "E2"]
+    assert [item["evidence"] for item in normalized["adjustments"]] == ["E1", "E2"]
+    assert "arrival comfort is important" in normalized["evidence"][0]["fact"].lower()
+    assert "key routine remains unchanged" in normalized["evidence"][1]["fact"].lower()
+    assert "arrival comfort" in normalized["reason"].lower()
+    assert "utility service company portal [private endpoint]" in (
+        normalized["user_feedback"].lower()
+    )
+    assert "key routine" in normalized["user_feedback"].lower()
 
 
 def test_explanation_quality_adjustment_remains_model_authored() -> None:
@@ -525,34 +900,38 @@ def test_normalizer_allows_no_change_but_rejects_mismatch_zero_item_and_unexplai
         )
 
 
-def test_normalizer_rejects_adjustment_evidence_sign_contradictions() -> None:
-    with pytest.raises(RoleplayResponseError, match="positive adjustments"):
-        normalize_roleplay_acceptance_response(
-            _valid_response(
-                adjustments=[{
-                    "dimension": "contradictory positive",
-                    "delta": 0.08,
-                    "evidence": "E1",
-                    "reason": "This cannot cite rejection evidence as a benefit.",
-                }],
-                final_acceptance_probability=0.45,
-            ),
-            expected_baseline=0.37,
-        )
+def test_normalizer_audits_adjustment_evidence_sign_contradictions() -> None:
+    positive = normalize_roleplay_acceptance_response(
+        _valid_response(
+            adjustments=[{
+                "dimension": "contradictory positive",
+                "delta": 0.08,
+                "evidence": "E1",
+                "reason": "This cites rejection-labelled evidence as a benefit.",
+            }],
+            final_acceptance_probability=0.45,
+        ),
+        expected_baseline=0.37,
+    )
+    negative = normalize_roleplay_acceptance_response(
+        _valid_response(
+            adjustments=[{
+                "dimension": "contradictory negative",
+                "delta": -0.06,
+                "evidence": "E2",
+                "reason": "This cites acceptance-labelled evidence as a penalty.",
+            }],
+            final_acceptance_probability=0.31,
+        ),
+        expected_baseline=0.37,
+    )
 
-    with pytest.raises(RoleplayResponseError, match="negative adjustments"):
-        normalize_roleplay_acceptance_response(
-            _valid_response(
-                adjustments=[{
-                    "dimension": "contradictory negative",
-                    "delta": -0.06,
-                    "evidence": "E2",
-                    "reason": "This cannot cite acceptance evidence as a penalty.",
-                }],
-                final_acceptance_probability=0.31,
-            ),
-            expected_baseline=0.37,
-        )
+    for result, sign in ((positive, "positive"), (negative, "negative")):
+        assert result["normalization"]["evidence_sign_consistent"] is False
+        assert result["normalization"]["evidence_sign_mismatches"][0]["delta_sign"] == sign
+        # The model-authored probability is preserved; no floor, cap, or
+        # post-hoc sign correction is applied.
+        assert result["normalization"]["arithmetic_residual"] == pytest.approx(0.0)
 
 
 def test_normalizer_rejects_duplicate_evidence_ids() -> None:

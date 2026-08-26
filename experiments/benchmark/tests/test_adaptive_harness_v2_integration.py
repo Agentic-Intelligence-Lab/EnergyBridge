@@ -156,6 +156,44 @@ def test_v2_roleplay_prompt_is_method_blind(monkeypatch) -> None:
     assert "mpc" not in prompts[0][1].lower()
 
 
+def test_v2_hidden_override_cannot_change_prompt_or_public_gate(monkeypatch) -> None:
+    persona, event, appliances, ordinary, offered = _fixture()
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")
+    monkeypatch.setenv("ENERGYBRIDGE_VPP_ACCEPTANCE_GATE", "adaptive_roleplay_v2")
+    monkeypatch.setenv("ENERGYBRIDGE_ROLEPLAY_ACCEPTANCE_GATE_USE_LLM", "1")
+    prompts: list[tuple[str, str]] = []
+
+    def fake_call(system: str, user: str, **kwargs):
+        prompts.append((system, user))
+        return _response(decision="accept", probability=0.54, delta=0.04), {
+            "used": True,
+            "model": "same-model",
+        }
+
+    monkeypatch.setattr(fr, "_call_roleplay_acceptance_gate_llm", fake_call)
+    left = json.loads(json.dumps(persona))
+    right = json.loads(json.dumps(persona))
+    left["preferences"]["vpp_override_prob"] = 0.01
+    right["preferences"]["vpp_override_prob"] = 0.99
+
+    gates = [
+        fr._evaluate_vpp_plan_acceptance_gate(
+            method="agent",
+            persona_config=current,
+            appliance_config=appliances,
+            event=event,
+            proposed_plan=offered,
+            default_plan=ordinary,
+            user_preference_text="A specific reversible plan is easier to accept.",
+        )
+        for current in (left, right)
+    ]
+
+    assert prompts[0] == prompts[1]
+    assert gates[0] == gates[1]
+    assert gates[0]["base_override_probability"] is None
+
+
 def test_v2_model_owns_valid_plan_and_explanation(monkeypatch) -> None:
     monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")
     assert fr._agent_model_owns_valid_plan("agent") is True
@@ -201,7 +239,11 @@ def test_v2_roleplay_error_fails_closed_without_legacy_estimator(monkeypatch) ->
     monkeypatch.delenv("ENERGYBRIDGE_DISABLE_ACCEPTANCE_FALLBACK", raising=False)
 
     def unavailable(*args, **kwargs):
-        raise RuntimeError("roleplay endpoint unavailable")
+        raise RuntimeError(
+            "roleplay endpoint unavailable; provider=SecretProvider model=SecretModel "
+            "evaluator=SecretJudge api_key=sk-EXCEPTIONSECRET123 "
+            "endpoint=https://private.example/v1"
+        )
 
     monkeypatch.setattr(fr, "_call_roleplay_acceptance_gate_llm", unavailable)
     gate = fr._evaluate_vpp_plan_acceptance_gate(
@@ -222,6 +264,15 @@ def test_v2_roleplay_error_fails_closed_without_legacy_estimator(monkeypatch) ->
     assert gate["roleplay_source"] == "roleplay_model_unavailable_fail_closed"
     assert gate["fallback_source"] == "roleplay_model_unavailable_fail_closed"
     assert "endpoint unavailable" in gate["fallback_error"]
+    serialized = json.dumps(gate)
+    for hidden in (
+        "SecretProvider",
+        "SecretModel",
+        "SecretJudge",
+        "sk-EXCEPTIONSECRET123",
+        "private.example",
+    ):
+        assert hidden not in serialized
     assert all("floor" not in factor.lower() and "cap" not in factor.lower() for factor in gate["factors"])
 
 

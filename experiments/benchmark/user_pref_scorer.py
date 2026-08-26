@@ -604,8 +604,6 @@ def _calibrate_roleplay_score(
     )
     if severe_service_issue and not v2_missing_service_evidence:
         return result
-    mode = _persona_score_mode(persona)
-    weights = _normalised_scoring_weights(persona, mode)
     gate = {}
     if isinstance(policy_control_context, dict):
         maybe_gate = policy_control_context.get("vpp_acceptance_gate")
@@ -660,6 +658,8 @@ def _calibrate_roleplay_score(
         }
         return result
 
+    mode = _persona_score_mode(persona)
+    weights = _normalised_scoring_weights(persona, mode)
     accepted = bool(gate.get("accepted", True)) if gate else True
     comfort_hard = _hard_comfort_component(
         mean_temp_c, pmv_ok_fraction, pref_min, pref_max, pref_tol, intrusion, mode
@@ -1174,7 +1174,9 @@ def _strategy_appliance_plan_text(
     if not presence:
         return ""
     start_h, _, window_text = _vpp_window_from_context(vpp_context)
-    low_disruption = _low_disruption_strategy_language(persona)
+    low_disruption = (
+        False if _adaptive_harness_v2() else _low_disruption_strategy_language(persona)
+    )
     parts = []
     if _profile_controllable(presence, "washer"):
         parts.append("shift washer away from VPP")
@@ -1228,7 +1230,9 @@ def _strategy_appliance_pref_en(
     if not presence:
         return ""
     start_h, _, window_text = _vpp_window_from_context(vpp_context)
-    low_disruption = _low_disruption_strategy_language(persona)
+    low_disruption = (
+        False if _adaptive_harness_v2() else _low_disruption_strategy_language(persona)
+    )
     actions = []
     if _profile_controllable(presence, "washer"):
         actions.append(f"shift washer away from {window_text}")
@@ -1334,7 +1338,9 @@ def _strategy_user_pref_for_profile(
     sp = (persona or {}).get("stable_preferences", {}) or {}
     pref_min = float(sp.get("preferred_temp_min", 24.0))
     pref_max = float(sp.get("preferred_temp_max", 26.0))
-    low_disruption = _low_disruption_strategy_language(persona)
+    low_disruption = (
+        False if _adaptive_harness_v2() else _low_disruption_strategy_language(persona)
+    )
     if low_disruption:
         if sid == "A":
             base = f"Comfort first: keep AC within {pref_min:.1f}-{pref_max:.1f}°C and protect routine."
@@ -1361,7 +1367,9 @@ def _align_candidates_to_appliance_profile(
     """Make strategy candidates consistent with appliance controllability."""
     fixed = _profile_fixed_names(profile)
     controllable = _profile_controllable_names(profile)
-    low_disruption = _low_disruption_strategy_language(persona)
+    low_disruption = (
+        False if _adaptive_harness_v2() else _low_disruption_strategy_language(persona)
+    )
     aligned: list[dict] = []
     for raw in candidates:
         c = dict(raw)
@@ -1408,6 +1416,337 @@ def _align_candidates_to_appliance_profile(
         aligned.append(c)
     return aligned
 
+
+_ADAPTIVE_VISIBLE_EVENT_FIELDS = (
+    "day",
+    "trigger_h",
+    "end_h",
+    "duration_h",
+    "current_hod",
+    "weather",
+    "outdoor_temp_c",
+    "indoor_temp_c",
+    "occupancy",
+    "price_context",
+    "grid_request",
+)
+
+_ADAPTIVE_HOUSEHOLD_STATEMENT_SYSTEM_PROMPT = (
+    "Speak as the household described in the supplied resume before this demand-response event. "
+    "Write one natural, concise first-person household statement that the controller can act on. "
+    "The household may approve an adjustment, agree only under concrete conditions, ask for a different "
+    "approach, or decline; do not presume cooperation or optimize for acceptance. Use only the visible "
+    "household and event facts supplied here, preserve stated routines and service commitments, and do not "
+    "invent savings, outcomes, personal details, scores, probabilities, or technical system identities. "
+    "Do not offer a menu or label alternatives. Return only one JSON object with the single string field "
+    '"statement".'
+)
+
+_ADAPTIVE_EVALUATOR_DISCLOSURE_RE = re.compile(
+    r"\bevaluator(?:\s+(?:name|id|model))?\s*"
+    r"(?:(?::|=|\bis\b)\s*|\s+)"
+    r"(?:\"[^\"]{1,160}\"|'[^']{1,160}'|[^\s,;]+)",
+    re.IGNORECASE,
+)
+
+
+def _protect_adaptive_household_language(value: object) -> object:
+    """Protect harmless wording that credential regexes can otherwise overmatch."""
+    if isinstance(value, dict):
+        return {
+            key: _protect_adaptive_household_language(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_protect_adaptive_household_language(item) for item in value]
+    if isinstance(value, str):
+        return re.sub(
+            r"\bkey\s+routine\b",
+            "key household routine",
+            value,
+            flags=re.IGNORECASE,
+        )
+    return value
+
+
+def _restore_adaptive_household_language(value: object) -> object:
+    """Restore only the harmless phrase protected at the privacy boundary."""
+    if isinstance(value, dict):
+        return {
+            key: _restore_adaptive_household_language(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_restore_adaptive_household_language(item) for item in value]
+    if isinstance(value, str):
+        return re.sub(
+            r"\bkey\s+household\s+routine\b",
+            "key routine",
+            value,
+            flags=re.IGNORECASE,
+        )
+    return value
+
+
+def _adaptive_roleplay_observable(value: object) -> object:
+    """Apply the shared role-play privacy projection to any adaptive payload."""
+    from energybridge.harness.roleplay import sanitize_household_resume_for_roleplay
+
+    protected = _protect_adaptive_household_language(value)
+    projected = sanitize_household_resume_for_roleplay(
+        protected if isinstance(protected, dict) else {"visible_value": protected}
+    )
+    restored = _restore_adaptive_household_language(projected)
+    if isinstance(value, dict):
+        return restored if isinstance(restored, dict) else {}
+    return (restored or {}).get("visible_value") if isinstance(restored, dict) else None
+
+
+def _adaptive_roleplay_payload(
+    persona: dict,
+    vpp_context: dict,
+    past_events: list,
+) -> dict:
+    """Build the same sanitized household resume used at the acceptance boundary."""
+    from energybridge.harness.profile import build_household_resume
+    appliances = persona.get("appliances")
+    source_resume = build_household_resume(
+        persona,
+        appliance_config=appliances if isinstance(appliances, dict) else None,
+        past_events=past_events,
+    )
+    resume = _adaptive_roleplay_observable(source_resume)
+    if not isinstance(resume, dict):
+        resume = {}
+    # Event identifiers are run bookkeeping rather than lived household facts.
+    for item in list(resume.get("relationship_history") or []):
+        if isinstance(item, dict):
+            item.pop("event_id", None)
+    event_source = dict(vpp_context or {})
+    visible_event = {
+        key: event_source.get(key)
+        for key in _ADAPTIVE_VISIBLE_EVENT_FIELDS
+        if event_source.get(key) not in (None, "", [], {})
+        or isinstance(event_source.get(key), bool)
+        or event_source.get(key) == 0
+    }
+    if event_source.get("trigger_h") is not None and event_source.get("end_h") is not None:
+        try:
+            visible_event["trigger_hod"] = float(event_source["trigger_h"]) % 24.0
+            visible_event["end_hod"] = float(event_source["end_h"]) % 24.0
+        except (TypeError, ValueError):
+            pass
+        visible_event["window_semantics"] = (
+            "Event trigger_h/end_h may be absolute simulation hours; household schedules use local "
+            "hour-of-day. The event window is half-open, so an action beginning exactly at end_hod is "
+            "outside the event."
+        )
+    projected_event = _adaptive_roleplay_observable({"event": visible_event})
+    visible_event = (
+        projected_event.get("event", {})
+        if isinstance(projected_event, dict)
+        else {}
+    )
+    return {
+        "schema_version": "energybridge.household_statement.v2",
+        "household_resume": resume,
+        "event": visible_event,
+    }
+
+
+def _sanitize_adaptive_household_statement(value: object, *, limit: int = 800) -> str:
+    """Sanitize model-authored free text without discarding ordinary household language."""
+    from energybridge.harness.roleplay import sanitize_household_resume_for_roleplay
+
+    text = " ".join(str(value or "").split())
+    # A trailing period can make the generic credential detector interpret
+    # "key routine." as a token-like value. Protect this harmless phrase while
+    # applying the shared role-play sanitizer, then restore its natural wording.
+    text = str(_protect_adaptive_household_language(text))
+    text = _ADAPTIVE_EVALUATOR_DISCLOSURE_RE.sub("plan source omitted", text)
+    projected = sanitize_household_resume_for_roleplay(
+        {"biography": {"description": text}}
+    )
+    clean = str((projected.get("biography") or {}).get("description") or "")
+    clean = _ADAPTIVE_EVALUATOR_DISCLOSURE_RE.sub("plan source omitted", clean)
+    clean = str(_restore_adaptive_household_language(clean))
+    clean = " ".join(clean.split())
+    return clean[:limit].rstrip()
+
+
+def _adaptive_statement_from_response(raw: object) -> str:
+    """Extract and sanitize one statement from a role-play model response."""
+    text = str(raw or "").strip()
+    if text.startswith("```"):
+        text = "\n".join(
+            line for line in text.splitlines()
+            if not line.strip().startswith("```")
+        ).strip()
+    if text.startswith("["):
+        raise ValueError("household statement response must not be a list")
+    if "{" in text and "}" in text:
+        start, end = text.find("{"), text.rfind("}")
+        parsed = json.loads(text[start:end + 1])
+        if not isinstance(parsed, dict):
+            raise ValueError("household statement response must be an object")
+        text = str(
+            parsed.get("statement")
+            or parsed.get("household_statement")
+            or parsed.get("user_statement")
+            or ""
+        ).strip()
+    statement = _sanitize_adaptive_household_statement(text)
+    if not statement:
+        raise ValueError("household statement response was empty after sanitization")
+    return statement
+
+
+def _sanitize_adaptive_strategy_candidates(raw: object) -> list[dict]:
+    """Validate and sanitize the three model-authored human-menu options."""
+    if not isinstance(raw, list) or len(raw) != 3:
+        raise ValueError("adaptive strategy response must contain three options")
+    expected_ids = ("A", "B", "C")
+    result: list[dict] = []
+    for expected_id, item in zip(expected_ids, raw):
+        if not isinstance(item, dict) or str(item.get("id", "")).strip().upper() != expected_id:
+            raise ValueError("adaptive strategy response must use A, B, C in order")
+        clean = {"id": expected_id}
+        for key, limit in (
+            ("label", 120),
+            ("description", 400),
+            ("tradeoff", 300),
+            ("user_pref", 800),
+        ):
+            text = _sanitize_adaptive_household_statement(item.get(key, ""), limit=limit)
+            if not text:
+                raise ValueError("adaptive strategy option was empty after privacy filtering")
+            clean[key] = text
+        result.append(clean)
+    return result
+
+
+def _adaptive_feedback_persona_from_resume(resume: dict) -> dict:
+    """Re-express a sanitized resume in the persona shape used by roleplay_user."""
+    biography = resume.get("biography") if isinstance(resume.get("biography"), dict) else {}
+    daily_life = resume.get("daily_life") if isinstance(resume.get("daily_life"), dict) else {}
+    service = (
+        resume.get("comfort_and_service")
+        if isinstance(resume.get("comfort_and_service"), dict)
+        else {}
+    )
+    appliances: dict[str, dict] = {}
+    for item in list(service.get("appliance_commitments") or []):
+        if not isinstance(item, dict) or not item.get("device"):
+            continue
+        device = str(item.get("device"))
+        appliances[device] = {
+            str(key): value for key, value in item.items() if key != "device"
+        }
+    projected = _adaptive_roleplay_observable({
+        "description": biography.get("description", ""),
+        "schedule": daily_life.get("schedule", {}),
+        "calendar": daily_life.get("calendar", {}),
+        "appliances": appliances,
+        "members": biography.get("household_members", []),
+    })
+    return projected if isinstance(projected, dict) else {}
+
+
+def _sanitize_adaptive_feedback_result(result: dict) -> dict:
+    """Sanitize all adaptive model-authored feedback text before persistence."""
+    out = dict(result or {})
+    out["comment"] = _sanitize_adaptive_household_statement(
+        out.get("comment", ""), limit=1000
+    )
+    label = str(out.get("label", "neutral") or "neutral").strip().lower()
+    out["label"] = label if label in _SCORE_LABELS else "neutral"
+    projected = _adaptive_roleplay_observable({
+        "zone_comfort_scores": out.get("zone_comfort_scores")
+    })
+    out["zone_comfort_scores"] = (
+        projected.get("zone_comfort_scores")
+        if isinstance(projected, dict)
+        else None
+    )
+    return out
+
+
+def _adaptive_statement_fallback(payload: dict) -> str:
+    """Return one neutral conditional statement derived only from visible facts."""
+    resume = payload.get("household_resume") or {}
+    service = resume.get("comfort_and_service") or {}
+    commitments = service.get("appliance_commitments") or []
+    devices = [
+        str(item.get("device", "")).replace("_", " ")
+        for item in commitments
+        if isinstance(item, dict) and item.get("present") and item.get("device")
+    ]
+    if devices:
+        device_text = " and ".join(devices[:2])
+        text = (
+            "I would consider a brief, reversible event adjustment only if it protects our comfort "
+            f"and keeps the timing of our {device_text} commitments intact."
+        )
+    else:
+        text = (
+            "I would consider a brief, reversible event adjustment only if it protects our comfort "
+            "and keeps our ordinary household routine intact."
+        )
+    return _sanitize_adaptive_household_statement(text)
+
+
+def _adaptive_calendar_trace(
+    persona: dict,
+    event_index: int,
+    vpp_context: dict,
+) -> dict:
+    """Keep household-visible calendar facts in adaptive trace metadata."""
+    raw_context = calendar_context_for_event(persona, event_index, vpp_context)
+    projected = _adaptive_roleplay_observable({"calendar_context": raw_context})
+    value = projected.get("calendar_context") if isinstance(projected, dict) else None
+    return value if isinstance(value, dict) else {}
+
+
+def _generate_adaptive_household_statement(
+    persona: dict,
+    vpp_context: dict,
+    past_events: list,
+) -> tuple[str, str]:
+    """Ask the role-play model for one unconstrained household statement."""
+    payload = _adaptive_roleplay_payload(persona, vpp_context, past_events)
+    user_prompt = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    try:
+        from energybridge.utils.config import load_llm_config
+        roleplay_config = load_llm_config(
+            prefix="ROLEPLAY_LLM",
+            use_key="ROLEPLAY_USE_LLM",
+            fallback_prefix="LLM",
+        )
+        if not roleplay_config.use_llm:
+            raise RuntimeError("LLM off")
+        from energybridge.llm.client import LLMClient
+
+        response = LLMClient(config=roleplay_config).chat_with_metrics(
+            _ADAPTIVE_HOUSEHOLD_STATEMENT_SYSTEM_PROMPT,
+            user_prompt,
+            max_retries=3,
+            retry_base_delay=1.0,
+        )
+        return _adaptive_statement_from_response(response.get("text", "")), "roleplay_llm"
+    except Exception as exc:
+        print(
+            "  [Household Statement] role-play unavailable; using visible-fact fallback "
+            f"({type(exc).__name__})"
+        )
+        return _adaptive_statement_fallback(payload), "roleplay_visible_fact_fallback"
+
+
 def get_user_preference_input(
     building: str,
     event_index: int,
@@ -1416,23 +1755,56 @@ def get_user_preference_input(
     persona: dict | None = None,
     log_path: Path | None = None,
     human_mode: bool = False,
-) -> str:
+) -> StrategyPreference:
     """Get user preference statement BEFORE agent acts on a VPP event.
 
-    Workflow:
-      1. LLM generates 3 candidate strategies (A=comfort, B=balanced, C=savings).
-      2. All 3 are printed to the log for visibility.
-      3. In automated mode: auto-selects based on persona comfort_priority.
-         In human_mode=True: prints choices and waits for terminal input (Feature 2).
-      4. Returns the selected strategy's 'user_pref' text, which is injected into
-         the AC agent's prompt for that event.
-
-    Falls back to hardcoded defaults if LLM strategy generation fails.
+    Adaptive automated runs ask the role-play household for one natural statement.
+    Legacy runs and explicit ``human_mode`` retain the A/B/C menu contract.
     """
     if persona is None:
         persona = OFFICE_PERSONA if building == "office" else FAMILY_PERSONA
     else:
         persona = normalize_persona(persona)
+
+    if _adaptive_harness_v2() and not human_mode:
+        statement, source = _generate_adaptive_household_statement(
+            persona,
+            vpp_context,
+            past_events,
+        )
+        calendar_context = _adaptive_calendar_trace(persona, event_index, vpp_context)
+        selected_strategy = {
+            "id": "household_statement",
+            "label": "Household statement",
+            "source": source,
+            "preference_text": statement,
+            "selection_meta": {
+                "source": source,
+                "single_statement": True,
+                "privacy_sanitized": True,
+            },
+        }
+        trace = {
+            "event_index": event_index,
+            "source": source,
+            "candidates": [],
+            "selected_strategy": selected_strategy,
+            "calendar_context": calendar_context,
+            "returned_user_pref": statement,
+        }
+        print(
+            f"  [Household Statement | event={event_index}] "
+            f"({source}) {statement}"
+        )
+        _log_and_return(
+            log_path,
+            {"id": "roleplay_household"},
+            event_index,
+            source,
+            statement,
+            extra={"selected_strategy": selected_strategy},
+        )
+        return StrategyPreference(statement, trace)
 
     # VPP override: comfort_sensitive persona may bypass strategy menu
     override_prob = persona.get("vpp_override_prob", 0.0)
@@ -1477,7 +1849,11 @@ def get_user_preference_input(
         )
 
     # Step 1: Generate 3 candidate strategies
-    calendar_context = calendar_context_for_event(persona, event_index, vpp_context)
+    calendar_context = (
+        _adaptive_calendar_trace(persona, event_index, vpp_context)
+        if _adaptive_harness_v2()
+        else calendar_context_for_event(persona, event_index, vpp_context)
+    )
     candidates = generate_vpp_strategy_candidates(
         building, event_index, vpp_context, past_events, persona,
         calendar_context=calendar_context,
@@ -1485,19 +1861,26 @@ def get_user_preference_input(
 
     # Step 2: Display all strategies
     appliance_presence = _appliance_control_profile(persona, vpp_context)
-    candidate_trace = _candidate_trace_items(candidates, appliance_presence, vpp_context, persona)
+    menu_persona = None if _adaptive_harness_v2() else persona
+    candidate_trace = _candidate_trace_items(
+        candidates, appliance_presence, vpp_context, menu_persona
+    )
     print(f"  ┌─[Strategy Candidates | VPP event {event_index}]{'─'*30}")
     for c in candidates:
         print(f"  │  [{c['id']}] {c['label']}  —  {c['description']}  ({c['tradeoff']})")
         plan_cn = _strategy_appliance_plan_cn(
-            str(c.get('id', '')).upper(), appliance_presence, vpp_context, persona
+            str(c.get('id', '')).upper(), appliance_presence, vpp_context, menu_persona
         )
         if plan_cn:
             print(f"  │      Appliance control: {plan_cn}")
     print(f"  └{'─'*56}")
 
     # Step 3: Select strategy
-    rule_selected = _auto_select_strategy(candidates, persona)
+    rule_selected = (
+        candidates[1]
+        if _adaptive_harness_v2() and len(candidates) >= 2
+        else _auto_select_strategy(candidates, persona)
+    )
     selected = rule_selected
     roleplay_selection_meta = {}
 
@@ -1539,6 +1922,8 @@ def get_user_preference_input(
                 return StrategyPreference(pref, trace)
         elif raw_choice:
             # custom free-text preference
+            if _adaptive_harness_v2():
+                raw_choice = _sanitize_adaptive_household_statement(raw_choice, limit=800)
             print(f"  [Strategy Selected  | event={event_index}] → [custom] (human)")
             trace = {
                 "event_index": event_index,
@@ -1663,18 +2048,23 @@ def generate_vpp_strategy_candidates(
         persona = OFFICE_PERSONA if building == "office" else FAMILY_PERSONA
     else:
         persona = normalize_persona(persona)
+    adaptive_v2 = _adaptive_harness_v2()
 
     try:
         from energybridge.utils.config import load_llm_config
-        if not load_llm_config(use_key="USE_LLM").use_llm:
+        candidate_llm_config = (
+            load_llm_config(
+                prefix="ROLEPLAY_LLM",
+                use_key="ROLEPLAY_USE_LLM",
+                fallback_prefix="LLM",
+            )
+            if adaptive_v2
+            else load_llm_config(use_key="USE_LLM")
+        )
+        if not candidate_llm_config.use_llm:
             raise RuntimeError("LLM off")
         from energybridge.llm.client import LLMClient
 
-        sp = persona.get("stable_preferences", {})
-        past_summary = [
-            {"event": e["id"], "score": e.get("score"), "comment": e.get("comment", "")[:50]}
-            for e in (past_events or [])
-        ]
         _ap = _appliance_control_profile(persona, vpp_context)
         _present_appliances = [k for k in _APPLIANCE_KEYS if _profile_present(_ap, k)]
         _controllable_appliances = _profile_controllable_names(_ap)
@@ -1684,32 +2074,14 @@ def generate_vpp_strategy_candidates(
             + "; controllable=" + (",".join(_controllable_appliances) if _controllable_appliances else "none")
             + "; fixed=" + (",".join(_fixed_appliances) if _fixed_appliances else "none")
         )
-        _cal = calendar_context or calendar_context_for_event(persona, event_index, vpp_context)
-        _cal_brief = calendar_brief_for_prompt(_cal)
-        _tags = persona.get("tags", {}) or {}
-        _style_notes = []
-        if _tags.get("price") in {"low_incentive", "price_indifferent"}:
-            _style_notes.append("Use comfort, routine preservation, and low-risk support as the only user-facing rationale.")
-            _style_notes.append("Write user_pref without financial or market language unless the user explicitly asks for it.")
-        if _tags.get("control") == "confirm_required":
-            _style_notes.append("Write each user_pref as an explicit event-level confirmation boundary, not as open-ended permission.")
-        if _tags.get("comfort") == "temp_sensitive":
-            _style_notes.append("Keep AC recommendations inside the preferred comfort range unless the user explicitly accepts a tiny drift.")
-        _style_text = " ".join(_style_notes) if _style_notes else "Use the persona's normal communication style."
-        _learned_notes = build_vpp_preference_memory_notes(past_events, persona)
-        _learned_text = " ".join(f"- {note}" for note in _learned_notes) if _learned_notes else "No learned feedback rules yet."
-
         if _adaptive_harness_v2():
-            household_resume = {
-                "id": persona.get("id"),
-                "display_name": persona.get("display_name"),
-                "description": persona.get("description", persona.get("summary", "")),
-                "communication_brief": (persona.get("llm_prompts") or {}).get("system_prompt", ""),
-                "decision_traits": persona.get("tags", {}),
-                "declared_preferences": persona.get("preferences", persona.get("stable_preferences", {})),
-                "schedule": persona.get("schedule", {}),
-                "calendar_context": _cal,
-            }
+            roleplay_payload = _adaptive_roleplay_payload(
+                persona, vpp_context, past_events
+            )
+            household_resume = roleplay_payload.get("household_resume") or {}
+            relationship_history = list(
+                household_resume.get("relationship_history") or []
+            )[-8:]
             sys_prompt = (
                 "You are simulating this particular household before a demand-response event. "
                 "Draft three genuinely plausible commitments the household might make after considering its "
@@ -1725,12 +2097,15 @@ def generate_vpp_strategy_candidates(
                 {
                     "household_resume": household_resume,
                     "event_index": event_index,
-                    "event_context": vpp_context,
+                    "event_context": roleplay_payload.get("event") or {},
+                    "calendar_context": (
+                        _adaptive_calendar_trace(persona, event_index, vpp_context)
+                    ),
                     "appliance_control_boundary": _active_appliances_text,
-                    "recent_events": past_summary,
-                    "learned_feedback": _learned_notes,
+                    "recent_events": relationship_history,
                 },
                 ensure_ascii=False,
+                sort_keys=True,
                 default=str,
             )
             prompt_client = LLMClient(
@@ -1739,6 +2114,25 @@ def generate_vpp_strategy_candidates(
                 fallback_prefix="LLM",
             )
         else:
+            sp = persona.get("stable_preferences", {})
+            past_summary = [
+                {"event": e["id"], "score": e.get("score"), "comment": e.get("comment", "")[:50]}
+                for e in (past_events or [])
+            ]
+            _cal = calendar_context or calendar_context_for_event(persona, event_index, vpp_context)
+            _cal_brief = calendar_brief_for_prompt(_cal)
+            _tags = persona.get("tags", {}) or {}
+            _style_notes = []
+            if _tags.get("price") in {"low_incentive", "price_indifferent"}:
+                _style_notes.append("Use comfort, routine preservation, and low-risk support as the only user-facing rationale.")
+                _style_notes.append("Write user_pref without financial or market language unless the user explicitly asks for it.")
+            if _tags.get("control") == "confirm_required":
+                _style_notes.append("Write each user_pref as an explicit event-level confirmation boundary, not as open-ended permission.")
+            if _tags.get("comfort") == "temp_sensitive":
+                _style_notes.append("Keep AC recommendations inside the preferred comfort range unless the user explicitly accepts a tiny drift.")
+            _style_text = " ".join(_style_notes) if _style_notes else "Use the persona's normal communication style."
+            _learned_notes = build_vpp_preference_memory_notes(past_events, persona)
+            _learned_text = " ".join(f"- {note}" for note in _learned_notes) if _learned_notes else "No learned feedback rules yet."
             sys_prompt = (
                 "You are an energy management strategy advisor for a smart home VPP demand-response system. "
                 "Generate 3 distinct response strategies for the upcoming peak-shaving event. "
@@ -1778,11 +2172,20 @@ def generate_vpp_strategy_candidates(
             required = ("id", "label", "description", "tradeoff", "user_pref")
             for c in candidates:
                 if not all(k in c for k in required):
-                    raise ValueError(f"missing keys in candidate: {c}")
+                    raise ValueError("strategy candidate is missing required fields")
+            if _adaptive_harness_v2():
+                candidates = _sanitize_adaptive_strategy_candidates(candidates)
             return _align_candidates_to_appliance_profile(candidates, _ap, vpp_context, persona)
         raise ValueError(f"unexpected shape: {type(candidates)}")
     except Exception as e:
-        print(f"  [StrategyGen] LLM failed ({e}), using defaults")
+        if _adaptive_harness_v2():
+            safe_error = _sanitize_adaptive_household_statement(str(e), limit=120)
+            print(
+                "  [StrategyGen] role-play generation failed "
+                f"({type(e).__name__}: {safe_error or 'details omitted'}), using defaults"
+            )
+        else:
+            print(f"  [StrategyGen] LLM failed ({e}), using defaults")
         _ap = _appliance_control_profile(persona, vpp_context)
         return _align_candidates_to_appliance_profile(
             list(_STRATEGY_DEFAULTS), _ap, vpp_context, persona
@@ -1879,9 +2282,14 @@ def _roleplay_select_strategy(
 
 def _log_and_return(log_path, persona, event_index, source, text, extra: dict | None = None):
     if log_path:
+        persona_id = (
+            "roleplay_household"
+            if _adaptive_harness_v2()
+            else persona.get("id", "?")
+        )
         entry = {
             "ts": datetime.datetime.utcnow().isoformat(),
-            "persona": persona.get("id", "?"),
+            "persona": persona_id,
             "event_index": event_index,
             "type": "user_input",
             "source": source,
@@ -1924,11 +2332,23 @@ def score_user_preference(
         persona = OFFICE_PERSONA if building == "office" else FAMILY_PERSONA
     else:
         persona = normalize_persona(persona)
-    calendar_context = calendar_context_for_event(
+    adaptive_v2 = _adaptive_harness_v2()
+    raw_calendar_context = calendar_context_for_event(
         persona,
         event_index,
         vpp_context or {"hour": 18.0, "duration_h": 1.0},
     )
+    if adaptive_v2:
+        projected_calendar = _adaptive_roleplay_observable({
+            "calendar_context": raw_calendar_context
+        })
+        calendar_context = (
+            projected_calendar.get("calendar_context", {})
+            if isinstance(projected_calendar, dict)
+            else {}
+        )
+    else:
+        calendar_context = raw_calendar_context
     calendar_brief = calendar_brief_for_prompt(calendar_context)
     tags = persona.get("tags", {}) or {}
     schedule = persona.get("schedule", {}) or {}
@@ -1938,11 +2358,14 @@ def score_user_preference(
     pref_min = float(ac_cfg.get("setpoint_preferred_min_c", persona.get("preferred_temp_min", 24.0)))
     pref_max = float(ac_cfg.get("setpoint_preferred_max_c", persona.get("preferred_temp_max", 26.0)))
     pref_tol = float(ac_cfg.get("temp_tolerance_c", persona.get("temp_tolerance", 1.0)))
-    protective_user = (
-        tags.get("schedule") == "caregiver"
-        or tags.get("comfort") == "temp_sensitive"
-        or tags.get("control") in {"confirm_required", "low_auto_accept", "privacy_sensitive"}
-        or bool(schedule.get("vulnerable_members"))
+    protective_user = bool(
+        not adaptive_v2
+        and (
+            tags.get("schedule") == "caregiver"
+            or tags.get("comfort") == "temp_sensitive"
+            or tags.get("control") in {"confirm_required", "low_auto_accept", "privacy_sensitive"}
+            or bool(schedule.get("vulnerable_members"))
+        )
     )
 
     # Human-in-the-loop scoring: print event summary and ask for terminal input
@@ -1967,6 +2390,8 @@ def score_user_preference(
             comment = input("  > ").strip()
         except (EOFError, KeyboardInterrupt):
             comment = ""
+        if adaptive_v2:
+            comment = _sanitize_adaptive_household_statement(comment, limit=1000)
         print(f"  [Human Score Selected | event={event_index}] → {score}/5 | {comment or '—'}")
         return {
             "score": score, "comfort_score": score, "energy_score": score,
@@ -1974,7 +2399,6 @@ def score_user_preference(
             "zone_comfort_scores": None, "source": "human",
         }
 
-    adaptive_v2 = _adaptive_harness_v2()
     policy_control_context = dict(policy_control_context or {})
     acceptance_gate = policy_control_context.get("vpp_acceptance_gate")
     identity_tokens = [
@@ -2000,11 +2424,16 @@ def score_user_preference(
             str(prompt_metrics.get("provider") or ""),
         ])
 
-    explanation_is_user_facing = _is_user_facing_controller_explanation(agent_reason)
     method_blind_agent_reason = _method_blind_observable_text(
         agent_reason,
         identities=identity_tokens,
         limit=1200,
+    )
+    explanation_is_user_facing = _is_user_facing_controller_explanation(
+        method_blind_agent_reason if adaptive_v2 else agent_reason
+    )
+    judgement_context_key = (
+        "household_judgement_context" if adaptive_v2 else "roleplay_scoring_contract"
     )
     home_state = {
         "indoor_temp": round(mean_temp_c, 1),
@@ -2013,10 +2442,9 @@ def score_user_preference(
         "washer_completed": washer_completed,
         "washer_during_vpp": washer_during_vpp,
         "calendar_context": calendar_context,
-        "protective_user_mode": protective_user,
         "fixed_non_dr_adjustable_appliances": fixed_appliances,
         "event_preference_counts_as_confirmation": bool(user_preference_text),
-        "roleplay_scoring_contract": {
+        judgement_context_key: {
             "price_sensitivity": (
                 "Treat price/cost-aware scheduling as a real satisfaction factor. "
                 "No-disruption cost savings can raise energy_score and may raise overall score "
@@ -2034,10 +2462,16 @@ def score_user_preference(
                 "favorably; if the same issue repeats, score more harshly."
             ),
         },
-        "controller_explanation_is_user_facing": bool(explanation_is_user_facing),
+        (
+            "household_facing_explanation_available"
+            if adaptive_v2
+            else "controller_explanation_is_user_facing"
+        ): bool(explanation_is_user_facing),
     }
+    if not adaptive_v2:
+        home_state["protective_user_mode"] = protective_user
     if adaptive_v2:
-        home_state["roleplay_scoring_contract"]["acceptance_satisfaction_consistency"] = (
+        home_state[judgement_context_key]["acceptance_satisfaction_consistency"] = (
             "The pre-event role-play judgement concerns the offered proposal. If that offer was accepted and "
             "executed, overall satisfaction should normally move in the same direction as its continuous "
             "willingness. If it was rejected, realised comfort, energy, appliance service, and VPP outcomes come "
@@ -2048,7 +2482,7 @@ def score_user_preference(
         )
     if agent_reason:
         if adaptive_v2 and explanation_is_user_facing:
-            home_state["controller_explanation_excerpt"] = method_blind_agent_reason
+            home_state["household_facing_explanation"] = method_blind_agent_reason
         elif not adaptive_v2:
             home_state["controller_explanation_excerpt"] = str(agent_reason)[:1200]
     if agent_reason and not explanation_is_user_facing:
@@ -2061,13 +2495,15 @@ def score_user_preference(
         )
     if vpp_result_context:
         home_state["vpp_result"] = vpp_result_context
+    if adaptive_v2 and user_preference_text:
+        home_state["event_user_statement"] = user_preference_text
     appliance_summary = appliance_summary or {}
     observable_acceptance = _observable_acceptance_judgement(
         acceptance_gate,
         identities=identity_tokens,
     )
     if adaptive_v2 and observable_acceptance is not None:
-        home_state["pre_event_roleplay_acceptance"] = observable_acceptance
+        home_state["pre_event_offer_judgement"] = observable_acceptance
         live_offer_accepted = observable_acceptance.get("accepted")
         home_state["offer_execution_status"] = {
             "offered_plan_accepted": live_offer_accepted,
@@ -2187,17 +2623,24 @@ def score_user_preference(
         and "ev" in emitted_policy_services
     )
     if policy_control_context:
-        home_state["policy_control_context"] = {
+        action_evidence_key = (
+            "observed_action_evidence" if adaptive_v2 else "policy_control_context"
+        )
+        home_state[action_evidence_key] = {
             "action_space_services": sorted(policy_action_space),
             "emitted_services": sorted(emitted_policy_services),
             "present_required_services": sorted(present_required_services),
-            "unsupported_policy_services": unsupported_policy_services,
-            "missing_policy_services": missing_policy_services,
+            (
+                "unsupported_services" if adaptive_v2 else "unsupported_policy_services"
+            ): unsupported_policy_services,
+            (
+                "missing_services" if adaptive_v2 else "missing_policy_services"
+            ): missing_policy_services,
             "vpp_trigger_actions": policy_control_context.get("vpp_trigger_actions", {}),
             "occupancy_decisions": policy_control_context.get("occupancy_decisions", []),
         }
         if not adaptive_v2:
-            home_state["policy_control_context"].update({
+            home_state[action_evidence_key].update({
                 "method": policy_control_context.get("method", method),
                 "objective_source": policy_control_context.get("objective_source", ""),
             })
@@ -2269,7 +2712,7 @@ def score_user_preference(
                 + ", ".join(fixed_appliances)
                 + ". Do not blame the controller for their fixed operation; evaluate whether controllable actions stayed within the user's consent and comfort."
             )
-        if _low_disruption_strategy_language(persona):
+        if not adaptive_v2 and _low_disruption_strategy_language(persona):
             rationale += (
                 " | This is a low-disruption user: evaluate mainly comfort, consent, routine smoothness, and whether the explanation stayed low-pressure. "
                 "Do not invent a financial or market pitch if the controller explanation did not contain one. "
@@ -2479,23 +2922,58 @@ def score_user_preference(
     if zone_group_temps and building == "office":
         zone_ctx = {g: {"mean_temp_c": round(t, 1)} for g, t in zone_group_temps.items()}
 
-    # Build richer persona for feedback LLM
-    rp_persona = dict(persona)
-    if "roleplay_user_prompt" in persona:
-        rp_persona["summary"] = persona["roleplay_user_prompt"]
+    # Build the feedback boundary. Adaptive runs expose one sanitized resume
+    # projection plus sanitized observable experience; legacy remains frozen.
+    if adaptive_v2:
+        resume = (_adaptive_roleplay_payload(
+            persona, vpp_context or {}, []
+        ).get("household_resume") or {})
+        rp_persona = _adaptive_feedback_persona_from_resume(resume)
+        visible_feedback_payload = _adaptive_roleplay_observable({
+            "selected_strategy": home_state,
+            "experienced_plan": control_plan,
+            "safety_report": safety,
+            "zone_context": zone_ctx or {},
+        })
+        visible_feedback_payload = (
+            visible_feedback_payload
+            if isinstance(visible_feedback_payload, dict)
+            else {}
+        )
+        model_home_state = visible_feedback_payload.get("selected_strategy") or {}
+        model_control_plan = visible_feedback_payload.get("experienced_plan") or {}
+        model_safety = visible_feedback_payload.get("safety_report") or {}
+        model_zone_ctx = visible_feedback_payload.get("zone_context") or None
+    else:
+        rp_persona = dict(persona)
+        if "roleplay_user_prompt" in persona:
+            rp_persona["summary"] = persona["roleplay_user_prompt"]
+        model_home_state = home_state
+        model_control_plan = control_plan
+        model_safety = safety
+        model_zone_ctx = zone_ctx
 
     try:
         from energybridge.utils.config import load_llm_config
-        if not load_llm_config(use_key="USE_LLM").use_llm:
+        feedback_llm_config = (
+            load_llm_config(
+                prefix="ROLEPLAY_LLM",
+                use_key="ROLEPLAY_USE_LLM",
+                fallback_prefix="LLM",
+            )
+            if adaptive_v2
+            else load_llm_config(use_key="USE_LLM")
+        )
+        if not feedback_llm_config.use_llm:
             raise RuntimeError("LLM off")
         from energybridge.llm.roleplay_user import RoleplayUserSimulator
         r = RoleplayUserSimulator().generate_feedback(
             persona=rp_persona,
             turn_index=event_index,
-            selected_strategy=home_state,
-            projected_control_plan=control_plan,
-            projected_safety_report=safety,
-            zone_group_context=zone_ctx,
+            selected_strategy=model_home_state,
+            projected_control_plan=model_control_plan,
+            projected_safety_report=model_safety,
+            zone_group_context=model_zone_ctx,
         )
         fb = r.get("data", {})
         result = {
@@ -2508,6 +2986,8 @@ def score_user_preference(
             "zone_comfort_scores": fb.get("zone_comfort_scores"),
             "source": "roleplay_llm",
         }
+        if adaptive_v2:
+            result = _sanitize_adaptive_feedback_result(result)
         if vpp_result_context and vpp_result_context.get("achieved") is True:
             comment_lower = str(result.get("comment", "")).lower()
             misleading_miss = any(
@@ -2605,7 +3085,8 @@ def score_user_preference(
                 ),
             })
         if (
-            _low_disruption_strategy_language(persona)
+            not adaptive_v2
+            and _low_disruption_strategy_language(persona)
             and fixed_appliances
             and (not adaptive_v2 or not missing_policy_services)
             and result["score"] < 4
@@ -2689,15 +3170,19 @@ def score_user_preference(
         ),
     )
     result = _apply_unserved_service_score_cap(result, unserved_service_devices)
+    if adaptive_v2:
+        result = _sanitize_adaptive_feedback_result(result)
 
     # Dialogue log
     if log_path:
         _append_dialogue_log(log_path, {
             "ts": datetime.datetime.utcnow().isoformat(),
-            "persona": persona.get("id", "?"),
+            "persona": (
+                "roleplay_household" if adaptive_v2 else persona.get("id", "?")
+            ),
             "event_index": event_index,
             "type": "feedback",
-            "method": method,
+            "method": "household_controller" if adaptive_v2 else method,
             "scores": {
                 "overall": result["score"],
                 "comfort": result["comfort_score"],

@@ -62,10 +62,21 @@ safety/service vetoes; it does not impose a quality floor or cap. The controller
 an observable onboarding profile plus context-matched interaction memory, and
 MPC is an advisory candidate rather than an invisible action override.
 
+The adaptive profile now composes three V3 internal contracts: an
+evidence-backed household model with uncertainty and provenance, a
+proposal→validation→consent→execution→outcome memory ledger, and open portfolio
+planning whose candidate count and final choice remain base-model judgments.
+These are component schema versions, not a new paper protocol. The design,
+privacy boundary, warm/cold memory modes, and same-base-model comparison
+criteria are documented in
+[`docs/ADAPTIVE_HARNESS_ARCHITECTURE.md`](docs/ADAPTIVE_HARNESS_ARCHITECTURE.md).
+
 Every result stores a key-free harness manifest and fingerprint. Resume mode
 reuses a result only when model IDs, prompt bundle, harness profile, inputs, and
 run configuration match. This prevents a model change from silently reusing an
-older run.
+older run. Explicit cross-run memory is the exception: warm-start jobs always
+execute because private memory contents are intentionally absent from the
+manifest fingerprint.
 
 The launch wrappers use `adaptive_v2` by default. To reproduce the historical
 frozen V1 consent path explicitly:
@@ -141,6 +152,7 @@ commands are documented in the
 | `energybridge/evaluation/` | Metrics, trajectory logging, and post-event audit |
 | `energybridge/llm/` | Provider-neutral LLM clients and prompts |
 | `energybridge/memory/` | Household and event memory |
+| `energybridge/harness/` | Observable profile, causal memory, portfolio planning, and consent harness |
 
 The execution-facing benchmark code is separate from the reusable package:
 

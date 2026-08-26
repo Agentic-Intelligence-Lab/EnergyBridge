@@ -2,7 +2,7 @@
 from __future__ import annotations
 import hashlib
 import re
-import os, sys, json, random, shutil
+import os, sys, json, random, shutil, math, stat, tempfile
 from copy import deepcopy
 
 # Fix Windows GBK encoding for Unicode status characters.
@@ -146,7 +146,12 @@ def _agent_observable_calendar_context(
             },
         )
     except Exception as exc:
-        context = {"available": False, "note": f"calendar projection unavailable: {str(exc)[:120]}"}
+        detail = (
+            _adaptive_exception_audit_text(exc, limit=120)
+            if _adaptive_harness_v2()
+            else str(exc)[:120]
+        )
+        context = {"available": False, "note": f"calendar projection unavailable: {detail}"}
     visible = {
         key: deepcopy(context.get(key))
         for key in (
@@ -228,6 +233,409 @@ def _assert_adaptive_v2_agent_prompt_observable(
                     raise RuntimeError(
                         f"adaptive_v2 observable boundary violation from hidden persona section {root!r}"
                     )
+
+
+_ADAPTIVE_V3_DEVICE_CAPABILITY_FIELDS = frozenset({
+    "present",
+    "mode",
+    "shiftable",
+    "dr_adjustable",
+    "setpoint_preferred_min_c",
+    "setpoint_preferred_max_c",
+    "temp_tolerance_c",
+    "earliest_h",
+    "latest_h",
+    "preferred_h",
+    "duration_h",
+    "arrival_h",
+    "departure_h",
+    "target_soc",
+    "min_soc",
+    "capacity_kwh",
+    "charger_kw",
+    "efficiency",
+    "daily_drive_kwh",
+    "bath_required_h",
+    "pre_heat_window_start_h",
+    "pre_heat_window_end_h",
+    "power_kw",
+    "rated_power_kw",
+})
+
+
+def _adaptive_v3_realtime_device_state(loop, sim_h: float) -> dict:
+    """Return a method-neutral snapshot of live simulator device state."""
+    suite = getattr(loop, "appliance_suite", None)
+    if suite is None:
+        return {"available": False}
+    day_idx = max(0, int(float(sim_h) // 24))
+    try:
+        status_lines = [str(value)[:600] for value in list(suite.status_lines(sim_h))[:16]]
+    except Exception:
+        status_lines = []
+    current_day: dict[str, Any] = {}
+    try:
+        for name, records in (suite.all_results() or {}).items():
+            if not isinstance(records, list):
+                continue
+            record = next(
+                (
+                    item for item in records
+                    if isinstance(item, dict) and int(item.get("day", -1)) == day_idx
+                ),
+                None,
+            )
+            if isinstance(record, dict):
+                current_day[str(name)] = deepcopy(record)
+    except Exception:
+        current_day = {}
+    last_power = getattr(suite, "_last_powers", {}) or {}
+    current_power_kw = {
+        str(name): float(value)
+        for name, value in last_power.items()
+        if isinstance(value, (int, float))
+    } if isinstance(last_power, dict) else {}
+    return {
+        "available": bool(status_lines or current_day),
+        "observed_at_sim_hour": float(sim_h),
+        "day": day_idx + 1,
+        "status_lines": status_lines,
+        "current_day_service_state": current_day,
+        "current_power_kw": current_power_kw,
+    }
+
+
+def _adaptive_v3_observable_planning_inputs(
+    loop,
+    *,
+    event_id: str,
+    sim_h: float,
+    hod: float,
+    temp: float | None,
+    out_t: float | None,
+    facility_w: float | None,
+    observable_calendar: dict | None,
+    memory_event: dict | None,
+    vpp_event: dict | None,
+    user_input: str,
+    appliance_config: dict | None,
+    setpoint_min_c: float,
+    setpoint_max_c: float,
+    price_context: str = "",
+    demand_context: dict | None = None,
+) -> dict:
+    """Assemble the V3 planner inputs from controller-observable evidence.
+
+    Profile/memory producers may populate the two ``*_capsule_by_event_id``
+    maps directly.  Until they do, this adapter projects the current V2
+    evidence store without copying evaluator personas or method metadata.
+    """
+    event_id = str(event_id or "")
+    profile_by_event = getattr(loop, "agent_profile_capsule_by_event_id", {}) or {}
+    memory_by_event = getattr(loop, "agent_memory_capsule_by_event_id", {}) or {}
+    observable_profile = deepcopy(profile_by_event.get(event_id) or {})
+    relevant_memory = deepcopy(memory_by_event.get(event_id) or {})
+
+    stored_memory = getattr(loop, "agent_preference_memory", {}) or {}
+    if not observable_profile:
+        onboarding = stored_memory.get("onboarding")
+        if not isinstance(onboarding, dict):
+            onboarding = stored_memory.get("onboarding_questionnaire")
+        onboarding = onboarding if isinstance(onboarding, dict) else {}
+        observable_profile = {
+            "privacy_scope": "controller_observable_only",
+            "onboarding_answers": deepcopy(list(onboarding.get("answers") or [])[:16]),
+            "evidence_backed_beliefs": deepcopy(stored_memory.get("beliefs") or {}),
+            "unresolved_beliefs": deepcopy(
+                list(stored_memory.get("unresolved_or_conflicting_beliefs") or [])[:12]
+            ),
+        }
+
+    if not relevant_memory:
+        current_context = deepcopy(
+            ((getattr(loop, "agent_memory_context_by_event_id", {}) or {}).get(event_id) or {})
+        )
+        if current_context and str(stored_memory.get("version", "")) == "energybridge_observable_profile_memory_v2":
+            try:
+                from energybridge.harness.memory import compact_memory_context
+
+                relevant_memory = compact_memory_context(
+                    stored_memory,
+                    current_context,
+                    k=4,
+                    max_chars=6000,
+                )
+            except Exception:
+                relevant_memory = {}
+        if not relevant_memory:
+            relevant_memory = {
+                "privacy_scope": "controller_observable_only",
+                "stable_beliefs": deepcopy(stored_memory.get("stable_beliefs") or {}),
+                "contextual_beliefs": deepcopy(stored_memory.get("contextual_beliefs") or {}),
+                "relevant_episodes": deepcopy(
+                    list(stored_memory.get("episodes") or stored_memory.get("events") or [])[-4:]
+                ),
+            }
+
+    devices: dict[str, dict] = {}
+    for name, raw in (appliance_config or {}).items():
+        if not isinstance(raw, dict):
+            continue
+        devices[str(name)] = {
+            str(key): deepcopy(value)
+            for key, value in raw.items()
+            if str(key) in _ADAPTIVE_V3_DEVICE_CAPABILITY_FIELDS
+        }
+    required_action_fields = _missing_explicit_appliance_actions(
+        {}, appliance_config, adaptive_contract=True
+    )
+    observable_state = {
+        "time": {"simulation_hour": sim_h, "hour_of_day": hod},
+        "environment": {"indoor_temp_c": temp, "outdoor_temp_c": out_t},
+        "occupancy": {
+            "occupied": bool(getattr(loop, "current_occupied", False)),
+            "people_count": float(getattr(loop, "current_occupancy_count", 0.0) or 0.0),
+            "source": str(getattr(loop, "current_occupancy_source", "") or ""),
+        },
+        "facility_load_kw": (float(facility_w) / 1000.0 if facility_w is not None else None),
+        "control_limits": {
+            "setpoint": {"min": float(setpoint_min_c), "max": float(setpoint_max_c)},
+        },
+        "device_capabilities": devices,
+        "realtime_device_state": _adaptive_v3_realtime_device_state(loop, sim_h),
+        "required_appliance_action_fields": required_action_fields,
+        "supported_plan_fields": {
+            "setpoint": "finite thermostat setpoint in degrees C",
+            "next_check_hour": "optional future simulation hour",
+            "appliances": "object using the required action fields and device capabilities above",
+            "water_heater_action_contract": (
+                "water_heater_preheat must be boolean when the device is present; "
+                "false disables/no-ops and other water-heater fields may be null or omitted; "
+                "true requires finite start in [0,24), end in [0,24], a positive window no longer "
+                "than 8 hours, and a temperature in [45,75] C"
+            ),
+            "reason": "compact controller rationale",
+            "strategy_explanation": {
+                "natural_language": "natural household-facing explanation",
+                "why_request": "event purpose when applicable",
+                "recommended_actions": "specific device actions with timing or amount",
+                "protected_constraints": "comfort, routine, consent, and service protections",
+                "user_control": "reversible choice, opt-out, or restoration information",
+                "expected_benefit": "truthful supported benefit and material uncertainty",
+            },
+        },
+    }
+    observable_event = deepcopy(memory_event or vpp_event or {})
+    observable_event.update({
+        "event_id": event_id,
+        "calendar": deepcopy(observable_calendar or {}),
+        "current_user_message": str(user_input or "")[:2000],
+        "demand_context": deepcopy(demand_context or {}),
+        "price_context": str(price_context or "")[:8000],
+    })
+    explicit_constraints = [
+        {
+            "constraint_id": "family_setpoint_required",
+            "kind": "required",
+            "path": "/setpoint",
+            "severity": "hard",
+            "evidence_paths": ["/observable_state/control_limits/setpoint"],
+        },
+        {
+            "constraint_id": "family_appliance_object_required",
+            "kind": "required",
+            "path": "/appliances",
+            "severity": "hard",
+            "evidence_paths": ["/observable_state/required_appliance_action_fields"],
+        },
+    ]
+    return {
+        "observable_state": observable_state,
+        "observable_profile": observable_profile,
+        "memory": relevant_memory,
+        "event": observable_event,
+        "explicit_constraints": explicit_constraints,
+    }
+
+
+def _adaptive_v3_advisor_candidates(skill_bundle: dict | None) -> list[dict]:
+    """Convert only available skill outputs into evaluator-anonymised evidence."""
+    candidates: list[dict] = []
+    for _, item in sorted(((skill_bundle or {}).get("skills") or {}).items()):
+        if not isinstance(item, dict) or item.get("status") != "available":
+            continue
+        candidates.append({
+            # Identity-bearing keys and strings are removed by planning.py
+            # before either the model or the portfolio audit sees provenance.
+            "source_skill": item.get("skill"),
+            "plan": {
+                "setpoint": item.get("setpoint"),
+                "next_check_hour": item.get("next_check_hour"),
+                "reason": item.get("reason"),
+                "appliances": deepcopy(item.get("appliance_actions") or {}),
+            },
+            "objective_estimates": deepcopy(item.get("objective_terms") or {}),
+            "uncertainty": deepcopy(item.get("diagnostics") or {}),
+        })
+    return candidates
+
+
+def _adaptive_v3_planning_prompts(
+    planning_inputs: dict,
+    *,
+    advisor_candidates: list[dict] | None = None,
+    allow_skill_request: bool = False,
+) -> tuple[str, str]:
+    """Build the open planning contract, optionally retaining stage-one tools."""
+    from energybridge.harness.planning import build_planning_prompts
+
+    system_prompt, user_prompt = build_planning_prompts(
+        observable_state=planning_inputs.get("observable_state") or {},
+        observable_profile=planning_inputs.get("observable_profile") or {},
+        memory=planning_inputs.get("memory") or {},
+        event=planning_inputs.get("event") or {},
+        advisor_candidates=advisor_candidates or [],
+        explicit_constraints=planning_inputs.get("explicit_constraints") or [],
+    )
+    if allow_skill_request:
+        system_prompt += """
+
+Before planning, you may request optional analysis tools if their evidence would materially help. If so, return only a JSON object with `skill_calls` and a brief `reason`. Otherwise return the planning portfolio now. This is an optional evidence-gathering step, not a required recipe."""
+        skill_catalog = {
+            "forecast_control": "predictive trajectory and executable-control evidence",
+            "constraint_scheduler": "constraint-aware appliance and HVAC scheduling evidence",
+            "thermal_dynamics": "regional HVAC response evidence",
+        }
+        user_prompt += (
+            "\n\n[OPTIONAL ANALYSIS TOOLS]\n"
+            + json.dumps(skill_catalog, ensure_ascii=False, sort_keys=True)
+        )
+    else:
+        system_prompt += "\n\nReturn the selected planning portfolio now; do not request another analysis tool."
+    system_prompt += """
+
+For a demand-response proposal or another material household change, the selected plan may carry a `strategy_explanation`. Make it brief, natural, household-specific, and traceable to the observed action, profile, event, or memory. Explain meaningful protections, tradeoffs, uncertainty, and user control; quantify a benefit only when the payload supports it. A fluent explanation does not excuse an infeasible or contradictory action."""
+    return system_prompt, user_prompt
+
+
+def _adaptive_v3_replan_feedback(evaluation: dict, policy_errors: list[str] | None = None) -> dict:
+    """Expose semantic validation failures without prescribing a replacement."""
+    audit = evaluation.get("portfolio_audit") if isinstance(evaluation, dict) else {}
+    audit = audit if isinstance(audit, dict) else {}
+    lifecycles = audit.get("candidate_lifecycles") or []
+    return {
+        "selection_status": evaluation.get("selection_status"),
+        "requested_candidate_id": (audit.get("model_selection") or {}).get("requested_candidate_id"),
+        "validator_reason": (audit.get("model_selection") or {}).get("validator_reason"),
+        "candidate_findings": [
+            {
+                "candidate_id": item.get("candidate_id"),
+                "origin": item.get("origin"),
+                "feasible": item.get("feasible"),
+                "violations": [
+                    {
+                        "path": violation.get("path"),
+                        "message": violation.get("message"),
+                    }
+                    for violation in list(item.get("violations") or [])[:12]
+                    if isinstance(violation, dict) and not violation.get("repaired")
+                ],
+            }
+            for item in lifecycles
+            if isinstance(item, dict) and item.get("origin") == "model"
+        ][:16],
+        "runtime_contract_errors": [str(error)[:500] for error in list(policy_errors or [])[:16]],
+    }
+
+
+def _adaptive_v3_resolve_planning_response(
+    raw_response: Any,
+    *,
+    planning_inputs: dict,
+    advisor_candidates: list[dict] | None = None,
+    policy_error_fn: Any = None,
+    replan_fn: Any = None,
+) -> dict:
+    """Evaluate model ownership, permit one semantic retry, then stop.
+
+    Crucially, this function never chooses a feasible advisor or another model
+    candidate on the base model's behalf.
+    """
+    from energybridge.harness.planning import evaluate_planning_response
+
+    def evaluate(raw: Any) -> tuple[dict, list[str]]:
+        result = evaluate_planning_response(
+            raw,
+            observable_state=planning_inputs.get("observable_state") or {},
+            observable_profile=planning_inputs.get("observable_profile") or {},
+            memory=planning_inputs.get("memory") or {},
+            event=planning_inputs.get("event") or {},
+            advisor_candidates=advisor_candidates or [],
+            explicit_constraints=planning_inputs.get("explicit_constraints") or [],
+        )
+        selected = result.get("selected_executable_plan")
+        errors = (
+            [str(value) for value in list(policy_error_fn(selected) or [])]
+            if selected is not None and callable(policy_error_fn)
+            else []
+        )
+        return result, errors
+
+    first, first_policy_errors = evaluate(raw_response)
+    attempts = [{
+        "attempt": 1,
+        "kind": "initial_model_response",
+        "evaluation": deepcopy(first.get("portfolio_audit") or {}),
+        "selection_status": first.get("selection_status"),
+        "runtime_contract_errors": first_policy_errors,
+    }]
+    final = first
+    final_policy_errors = first_policy_errors
+    replan_error = ""
+    if (first.get("selected_executable_plan") is None or first_policy_errors) and callable(replan_fn):
+        try:
+            retry_raw = replan_fn(_adaptive_v3_replan_feedback(first, first_policy_errors))
+            final, final_policy_errors = evaluate(retry_raw)
+            attempts.append({
+                "attempt": 2,
+                "kind": "semantic_replan",
+                "evaluation": deepcopy(final.get("portfolio_audit") or {}),
+                "selection_status": final.get("selection_status"),
+                "runtime_contract_errors": final_policy_errors,
+            })
+        except Exception as exc:
+            replan_error = _adaptive_exception_audit_text(exc, limit=500)
+
+    selected_plan = (
+        deepcopy(final.get("selected_executable_plan"))
+        if final.get("selected_executable_plan") is not None and not final_policy_errors
+        else None
+    )
+    selected_raw_plan = None
+    if selected_plan is not None:
+        selected_id = final.get("selected_candidate_id")
+        for item in (final.get("portfolio_audit") or {}).get("candidate_lifecycles") or []:
+            if (
+                isinstance(item, dict)
+                and item.get("origin") == "model"
+                and str(item.get("candidate_id")) == str(selected_id)
+            ):
+                selected_raw_plan = deepcopy(item.get("raw_snapshot"))
+                break
+    status = "selected" if selected_plan is not None else "fallback_required"
+    return {
+        "version": "energybridge.open_portfolio_resolution.v3",
+        "status": status,
+        "selected_candidate_id": final.get("selected_candidate_id") if selected_plan is not None else None,
+        "selected_executable_plan": selected_plan,
+        "selected_raw_plan": selected_raw_plan,
+        "semantic_replan_attempted": len(attempts) > 1 or bool(replan_error),
+        "semantic_replan_error": replan_error,
+        "attempts": attempts,
+        "final_portfolio_audit": deepcopy(final.get("portfolio_audit") or {}),
+        "final_runtime_contract_errors": final_policy_errors,
+        "advisor_override_allowed": False,
+    }
 
 
 def _adaptive_v2_plan_snapshot(plan: dict | None) -> dict:
@@ -369,6 +777,202 @@ def _adaptive_v2_attach_lifecycle(
     })
     out["adaptive_decision_audit"] = audit
     return out
+
+
+def _adaptive_v3_record_actuator_execution(
+    lifecycle: dict | None,
+    requested_plan: dict | None,
+    *,
+    effective_setpoint: float | None,
+    application_report: dict | None,
+    hvac_actuator_available: bool | None = None,
+    status: str = "executed",
+) -> tuple[dict, dict]:
+    """Record only simulator-accepted actions as the executed lifecycle stage."""
+    report = deepcopy(application_report) if isinstance(application_report, dict) else {
+        "version": "energybridge.actuator_application.v3",
+        "requested_actions": deepcopy(
+            ((requested_plan or {}).get("appliance_actions") or {})
+            if isinstance(requested_plan, dict)
+            else {}
+        ),
+        "applied_actions": {},
+        "patches": [],
+        "rejections": [{"service": "appliance_suite", "reason": "actuator_unavailable"}],
+        "status": "actuator_unavailable",
+    }
+    report["rejections"] = list(report.get("rejections") or [])
+    report["unknowns"] = list(report.get("unknowns") or [])
+    requested_setpoint = (
+        (requested_plan or {}).get("setpoint")
+        if isinstance(requested_plan, dict)
+        else None
+    )
+    hvac_report: dict[str, Any] = {
+        "service": "hvac_cooling_setpoint",
+        "requested_setpoint": requested_setpoint,
+    }
+    applied_setpoint: float | None = None
+    if hvac_actuator_available is True:
+        try:
+            candidate = float(effective_setpoint)
+            if not math.isfinite(candidate):
+                raise ValueError("non-finite setpoint")
+            applied_setpoint = round(candidate, 3)
+            hvac_report.update({
+                "status": "actuator_available",
+                "applied_setpoint": applied_setpoint,
+            })
+        except (TypeError, ValueError):
+            hvac_report["status"] = "application_unknown"
+            report["unknowns"].append({
+                "service": "hvac_cooling_setpoint",
+                "reason": "effective_setpoint_unavailable",
+            })
+    elif hvac_actuator_available is False:
+        hvac_report["status"] = "actuator_unavailable"
+        report["rejections"].append({
+            "service": "hvac_cooling_setpoint",
+            "reason": "cooling_setpoint_actuator_unavailable",
+        })
+    else:
+        hvac_report["status"] = "application_unknown"
+        report["unknowns"].append({
+            "service": "hvac_cooling_setpoint",
+            "reason": "cooling_setpoint_actuator_availability_unknown",
+        })
+    report["hvac_application"] = hvac_report
+
+    actual: dict[str, Any] = {}
+    if applied_setpoint is not None:
+        actual["setpoint"] = applied_setpoint
+    applied_actions = deepcopy(report.get("applied_actions") or {})
+    if applied_actions:
+        actual["appliance_actions"] = applied_actions
+    rejected = list(report.get("rejections") or [])
+    unknowns = list(report.get("unknowns") or [])
+    normalized = list(report.get("patches") or [])
+    application_status = (
+        "execution_rejected_actuator_unavailable"
+        if not actual and hvac_actuator_available is False
+        else "execution_unknown"
+        if not actual
+        else "executed_with_actuator_rejections"
+        if rejected
+        else "executed_with_application_unknowns"
+        if unknowns
+        else "executed_with_runtime_normalization"
+        if normalized
+        else str(status or "executed")
+    )
+    resolution_status = str(status or "executed")
+    execution_status = (
+        f"{resolution_status}_{application_status}"
+        if resolution_status != "executed" and application_status != resolution_status
+        else application_status
+    )
+    reason_bits = []
+    if rejected:
+        reason_bits.append("simulator rejected or could not apply one or more requested actions")
+    if unknowns:
+        reason_bits.append("runtime could not establish whether one or more requested actions were applied")
+    if normalized:
+        reason_bits.append("runtime normalized requested actions to actuator-facing values")
+    if not actual:
+        reason_bits.append("no actuator-facing execution evidence was observed")
+    if not reason_bits:
+        reason_bits.append("actuator-facing plan matched the resolved request")
+    updated = _adaptive_v2_record_plan_stage(
+        lifecycle,
+        "executed_plan",
+        actual,
+        validator="actuator_application_v3",
+        status=execution_status,
+        reason="; ".join(reason_bits),
+    )
+    stage = (updated.get("stages") or {}).get("executed_plan") or {}
+    stage["resolution_status"] = resolution_status
+    if not actual:
+        # Keep the rejected/unknown attempt auditable without manufacturing an
+        # executed exposure fingerprint from an empty appliance mapping.
+        stage["plan"] = {}
+        stage["fingerprint"] = None
+        stage["patches"] = _adaptive_v2_plan_patches(
+            dict(
+                (((updated.get("stages") or {}).get(stage.get("from_stage")) or {}).get("plan") or {})
+            ),
+            {},
+        )
+    stage["application_report"] = report
+    validators = updated.get("validators") or []
+    if validators:
+        validators[-1]["resolution_status"] = resolution_status
+        if not actual:
+            validators[-1]["patches"] = deepcopy(stage.get("patches") or [])
+        validators[-1]["application_report"] = deepcopy(report)
+    return updated, actual
+
+
+def _adaptive_v3_append_execution_exposure(
+    loop: Any,
+    event_id: str,
+    sim_h: float,
+    lifecycle: dict | None,
+    actual_plan: dict | None,
+) -> dict:
+    """Preserve every observed dispatch that can influence one event outcome.
+
+    A VPP episode may include a day-ahead/pre-event dispatch and one or more
+    event-time replans.  The latest lifecycle remains convenient for display,
+    while this ordered exposure ledger prevents an event-start attach from
+    erasing earlier actuator-facing controls that also affected the outcome.
+    """
+    updated = deepcopy(lifecycle or {})
+    event_id = str(event_id or "")
+    if not isinstance(actual_plan, dict) or not actual_plan:
+        return updated
+    actual = _adaptive_v2_plan_snapshot(actual_plan)
+    if (
+        not event_id
+        or ("setpoint" not in actual and not (actual.get("appliance_actions") or {}))
+    ):
+        return updated
+    history_map = getattr(loop, "agent_execution_history_by_event_id", None)
+    if not isinstance(history_map, dict):
+        history_map = {}
+        setattr(loop, "agent_execution_history_by_event_id", history_map)
+    history = list(history_map.get(event_id) or [])
+    executed_stage = dict(((updated.get("stages") or {}).get("executed_plan") or {}))
+    exposure = {
+        "sequence": len(history) + 1,
+        "simulation_hour": round(float(sim_h), 6),
+        "plan": actual,
+        "fingerprint": _adaptive_v2_plan_fingerprint(actual),
+        "status": str(executed_stage.get("status") or "executed"),
+        "application_report": deepcopy(executed_stage.get("application_report") or {}),
+    }
+    if (
+        history
+        and history[-1].get("simulation_hour") == exposure["simulation_hour"]
+        and history[-1].get("fingerprint") == exposure["fingerprint"]
+    ):
+        exposure["sequence"] = history[-1].get("sequence", len(history))
+        history[-1] = exposure
+    else:
+        history.append(exposure)
+    history = history[-64:]
+    history_map[event_id] = deepcopy(history)
+    updated["execution_exposures"] = deepcopy(history)
+    updated["execution_exposure_fingerprint"] = hashlib.sha256(
+        json.dumps(
+            history,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()[:16]
+    return updated
 
 
 def _adaptive_v2_strategy_explanation(raw: Any) -> dict:
@@ -856,6 +1460,7 @@ class _FamilyLoop:
         self.agent_plan_lifecycle_by_event_id: Dict[str, dict] = {}
         self.agent_observable_calendar_by_event_id: Dict[str, dict] = {}
         self.agent_execution_context_by_event_id: Dict[str, dict] = {}
+        self.agent_execution_history_by_event_id: Dict[str, List[dict]] = {}
         # Per-event VPP energy tracking and demand-agent outputs
         self.vpp_event_energy_wh: Dict[str, float] = {}   # {event_id: Wh} accumulated per event
         self.vpp_demand_by_id: Dict[str, dict] = {}        # {event_id: {target_kwh, reason}}
@@ -874,6 +1479,12 @@ class _FamilyLoop:
         self.no_vpp_daily_plan_by_day: Dict[int, dict] = {}
         self.vpp_plan_gate_by_id: Dict[str, dict] = {}
         self.agent_preference_memory: Dict[str, Any] = {}
+        self.agent_household_model: Dict[str, Any] = {}
+        self.agent_profile_capsule_by_event_id: Dict[str, dict] = {}
+        self.agent_memory_capsule_by_event_id: Dict[str, dict] = {}
+        self.agent_memory_v3_audit: Dict[str, Any] = {}
+        self.agent_memory_v3_store_path: Optional[Path] = None
+        self.agent_memory_v3_save_allowed: bool = False
         self.agent_memory_path: Optional[Path] = None
         self.agent_memory_md_path: Optional[Path] = None
         self.persist_agent_preference_memory: bool = False
@@ -975,7 +1586,8 @@ def run_family_pmv(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
                 energy_kwh_per_day=kwh/3, event_index=idx+1)
             pref_scores.append(r.get("score") or 0.0)
     except Exception as e:
-        print(f"  [PMV score] {e}")
+        detail = _adaptive_exception_audit_text(e) if _adaptive_harness_v2() else str(e)
+        print(f"  [PMV score] {detail}")
 
     return BenchmarkResult(scenario=f"family/{weather_label}", building="family",
         weather=weather_label, method="pmv", exit_code=ec,
@@ -1144,7 +1756,11 @@ def _attach_event_baseline_shed(event_result: dict, event: dict, power_trace_row
     except Exception as exc:
         event_result["event_baseline_estimate"] = {
             "status": "failed",
-            "reason": str(exc)[:160],
+            "reason": (
+                _adaptive_exception_audit_text(exc, limit=160)
+                if _adaptive_harness_v2()
+                else str(exc)[:160]
+            ),
         }
         return
 
@@ -1351,7 +1967,11 @@ def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
             ok = suite.shift_appliance(name, day_idx, abs_h)
             print(f"    [Appliance] shift {name} day={day_idx} hod={hod:.1f} -> {'ok' if ok else 'rejected'}")
         except (TypeError, ValueError) as e:
-            print(f"    [Appliance] bad {key} value={val}: {e}")
+            detail = _adaptive_exception_audit_text(e) if _adaptive_harness_v2() else str(e)
+            if _adaptive_harness_v2():
+                print(f"    [Appliance] bad {key}: {detail}")
+            else:
+                print(f"    [Appliance] bad {key} value={val}: {detail}")
 
     # --- Water heater preheat schedule ---
     preheat     = actions.get("water_heater_preheat")
@@ -1394,7 +2014,8 @@ def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
                           f"start={ph_start} end={ph_end} temp={ph_temp} "
                           f"-> {'ok' if ok else 'rejected'}")
         except Exception as e:
-            print(f"    [Appliance] water_heater preheat error: {e}")
+            detail = _adaptive_exception_audit_text(e) if _adaptive_harness_v2() else str(e)
+            print(f"    [Appliance] water_heater preheat error: {detail}")
 
     # --- EV charging mode + per-day window ---
     ev_mode     = actions.get("ev_mode")
@@ -1405,7 +2026,8 @@ def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
             ok = suite.set_ev_mode(day_idx, str(ev_mode))
             print(f"    [Appliance] ev mode={ev_mode} -> {'ok' if ok else 'rejected'}")
         except Exception as e:
-            print(f"    [Appliance] ev mode error: {e}")
+            detail = _adaptive_exception_audit_text(e) if _adaptive_harness_v2() else str(e)
+            print(f"    [Appliance] ev mode error: {detail}")
     if ev_ch_start is not None or ev_ch_end is not None:
         try:
             if _ev_replan_would_reduce_existing_charge(suite, day_idx, ev_ch_start, ev_ch_end, sim_h):
@@ -1421,7 +2043,379 @@ def _apply_appliance_actions(suite, actions: dict, sim_h: float) -> None:
             )
             print(f"    [Appliance] ev charge_window={ev_ch_start}-{ev_ch_end} -> {'ok' if ok else 'rejected'}")
         except Exception as e:
-            print(f"    [Appliance] ev charge_window error: {e}")
+            detail = _adaptive_exception_audit_text(e) if _adaptive_harness_v2() else str(e)
+            print(f"    [Appliance] ev charge_window error: {detail}")
+
+
+def _adaptive_v3_water_heater_action_errors(
+    actions: dict | None,
+    appliance_config: dict | None,
+) -> list[str]:
+    """Validate the conditional V3 water-heater action contract."""
+    actions = actions if isinstance(actions, dict) else {}
+    wh_config = (appliance_config or {}).get("water_heater", {}) or {}
+    if not isinstance(wh_config, dict) or not bool(wh_config.get("present", False)):
+        return []
+    enabled = actions.get("water_heater_preheat")
+    if not isinstance(enabled, bool):
+        return ["water_heater_preheat must be an explicit boolean"]
+    if enabled is False:
+        # Associated fields are intentionally ignored at application time.  A
+        # false command is a real disable/no-op, never an implicit enable.
+        return []
+
+    errors: list[str] = []
+    values: dict[str, float] = {}
+    for key in (
+        "water_heater_preheat_start_h",
+        "water_heater_preheat_end_h",
+        "water_heater_preheat_temp_c",
+    ):
+        raw = actions.get(key)
+        if isinstance(raw, bool):
+            errors.append(f"{key} must be a finite number when preheat=true")
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            errors.append(f"{key} must be a finite number when preheat=true")
+            continue
+        if not math.isfinite(value):
+            errors.append(f"{key} must be a finite number when preheat=true")
+            continue
+        values[key] = value
+    start = values.get("water_heater_preheat_start_h")
+    end = values.get("water_heater_preheat_end_h")
+    temp = values.get("water_heater_preheat_temp_c")
+    if start is not None and not 0.0 <= start < 24.0:
+        errors.append("water_heater_preheat_start_h must be in [0, 24)")
+    if end is not None and not 0.0 <= end <= 24.0:
+        errors.append("water_heater_preheat_end_h must be in [0, 24]")
+    if temp is not None and not 45.0 <= temp <= 75.0:
+        errors.append("water_heater_preheat_temp_c must be in [45, 75]")
+    if start is not None and end is not None and 0.0 <= start < 24.0 and 0.0 <= end <= 24.0:
+        duration = end - start
+        if duration <= 0.0:
+            duration += 24.0
+        if duration <= 1e-6 or duration > 8.0:
+            errors.append("water-heater preheat window duration must be greater than 0 and at most 8 hours")
+    return errors
+
+
+def _adaptive_v3_appliance_action_contract_errors(
+    actions: dict | None,
+    appliance_config: dict | None,
+) -> list[str]:
+    """Validate exact V3 types and canonical local-hour ranges."""
+    actions = actions if isinstance(actions, dict) else {}
+    config = appliance_config or {}
+    errors = _adaptive_v3_water_heater_action_errors(actions, appliance_config)
+
+    def finite_hour(key: str, *, end_semantics: bool = False) -> None:
+        raw = actions.get(key)
+        if raw is None:
+            return
+        if isinstance(raw, bool):
+            errors.append(f"{key} must be numeric")
+            return
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            errors.append(f"{key} must be numeric")
+            return
+        if not math.isfinite(value):
+            errors.append(f"{key} must be finite")
+            return
+        upper_ok = value <= 24.0 if end_semantics else value < 24.0
+        if value < 0.0 or not upper_ok:
+            interval = "[0, 24]" if end_semantics else "[0, 24)"
+            errors.append(f"{key} must use canonical local hours in {interval}")
+
+    for name in ("washer", "dishwasher", "dryer"):
+        device = config.get(name, {}) or {}
+        if not isinstance(device, dict) or not bool(device.get("present", False)):
+            continue
+        skip_key = f"{name}_skip"
+        if skip_key in actions and not isinstance(actions.get(skip_key), bool):
+            errors.append(f"{skip_key} must be an exact boolean")
+        if actions.get(skip_key) is not True:
+            finite_hour(f"{name}_start_h")
+
+    ev = config.get("ev", {}) or {}
+    if isinstance(ev, dict) and bool(ev.get("present", False)):
+        mode = actions.get("ev_mode")
+        if mode is not None and (not isinstance(mode, str) or mode not in {"normal", "smart", "delay"}):
+            errors.append("ev_mode must be one of: normal, smart, delay")
+        finite_hour("ev_charge_start_h")
+        finite_hour("ev_charge_end_h", end_semantics=True)
+    return errors
+
+
+def _adaptive_v3_plan_control_errors(
+    plan: dict | None,
+    *,
+    sim_h: float,
+    total_sim_hours: float,
+    setpoint_min_c: float,
+    setpoint_max_c: float,
+) -> list[str]:
+    """Validate scalar execution fields before portfolio selection."""
+    if not isinstance(plan, dict):
+        return ["selected plan is not an executable object"]
+    errors: list[str] = []
+    try:
+        raw_setpoint = plan.get("setpoint")
+        if isinstance(raw_setpoint, bool):
+            raise ValueError("boolean is not a setpoint")
+        setpoint = float(raw_setpoint)
+        if not math.isfinite(setpoint):
+            raise ValueError("non-finite")
+        if not float(setpoint_min_c) <= setpoint <= float(setpoint_max_c):
+            errors.append(
+                f"setpoint must be within [{float(setpoint_min_c):.3f}, {float(setpoint_max_c):.3f}]"
+            )
+    except (TypeError, ValueError):
+        errors.append("setpoint must be finite")
+    next_check = plan.get("next_check_hour")
+    if next_check is not None:
+        try:
+            if isinstance(next_check, bool):
+                raise ValueError("boolean is not an hour")
+            next_value = float(next_check)
+            if not math.isfinite(next_value):
+                raise ValueError("non-finite")
+            if next_value <= float(sim_h) + 0.25:
+                errors.append("next_check_hour must be in the future")
+            elif next_value > float(total_sim_hours):
+                errors.append("next_check_hour exceeds the simulation horizon")
+        except (TypeError, ValueError):
+            errors.append("next_check_hour must be a finite number or null")
+    if not isinstance(plan.get("appliances"), dict):
+        errors.append("appliances must be an object")
+    return errors
+
+
+def _adaptive_v3_apply_appliance_actions(
+    suite: Any,
+    actions: dict | None,
+    sim_h: float,
+) -> dict:
+    """Apply adaptive actions and return the actuator-facing action record.
+
+    This path is intentionally separate from the legacy actuator helper.  It
+    records only commands accepted by the simulator and makes runtime bounds or
+    rejection visible to lifecycle auditing.
+    """
+    requested = deepcopy(actions) if isinstance(actions, dict) else {}
+    applied: dict[str, Any] = {}
+    rejections: list[dict[str, str]] = []
+    day_idx = int(sim_h // 24)
+
+    for name in ("washer", "dishwasher", "dryer"):
+        skip_key = f"{name}_skip"
+        start_key = f"{name}_start_h"
+        if requested.get(skip_key) is True:
+            if _shiftable_has_existing_service_plan(suite, name, day_idx):
+                rejections.append({"service": name, "reason": "existing_service_plan_preserved"})
+                print(
+                    f"    [Appliance] skip {name} day={day_idx} -> rejected "
+                    "(existing schedule/run preserved)"
+                )
+                continue
+            try:
+                ok = bool(suite.skip_appliance(name, day_idx))
+            except Exception as exc:
+                ok = False
+                rejections.append({"service": name, "reason": f"apply_error:{type(exc).__name__}"})
+            if ok:
+                applied[skip_key] = True
+            elif not any(item["service"] == name for item in rejections):
+                rejections.append({"service": name, "reason": "simulator_rejected_skip"})
+            print(f"    [Appliance] skip {name} day={day_idx} -> {'ok' if ok else 'rejected'}")
+            continue
+        value = requested.get(start_key)
+        if value is None:
+            continue
+        try:
+            hod = float(value)
+            if not math.isfinite(hod) or not 0.0 <= hod < 24.0:
+                raise ValueError("start hour must be finite and in [0,24)")
+            absolute_h = day_idx * 24.0 + hod
+            app = getattr(suite, "_shiftable", {}).get(name)
+            if (
+                app is not None
+                and bool(getattr(app, "_overnight", False))
+                and hod < float(getattr(app, "earliest_h", 0.0))
+            ):
+                absolute_h += 24.0
+            ok = bool(suite.shift_appliance(name, day_idx, absolute_h))
+            if ok:
+                applied[start_key] = round(hod, 3)
+                if requested.get(skip_key) is False:
+                    applied[skip_key] = False
+            else:
+                rejections.append({"service": name, "reason": "simulator_rejected_schedule"})
+            print(f"    [Appliance] shift {name} day={day_idx} hod={hod:.1f} -> {'ok' if ok else 'rejected'}")
+        except (TypeError, ValueError) as exc:
+            rejections.append({"service": name, "reason": f"invalid_schedule:{type(exc).__name__}"})
+            print(
+                f"    [Appliance] bad {start_key}: "
+                f"{_adaptive_exception_audit_text(exc, limit=160)}"
+            )
+
+    enabled = requested.get("water_heater_preheat")
+    water_keys_present = any(
+        key in requested
+        for key in (
+            "water_heater_preheat",
+            "water_heater_preheat_start_h",
+            "water_heater_preheat_end_h",
+            "water_heater_preheat_temp_c",
+        )
+    )
+    if water_keys_present:
+        if enabled is False:
+            # The simulator has no public disable operation.  This adaptive
+            # integration owns the explicit-only schedule state and clears it
+            # directly so a prior true command cannot survive a later false.
+            heater = getattr(suite, "_water_heater", None)
+            state = (getattr(heater, "_days", {}) or {}).get(day_idx) if heater is not None else None
+            if isinstance(state, dict):
+                state.update({
+                    "preheat_requested": False,
+                    "preheat_start_h": None,
+                    "preheat_end_h": None,
+                    "preheat_temp_c": None,
+                })
+                applied["water_heater_preheat"] = False
+                print("    [Appliance] water_heater preheat=False -> disabled")
+            else:
+                rejections.append({"service": "water_heater", "reason": "schedule_state_unavailable"})
+        elif enabled is True:
+            validation = _adaptive_v3_water_heater_action_errors(
+                requested,
+                {"water_heater": {"present": True}},
+            )
+            if validation:
+                rejections.append({
+                    "service": "water_heater",
+                    "reason": "invalid_contract:" + " | ".join(validation),
+                })
+            else:
+                start = float(requested["water_heater_preheat_start_h"])
+                end = float(requested["water_heater_preheat_end_h"])
+                temp = float(requested["water_heater_preheat_temp_c"])
+                bounded_start, bounded_end, guard = _bounded_water_heater_preheat_window(
+                    suite, day_idx, start, end, sim_h
+                )
+                if guard in {"invalid", "past"}:
+                    rejections.append({"service": "water_heater", "reason": f"runtime_{guard}"})
+                else:
+                    try:
+                        ok = bool(suite.set_ewh_preheat_schedule(
+                            day_idx,
+                            start_h=float(bounded_start),
+                            end_h=float(bounded_end),
+                            temp_c=temp,
+                        ))
+                    except Exception as exc:
+                        ok = False
+                        rejections.append({
+                            "service": "water_heater",
+                            "reason": f"apply_error:{type(exc).__name__}",
+                        })
+                    if ok:
+                        applied.update({
+                            "water_heater_preheat": True,
+                            "water_heater_preheat_start_h": round(float(bounded_start), 3),
+                            "water_heater_preheat_end_h": round(float(bounded_end), 3),
+                            "water_heater_preheat_temp_c": round(temp, 3),
+                        })
+                    elif not any(item["service"] == "water_heater" for item in rejections):
+                        rejections.append({"service": "water_heater", "reason": "simulator_rejected_schedule"})
+                    print(
+                        "    [Appliance] water_heater preheat schedule: "
+                        f"start={bounded_start} end={bounded_end} temp={temp} "
+                        f"-> {'ok' if ok else 'rejected'}"
+                    )
+        else:
+            rejections.append({"service": "water_heater", "reason": "explicit_boolean_required"})
+
+    ev_mode = requested.get("ev_mode")
+    ev_start = requested.get("ev_charge_start_h")
+    ev_end = requested.get("ev_charge_end_h")
+    if ev_mode is not None:
+        try:
+            if not isinstance(ev_mode, str) or ev_mode not in {"normal", "smart", "delay"}:
+                raise ValueError("unsupported EV mode")
+            ok = bool(suite.set_ev_mode(day_idx, ev_mode))
+        except Exception as exc:
+            ok = False
+            rejections.append({"service": "ev_mode", "reason": f"apply_error:{type(exc).__name__}"})
+        if ok:
+            applied["ev_mode"] = str(ev_mode)
+        elif not any(item["service"] == "ev_mode" for item in rejections):
+            rejections.append({"service": "ev_mode", "reason": "simulator_rejected_mode"})
+        print(f"    [Appliance] ev mode={ev_mode} -> {'ok' if ok else 'rejected'}")
+    if ev_start is not None or ev_end is not None:
+        try:
+            if _ev_replan_would_reduce_existing_charge(suite, day_idx, ev_start, ev_end, sim_h):
+                rejections.append({"service": "ev", "reason": "existing_target_window_preserved"})
+                ok = False
+            else:
+                start_value = float(ev_start) if ev_start is not None else None
+                end_value = float(ev_end) if ev_end is not None else None
+                if (
+                    start_value is not None
+                    and (not math.isfinite(start_value) or not 0.0 <= start_value < 24.0)
+                ):
+                    raise ValueError("EV start hour must be in [0,24)")
+                if (
+                    end_value is not None
+                    and (not math.isfinite(end_value) or not 0.0 <= end_value <= 24.0)
+                ):
+                    raise ValueError("EV end hour must be in [0,24]")
+                ok = bool(suite.set_ev_charge_window(
+                    day_idx,
+                    start_h=start_value,
+                    end_h=end_value,
+                ))
+                if ok:
+                    if start_value is not None:
+                        applied["ev_charge_start_h"] = round(start_value, 3)
+                    if end_value is not None:
+                        applied["ev_charge_end_h"] = round(end_value, 3)
+                else:
+                    rejections.append({"service": "ev", "reason": "simulator_rejected_window"})
+            print(f"    [Appliance] ev charge_window={ev_start}-{ev_end} -> {'ok' if ok else 'rejected'}")
+        except (TypeError, ValueError) as exc:
+            rejections.append({"service": "ev", "reason": f"invalid_window:{type(exc).__name__}"})
+            print(
+                "    [Appliance] ev charge_window error: "
+                f"{_adaptive_exception_audit_text(exc, limit=160)}"
+            )
+        except Exception as exc:
+            rejections.append({"service": "ev", "reason": f"apply_error:{type(exc).__name__}"})
+            print(
+                "    [Appliance] ev charge_window error: "
+                f"{_adaptive_exception_audit_text(exc, limit=160)}"
+            )
+
+    patches = _adaptive_v2_plan_patches(requested, applied)
+    return {
+        "version": "energybridge.actuator_application.v3",
+        "requested_actions": requested,
+        "applied_actions": applied,
+        "patches": patches,
+        "rejections": rejections,
+        "status": (
+            "applied_with_rejections"
+            if rejections
+            else "applied_with_normalization"
+            if patches
+            else "applied_as_requested"
+        ),
+    }
 
 
 def _service_from_appliance_action_key(key: str) -> str | None:
@@ -2190,7 +3184,12 @@ def _persona_agent_policy_text(persona_config: dict | None) -> str:
     return "\n[PERSONA-SPECIFIC AGENT POLICY]\n" + "\n".join(f"- {part}" for part in parts)
 
 
-def _missing_explicit_appliance_actions(actions: dict | None, appliance_config: dict | None) -> List[str]:
+def _missing_explicit_appliance_actions(
+    actions: dict | None,
+    appliance_config: dict | None,
+    *,
+    adaptive_contract: bool = False,
+) -> List[str]:
     """Return fields missing from an Agent response for present controllable appliances."""
     actions = actions or {}
     missing: List[str] = []
@@ -2206,14 +3205,27 @@ def _missing_explicit_appliance_actions(actions: dict | None, appliance_config: 
             if actions.get(skip_key) is None:
                 missing.append(skip_key)
     if "water_heater" in present:
-        for key in (
-            "water_heater_preheat_start_h",
-            "water_heater_preheat_end_h",
-            "water_heater_preheat_temp_c",
-            "water_heater_preheat",
-        ):
-            if actions.get(key) is None:
-                missing.append(key)
+        if adaptive_contract:
+            enabled = actions.get("water_heater_preheat")
+            if not isinstance(enabled, bool):
+                missing.append("water_heater_preheat")
+            elif enabled:
+                for key in (
+                    "water_heater_preheat_start_h",
+                    "water_heater_preheat_end_h",
+                    "water_heater_preheat_temp_c",
+                ):
+                    if actions.get(key) is None:
+                        missing.append(key)
+        else:
+            for key in (
+                "water_heater_preheat_start_h",
+                "water_heater_preheat_end_h",
+                "water_heater_preheat_temp_c",
+                "water_heater_preheat",
+            ):
+                if actions.get(key) is None:
+                    missing.append(key)
     if "ev" in present:
         if actions.get("ev_charge_start_h") is None:
             missing.append("ev_charge_start_h")
@@ -2223,7 +3235,10 @@ def _missing_explicit_appliance_actions(actions: dict | None, appliance_config: 
 
 
 def _explicit_appliance_requirement_text(
-    appliance_config: dict | None, *, vpp_event: dict | None = None
+    appliance_config: dict | None,
+    *,
+    vpp_event: dict | None = None,
+    adaptive_contract: bool = False,
 ) -> str:
     """Human-readable prompt text listing the exact non-null fields required now."""
     present = _present_agent_controlled_appliances(appliance_config)
@@ -2248,7 +3263,14 @@ def _explicit_appliance_requirement_text(
         "Their latest_h is the latest FINISH time, so latest valid start is latest_h-duration_h. "
         "For overnight windows, a next-morning hour is valid only if the appliance status shows (+1d) and the "
         "cycle still finishes before latest_h. "
-        "For water_heater: emit preheat=true/false plus start/end/temp when controlling it. "
+        + (
+            "For water_heater: emit preheat as a boolean. false disables/no-ops and its "
+            "start/end/temp fields may be null or omitted; true requires finite start in [0,24), "
+            "end in [0,24], a positive window of at most 8 hours, and temp in [45,75]C. "
+            if adaptive_contract
+            else "For water_heater: emit preheat=true/false plus start/end/temp when controlling it. "
+        )
+        +
         "For EV: emit ev_charge_start_h and ev_charge_end_h; ev_mode is optional compatibility metadata."
         f"{_ev_service_window_guidance_text(appliance_config, vpp_event=vpp_event)}"
         f"{vpp_note}"
@@ -3587,7 +4609,11 @@ def _evaluate_household_vpp_plan_acceptance_gate(
         "acceptance_probability": round(probability, 6),
         "stable_draw": round(draw, 6),
         "high_confidence_accept": bool(high_confidence_accept),
-        "base_override_probability": round(_persona_vpp_override_prob(persona_config), 6),
+        "base_override_probability": (
+            None
+            if _adaptive_harness_v2()
+            else round(_persona_vpp_override_prob(persona_config), 6)
+        ),
         "factors": factors,
         "intrusion": household_intrusion,
         "strategy_quality": _strategy_quality_metrics(adaptability=adaptability, intrusion=household_intrusion),
@@ -3991,7 +5017,11 @@ def _evaluate_roleplay_prompt_vpp_plan_acceptance_gate(
         except Exception as exc:
             roleplay = dict(fallback)
             roleplay["source"] = "deterministic_after_roleplay_prompt_error"
-            roleplay["error"] = str(exc)[:200]
+            roleplay["error"] = (
+                _adaptive_exception_audit_text(exc, limit=200)
+                if _adaptive_harness_v2()
+                else str(exc)[:200]
+            )
 
     probability = max(0.004, min(0.95, float(roleplay.get("final_acceptance_probability", fallback["final_acceptance_probability"]) or 0.0)))
     gate_factors = [
@@ -4051,7 +5081,11 @@ def _evaluate_roleplay_prompt_vpp_plan_acceptance_gate(
         "acceptance_probability": round(probability, 6),
         "stable_draw": round(draw, 6),
         "high_confidence_accept": False,
-        "base_override_probability": round(_persona_vpp_override_prob(persona_config), 6),
+        "base_override_probability": (
+            None
+            if _adaptive_harness_v2()
+            else round(_persona_vpp_override_prob(persona_config), 6)
+        ),
         "baseline_acceptance_probability": round(baseline, 6),
         "factors": gate_factors,
         "roleplay_acceptance_reasoning": str(roleplay.get("acceptance_reasoning", ""))[:700],
@@ -4138,7 +5172,7 @@ def _adaptive_v2_fallback_response(
         },
     }
     if error is not None:
-        out["fallback_error"] = str(error)[:200]
+        out["fallback_error"] = _adaptive_exception_audit_text(error, limit=200)
     return out
 
 
@@ -4251,7 +5285,10 @@ def _evaluate_adaptive_v2_vpp_plan_acceptance_gate(
         "stable_draw": None,
         "decision_source": "direct_roleplay_household_judgement",
         "high_confidence_accept": bool(accepted and float(roleplay.get("confidence", 0.0) or 0.0) >= 0.8),
-        "base_override_probability": round(_persona_vpp_override_prob(persona_config), 6),
+        # Hidden evaluator propensity is neither observable household evidence
+        # nor an adaptive consent input. Keep the field structurally compatible
+        # while preventing it from becoming a public side channel.
+        "base_override_probability": None,
         "baseline_acceptance_probability": round(float(roleplay.get("baseline_acceptance_probability", baseline)), 6),
         "factors": factors,
         "roleplay_acceptance_reasoning": str(roleplay.get("reason", ""))[:1200],
@@ -4647,7 +5684,7 @@ def _evaluate_vpp_plan_acceptance_gate(
         "acceptance_probability": round(probability, 6),
         "stable_draw": round(draw, 6),
         "high_confidence_accept": bool(high_confidence_accept),
-        "base_override_probability": round(override_prob, 6),
+        "base_override_probability": None if _adaptive_harness_v2() else round(override_prob, 6),
         "factors": factors,
         "intrusion": intrusion,
         "strategy_quality": strategy_quality,
@@ -4899,6 +5936,170 @@ def _plan_for_roleplay_manual_prompt(plan: dict | None) -> dict:
     return snap
 
 
+_MANUAL_ROLEPLAY_EVALUATOR_RE = re.compile(
+    r"\bevaluator(?:\s+(?:name|id|model))?\s*"
+    r"(?:(?::|=|\bis\b)\s*|\s+)"
+    r"(?:\"[^\"]{1,160}\"|'[^']{1,160}'|[^\s,;]+)",
+    re.IGNORECASE,
+)
+
+
+def _protect_manual_roleplay_household_language(value: object) -> object:
+    """Protect harmless household wording while shared credential filters run."""
+    if isinstance(value, dict):
+        return {
+            key: _protect_manual_roleplay_household_language(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_protect_manual_roleplay_household_language(item) for item in value]
+    if isinstance(value, str):
+        return re.sub(
+            r"\bkey\s+routine\b",
+            "key household routine",
+            value,
+            flags=re.IGNORECASE,
+        )
+    return value
+
+
+def _restore_manual_roleplay_household_language(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            key: _restore_manual_roleplay_household_language(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_restore_manual_roleplay_household_language(item) for item in value]
+    if isinstance(value, str):
+        return re.sub(
+            r"\bkey\s+household\s+routine\b",
+            "key routine",
+            value,
+            flags=re.IGNORECASE,
+        )
+    return value
+
+
+def _sanitize_manual_roleplay_text(value: object, *, limit: int = 600) -> str:
+    """Apply the shared role-play privacy boundary to model-authored free text."""
+    from energybridge.harness.roleplay import sanitize_household_resume_for_roleplay
+
+    text = " ".join(str(value or "").split())
+    text = str(_protect_manual_roleplay_household_language(text))
+    text = _MANUAL_ROLEPLAY_EVALUATOR_RE.sub("plan source omitted", text)
+    projected = sanitize_household_resume_for_roleplay(
+        {"biography": {"description": text}}
+    )
+    clean = str((projected.get("biography") or {}).get("description") or "")
+    clean = _MANUAL_ROLEPLAY_EVALUATOR_RE.sub("plan source omitted", clean)
+    clean = str(_restore_manual_roleplay_household_language(clean))
+    return " ".join(clean.split())[:limit].rstrip()
+
+
+def _adaptive_exception_audit_text(error: BaseException, *, limit: int = 200) -> str:
+    """Return an adaptive-safe exception type and privacy-clean summary."""
+    error_type = type(error).__name__
+    summary = _sanitize_manual_roleplay_text(str(error), limit=max(0, limit - len(error_type) - 2))
+    value = f"{error_type}: {summary}" if summary else error_type
+    return value[:limit].rstrip()
+
+
+def _adaptive_manual_roleplay_prompt_inputs(
+    *,
+    persona_config: dict | None,
+    appliance_config: dict | None,
+    event: dict,
+    rejected_plan: dict | None,
+    deterministic_manual_plan: dict,
+    current_setpoint: float | None,
+    current_hod: float | None,
+) -> tuple[dict, dict]:
+    """Return method-blind household and scenario views for adaptive role-play."""
+    from energybridge.harness.profile import build_household_resume
+    from energybridge.harness.profile_v3 import sanitize_observable_payload
+    from energybridge.harness.roleplay import (
+        build_roleplay_acceptance_prompts,
+        sanitize_household_resume_for_roleplay,
+    )
+
+    source_resume = build_household_resume(
+        persona_config,
+        appliance_config=appliance_config,
+    )
+    household_resume = _restore_manual_roleplay_household_language(
+        sanitize_household_resume_for_roleplay(
+            _protect_manual_roleplay_household_language(source_resume)
+        )
+    )
+    event_for_projection = dict(event or {})
+    event_for_projection["current_hod"] = current_hod
+    _, _, boundary = build_roleplay_acceptance_prompts(
+        persona_config=persona_config,
+        appliance_config=appliance_config,
+        event=event_for_projection,
+        proposed_plan=rejected_plan,
+        default_plan=deterministic_manual_plan,
+    )
+    available_appliances = {
+        name: {
+            key: value
+            for key, value in (cfg or {}).items()
+            if key in {
+                "present",
+                "preferred_h",
+                "normal_start_h",
+                "normal_end_h",
+                "arrival_h",
+                "departure_h",
+                "setpoint_preferred_min_c",
+                "setpoint_preferred_max_c",
+            }
+        }
+        for name, cfg in (appliance_config or {}).items()
+        if isinstance(cfg, dict)
+    }
+    scenario = {
+        "event": boundary.get("event", {}),
+        "current_setpoint": current_setpoint,
+        "rejected_vpp_plan": boundary.get("offered_vpp_plan", {}),
+        "ordinary_routine_baseline": boundary.get("ordinary_household_plan", {}),
+        "available_appliances": available_appliances,
+    }
+    scenario = _restore_manual_roleplay_household_language(
+        sanitize_observable_payload(
+            _protect_manual_roleplay_household_language(scenario)
+        )
+    )
+    return (
+        household_resume if isinstance(household_resume, dict) else {},
+        scenario if isinstance(scenario, dict) else {},
+    )
+
+
+def _adaptive_manual_roleplay_metrics(metrics: dict | None) -> dict:
+    """Allowlist non-identifying role-play usage metrics."""
+    source = metrics or {}
+    latency = source.get("latency_seconds")
+    try:
+        latency = None if isinstance(latency, bool) else float(latency)
+        if latency is not None and not math.isfinite(latency):
+            latency = None
+    except (TypeError, ValueError):
+        latency = None
+    token_source = source.get("token_usage") if isinstance(source.get("token_usage"), dict) else {}
+    token_usage: dict[str, int] = {}
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = token_source.get(key)
+        if isinstance(value, bool):
+            continue
+        try:
+            token_usage[key] = max(0, int(value))
+        except (TypeError, ValueError):
+            continue
+    return {"latency_seconds": latency, "token_usage": token_usage}
+
+
 def _normalise_roleplay_manual_override(
     data: dict,
     *,
@@ -4908,10 +6109,17 @@ def _normalise_roleplay_manual_override(
     payload = data.get("manual_override") if isinstance(data.get("manual_override"), dict) else data
     if not isinstance(payload, dict):
         return None
+    adaptive = _adaptive_harness_v2()
     out = dict(base_plan or {})
     try:
         if payload.get("setpoint") is not None:
-            out["setpoint"] = round(float(payload.get("setpoint")), 1)
+            raw_setpoint = payload.get("setpoint")
+            if adaptive and isinstance(raw_setpoint, bool):
+                return None
+            setpoint = float(raw_setpoint)
+            if adaptive and not math.isfinite(setpoint):
+                return None
+            out["setpoint"] = round(setpoint, 1)
     except (TypeError, ValueError):
         return None
 
@@ -4943,26 +6151,43 @@ def _normalise_roleplay_manual_override(
                 continue
         try:
             if key in float_keys:
-                actions[key] = round(float(value), 3)
+                if adaptive and isinstance(value, bool):
+                    return None
+                number = float(value)
+                if adaptive and not math.isfinite(number):
+                    return None
+                actions[key] = round(number, 3)
             elif key in bool_keys:
                 if not isinstance(value, bool):
                     return None
                 actions[key] = value
             elif key == "ev_mode":
                 mode = str(value).strip().lower()
-                if mode not in {"normal", "smart", "off"}:
+                allowed_modes = {"normal", "smart", "delay"} if adaptive else {"normal", "smart", "off"}
+                if mode not in allowed_modes:
                     return None
                 actions[key] = mode
         except (TypeError, ValueError):
             return None
+    if adaptive and actions.get("ev_mode") is not None and actions.get("ev_mode") not in {
+        "normal", "smart", "delay",
+    }:
+        return None
     out["appliance_actions"] = actions
     user_comment = str(data.get("user_comment") or payload.get("user_comment") or "").strip()
     reason = str(payload.get("reason") or data.get("reason") or user_comment or "Role-play user manual override").strip()
+    override_type = str(data.get("override_type") or payload.get("override_type") or "").strip()
+    if adaptive:
+        user_comment = _sanitize_manual_roleplay_text(user_comment, limit=300)
+        reason = _sanitize_manual_roleplay_text(reason, limit=240)
+        override_type = _sanitize_manual_roleplay_text(override_type, limit=80)
+        if not reason:
+            reason = "Household manual override after rejecting the event request"
     out["reason"] = reason[:240]
     out["manual_override_user_comment"] = user_comment[:300]
     out["manual_override_source"] = "roleplay_llm"
     out["manual_override_raw"] = {
-        "override_type": str(data.get("override_type") or payload.get("override_type") or "")[:80],
+        "override_type": override_type[:80],
         "reason": reason[:240],
     }
     return out
@@ -4992,53 +6217,83 @@ def _roleplay_manual_vpp_rejection_override(
         "Respond as the user deciding what they manually set at home. Do not optimize for the grid. "
         "Return only valid JSON. Do not mention or infer which algorithm produced the rejected plan."
     )
-    scenario = {
-        "event": {
-            "id": event.get("id"),
-            "day": event.get("day"),
-            "window": _event_window_text(event),
-            "current_hod": current_hod,
-        },
-        "current_setpoint": current_setpoint,
-        "rejected_vpp_plan": _plan_for_roleplay_manual_prompt(rejected_plan),
-        "ordinary_routine_baseline": _plan_for_roleplay_manual_prompt(deterministic_manual_plan),
-        "available_appliances": {
-            name: {
-                key: value
-                for key, value in (cfg or {}).items()
-                if key in {
-                    "present",
-                    "preferred_h",
-                    "normal_start_h",
-                    "normal_end_h",
-                    "arrival_h",
-                    "departure_h",
-                    "setpoint_preferred_min_c",
-                    "setpoint_preferred_max_c",
+    if _adaptive_harness_v2():
+        household_resume, scenario = _adaptive_manual_roleplay_prompt_inputs(
+            persona_config=persona_config,
+            appliance_config=appliance_config,
+            event=event,
+            rejected_plan=rejected_plan,
+            deterministic_manual_plan=deterministic_manual_plan,
+            current_setpoint=current_setpoint,
+            current_hod=current_hod,
+        )
+        user_prompt = (
+            "Household resume (visible facts only):\n"
+            f"{json.dumps(household_resume, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}\n\n"
+            "Situation (visible facts only):\n"
+            f"{json.dumps(scenario, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}\n\n"
+            "Instructions:\n"
+            "- You already rejected the VPP-specific dispatch. Choose the manual home setting you would realistically use now.\n"
+            "- You may simply restore the ordinary routine, immediately cool for comfort, start hot water, or charge the EV as usual.\n"
+            "- Do not intentionally preserve VPP-window avoidance unless that is also your ordinary routine.\n"
+            "- Keep required appliance services realistic; do not skip washer/dishwasher/dryer unless the household would truly cancel it.\n"
+            "- Use only these appliance action keys when needed: washer_start_h, washer_skip, dishwasher_start_h, dishwasher_skip, dryer_start_h, dryer_skip, water_heater_preheat, water_heater_preheat_start_h, water_heater_preheat_end_h, water_heater_preheat_temp_c, ev_mode, ev_charge_start_h, ev_charge_end_h.\n"
+            "- ev_mode, when present, must be normal, smart, or delay; never use off.\n\n"
+            "Return JSON with fields:\n"
+            "{\n"
+            '  "manual_override": {"setpoint": number, "appliance_actions": {...}, "reason": "..."},\n'
+            '  "override_type": "restore_routine|comfort_intervention|service_intervention|mixed",\n'
+            '  "user_comment": "one sentence in first person"\n'
+            "}"
+        )
+    else:
+        scenario = {
+            "event": {
+                "id": event.get("id"),
+                "day": event.get("day"),
+                "window": _event_window_text(event),
+                "current_hod": current_hod,
+            },
+            "current_setpoint": current_setpoint,
+            "rejected_vpp_plan": _plan_for_roleplay_manual_prompt(rejected_plan),
+            "ordinary_routine_baseline": _plan_for_roleplay_manual_prompt(deterministic_manual_plan),
+            "available_appliances": {
+                name: {
+                    key: value
+                    for key, value in (cfg or {}).items()
+                    if key in {
+                        "present",
+                        "preferred_h",
+                        "normal_start_h",
+                        "normal_end_h",
+                        "arrival_h",
+                        "departure_h",
+                        "setpoint_preferred_min_c",
+                        "setpoint_preferred_max_c",
+                    }
                 }
-            }
-            for name, cfg in (appliance_config or {}).items()
-            if isinstance(cfg, dict)
-        },
-    }
-    user_prompt = (
-        "Hidden role-play persona / household JSON:\n"
-        f"{json.dumps(persona_config or {}, ensure_ascii=False)[:9000]}\n\n"
-        "Situation:\n"
-        f"{json.dumps(scenario, ensure_ascii=False)}\n\n"
-        "Instructions:\n"
-        "- You already rejected the VPP-specific dispatch. Choose the manual home setting you would realistically use now.\n"
-        "- You may simply restore the ordinary routine, immediately cool for comfort, start hot water, or charge the EV as usual.\n"
-        "- Do not intentionally preserve VPP-window avoidance unless that is also your ordinary routine.\n"
-        "- Keep required appliance services realistic; do not skip washer/dishwasher/dryer unless the user would truly cancel it.\n"
-        "- Use only these appliance action keys when needed: washer_start_h, washer_skip, dishwasher_start_h, dishwasher_skip, dryer_start_h, dryer_skip, water_heater_preheat, water_heater_preheat_start_h, water_heater_preheat_end_h, water_heater_preheat_temp_c, ev_mode, ev_charge_start_h, ev_charge_end_h.\n\n"
-        "Return JSON with fields:\n"
-        "{\n"
-        '  "manual_override": {"setpoint": number, "appliance_actions": {...}, "reason": "..."},\n'
-        '  "override_type": "restore_routine|comfort_intervention|service_intervention|mixed",\n'
-        '  "user_comment": "one sentence in first person"\n'
-        "}"
-    )
+                for name, cfg in (appliance_config or {}).items()
+                if isinstance(cfg, dict)
+            },
+        }
+        user_prompt = (
+            "Hidden role-play persona / household JSON:\n"
+            f"{json.dumps(persona_config or {}, ensure_ascii=False)[:9000]}\n\n"
+            "Situation:\n"
+            f"{json.dumps(scenario, ensure_ascii=False)}\n\n"
+            "Instructions:\n"
+            "- You already rejected the VPP-specific dispatch. Choose the manual home setting you would realistically use now.\n"
+            "- You may simply restore the ordinary routine, immediately cool for comfort, start hot water, or charge the EV as usual.\n"
+            "- Do not intentionally preserve VPP-window avoidance unless that is also your ordinary routine.\n"
+            "- Keep required appliance services realistic; do not skip washer/dishwasher/dryer unless the user would truly cancel it.\n"
+            "- Use only these appliance action keys when needed: washer_start_h, washer_skip, dishwasher_start_h, dishwasher_skip, dryer_start_h, dryer_skip, water_heater_preheat, water_heater_preheat_start_h, water_heater_preheat_end_h, water_heater_preheat_temp_c, ev_mode, ev_charge_start_h, ev_charge_end_h.\n\n"
+            "Return JSON with fields:\n"
+            "{\n"
+            '  "manual_override": {"setpoint": number, "appliance_actions": {...}, "reason": "..."},\n'
+            '  "override_type": "restore_routine|comfort_intervention|service_intervention|mixed",\n'
+            '  "user_comment": "one sentence in first person"\n'
+            "}"
+        )
     try:
         data, metrics = _call_roleplay_manual_override_llm(system_prompt, user_prompt)
         plan = _normalise_roleplay_manual_override(
@@ -5048,15 +6303,23 @@ def _roleplay_manual_vpp_rejection_override(
         )
         if plan is None:
             return None
-        plan["manual_override_metrics"] = {
-            "latency_seconds": (metrics or {}).get("latency_seconds"),
-            "token_usage": (metrics or {}).get("token_usage", {}),
-        }
+        plan["manual_override_metrics"] = (
+            _adaptive_manual_roleplay_metrics(metrics)
+            if _adaptive_harness_v2()
+            else {
+                "latency_seconds": (metrics or {}).get("latency_seconds"),
+                "token_usage": (metrics or {}).get("token_usage", {}),
+            }
+        )
         return plan
     except Exception as exc:
         fallback = dict(deterministic_manual_plan or {})
         fallback["manual_override_source"] = "deterministic_after_roleplay_error"
-        fallback["manual_override_error"] = str(exc)[:200]
+        fallback["manual_override_error"] = (
+            _adaptive_exception_audit_text(exc, limit=200)
+            if _adaptive_harness_v2()
+            else str(exc)[:200]
+        )
         return fallback
 
 
@@ -5115,7 +6378,45 @@ def _vpp_gate_matches_current_plan(
         current_sp = float((plan or {}).get("setpoint"))
     except (TypeError, ValueError):
         return False
-    return abs(accepted_sp - current_sp) <= float(setpoint_tolerance_c)
+    if abs(accepted_sp - current_sp) > float(setpoint_tolerance_c):
+        return False
+    accepted_actions = _non_null_actions(
+        accepted_plan.get("appliance_actions") or accepted_plan.get("appliances")
+    )
+    current_actions = _non_null_actions(
+        (plan or {}).get("appliance_actions") or (plan or {}).get("appliances")
+    )
+    return accepted_actions == current_actions
+
+
+def _adaptive_v3_retain_feasible_accepted_commitment(
+    acceptance_gate: dict | None,
+    new_plan: dict | None,
+    *,
+    action_validator,
+    setpoint_min_c: float,
+    setpoint_max_c: float,
+) -> tuple[dict, bool, list[str]]:
+    """Prefer a still-feasible consented plan over an unsolicited replacement."""
+    gate = acceptance_gate or {}
+    if not bool(gate.get("accepted")):
+        return dict(new_plan or {}), False, ["no accepted commitment"]
+    committed, _ = _lock_to_user_accepted_vpp_plan(
+        new_plan,
+        gate,
+        clear_appliance_actions=False,
+    )
+    errors = list(action_validator(committed.get("appliance_actions", {})) or [])
+    try:
+        setpoint = float(committed.get("setpoint"))
+        if not (float(setpoint_min_c) <= setpoint <= float(setpoint_max_c)):
+            errors.append("accepted setpoint is outside current actuator limits")
+    except (TypeError, ValueError):
+        errors.append("accepted setpoint is not executable")
+    if errors:
+        return dict(new_plan or {}), False, errors
+    committed["accepted_commitment_reused"] = True
+    return committed, True, []
 
 
 def _manual_no_vpp_user_plan(
@@ -5876,7 +7177,11 @@ def _run_agent_onboarding_questionnaire(
             controller_observable_only=controller_observable_only,
         )
         fallback["source"] = "roleplay_questionnaire_fallback_after_error"
-        fallback["error"] = str(exc)[:200]
+        fallback["error"] = (
+            _adaptive_exception_audit_text(exc, limit=200)
+            if _adaptive_harness_v2()
+            else str(exc)[:200]
+        )
         return fallback
 
 
@@ -5901,17 +7206,164 @@ def _agent_onboarding_summary_text(questionnaire: dict | None) -> str:
     )
 
 
+def _adaptive_v3_household_id(
+    persona_config: dict | None,
+    questionnaire: dict | None,
+) -> tuple[str, bool]:
+    """Return an opaque namespace and whether it is safe for cross-run reuse."""
+    namespace = str((persona_config or {}).get("id", "") or "").strip()
+    identity_eligible = bool(namespace and namespace.lower() not in {"unknown", "unknown_persona", "anonymous"})
+    if identity_eligible:
+        digest_source = namespace.encode("utf-8")
+    else:
+        # Questionnaire equality is not identity.  Use a fresh opaque namespace
+        # for this process and prohibit load/save below.
+        digest_source = os.urandom(32)
+    digest = hashlib.sha256(digest_source).hexdigest()[:24]
+    return f"household-{digest}", identity_eligible
+
+
+def _adaptive_v3_memory_store_file(raw_store: str, household_id: str) -> Path:
+    """Resolve an explicitly configured file or directory to one private file."""
+    raw_store = str(raw_store or "").strip()
+    if not raw_store:
+        raise ValueError("memory store is not configured")
+    # Work with an absolute, but deliberately unresolved, path so a symlink in
+    # any existing ancestor cannot redirect the directory creation boundary.
+    candidate = Path(os.path.abspath(os.fspath(Path(raw_store).expanduser())))
+    directory_intent = (
+        raw_store.endswith(("/", "\\"))
+        or (candidate.exists() and candidate.is_dir())
+        or (not candidate.exists() and not candidate.suffix)
+    )
+    directory = candidate if directory_intent else candidate.parent
+    for component in (directory, *directory.parents):
+        if component.is_symlink():
+            raise ValueError("memory store path may not contain a symlink")
+    directory_existed = directory.exists()
+    if directory_existed:
+        mode = stat.S_IMODE(directory.stat().st_mode)
+        if directory_intent and mode & 0o077:
+            raise PermissionError(
+                "memory store directory must not grant group/other access"
+            )
+        if not directory_intent and mode & 0o022:
+            raise PermissionError(
+                "memory store file parent must not be group/world writable"
+            )
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not directory.is_dir():
+        raise ValueError("memory store parent is not a directory")
+    if not directory_existed:
+        os.chmod(directory, 0o700)
+    if directory_intent:
+        return directory / f"{household_id}.memory-v3.json"
+    return candidate
+
+
+def _adaptive_v3_reconcile_loaded_memory(loaded: dict, cold: dict) -> dict:
+    """Keep prior observed episodes while making current onboarding authoritative."""
+    reconciled = deepcopy(loaded)
+    cold_beliefs = deepcopy(cold.get("stable_beliefs") or {})
+    retained_beliefs: dict[str, dict] = {}
+    for key, belief in (loaded.get("stable_beliefs") or {}).items():
+        if not isinstance(belief, dict):
+            continue
+        evidence = list(belief.get("evidence") or [])
+        if any(
+            isinstance(item, dict) and item.get("source") == "onboarding_questionnaire"
+            for item in evidence
+        ):
+            continue
+        retained_beliefs[str(key)] = deepcopy(belief)
+    retained_beliefs.update(cold_beliefs)
+    reconciled.update({
+        "owner": deepcopy(cold.get("owner") or {}),
+        "privacy_boundary": deepcopy(cold.get("privacy_boundary") or {}),
+        "onboarding": deepcopy(cold.get("onboarding") or {}),
+        "stable_beliefs": retained_beliefs,
+        "updated_at": cold.get("updated_at"),
+        "revision": max(
+            int(loaded.get("revision", 0) or 0),
+            int(cold.get("revision", 0) or 0),
+        ) + 1,
+    })
+    prior_ledger = [
+        deepcopy(item)
+        for item in list(loaded.get("belief_revision_ledger") or [])
+        if isinstance(item, dict) and item.get("source") != "onboarding_questionnaire"
+    ]
+    reconciled["belief_revision_ledger"] = (
+        prior_ledger + deepcopy(list(cold.get("belief_revision_ledger") or []))
+    )[-500:]
+    return reconciled
+
+
+def _adaptive_v3_profile_feedback_history(memory: dict | None) -> list[dict]:
+    """Project warm episodic outcomes into observable profile feedback records."""
+    history: list[dict] = []
+    for episode in list((memory or {}).get("episodes") or [])[-24:]:
+        if not isinstance(episode, dict):
+            continue
+        attribution = (
+            episode.get("causal_attribution")
+            if isinstance(episode.get("causal_attribution"), dict)
+            else {}
+        )
+        if attribution.get("outcome_attribution") != "observational_executed_plan":
+            # Consent-only/rejected proposals remain useful episodic memory,
+            # but are not physical performance evidence for the profile.
+            continue
+        outcome_stage = ((episode.get("stages") or {}).get("outcome") or {})
+        observations = outcome_stage.get("observations")
+        if not isinstance(observations, dict):
+            continue
+        history.append({
+            **deepcopy(observations),
+            "event_id": str(episode.get("episode_id", "")),
+            "event_context": deepcopy(episode.get("context") or {}),
+            "observed_at": outcome_stage.get("recorded_at"),
+        })
+    return history
+
+
+def _adaptive_v3_component_audit(loop, event_id: str = "") -> dict:
+    """Return public component state without household or filesystem identity."""
+    model = getattr(loop, "agent_household_model", {}) or {}
+    memory = getattr(loop, "agent_preference_memory", {}) or {}
+    profile_capsule = (
+        (getattr(loop, "agent_profile_capsule_by_event_id", {}) or {}).get(str(event_id or ""))
+        or {}
+    )
+    memory_capsule = (
+        (getattr(loop, "agent_memory_capsule_by_event_id", {}) or {}).get(str(event_id or ""))
+        or {}
+    )
+    state = getattr(loop, "agent_memory_v3_audit", {}) or {}
+    return {
+        "household_profile_schema": model.get("schema_version"),
+        "evidence_memory_schema": memory.get("version"),
+        "profile_capsule_schema": profile_capsule.get("schema_version"),
+        "memory_capsule_schema": memory_capsule.get("memory_version"),
+        "memory_session_state": state.get("memory_session_state", "cold"),
+        "load_status": state.get("load_status", "not_requested"),
+        "persistence_enabled": bool(state.get("persistence_enabled", False)),
+        "save_status": state.get("save_status", "not_requested"),
+    }
+
+
 def _init_agent_preference_memory(
     loop,
     output_dir: Path,
     *,
     method: str,
     persona_config: dict | None,
+    appliance_config: dict | None = None,
 ) -> None:
     """Create optional run-local preference memory files for agent methods."""
     if method != "agent":
         return
-    persist_memory = str(os.getenv("ENERGYBRIDGE_PERSIST_AGENT_MEMORY", "")).strip().lower() in {
+    legacy_persist_memory = str(os.getenv("ENERGYBRIDGE_PERSIST_AGENT_MEMORY", "")).strip().lower() in {
         "1", "true", "yes", "on"
     }
     persona_id = (persona_config or {}).get("id", "unknown_persona")
@@ -5932,29 +7384,82 @@ def _init_agent_preference_memory(
     else:
         questionnaire = _run_agent_onboarding_questionnaire(persona_config)
     if _adaptive_harness_v2():
-        from energybridge.harness.memory import initialize_memory
+        from energybridge.harness.memory_v3 import initialize_memory_v3, load_memory_v3
+        from energybridge.harness.profile_v3 import initialize_household_model
 
-        memory = initialize_memory(
-            questionnaire,
-            persona_id=str(persona_id),
-            method=method,
+        household_id, identity_eligible = _adaptive_v3_household_id(
+            persona_config, questionnaire
         )
-        # Compatibility aliases keep existing dashboards readable; planning
-        # consumes the observable-only V2 structures below, not hidden persona.
-        memory.update({
-            "method": method,
-            "persona_id": persona_id,
-            "purpose": (
-                "EnergyBridge V2 observable-profile memory with evidence confidence, "
-                "contradiction tracking, and context-similar episode retrieval."
-            ),
-            "onboarding_questionnaire": memory.get("onboarding", {}),
-            "learned_preference_rules": list(
-                (memory.get("onboarding") or {}).get("preference_rules") or []
-            )[:12],
-            "latest_summary": _agent_onboarding_summary_text(questionnaire),
-        })
+        cold_memory = initialize_memory_v3(
+            questionnaire,
+            household_id=household_id,
+        )
+        memory = cold_memory
+        store_setting = str(os.getenv("ENERGYBRIDGE_AGENT_MEMORY_STORE", "") or "").strip()
+        load_requested = _env_flag("ENERGYBRIDGE_LOAD_AGENT_MEMORY")
+        memory_state = "cold"
+        load_status = "not_requested"
+        save_allowed = False
+        store_path: Path | None = None
+        if store_setting and not identity_eligible:
+            load_status = "cold_identity_unavailable"
+            print(
+                "  [Adaptive Memory] no stable household namespace was provided; "
+                "cross-run load/save is disabled for this cold session."
+            )
+        elif store_setting:
+            try:
+                store_path = _adaptive_v3_memory_store_file(store_setting, household_id)
+                if load_requested and store_path.exists():
+                    loaded = load_memory_v3(
+                        store_path,
+                        allow_persistence=True,
+                        expected_household_id=household_id,
+                    )
+                    memory = _adaptive_v3_reconcile_loaded_memory(loaded, cold_memory)
+                    memory_state = "warm"
+                    load_status = "loaded_and_reconciled"
+                    save_allowed = True
+                elif load_requested:
+                    load_status = "cold_store_missing"
+                    save_allowed = True
+                elif store_path.exists():
+                    load_status = "cold_existing_store_not_loaded"
+                    save_allowed = False
+                else:
+                    load_status = "cold_new_store"
+                    save_allowed = True
+            except Exception as exc:
+                load_status = f"cold_load_failed:{type(exc).__name__}"
+                save_allowed = False
+                print(
+                    "  [Adaptive Memory] configured store could not be safely loaded; "
+                    "using an isolated cold session without overwriting it."
+                )
+        feedback_history = _adaptive_v3_profile_feedback_history(memory if memory_state == "warm" else {})
+        household_model = initialize_household_model(
+            questionnaire,
+            household_id=household_id,
+            devices=appliance_config or {},
+            feedback_history=feedback_history,
+        )
+        loop.agent_household_model = household_model
+        loop.agent_profile_capsule_by_event_id = {}
+        loop.agent_memory_capsule_by_event_id = {}
+        loop.agent_memory_v3_store_path = store_path
+        loop.agent_memory_v3_save_allowed = save_allowed
+        loop.agent_memory_v3_audit = {
+            "memory_session_state": memory_state,
+            "load_status": load_status,
+            "persistence_enabled": bool(store_setting and identity_eligible),
+            "save_status": "pending_event" if save_allowed else "not_allowed",
+        }
+        # Run-local review artifacts and private cross-run persistence are
+        # separate opt-ins.  An explicit store still enables a review, while
+        # the legacy review flag does not implicitly enable cross-run saving.
+        persist_memory = legacy_persist_memory or bool(store_setting)
     else:
+        persist_memory = legacy_persist_memory
         memory = {
             "version": "agent_preference_memory_v1",
             "method": method,
@@ -5973,17 +7478,43 @@ def _init_agent_preference_memory(
     loop.agent_memory_context_by_event_id = {}
     loop.persist_agent_preference_memory = persist_memory
     if persist_memory:
-        loop.agent_memory_path = Path(output_dir) / "agent_preference_memory.json"
-        loop.agent_memory_md_path = Path(output_dir) / "agent_preference_memory.md"
-        _write_agent_preference_memory(loop)
+        if _adaptive_harness_v2():
+            # These are run-local review summaries.  The private cross-run
+            # envelope is stored separately and never exposed in results.
+            try:
+                review_dir = _adaptive_v3_private_artifact_directory(output_dir)
+                loop.agent_memory_path = review_dir / "agent_memory_v3_review.json"
+                loop.agent_memory_md_path = review_dir / "agent_memory_v3_review.md"
+            except Exception as exc:
+                loop.agent_memory_path = None
+                loop.agent_memory_md_path = None
+                loop.agent_memory_v3_audit["review_status"] = (
+                    f"disabled_unsafe_output:{type(exc).__name__}"
+                )
+                print(
+                    "  [Adaptive Memory] private run-local review directory "
+                    "could not be created safely; review artifacts are disabled."
+                )
+        else:
+            loop.agent_memory_path = Path(output_dir) / "agent_preference_memory.json"
+            loop.agent_memory_md_path = Path(output_dir) / "agent_preference_memory.md"
+            _write_agent_preference_memory(loop)
     else:
         loop.agent_memory_path = None
         loop.agent_memory_md_path = None
-        label = "EnergyBridge"
-        profile = questionnaire.get("inferred_profile") if isinstance(questionnaire.get("inferred_profile"), dict) else {}
-        print(f"  [{label} Memory] run-context memory only; set ENERGYBRIDGE_PERSIST_AGENT_MEMORY=1 to write review files.")
+    if _adaptive_harness_v2():
         print(
-            f"  [{label} Onboarding] source={questionnaire.get('source')} "
+            "  [Adaptive Memory] "
+            f"state={loop.agent_memory_v3_audit.get('memory_session_state')} "
+            f"load={loop.agent_memory_v3_audit.get('load_status')} "
+            f"profile_schema={loop.agent_household_model.get('schema_version')} "
+            f"memory_schema={memory.get('version')}"
+        )
+    elif not persist_memory:
+        profile = questionnaire.get("inferred_profile") if isinstance(questionnaire.get("inferred_profile"), dict) else {}
+        print("  [EnergyBridge Memory] run-context memory only; set ENERGYBRIDGE_PERSIST_AGENT_MEMORY=1 to write review files.")
+        print(
+            f"  [EnergyBridge Onboarding] source={questionnaire.get('source')} "
             f"questions={questionnaire.get('question_count')} "
             f"strategy_bias={profile.get('strategy_bias', 'unknown')}"
         )
@@ -6000,6 +7531,67 @@ def _agent_preference_memory_prompt_text(
     memory = getattr(loop, "agent_preference_memory", {}) or {}
     if not memory:
         return ""
+    if str(memory.get("version", "")) == "energybridge_evidence_memory_v3":
+        from energybridge.harness.memory_v3 import (
+            build_event_context_v3,
+            compact_memory_context_v3,
+        )
+        from energybridge.harness.profile_v3 import build_profile_capsule
+
+        current_context = build_event_context_v3(
+            event or {},
+            calendar=calendar or {},
+            home_state=home_state or {},
+            user_input=user_input,
+            observations={
+                "realtime_device_state": deepcopy(
+                    (home_state or {}).get("realtime_device_state") or {}
+                ),
+            },
+        )
+        event_id = str(current_context.get("event_id") or "")
+        profile_context = dict(current_context.get("event") or {})
+        profile_context.update({
+            "occupied": (current_context.get("calendar") or {}).get(
+                "occupied",
+                (current_context.get("home_state") or {}).get("occupied"),
+            ),
+            "occupancy": (current_context.get("calendar") or {}).get(
+                "occupancy",
+                (current_context.get("home_state") or {}).get("occupancy"),
+            ),
+        })
+        profile_capsule = build_profile_capsule(
+            getattr(loop, "agent_household_model", {}) or {},
+            context=profile_context,
+            token_budget=480,
+        )
+        memory_capsule = compact_memory_context_v3(
+            memory,
+            current_context,
+            k=4,
+            max_chars=6500,
+        )
+        if event_id:
+            if not hasattr(loop, "agent_memory_context_by_event_id"):
+                loop.agent_memory_context_by_event_id = {}
+            if not hasattr(loop, "agent_profile_capsule_by_event_id"):
+                loop.agent_profile_capsule_by_event_id = {}
+            if not hasattr(loop, "agent_memory_capsule_by_event_id"):
+                loop.agent_memory_capsule_by_event_id = {}
+            loop.agent_memory_context_by_event_id[event_id] = current_context
+            loop.agent_profile_capsule_by_event_id[event_id] = profile_capsule
+            loop.agent_memory_capsule_by_event_id[event_id] = memory_capsule
+        return (
+            "\n[OBSERVABLE HOUSEHOLD PROFILE AND RELEVANT MEMORY]\n"
+            "The profile originates from observable onboarding_questionnaire evidence and later feedback. "
+            "Treat these evidence-linked beliefs as uncertain context, not an action recipe.\n"
+            + json.dumps(
+                {"profile": profile_capsule, "memory": memory_capsule},
+                ensure_ascii=False,
+                default=str,
+            )
+        )
     if str(memory.get("version", "")) == "energybridge_observable_profile_memory_v2":
         from energybridge.harness.memory import build_event_context, compact_memory_context
 
@@ -6063,6 +7655,42 @@ def _agent_preference_memory_prompt_text(
 
 def _agent_memory_profile(loop) -> dict:
     memory = getattr(loop, "agent_preference_memory", {}) or {}
+    if str(memory.get("version", "")) == "energybridge_evidence_memory_v3":
+        model = getattr(loop, "agent_household_model", {}) or {}
+        traits = model.get("traits") if isinstance(model.get("traits"), dict) else {}
+
+        def categorical(name: str) -> tuple[str, float]:
+            trait = traits.get(name) if isinstance(traits.get(name), dict) else {}
+            distribution = trait.get("distribution") if isinstance(trait.get("distribution"), dict) else {}
+            if not distribution:
+                return "unknown", 0.0
+            label = max(distribution, key=lambda key: float(distribution.get(key, 0.0) or 0.0))
+            return str(label), float(trait.get("confidence", 0.0) or 0.0)
+
+        comfort, comfort_confidence = categorical("comfort_protection")
+        savings, savings_confidence = categorical("savings_interest")
+        grid, grid_confidence = categorical("grid_support_interest")
+        control, control_confidence = categorical("change_control")
+        routine, routine_confidence = categorical("routine_protection")
+        tolerance_trait = traits.get("thermostat_change_tolerance_c") or {}
+        tolerance_distribution = (
+            tolerance_trait.get("distribution")
+            if isinstance(tolerance_trait, dict) and isinstance(tolerance_trait.get("distribution"), dict)
+            else {}
+        )
+        profile: dict[str, Any] = {}
+        if comfort_confidence >= 0.35:
+            profile["comfort_priority"] = comfort
+        if max(savings_confidence, grid_confidence) >= 0.35:
+            profile["cost_grid_priority"] = "high" if "high" in {savings, grid} else "moderate"
+        if control_confidence >= 0.35:
+            profile["automation_preference"] = control
+        if routine_confidence >= 0.35:
+            profile["calendar_routine_sensitivity"] = routine
+        tolerance = tolerance_distribution.get("mean")
+        if tolerance is not None and float(tolerance_trait.get("confidence", 0.0) or 0.0) >= 0.35:
+            profile["thermostat_flexibility_c"] = tolerance
+        return profile
     if str(memory.get("version", "")) == "energybridge_observable_profile_memory_v2":
         questionnaire = memory.get("onboarding") if isinstance(memory.get("onboarding"), dict) else {}
     else:
@@ -6374,6 +8002,95 @@ def _agent_cap_hot_water_preheat_for_energy(plan: dict | None) -> dict:
     return out
 
 
+def _adaptive_v3_atomic_private_artifact_write(
+    path: str | Path,
+    content: str | bytes,
+    *,
+    max_bytes: int = 8_000_000,
+) -> Path:
+    """Atomically write one owner-only V3 review artifact without symlinks."""
+    from energybridge.harness.memory_v3 import (
+        _assert_no_symlink_components,
+        _assert_private_persistence_parent,
+    )
+
+    encoded = content.encode("utf-8") if isinstance(content, str) else bytes(content)
+    if len(encoded) > int(max_bytes):
+        raise ValueError("review artifact exceeds max_bytes")
+    target = _assert_no_symlink_components(path)
+    try:
+        target_metadata = os.lstat(target)
+    except FileNotFoundError:
+        target_metadata = None
+    if target_metadata is not None and not stat.S_ISREG(target_metadata.st_mode):
+        raise ValueError("review artifact target must be a regular non-symlink file")
+    parent = _assert_private_persistence_parent(target)
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+        dir=str(parent),
+    )
+    try:
+        # Apply the final permissions before any private bytes become visible.
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = -1
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        # Replacement changes the directory entry itself; it never follows a
+        # destination leaf symlink.  The private parent prevents peer swaps.
+        os.replace(temporary_name, target)
+        parent_flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY"):
+            parent_flags |= os.O_DIRECTORY
+        if hasattr(os, "O_NOFOLLOW"):
+            parent_flags |= os.O_NOFOLLOW
+        parent_descriptor = os.open(parent, parent_flags)
+        try:
+            os.fsync(parent_descriptor)
+        finally:
+            os.close(parent_descriptor)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+    return target
+
+
+def _adaptive_v3_private_artifact_directory(output_dir: str | Path) -> Path:
+    """Create an owner-only child for private review artifacts.
+
+    Benchmark output directories are commonly group-readable or group-writable
+    so EnergyPlus results can be shared.  Household memory reviews should not
+    inherit those permissions.  Keeping them in a dedicated 0700 child lets the
+    atomic writer retain its strict parent-directory contract without changing
+    permissions on unrelated simulation outputs.
+    """
+    from energybridge.harness.memory_v3 import _assert_no_symlink_components
+
+    output_root = _assert_no_symlink_components(output_dir)
+    metadata = os.lstat(output_root)
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise ValueError("run output must be a real directory")
+    private_dir = output_root / ".adaptive_harness_private"
+    try:
+        private_metadata = os.lstat(private_dir)
+    except FileNotFoundError:
+        os.mkdir(private_dir, mode=0o700)
+        private_metadata = os.lstat(private_dir)
+    if stat.S_ISLNK(private_metadata.st_mode) or not stat.S_ISDIR(private_metadata.st_mode):
+        raise ValueError("private review directory must be a real directory")
+    if stat.S_IMODE(private_metadata.st_mode) & 0o077:
+        raise PermissionError("private review directory must be owner-only")
+    _assert_no_symlink_components(private_dir)
+    return private_dir
+
+
 def _write_agent_preference_memory(loop) -> None:
     memory_path = getattr(loop, "agent_memory_path", None)
     md_path = getattr(loop, "agent_memory_md_path", None)
@@ -6381,6 +8098,94 @@ def _write_agent_preference_memory(loop) -> None:
     if not getattr(loop, "persist_agent_preference_memory", False):
         return
     if memory_path is None or md_path is None or not memory:
+        return
+    if str(memory.get("version", "")) == "energybridge_evidence_memory_v3":
+        from energybridge.harness.memory_v3 import save_memory_v3
+
+        state = getattr(loop, "agent_memory_v3_audit", {}) or {}
+        store_path = getattr(loop, "agent_memory_v3_store_path", None)
+        if getattr(loop, "agent_memory_v3_save_allowed", False) and store_path is not None:
+            try:
+                save_memory_v3(memory, store_path, allow_persistence=True)
+                state["save_status"] = "saved"
+            except Exception as exc:
+                state["save_status"] = f"save_failed:{type(exc).__name__}"
+                print("  [Adaptive Memory] private store save failed; run-local state remains available.")
+        model = getattr(loop, "agent_household_model", {}) or {}
+        traits = model.get("traits") if isinstance(model.get("traits"), dict) else {}
+        review = {
+            "title": "Adaptive Household Memory Review",
+            "components": _adaptive_v3_component_audit(loop),
+            "profile": {
+                "schema_version": model.get("schema_version"),
+                "revision": model.get("revision"),
+                "traits": {
+                    str(name): {
+                        "distribution": deepcopy((trait or {}).get("distribution")),
+                        "confidence": (trait or {}).get("confidence"),
+                        "evidence_count": (trait or {}).get("evidence_count"),
+                        "contradiction_count": (trait or {}).get("contradiction_count"),
+                    }
+                    for name, trait in traits.items()
+                    if isinstance(trait, dict)
+                },
+                "unknowns": deepcopy(list(model.get("unknowns") or [])),
+                "active_questions": deepcopy(list(model.get("active_questions") or [])),
+            },
+            "memory": {
+                "schema_version": memory.get("version"),
+                "revision": memory.get("revision"),
+                "episode_count": len(list(memory.get("episodes") or [])),
+                "stable_belief_count": len(memory.get("stable_beliefs") or {}),
+                "contextual_belief_count": len(memory.get("contextual_beliefs") or {}),
+                "recent_attribution": [
+                    {
+                        "episode_id": item.get("episode_id"),
+                        "integrity_flags": deepcopy(item.get("integrity_flags") or []),
+                        "causal_attribution": deepcopy(item.get("causal_attribution") or {}),
+                    }
+                    for item in list(memory.get("episodes") or [])[-8:]
+                    if isinstance(item, dict)
+                ],
+            },
+        }
+        try:
+            _adaptive_v3_atomic_private_artifact_write(
+                memory_path,
+                json.dumps(review, indent=2, ensure_ascii=False),
+            )
+            lines = [
+                "# Adaptive Household Memory Review",
+                "",
+                f"- Profile schema: `{model.get('schema_version', '')}`",
+                f"- Memory schema: `{memory.get('version', '')}`",
+                f"- Session: `{state.get('memory_session_state', 'cold')}`",
+                f"- Load: `{state.get('load_status', 'not_requested')}`",
+                f"- Save: `{state.get('save_status', 'not_requested')}`",
+                f"- Profile revision: `{model.get('revision', 0)}`",
+                f"- Memory revision: `{memory.get('revision', 0)}`",
+                "",
+                "## Current unknowns",
+                "",
+            ]
+            lines.extend(
+                f"- {item.get('dimension')}: {item.get('reason')}"
+                for item in list(model.get("unknowns") or [])
+                if isinstance(item, dict)
+            )
+            lines.extend(["", "## Episode attribution", ""])
+            lines.extend(
+                f"- {item.get('episode_id')}: {(item.get('causal_attribution') or {}).get('outcome_attribution')}"
+                for item in list(memory.get("episodes") or [])[-12:]
+                if isinstance(item, dict)
+            )
+            _adaptive_v3_atomic_private_artifact_write(
+                md_path,
+                "\n".join(lines).rstrip() + "\n",
+            )
+        except Exception as exc:
+            print(f"  [Adaptive Memory] review artifact write failed ({type(exc).__name__}).")
+        loop.agent_memory_v3_audit = state
         return
     try:
         memory_path.write_text(json.dumps(memory, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -6471,7 +8276,245 @@ def _write_agent_preference_memory(loop) -> None:
             )
         md_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     except Exception as exc:
-        print(f"  [Agent Memory] write failed: {exc}")
+        detail = (
+            _adaptive_exception_audit_text(exc, limit=200)
+            if _adaptive_harness_v2()
+            else str(exc)
+        )
+        print(f"  [Agent Memory] write failed: {detail}")
+
+
+def _update_agent_v3_memory(loop, event_result: dict, feedback_text: str) -> None:
+    """Attribute one scored event to the observed V3 plan lifecycle."""
+    from energybridge.harness.memory_v3 import build_event_context_v3, update_memory_v3
+    from energybridge.harness.profile_v3 import update_household_model
+
+    memory = getattr(loop, "agent_preference_memory", {}) or {}
+    event_id = str(event_result.get("id") or event_result.get("event_id") or "")
+    cached_context = dict(
+        (getattr(loop, "agent_execution_context_by_event_id", {}) or {}).get(event_id)
+        or (getattr(loop, "agent_memory_context_by_event_id", {}) or {}).get(event_id)
+        or {}
+    )
+    lifecycle = deepcopy(
+        (getattr(loop, "agent_plan_lifecycle_by_event_id", {}) or {}).get(event_id)
+        or cached_context.get("plan_lifecycle")
+        or {}
+    )
+    if not lifecycle:
+        lifecycle = _adaptive_v2_new_plan_lifecycle({})
+        lifecycle["stages"]["raw_model_plan"]["status"] = "model_output_unavailable"
+    stages = lifecycle.get("stages") or {}
+
+    def stage_plan(name: str) -> dict:
+        return dict(((stages.get(name) or {}).get("plan") or {}))
+
+    prior_executed_stage = dict(stages.get("executed_plan") or {})
+    execution_exposures = [
+        deepcopy(item)
+        for item in list(
+            (getattr(loop, "agent_execution_history_by_event_id", {}) or {}).get(event_id)
+            or lifecycle.get("execution_exposures")
+            or []
+        )
+        if isinstance(item, dict)
+        and isinstance(item.get("plan"), dict)
+        and item.get("plan")
+        and item.get("fingerprint")
+    ]
+    if execution_exposures:
+        actual_executed = dict(execution_exposures[-1]["plan"])
+        actual_executed["execution_exposures"] = deepcopy(execution_exposures)
+        execution_observed = True
+        lifecycle["execution_exposures"] = deepcopy(execution_exposures)
+        lifecycle["execution_exposure_fingerprint"] = hashlib.sha256(
+            json.dumps(
+                execution_exposures,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()[:16]
+    else:
+        actual_executed = dict(prior_executed_stage.get("plan") or {})
+        execution_observed = bool(
+            prior_executed_stage.get("fingerprint") and actual_executed
+        )
+    application_report = dict(prior_executed_stage.get("application_report") or {})
+    hvac_application = dict(application_report.get("hvac_application") or {})
+    ignored_summary_fields: list[str] = []
+    mismatched_summary_fields: list[str] = []
+    if event_result.get("setpoint") is not None:
+        if actual_executed.get("setpoint") is None:
+            ignored_summary_fields.append("/setpoint")
+        else:
+            try:
+                if abs(
+                    float(event_result.get("setpoint"))
+                    - float(actual_executed.get("setpoint"))
+                ) > 1e-6:
+                    mismatched_summary_fields.append("/setpoint")
+            except (TypeError, ValueError):
+                mismatched_summary_fields.append("/setpoint")
+    summary_actions = dict(event_result.get("vpp_trigger_actions") or {})
+    executed_actions = dict(actual_executed.get("appliance_actions") or {})
+    if summary_actions:
+        if not executed_actions:
+            ignored_summary_fields.append("/appliance_actions")
+        elif summary_actions != executed_actions:
+            mismatched_summary_fields.append("/appliance_actions")
+
+    if not execution_observed:
+        validation_status = "execution_unobserved_event_summary_ignored"
+        validation_reason = (
+            "event-end summary is not actuator evidence; no executed exposure was recorded"
+        )
+    elif mismatched_summary_fields:
+        validation_status = "preserved_actuator_record_over_event_summary"
+        validation_reason = (
+            "event-end summary differed from actuator application; preserved the recorded execution"
+        )
+    elif ignored_summary_fields:
+        validation_status = "preserved_partial_actuator_execution"
+        validation_reason = (
+            "event-end summary contained fields without actuator evidence; preserved only recorded execution"
+        )
+    else:
+        validation_status = "matched_actuator_facing_execution"
+        validation_reason = "event-end summary matched the recorded actuator-facing execution"
+    execution_validator = {
+        "validator": "observed_execution_attribution",
+        "status": validation_status,
+        "from_stage": "executed_plan" if prior_executed_stage else (
+            list(lifecycle.get("stage_order") or ["raw_model_plan"])[-1]
+        ),
+        "to_stage": "outcome_observation",
+        "patches": [],
+        "reason": validation_reason,
+        "execution_observed": execution_observed,
+    }
+    if ignored_summary_fields:
+        execution_validator["ignored_event_summary_fields"] = ignored_summary_fields
+    if mismatched_summary_fields:
+        execution_validator["mismatched_event_summary_fields"] = mismatched_summary_fields
+    if application_report:
+        execution_validator["application_report"] = deepcopy(application_report)
+    lifecycle.setdefault("validators", []).append(execution_validator)
+    loop.agent_plan_lifecycle_by_event_id[event_id] = deepcopy(lifecycle)
+    stages = lifecycle.get("stages") or {}
+    proposed_plan = stage_plan("proposed_plan")
+    gate = event_result.get("vpp_acceptance_gate")
+    gate = gate if isinstance(gate, dict) else {}
+    if not proposed_plan:
+        proposed_plan = dict(gate.get("proposed_plan") or {})
+    outcome = {
+        "accepted": gate.get("accepted") if "accepted" in gate else event_result.get("accepted"),
+        "score": event_result.get("score"),
+        "comfort_score": event_result.get("comfort_score"),
+        "energy_score": event_result.get("energy_score"),
+        "vpp_score": event_result.get("vpp_score"),
+        "target_achieved": event_result.get("target_achieved"),
+        "actual_kwh": event_result.get("actual_kwh"),
+        "actual_shed_kwh": event_result.get("actual_shed_kwh"),
+        "comfort_violation_minutes": event_result.get("comfort_violation_minutes"),
+        "user_feedback": feedback_text,
+        "controller_feedback": event_result.get("controller_feedback"),
+        "member_feedback_summary": event_result.get("member_feedback_summary"),
+        "comment": event_result.get("comment"),
+        "preference_observations": deepcopy(event_result.get("preference_observations") or []),
+    }
+    context_event = cached_context.get("event") or {
+        "id": event_id,
+        "day": event_result.get("day"),
+        "trigger_h": event_result.get("trigger_h"),
+        "end_h": event_result.get("end_h"),
+    }
+    event_context = build_event_context_v3(
+        context_event,
+        calendar=cached_context.get("calendar") or {},
+        home_state=cached_context.get("home_state") or {},
+        user_input=str(event_result.get("user_input", "") or cached_context.get("user_input", "")),
+        raw_proposal=stage_plan("raw_model_plan"),
+        validated_plan=stage_plan("validated_plan"),
+        proposed_plan=proposed_plan,
+        consented_plan=stage_plan("consented_plan"),
+        executed_plan=actual_executed if execution_observed else None,
+        observations={
+            "actuator_facing_execution": execution_observed,
+            "execution_exposure_count": len(execution_exposures) if execution_exposures else (1 if execution_observed else 0),
+            "execution_exposure_fingerprint": lifecycle.get("execution_exposure_fingerprint"),
+            "actuator_application_status": (
+                hvac_application.get("status")
+                or application_report.get("status")
+                or "unobserved"
+            ),
+            "event_energy_kwh": event_result.get("actual_kwh"),
+            "demand_achievement_ratio": event_result.get("demand_achievement_ratio"),
+        },
+    )
+    updated_memory = update_memory_v3(memory, event_context, outcome)
+    loop.agent_preference_memory = updated_memory
+
+    profile_context = dict(event_context.get("event") or {})
+    profile_context.update({
+        "occupied": (event_context.get("calendar") or {}).get(
+            "occupied",
+            (event_context.get("home_state") or {}).get("occupied"),
+        ),
+        "occupancy": (event_context.get("calendar") or {}).get(
+            "occupancy",
+            (event_context.get("home_state") or {}).get("occupancy"),
+        ),
+        "affected_devices": sorted({
+            service
+            for exposure_plan in (
+                [item.get("plan") or {} for item in execution_exposures]
+                if execution_exposures
+                else [actual_executed]
+            )
+            for key in (exposure_plan.get("appliance_actions") or {})
+            for service in [_service_from_appliance_action_key(str(key))]
+            if service
+        }),
+    })
+    profile_feedback = (
+        {**outcome, "event_id": event_id}
+        if execution_observed
+        else {
+            "event_id": event_id,
+            "accepted": outcome.get("accepted"),
+            "user_feedback": outcome.get("user_feedback"),
+            "preference_observations": deepcopy(
+                outcome.get("preference_observations") or []
+            ),
+        }
+    )
+    loop.agent_household_model = update_household_model(
+        getattr(loop, "agent_household_model", {}) or {},
+        event_context=profile_context,
+        feedback=profile_feedback,
+    )
+    _write_agent_preference_memory(loop)
+    component_audit = _adaptive_v3_component_audit(loop, event_id)
+    latest_episode = (
+        list(updated_memory.get("episodes") or [])[-1]
+        if list(updated_memory.get("episodes") or [])
+        else {}
+    )
+    lifecycle["harness_components"] = deepcopy(component_audit)
+    lifecycle["memory_attribution"] = {
+        "episode_stages": sorted(list((latest_episode.get("stages") or {}).keys())),
+        "integrity_flags": deepcopy(latest_episode.get("integrity_flags") or []),
+        "causal_attribution": deepcopy(latest_episode.get("causal_attribution") or {}),
+    }
+    event_result.update(_adaptive_v2_attach_lifecycle(loop, event_id, event_result, lifecycle))
+    event_result.setdefault("adaptive_decision_audit", {})["harness_components"] = component_audit
+    event_result["adaptive_decision_audit"]["memory_update"] = {
+        "profile_revision": loop.agent_household_model.get("revision"),
+        "memory_revision": updated_memory.get("revision"),
+        "episode_stage_separation": deepcopy(lifecycle["memory_attribution"]),
+    }
 
 
 def _update_agent_preference_memory(
@@ -6494,6 +8537,9 @@ def _update_agent_preference_memory(
         _gate_feedback = str(_gate.get("energybridge_feedback", "") or "")
     if _gate_feedback:
         _feedback_text = (_feedback_text + " | Gate feedback: " + _gate_feedback).strip(" |")
+    if str(memory.get("version", "")) == "energybridge_evidence_memory_v3":
+        _update_agent_v3_memory(loop, event_result, _feedback_text)
+        return
     if str(memory.get("version", "")) == "energybridge_observable_profile_memory_v2":
         from energybridge.harness.memory import build_event_context, update_memory
 
@@ -6737,8 +8783,17 @@ def _build_agent_skill_bundle(
                 objective_source="mpc_candidate_scoring_pdf_v15",
             )
         except Exception as exc:
-            bundle["skills"]["mpc_dynamic"] = {"skill": "mpc_dynamic", "status": "error", "error": str(exc)[:200]}
-            bundle["errors"].append(f"mpc_dynamic: {str(exc)[:160]}")
+            detail = (
+                _adaptive_exception_audit_text(exc, limit=200)
+                if _adaptive_harness_v2()
+                else str(exc)[:200]
+            )
+            bundle["skills"]["mpc_dynamic"] = {
+                "skill": "mpc_dynamic",
+                "status": "error",
+                "error": detail,
+            }
+            bundle["errors"].append(f"mpc_dynamic: {detail[:160]}")
 
     if requested.intersection({"rule_milp", "dynamic_hvac"}):
         try:
@@ -6808,14 +8863,23 @@ def _build_agent_skill_bundle(
                     "diagnostics": dynamic_diag,
                 }
         except Exception as exc:
+            detail = (
+                _adaptive_exception_audit_text(exc, limit=200)
+                if _adaptive_harness_v2()
+                else str(exc)[:200]
+            )
             if "rule_milp" in requested:
                 bundle["skills"].setdefault(
                     "rule_milp",
-                    {"skill": "rule_milp", "status": "error", "error": str(exc)[:200]},
+                    {"skill": "rule_milp", "status": "error", "error": detail},
                 )
             if "dynamic_hvac" in requested:
-                bundle["skills"]["dynamic_hvac"] = {"skill": "dynamic_hvac", "status": "error", "error": str(exc)[:200]}
-            bundle["errors"].append(f"rule_milp/dynamic_hvac: {str(exc)[:160]}")
+                bundle["skills"]["dynamic_hvac"] = {
+                    "skill": "dynamic_hvac",
+                    "status": "error",
+                    "error": detail,
+                }
+            bundle["errors"].append(f"rule_milp/dynamic_hvac: {detail[:160]}")
 
     return bundle
 
@@ -6857,6 +8921,9 @@ def _requested_agent_skill_names(data: dict | None) -> list[str]:
     else:
         return []
     aliases = {
+        "forecast_control": "mpc_dynamic",
+        "constraint_scheduler": "rule_milp",
+        "thermal_dynamics": "dynamic_hvac",
         "mpc": "mpc_dynamic",
         "mpc_dynamic": "mpc_dynamic",
         "rule": "rule_milp",
@@ -7186,13 +9253,15 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
             print(
                 f"  [DR Memory] loaded library with {len(loop.dr_memory_library.get('events', []))} historical events")
         except Exception as e:
-            print(f"  [DR Memory] failed to load: {e}")
+            detail = _adaptive_exception_audit_text(e) if _adaptive_harness_v2() else str(e)
+            print(f"  [DR Memory] failed to load: {detail}")
             loop.dr_memory_library = None
     _init_agent_preference_memory(
         loop,
         output_dir,
         method=method,
         persona_config=persona_config,
+        appliance_config=appliance_config,
     )
 
     def _write_live_snapshot(status: str = "running") -> None:
@@ -7252,14 +9321,16 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
             loop.appliance_suite = ApplianceSuite(_acfg, sim_days=sim_days, vpp_events=vpp_events, explicit_only=True)
             print(f"  [ApplianceSuite] explicit-only loaded: {[k for k,v in _acfg.items() if isinstance(v,dict) and v.get('present',True)]}")
     except Exception as _ae:
-        print(f"  [ApplianceSuite] init failed: {_ae}; appliances disabled")
+        detail = _adaptive_exception_audit_text(_ae) if _adaptive_harness_v2() else str(_ae)
+        print(f"  [ApplianceSuite] init failed: {detail}; appliances disabled")
         loop.appliance_suite = None
     try:
         from energybridge.quantification import quantify_agent_vpp_events
         loop.total_quantification_by_id = quantify_agent_vpp_events(vpp_events)
         print("  [Total Quantification] reference A3 90% event capacities loaded")
     except Exception as _tqe:
-        print(f"  [Total Quantification] failed: {_tqe}")
+        detail = _adaptive_exception_audit_text(_tqe) if _adaptive_harness_v2() else str(_tqe)
+        print(f"  [Total Quantification] failed: {detail}")
         loop.total_quantification_by_id = {}
     print(f"  [VPP Schedule] {describe_vpp_events(vpp_events)}  source={loop.vpp_schedule_source}")
     if disable_acceptance_fallback:
@@ -7310,7 +9381,8 @@ def run_family_agent(idf_path=DEFAULT_FAMILY_IDF, epw_path=DEFAULT_FAMILY_EPW,
     _rule_milp_sp_max = AC_OFF_FALLBACK_COOLING_SETPOINT
     _energy_saving_sp_floor = _run_sp_min
     if _protective_mode:
-        _run_sp_max = min(_run_sp_max, _ac_sp_max)
+        if not (method == "agent" and _adaptive_harness_v2()):
+            _run_sp_max = min(_run_sp_max, _ac_sp_max)
         _ac_sp_vpp_min = _ac_sp_default
         _ac_sp_vpp_max = _ac_sp_max
         if (
@@ -7497,8 +9569,9 @@ and earlier successful actions are evidence, not commands.
 Form a fresh hypothesis for this decision from the observable user resume and context-matched memories.
 Do not use a fixed persona template, a model-independent setpoint recipe, or an acceptance-probability rubric.
 When evidence conflicts, favor the newer and more context-similar observation and state the uncertainty.
-The final plan should reflect your own comparison of at least one conservative and one flexible alternative.
-Your valid final control is executed as written; it will not be silently replaced by the MPC candidate.
+Explore alternatives when the evidence exposes a genuine tradeoff or material uncertainty; decide what alternatives
+are useful instead of filling a prescribed strategy grid. Your valid final control is executed as written and is
+never silently replaced by an advisor candidate.
 Only hard safety/service/physical validation may reject or minimally repair it.
 
 If an observable user message asks what they save or gain, answer that question directly in
@@ -7652,7 +9725,12 @@ These fields are for auditability and may differ across capable models; do not i
                 current_day = run_start_date + _timedelta(days=int(sim_h // 24))
                 price_tag = "\n" + day_ahead_price_profile.prompt_context_for_day(current_day)
             except Exception as _pe:
-                price_tag = f"\nDAY_AHEAD_PRICE: unavailable ({str(_pe)[:80]})."
+                detail = (
+                    _adaptive_exception_audit_text(_pe, limit=80)
+                    if adaptive_agent
+                    else str(_pe)[:80]
+                )
+                price_tag = f"\nDAY_AHEAD_PRICE: unavailable ({detail})."
         agent_skill_bundle: dict | None = None
         agent_skill_tag = ""
         agent_memory_tag = ""
@@ -7674,6 +9752,7 @@ These fields are for auditability and may differ across capable models; do not i
                     "occupied": bool(loop.current_occupied),
                     "occupancy": float(loop.current_occupancy_count),
                     "facility_w": facility_w,
+                    "realtime_device_state": _adaptive_v3_realtime_device_state(loop, sim_h),
                 },
                 user_input=user_pref_input,
             )
@@ -7703,7 +9782,11 @@ These fields are for auditability and may differ across capable models; do not i
         else:
             appl_tag = ""
         fixed_appliance_tag = _fixed_appliance_constraint_text(appliance_config)
-        explicit_appliance_tag = _explicit_appliance_requirement_text(appliance_config, vpp_event=vpp_event)
+        explicit_appliance_tag = _explicit_appliance_requirement_text(
+            appliance_config,
+            vpp_event=vpp_event,
+            adaptive_contract=adaptive_agent,
+        )
         occupancy_tag = (
             f"occupancy={'occupied' if loop.current_occupied else 'unoccupied'} "
             f"people_count={loop.current_occupancy_count:.2f} "
@@ -7741,10 +9824,11 @@ These fields are for auditability and may differ across capable models; do not i
             _j.loads(t)  # raises json.JSONDecodeError if not valid JSON
             return t
 
-        def _call_llm_json(prompt_text: str):
+        def _call_llm_json(prompt_text: str, *, system_prompt: str | None = None):
+            active_system_prompt = system_prompt or _LLM_SYS_FAM
             if adaptive_agent:
                 _assert_adaptive_v2_agent_prompt_observable(
-                    _LLM_SYS_FAM,
+                    active_system_prompt,
                     prompt_text,
                     persona_config,
                 )
@@ -7752,9 +9836,12 @@ These fields are for auditability and may differ across capable models; do not i
             # The EnergyBridge controller returns executable JSON plus a short
             # strategy explanation. The default 1024-token project setting can
             # truncate that JSON, so use a local budget for this controller.
-            _client.config.max_tokens = max(int(_client.config.max_tokens), 3072)
+            _client.config.max_tokens = max(
+                int(_client.config.max_tokens),
+                4096 if adaptive_agent else 3072,
+            )
             _llm_r = _client.chat_with_metrics(
-                _LLM_SYS_FAM,
+                active_system_prompt,
                 prompt_text,
                 max_retries=5,
                 retry_base_delay=2.0,
@@ -7775,9 +9862,20 @@ These fields are for auditability and may differ across capable models; do not i
 
         def _hard_policy_errors(actions: dict | None) -> list[str]:
             errors: list[str] = []
-            missing = _missing_explicit_appliance_actions(actions or {}, appliance_config)
+            missing = _missing_explicit_appliance_actions(
+                actions or {},
+                appliance_config,
+                adaptive_contract=adaptive_agent,
+            )
             if missing:
                 errors.append("missing explicit appliance commands: " + ", ".join(missing))
+            if adaptive_agent:
+                errors.extend(
+                    "adaptive action contract: " + item
+                    for item in _adaptive_v3_appliance_action_contract_errors(
+                        actions or {}, appliance_config
+                    )
+                )
             errors.extend(
                 "shiftable service infeasible: " + item
                 for item in _shiftable_service_window_errors(actions or {}, appliance_config)
@@ -7830,23 +9928,27 @@ These fields are for auditability and may differ across capable models; do not i
                         else _agent_primary_mpc_guidance_text(agent_skill_bundle)
                     )
                 except Exception as _ase:
+                    detail = (
+                        _adaptive_exception_audit_text(_ase, limit=200)
+                        if adaptive_agent
+                        else str(_ase)[:200]
+                    )
                     agent_skill_bundle = {
                         "version": "energybridge_agent_skills_v1",
                         "skills": {},
                         "requested_skills": ["mpc_dynamic"],
-                        "errors": [str(_ase)[:200]],
+                        "errors": [detail],
                     }
                     prompt = prompt + (
                         _agent_adaptive_v2_mpc_guidance_text(agent_skill_bundle)
                         if _adaptive_harness_v2()
                         else _agent_primary_mpc_guidance_text(agent_skill_bundle)
                     )
-            if verbose:
-                print(f"  ┌─[PROMPT | h={sim_h:.1f} sim / {int(hod%24):02d}:00]{'─'*40}")
-                for _line in prompt.splitlines():
-                    print(f"  │ {_line}")
-                print(f"  └{'─'*56}")
             agent_skill_trace: dict[str, Any] = {}
+            adaptive_planning_inputs: dict = {}
+            adaptive_advisor_candidates: list[dict] = []
+            adaptive_planning_resolution: dict = {}
+            adaptive_selected_raw_plan: dict | None = None
             force_mpc_primary = (
                 method == "agent"
                 and str(
@@ -7857,6 +9959,36 @@ These fields are for auditability and may differ across capable models; do not i
                 ).strip().lower()
                 in {"1", "true", "yes", "on"}
             )
+            initial_system_prompt = _LLM_SYS_FAM
+            initial_prompt = prompt
+            if adaptive_agent and not force_mpc_primary:
+                adaptive_planning_inputs = _adaptive_v3_observable_planning_inputs(
+                    loop,
+                    event_id=str(memory_event.get("id", "")),
+                    sim_h=sim_h,
+                    hod=hod,
+                    temp=temp,
+                    out_t=out_t,
+                    facility_w=facility_w,
+                    observable_calendar=observable_calendar,
+                    memory_event=memory_event,
+                    vpp_event=vpp_event,
+                    user_input=user_pref_input,
+                    appliance_config=appliance_config or {},
+                    setpoint_min_c=_run_sp_min,
+                    setpoint_max_c=_run_sp_max,
+                    price_context=price_tag,
+                    demand_context=prompt_vpp_demand,
+                )
+                initial_system_prompt, initial_prompt = _adaptive_v3_planning_prompts(
+                    adaptive_planning_inputs,
+                    allow_skill_request=True,
+                )
+            if verbose:
+                print(f"  ┌─[PROMPT | h={sim_h:.1f} sim / {int(hod%24):02d}:00]{'─'*40}")
+                for _line in initial_prompt.splitlines():
+                    print(f"  │ {_line}")
+                print(f"  └{'─'*56}")
             if force_mpc_primary:
                 initial_data = {
                     "skill_calls": ["mpc_dynamic"],
@@ -7880,7 +10012,10 @@ These fields are for auditability and may differ across capable models; do not i
                         memory_path=str(getattr(loop, "agent_memory_path", "") or ""),
                     )
             else:
-                initial_data = _call_llm_json(prompt)
+                initial_data = _call_llm_json(
+                    initial_prompt,
+                    system_prompt=initial_system_prompt,
+                )
                 requested_skill_names = (
                     _requested_agent_skill_names(initial_data)
                     if method == "agent"
@@ -7919,32 +10054,40 @@ These fields are for auditability and may differ across capable models; do not i
                             requested_skills=requested_skill_names,
                         )
                     except Exception as _ase:
+                        detail = (
+                            _adaptive_exception_audit_text(_ase, limit=200)
+                            if adaptive_agent
+                            else str(_ase)[:200]
+                        )
                         agent_skill_bundle = {
                             "version": "energybridge_agent_skills_v1",
                             "skills": {},
                             "requested_skills": requested_skill_names,
-                            "errors": [str(_ase)[:200]],
+                            "errors": [detail],
                         }
-                skill_result_prompt = (
-                    prompt
-                    + "\n\n[YOUR SKILL REQUEST]\n"
-                    + _j.dumps(initial_data, ensure_ascii=False, default=str)
-                    + (
-                        _agent_adaptive_v2_mpc_guidance_text(agent_skill_bundle)
-                        if _adaptive_harness_v2()
-                        else _agent_primary_mpc_guidance_text(agent_skill_bundle)
+                if adaptive_agent:
+                    adaptive_advisor_candidates = _adaptive_v3_advisor_candidates(
+                        agent_skill_bundle
                     )
-                    + (
-                        "\n\nReturn the final control JSON now. Treat every skill result as advisory: "
-                        "adopt, combine, or reject any candidate based on observable evidence and return your own "
-                        "executable plan. Do not return another skill request."
-                        if _adaptive_harness_v2()
-                        else
-                        "\n\nReturn the final control JSON now. You may choose one skill output, combine skill output with your own appliance plan, "
+                    skill_system_prompt, skill_result_prompt = _adaptive_v3_planning_prompts(
+                        adaptive_planning_inputs,
+                        advisor_candidates=adaptive_advisor_candidates,
+                        allow_skill_request=False,
+                    )
+                    data = _call_llm_json(
+                        skill_result_prompt,
+                        system_prompt=skill_system_prompt,
+                    )
+                else:
+                    skill_result_prompt = (
+                        prompt
+                        + "\n\n[YOUR SKILL REQUEST]\n"
+                        + _j.dumps(initial_data, ensure_ascii=False, default=str)
+                        + _agent_primary_mpc_guidance_text(agent_skill_bundle)
+                        + "\n\nReturn the final control JSON now. You may choose one skill output, combine skill output with your own appliance plan, "
                         "or make small user-feedback adjustments to the MPC base plan. Do not return another skill request."
                     )
-                )
-                data = _call_llm_json(skill_result_prompt)
+                    data = _call_llm_json(skill_result_prompt)
                 agent_skill_trace = _agent_skill_trace_from_bundle(
                     agent_skill_bundle,
                     source="energybridge_agent_llm_skill_calls",
@@ -7966,6 +10109,103 @@ These fields are for auditability and may differ across capable models; do not i
                         final_data=data,
                         memory_path=str(getattr(loop, "agent_memory_path", "") or ""),
                     )
+            if adaptive_agent and not force_mpc_primary:
+                def _portfolio_runtime_errors(selected_plan: dict | None) -> list[str]:
+                    if not isinstance(selected_plan, dict):
+                        return ["selected plan is not an executable object"]
+                    return (
+                        _adaptive_v3_plan_control_errors(
+                            selected_plan,
+                            sim_h=sim_h,
+                            total_sim_hours=total_sim_hours,
+                            setpoint_min_c=_run_sp_min,
+                            setpoint_max_c=_run_sp_max,
+                        )
+                        + _hard_policy_errors(selected_plan.get("appliances", {}))
+                    )
+
+                def _semantic_replan(validation_feedback: dict) -> dict:
+                    retry_system, retry_prompt = _adaptive_v3_planning_prompts(
+                        adaptive_planning_inputs,
+                        advisor_candidates=adaptive_advisor_candidates,
+                        allow_skill_request=False,
+                    )
+                    retry_prompt += (
+                        "\n\n[SEMANTIC VALIDATION FEEDBACK]\n"
+                        "The previous response did not yield a valid model-selected executable plan. "
+                        "Use these findings as evidence, revise the portfolio as needed, and explicitly select "
+                        "one of your own feasible candidates. Do not select an advisor reference and do not "
+                        "merely rename an invalid plan.\n"
+                        + _j.dumps(validation_feedback, ensure_ascii=False, default=str)
+                    )
+                    return _call_llm_json(retry_prompt, system_prompt=retry_system)
+
+                adaptive_planning_resolution = _adaptive_v3_resolve_planning_response(
+                    data,
+                    planning_inputs=adaptive_planning_inputs,
+                    advisor_candidates=adaptive_advisor_candidates,
+                    policy_error_fn=_portfolio_runtime_errors,
+                    replan_fn=_semantic_replan,
+                )
+                selected_plan = adaptive_planning_resolution.get("selected_executable_plan")
+                if not isinstance(selected_plan, dict):
+                    loop.llm_failures += 1
+                    planning_fallback = dict(fallback)
+                    planning_failure = (
+                        adaptive_planning_resolution.get("final_runtime_contract_errors")
+                        or adaptive_planning_resolution.get("semantic_replan_error")
+                        or adaptive_planning_resolution.get("status")
+                    )
+                    planning_fallback.update({
+                        "reason": "",
+                        "controller_fallback_source": "adaptive_v2_invalid_model_selection",
+                        "controller_fallback_error": _sanitize_manual_roleplay_text(
+                            planning_failure,
+                            limit=300,
+                        ),
+                    })
+                    planning_lifecycle = _adaptive_v2_new_plan_lifecycle(
+                        {},
+                        model=str(os.getenv("LLM_MODEL", "")),
+                    )
+                    planning_lifecycle["portfolio_planning"] = deepcopy(
+                        adaptive_planning_resolution
+                    )
+                    planning_lifecycle["stages"]["raw_model_plan"]["status"] = (
+                        "portfolio_selection_invalid"
+                    )
+                    planning_lifecycle = _adaptive_v2_record_plan_stage(
+                        planning_lifecycle,
+                        "validated_plan",
+                        planning_fallback,
+                        validator="open_portfolio_selection_and_runtime_contract",
+                        status="fallback",
+                        reason="model did not select a feasible executable plan after one semantic replan",
+                    )
+                    planning_fallback = _adaptive_v2_attach_lifecycle(
+                        loop,
+                        str(memory_event.get("id", "")),
+                        planning_fallback,
+                        planning_lifecycle,
+                    )
+                    planning_fallback.setdefault("adaptive_decision_audit", {})[
+                        "portfolio_planning"
+                    ] = deepcopy(adaptive_planning_resolution)
+                    planning_fallback["adaptive_decision_audit"]["harness_components"] = (
+                        _adaptive_v3_component_audit(loop, str(memory_event.get("id", "")))
+                    )
+                    if agent_skill_trace:
+                        planning_fallback["strategy_trace"] = agent_skill_trace
+                    return planning_fallback
+                data = selected_plan
+                adaptive_selected_raw_plan = (
+                    deepcopy(adaptive_planning_resolution.get("selected_raw_plan"))
+                    if isinstance(adaptive_planning_resolution.get("selected_raw_plan"), dict)
+                    else deepcopy(data)
+                )
+                data["control_source"] = "llm_adaptive_v2"
+                data["harness_profile"] = _harness_profile()
+                data.setdefault("selected_skill", "adaptive_synthesis")
             data, _agent_payload_trace = _prepare_policy_payload(data)
             mpc_skill = {}
             def _apply_agent_mpc_primary(data_in: dict) -> dict:
@@ -8077,11 +10317,17 @@ These fields are for auditability and may differ across capable models; do not i
                 # This snapshot is deliberately taken before setpoint clamps,
                 # time normalization, appliance filtering, or EV repair.
                 adaptive_lifecycle = _adaptive_v2_new_plan_lifecycle(
-                    deepcopy(data),
+                    deepcopy(adaptive_selected_raw_plan or data),
                     model=str(os.getenv("LLM_MODEL", "")),
                 )
+                if adaptive_planning_resolution:
+                    adaptive_lifecycle["portfolio_planning"] = deepcopy(
+                        adaptive_planning_resolution
+                    )
             missing_explicit = _missing_explicit_appliance_actions(
-                data.get("appliances", {}), appliance_config
+                data.get("appliances", {}),
+                appliance_config,
+                adaptive_contract=adaptive_agent,
             )
             if missing_explicit:
                 print(
@@ -8188,14 +10434,11 @@ These fields are for auditability and may differ across capable models; do not i
                         high_trust_cap = max(_ac_sp_min, _ac_sp_max - 0.5)
                     sp_upper = min(sp_upper, high_trust_cap)
             if _agent_model_owns_valid_plan(method):
-                # V2 validates only the explicit physical/user envelope here.
-                # Event heuristics, economic floors, return-home recipes, and
-                # learned setpoint recipes remain prompt evidence and may not
-                # silently replace a capable model's judgement.
+                # Adaptive planning advertises this exact hard envelope.  An
+                # uncertain/protective profile is decision evidence, not a
+                # hidden clamp that silently replaces the model's valid plan.
                 sp_lower = _run_sp_min
                 sp_upper = _run_sp_max
-                if agent_memory_protective:
-                    sp_upper = min(sp_upper, _ac_sp_max)
             raw_sp = float(data.get("setpoint", fb_sp))
             sp_lower = locals().get("sp_lower", _energy_saving_sp_floor)
             if mpc_direct_control:
@@ -8379,6 +10622,14 @@ These fields are for auditability and may differ across capable models; do not i
                     "memory_citations": list(data.get("memory_citations") or [])[:8],
                     "alternatives_considered": list(data.get("alternatives_considered") or [])[:6],
                     "uncertainty": str(data.get("uncertainty", ""))[:500],
+                    "selected_candidate_id": adaptive_planning_resolution.get(
+                        "selected_candidate_id"
+                    ),
+                    "portfolio_planning": deepcopy(adaptive_planning_resolution),
+                    "harness_components": _adaptive_v3_component_audit(
+                        loop,
+                        str(memory_event.get("id", "")),
+                    ),
                     "model_response_fingerprint": (
                         ((adaptive_lifecycle.get("stages") or {}).get("raw_model_plan") or {}).get("fingerprint")
                     ),
@@ -8399,12 +10650,17 @@ These fields are for auditability and may differ across capable models; do not i
                 }
             return result
         except Exception as e:
-            print(f"  [FamilyAgent] LLM error at h={sim_h:.1f}: {e}")
+            error_detail = (
+                _adaptive_exception_audit_text(e, limit=500)
+                if _adaptive_harness_v2()
+                else str(e)
+            )
+            print(f"  [FamilyAgent] LLM error at h={sim_h:.1f}: {error_detail}")
             loop.llm_failures += 1
             fallback["reason"] = ""
             if method == "agent" and _adaptive_harness_v2():
                 fallback["controller_fallback_source"] = "adaptive_v2_model_unavailable"
-                fallback["controller_fallback_error"] = str(e)[:200]
+                fallback["controller_fallback_error"] = error_detail[:200]
                 _lifecycle = _adaptive_v2_new_plan_lifecycle(
                     {},
                     model=str(os.getenv("LLM_MODEL", "")),
@@ -8416,13 +10672,16 @@ These fields are for auditability and may differ across capable models; do not i
                     fallback,
                     validator="controller_model_unavailable_fallback",
                     status="fallback",
-                    reason=str(e)[:500],
+                    reason=error_detail[:500],
                 )
                 fallback = _adaptive_v2_attach_lifecycle(
                     loop,
                     str(memory_event.get("id", "")),
                     fallback,
                     _lifecycle,
+                )
+                fallback.setdefault("adaptive_decision_audit", {})["harness_components"] = (
+                    _adaptive_v3_component_audit(loop, str(memory_event.get("id", "")))
                 )
             elif vpp_event:
                 fallback["strategy_explanation"] = normalize_vpp_strategy_explanation(
@@ -8746,17 +11005,23 @@ These fields are for auditability and may differ across capable models; do not i
                 )
                 res["objective_source"] = "posthoc_agent_decision_time_pdf_v15"
             except Exception as _oe:
-                print(f"  [HEMA Objective] posthoc error: {_oe}")
+                detail = (
+                    _adaptive_exception_audit_text(_oe)
+                    if _adaptive_harness_v2()
+                    else str(_oe)
+                )
+                print(f"  [HEMA Objective] posthoc error: {detail}")
 
             return res
 
         except Exception as e:
-            print(f"  [HEMA Control] error at h={sim_h:.1f}: {e}")
+            detail = _adaptive_exception_audit_text(e) if _adaptive_harness_v2() else str(e)
+            print(f"  [HEMA Control] error at h={sim_h:.1f}: {detail}")
             loop.llm_failures += 1
             return {
                 "setpoint": getattr(loop, "sp", SP_DEFAULT),
                 "next_check_hour": None,
-                "reason": f"HEMA fallback: {str(e)[:60]}",
+                "reason": f"HEMA fallback: {detail[:60]}",
                 "appliance_actions": {},
             }
 
@@ -8796,10 +11061,15 @@ These fields are for auditability and may differ across capable models; do not i
                 "objective_source": "rule_milp_cost_min_v1",
             }
         except Exception as exc:
+            detail = (
+                _adaptive_exception_audit_text(exc, limit=80)
+                if _adaptive_harness_v2()
+                else str(exc)[:80]
+            )
             return {
                 "setpoint": getattr(loop, "sp", SP_DEFAULT),
                 "next_check_hour": None,
-                "reason": f"rule_milp_reference_unavailable: {str(exc)[:80]}",
+                "reason": f"rule_milp_reference_unavailable: {detail}",
                 "appliance_actions": {},
                 "objective_source": "rule_milp_reference_unavailable",
             }
@@ -8885,7 +11155,8 @@ These fields are for auditability and may differ across capable models; do not i
                     hvac_context=_capacity_hvac_context(loop, temp=temp, out_t=out_t, facility_w=facility_w or 0.0),
                 )
             except Exception as exc:
-                print(f"  [RL Pref-v2] capacity unavailable: {exc}")
+                detail = _adaptive_exception_audit_text(exc) if _adaptive_harness_v2() else str(exc)
+                print(f"  [RL Pref-v2] capacity unavailable: {detail}")
         base_actions = {}
         pref_proxy = _build_user_preference_proxy(persona_config) if persona_config else None
         try:
@@ -8900,7 +11171,8 @@ These fields are for auditability and may differ across capable models; do not i
                 model_region=weather_label,
             )
         except Exception as exc:
-            raise RuntimeError(f"RL PPO Pref-v2 failed at h={sim_h:.2f}: {exc}") from exc
+            detail = _adaptive_exception_audit_text(exc) if _adaptive_harness_v2() else str(exc)
+            raise RuntimeError(f"RL PPO Pref-v2 failed at h={sim_h:.2f}: {detail}") from exc
         sp = round(max(_run_sp_min, min(_run_sp_max, float(decision.get("setpoint", loop.sp)))), 1)
         appliance_actions = _filter_controllable_appliance_actions(
             decision.get("appliance_actions", {}), appliance_config
@@ -9101,12 +11373,13 @@ These fields are for auditability and may differ across capable models; do not i
                     "adaptability_diagnostics": adaptability_diagnostics,
                     "source": src}
         except Exception as e:
-            print(f"  [VPP score {ev['id']}] error: {e}")
+            detail = _adaptive_exception_audit_text(e) if _adaptive_harness_v2() else str(e)
+            print(f"  [VPP score {ev['id']}] error: {detail}")
             if not human_mode:
                 raise
             return {"id": ev["id"], "setpoint": loop_ref.sp, "score": None, "label": "?",
                     "comfort_score": None, "energy_score": None, "vpp_score": None,
-                    "comment": str(e)[:60], "user_input": "", "source": "error"}
+                    "comment": detail[:60], "user_input": "", "source": "error"}
 
     def _event_score_due_hour(ev: dict, event_index: int) -> float:
         """Score each event at the end of its simulation day, i.e. day 24:00."""
@@ -9322,7 +11595,12 @@ These fields are for auditability and may differ across capable models; do not i
                 loop.sp = round(max(_rule_milp_sp_min, min(_rule_milp_sp_max, float(rule_sp))), 1)
                 loop.planned_occupied_sp = loop.sp
             except Exception as _rme:
-                print(f"  [Rule+MILP HVAC] dynamics rule failed: {_rme}")
+                detail = (
+                    _adaptive_exception_audit_text(_rme)
+                    if _adaptive_harness_v2()
+                    else str(_rme)
+                )
+                print(f"  [Rule+MILP HVAC] dynamics rule failed: {detail}")
 
         if not wu:
             loop.power_trace_rows.append({
@@ -9487,7 +11765,12 @@ These fields are for auditability and may differ across capable models; do not i
                                 ),
                             )
                         except Exception as _ce:
-                            print(f"  [Capacity Assessment] failed: {_ce}")
+                            detail = (
+                                _adaptive_exception_audit_text(_ce)
+                                if _adaptive_harness_v2()
+                                else str(_ce)
+                            )
+                            print(f"  [Capacity Assessment] failed: {detail}")
                     loop.vpp_capacity_by_id[vid] = _capacity
                     loop.current_vpp_capacity = _capacity
                     if hasattr(loop, 'dr_memory_library') and loop.dr_memory_library is not None:
@@ -9536,7 +11819,12 @@ These fields are for auditability and may differ across capable models; do not i
                             else:
                                 print("  [DR Memory Adjustment] no valid memory estimate, keeping original bid")
                         except Exception as e:
-                            print(f"  [DR Memory Adjustment] failed: {e}")
+                            detail = (
+                                _adaptive_exception_audit_text(e)
+                                if _adaptive_harness_v2()
+                                else str(e)
+                            )
+                            print(f"  [DR Memory Adjustment] failed: {detail}")
                     _assessment = _capacity.get("assessment", {})
                     print(
                         "  [Household Capacity] "
@@ -9617,7 +11905,12 @@ These fields are for auditability and may differ across capable models; do not i
                             getattr(_pref_result, "strategy_trace", {}) or {}
                         )
                     except Exception as _e:
-                        print(f"  [UserInput] {_e}")
+                        detail = (
+                            _adaptive_exception_audit_text(_e)
+                            if _adaptive_harness_v2()
+                            else str(_e)
+                        )
+                        print(f"  [UserInput] {detail}")
                         loop.vpp_user_input = ""
                         loop.vpp_user_input_by_id[planning_vid] = ""
                         loop.vpp_strategy_trace_by_id[planning_vid] = {}
@@ -9682,7 +11975,12 @@ These fields are for auditability and may differ across capable models; do not i
                             )
                             res["objective_source"] = "posthoc_agent_decision_time_pdf_v15"
                         except Exception as _oe:
-                            print(f"  [Agent Objective] posthoc objective error: {_oe}")
+                            detail = (
+                                _adaptive_exception_audit_text(_oe)
+                                if _adaptive_harness_v2()
+                                else str(_oe)
+                            )
+                            print(f"  [Agent Objective] posthoc objective error: {detail}")
                 if method == "rule_milp" and (is_vpp or active_vpp is not None):
                     res["setpoint"] = AC_OFF_FALLBACK_COOLING_SETPOINT
                     res["reason"] = f"{res.get('reason', method)} | active VPP HVAC-off"
@@ -9883,6 +12181,34 @@ These fields are for auditability and may differ across capable models; do not i
                         None if disable_acceptance_fallback
                         else loop.vpp_plan_gate_by_id.get(planning_vid)
                     )
+                    # A pre-event consent is a commitment, not merely a score.
+                    # At event start, keep the already accepted executable plan
+                    # when it still satisfies the current hard contract.  A
+                    # fresh model proposal may only displace it when changed
+                    # physical state makes the commitment infeasible, in which
+                    # case the replacement is presented for new consent below.
+                    if (
+                        method == "agent"
+                        and _adaptive_harness_v2()
+                        and is_vpp
+                        and isinstance(_existing_gate, dict)
+                        and bool(_existing_gate.get("accepted"))
+                    ):
+                        _committed_res, _commitment_reused, _commitment_errors = (
+                            _adaptive_v3_retain_feasible_accepted_commitment(
+                                _existing_gate,
+                                res,
+                                action_validator=_hard_policy_errors,
+                                setpoint_min_c=_run_sp_min,
+                                setpoint_max_c=_run_sp_max,
+                            )
+                        )
+                        if _commitment_reused:
+                            res = _committed_res
+                            print(
+                                "  [VPP Acceptance Gate] "
+                                f"{planning_vid} retained the feasible pre-event accepted commitment"
+                            )
                     _reuse_existing_gate = (
                         _existing_gate is not None
                         and is_vpp
@@ -10035,8 +12361,73 @@ These fields are for auditability and may differ across capable models; do not i
                     and not bool(res.get("fallback_after_vpp_rejection"))
                 ):
                     res = _agent_cap_hot_water_preheat_for_energy(res)
+                if (
+                    method == "agent"
+                    and _adaptive_harness_v2()
+                    and bool(res.get("fallback_after_vpp_rejection"))
+                ):
+                    _fallback_event_id = planning_vid or str((active_vpp or {}).get("id", ""))
+                    _fallback_lifecycle = deepcopy(
+                        loop.agent_plan_lifecycle_by_event_id.get(_fallback_event_id) or {}
+                    )
+                    _fallback_lifecycle = _adaptive_v2_record_plan_stage(
+                        _fallback_lifecycle,
+                        "resolved_execution_plan",
+                        res,
+                        validator="household_consent_resolution",
+                        status="fallback_after_rejection",
+                        reason=(
+                            "household rejected the offered VPP plan; execution resolved "
+                            "to the observable no-VPP household plan before actuator application"
+                        ),
+                    )
+                    res = _adaptive_v2_attach_lifecycle(
+                        loop,
+                        _fallback_event_id,
+                        res,
+                        _fallback_lifecycle,
+                    )
                 _execution_event = planning_vpp_event or active_vpp
                 _execution_event_id = str((_execution_event or {}).get("id", ""))
+                loop.planned_occupied_sp = res["setpoint"]
+                effective_sp = res["setpoint"] if hvac_control_occupied or hvac_avail_set else AC_OFF_FALLBACK_COOLING_SETPOINT
+                loop.sp = effective_sp
+                _application_report: dict | None = None
+                _actual_applied_actions = deepcopy(res.get("appliance_actions", {}) or {})
+                if loop.appliance_suite is not None:
+                    if method == "agent" and _adaptive_harness_v2():
+                        _application_report = _adaptive_v3_apply_appliance_actions(
+                            loop.appliance_suite,
+                            res.get("appliance_actions", {}),
+                            sim_h,
+                        )
+                        _actual_applied_actions = deepcopy(
+                            _application_report.get("applied_actions") or {}
+                        )
+                    else:
+                        _apply_appliance_actions(
+                            loop.appliance_suite,
+                            res.get("appliance_actions", {}),
+                            sim_h,
+                        )
+                elif method == "agent" and _adaptive_harness_v2():
+                    _actual_applied_actions = {}
+
+                _hvac_execution_observed: bool | None = None
+                if method == "agent" and _adaptive_harness_v2():
+                    if getattr(loop, "h_cool", -1) == -1:
+                        _hvac_execution_observed = False
+                    else:
+                        try:
+                            # Apply before writing the executed lifecycle.  The
+                            # normal timestep write below remains as a harmless
+                            # idempotent refresh, but memory attribution no
+                            # longer rests on handle existence alone.
+                            ex.set_actuator_value(s, loop.h_cool, float(effective_sp))
+                            _hvac_execution_observed = True
+                        except Exception:
+                            _hvac_execution_observed = None
+
                 if method == "agent" and _adaptive_harness_v2() and _execution_event_id:
                     _lifecycle = deepcopy(
                         loop.agent_plan_lifecycle_by_event_id.get(_execution_event_id) or {}
@@ -10049,17 +12440,20 @@ These fields are for auditability and may differ across capable models; do not i
                         if bool(res.get("fallback_after_vpp_rejection"))
                         else "executed"
                     )
-                    _lifecycle = _adaptive_v2_record_plan_stage(
+                    _lifecycle, _actual_execution = _adaptive_v3_record_actuator_execution(
                         _lifecycle,
-                        "executed_plan",
                         res,
-                        validator="consent_and_execution_resolution",
+                        effective_setpoint=float(effective_sp),
+                        application_report=_application_report,
+                        hvac_actuator_available=_hvac_execution_observed,
                         status=_execution_status,
-                        reason=(
-                            "household rejection selected the no-VPP fallback"
-                            if _execution_status == "fallback_after_rejection"
-                            else "final consented/validated plan passed to actuators"
-                        ),
+                    )
+                    _lifecycle = _adaptive_v3_append_execution_exposure(
+                        loop,
+                        _execution_event_id,
+                        sim_h,
+                        _lifecycle,
+                        _actual_execution,
                     )
                     res = _adaptive_v2_attach_lifecycle(
                         loop,
@@ -10067,12 +12461,20 @@ These fields are for auditability and may differ across capable models; do not i
                         res,
                         _lifecycle,
                     )
+                    res.setdefault("adaptive_decision_audit", {})[
+                        "actuator_application"
+                    ] = deepcopy(
+                        ((_lifecycle.get("stages") or {}).get("executed_plan") or {}).get(
+                            "application_report"
+                        )
+                        or {}
+                    )
                     try:
-                        from energybridge.harness.memory import build_event_context
+                        from energybridge.harness.memory_v3 import build_event_context_v3
 
                         _stages = _lifecycle.get("stages") or {}
                         _stage_plan = lambda name: dict((_stages.get(name) or {}).get("plan") or {})
-                        _execution_context = build_event_context(
+                        _execution_context = build_event_context_v3(
                             _execution_event,
                             calendar=(
                                 loop.agent_observable_calendar_by_event_id.get(_execution_event_id)
@@ -10089,6 +12491,9 @@ These fields are for auditability and may differ across capable models; do not i
                                 "occupied": bool(occ),
                                 "occupancy": float(occ_count),
                                 "facility_w": fac,
+                                "realtime_device_state": _adaptive_v3_realtime_device_state(
+                                    loop, sim_h
+                                ),
                             },
                             user_input=loop.vpp_user_input_by_id.get(
                                 _execution_event_id,
@@ -10099,15 +12504,18 @@ These fields are for auditability and may differ across capable models; do not i
                             proposed_plan=_stage_plan("proposed_plan"),
                             consented_plan=_stage_plan("consented_plan"),
                             executed_plan=_stage_plan("executed_plan"),
-                            plan_lifecycle=_lifecycle,
+                            observations={
+                                "actuator_application_status": (
+                                    _application_report or {}
+                                ).get("status", "actuator_unavailable")
+                            },
                         )
                         loop.agent_execution_context_by_event_id[_execution_event_id] = _execution_context
                         loop.agent_memory_context_by_event_id[_execution_event_id] = _execution_context
                     except Exception as memory_exc:
-                        res.setdefault("adaptive_decision_audit", {})["memory_context_error"] = str(memory_exc)[:200]
-                loop.planned_occupied_sp = res["setpoint"]
-                effective_sp = res["setpoint"] if hvac_control_occupied or hvac_avail_set else AC_OFF_FALLBACK_COOLING_SETPOINT
-                loop.sp = effective_sp
+                        res.setdefault("adaptive_decision_audit", {})["memory_context_error"] = (
+                            _adaptive_exception_audit_text(memory_exc, limit=200)
+                        )
                 loop.next_check = res.get("next_check_hour")
                 if method != "no_dr" and not is_vpp:
                     _agent_checkpoint = _agent_next_vpp_checkpoint_hour(
@@ -10126,7 +12534,9 @@ These fields are for auditability and may differ across capable models; do not i
                     if loop.next_check is None or loop.next_check > _vpp_end:
                         loop.next_check = _vpp_end
                 loop.vpp_last_reason = res.get("reason", "")
-                _non_null = {k: v for k, v in res.get("appliance_actions", {}).items() if v is not None}
+                _non_null = {
+                    k: v for k, v in _actual_applied_actions.items() if v is not None
+                }
                 _decision_log = {
                     "h": sim_h,
                     "sp": res["setpoint"],
@@ -10141,8 +12551,15 @@ These fields are for auditability and may differ across capable models; do not i
                     "ac_mode": "on" if hvac_control_occupied else "off_unoccupied",
                     "reason": res.get("reason", ""),
                     "actions": _non_null,
+                    "requested_actions": {
+                        k: v
+                        for k, v in (res.get("appliance_actions", {}) or {}).items()
+                        if v is not None
+                    },
                     "raw_appliance_actions": _raw_appliance_actions,
                 }
+                if _application_report is not None:
+                    _decision_log["actuator_application"] = deepcopy(_application_report)
                 if _vpp_replan_guard:
                     _decision_log["vpp_replan_guard"] = _vpp_replan_guard
                 if method == "no_dr":
@@ -10180,7 +12597,7 @@ These fields are for auditability and may differ across capable models; do not i
                     _decision_log["adaptability_diagnostics"] = res.get("adaptability_diagnostics", {})
                 _append_day_agent_decision(loop, sim_days, sim_h, _decision_log)
                 if is_vpp and triggered_vpp is not None:
-                    loop.vpp_trigger_actions[vid] = res.get("appliance_actions", {})
+                    loop.vpp_trigger_actions[vid] = deepcopy(_actual_applied_actions)
                     loop.vpp_trigger_reason_by_id[vid] = res.get("reason", "")
                     if res.get("vpp_acceptance_gate"):
                         loop.vpp_plan_gate_by_id[vid] = res.get("vpp_acceptance_gate", {})
@@ -10190,11 +12607,6 @@ These fields are for auditability and may differ across capable models; do not i
                         existing_trace = dict(loop.vpp_strategy_trace_by_id.get(vid, {}) or {})
                         existing_trace.update(res.get("strategy_trace", {}))
                         loop.vpp_strategy_trace_by_id[vid] = existing_trace
-                if loop.appliance_suite is not None:
-                    _apply_appliance_actions(
-                        loop.appliance_suite,
-                        res.get("appliance_actions", {}),
-                        sim_h)
 
             # Collect per-VPP-window data
             if active_vpp:
@@ -10222,7 +12634,12 @@ These fields are for auditability and may differ across capable models; do not i
                             "success_probability": float(_step_assessment.get("success_probability", 0.0)),
                         })
                     except Exception as _ce:
-                        print(f"  [Capacity Window] failed: {_ce}")
+                        detail = (
+                            _adaptive_exception_audit_text(_ce)
+                            if _adaptive_harness_v2()
+                            else str(_ce)
+                        )
+                        print(f"  [Capacity Window] failed: {detail}")
 
             # VPP role-play scoring is intentionally deferred to the event day's
             # 24:00 boundary above, after service outcomes are observable.
@@ -10432,7 +12849,8 @@ These fields are for auditability and may differ across capable models; do not i
             sim_days=sim_days,
         )
     except Exception as _pe:
-        print(f"  [Day-ahead price] metrics unavailable: {_pe}")
+        detail = _adaptive_exception_audit_text(_pe) if _adaptive_harness_v2() else str(_pe)
+        print(f"  [Day-ahead price] metrics unavailable: {detail}")
         from energybridge.data.day_ahead import compute_price_metrics
         price_metrics = compute_price_metrics(
             output_dir,

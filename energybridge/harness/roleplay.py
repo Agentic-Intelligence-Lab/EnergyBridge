@@ -78,6 +78,177 @@ _PRODUCED_BY_RE = re.compile(
     r"\b(?:generated|produced|authored|selected|computed)\s+by\s+[-_.a-z0-9]+",
     re.IGNORECASE,
 )
+_HOUSEHOLD_SERVICE_PROVIDER_RE = re.compile(
+    r"\b(utility|energy|service)\s+provider\b",
+    re.IGNORECASE,
+)
+_PEM_BLOCK_RE = re.compile(
+    r"-----BEGIN\s+[A-Z0-9 _-]{1,80}-----.*?(?:-----END\s+[A-Z0-9 _-]{1,80}-----|$)",
+    re.IGNORECASE | re.DOTALL,
+)
+_AUTH_HEADER_RE = re.compile(
+    r"\b(?:authorization\s*:\s*)?(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{4,}",
+    re.IGNORECASE,
+)
+_SK_CREDENTIAL_RE = re.compile(r"sk-[A-Za-z0-9_-]{6,}\b", re.IGNORECASE)
+_SENSITIVE_ASSIGNMENT_RE = re.compile(
+    r"\b(?:[A-Za-z0-9_.-]*(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|"
+    r"auth(?:orization)?|credential|password|passwd|private[_ -]?key|secret|"
+    r"endpoint|base[_ -]?url)[A-Za-z0-9_.-]*)\s*(?::|=|\bis\b)\s*"
+    r"(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)",
+    re.IGNORECASE,
+)
+_CREDENTIAL_PHRASE_RE = re.compile(
+    r"\b(?:api[_ -]?key|access[_ -]?key|secret[_ -]?key|private[_ -]?key|"
+    r"credential|password|passwd|secret)\b"
+    r"(?:\s*(?::|=|\bis\b)\s*|\s+)"
+    r"(?:\"[^\"]*\"|'[^']*'|[A-Za-z0-9._~+/=-]{4,})",
+    re.IGNORECASE,
+)
+_TOKEN_VALUE_RE = re.compile(
+    r"\b(?:access\s+token|refresh\s+token|token)\b"
+    r"(?:\s*(?::|=|\bis\b)\s*|\s+)"
+    r"[A-Za-z0-9._~+/=-]{4,}",
+    re.IGNORECASE,
+)
+_GENERIC_KEY_VALUE_RE = re.compile(
+    r"(?i:\bkey\b)(?:\s*(?::|=|\bis\b)\s*|\s+)"
+    r"(?:\"[^\"]{4,}\"|'[^']{4,}'|[A-Za-z0-9._~+/=-]{16,}|"
+    r"(?=[A-Za-z0-9._~+/=-]{6,})(?=[A-Za-z0-9._~+/=-]*[0-9._~+/=-])"
+    r"[A-Za-z0-9._~+/=-]{6,}|[A-Z]{6,})"
+)
+_URL_ENDPOINT_RE = re.compile(
+    r"\b(?:https?|wss?)://[^\s<>\"'\[\]{}()]+",
+    re.IGNORECASE,
+)
+_BARE_HOST_ENDPOINT_RE = re.compile(
+    r"(?<![@\w.])(?:localhost|(?:[a-z0-9](?:[a-z0-9-]{0,62})\.)+[a-z]{2,63})"
+    r"(?![a-z])(?::\d{2,5})?"
+    r"(?:/[^\s<>\"'\[\]{}()]*)?",
+    re.IGNORECASE,
+)
+_LABELLED_DOTTED_HOST_ENDPOINT_RE = re.compile(
+    r"\b(?:endpoint|host|server|api[_ -]?base|base[_ -]?url)\s+"
+    r"(?:[a-z0-9](?:[a-z0-9-]{0,62})\.)+[a-z0-9-]{2,63}"
+    r"(?::\d{2,5})?(?:/[^\s<>\"'\[\]{}()]*)?",
+    re.IGNORECASE,
+)
+_SINGLE_LABEL_HOST_ENDPOINT_RE = re.compile(
+    r"\b(?:endpoint|host|server)\s+(?=[a-z0-9-]{2,64}:)(?=[a-z0-9-]*[a-z-])"
+    r"(?:[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?):\d{2,5}"
+    r"(?:/[^\s<>\"'\[\]{}()]*)?",
+    re.IGNORECASE,
+)
+_IP_ENDPOINT_RE = re.compile(
+    r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{2,5})?(?:/[^\s<>\"'\[\]{}()]*)?"
+)
+_IPV6_ENDPOINT_RE = re.compile(
+    r"\b(?:endpoint|host|server)\s+\[[0-9a-f:]{2,}\]"
+    r"(?::\d{2,5})?(?:/[^\s<>\"'\[\]{}()]*)?",
+    re.IGNORECASE,
+)
+_UNKNOWN_TECH_IDENTITY_RE = re.compile(
+    r"\b[A-Z][A-Za-z0-9]*(?:[-_]?(?:Cloud|Solver|Planner|Optimizer|Controller|"
+    r"Provider|Model|Agent|Algorithm|LLM|API))(?:V?\d+)?\b"
+)
+_LABELLED_TECH_IDENTITY_RE = re.compile(
+    r"(?<!utility\s)(?<!energy\s)(?<!service\s)"
+    r"\b(?:method|provider|model|planner|solver|optimizer|controller|algorithm|vendor|"
+    r"backend|deployment|agent|llm)(?:\s+(?:name|id))?"
+    r"\s*(?:(?::|=|\bis\b)\s*|\s+)"
+    r"(?!(?:identity|behavior|behaviour|configuration|settings|context|preference|"
+    r"choices|charges|service|information|data|facts?|unknown|unspecified|omitted|system)\b)"
+    r"(?:\"[^\"]{1,120}\"|'[^']{1,120}'|[^\s,;]+)",
+    re.IGNORECASE,
+)
+_EVALUATOR_ASSIGNMENT_RE = re.compile(
+    r"\b(?:scoring[_ -]?weights?|stable[_ -]?priorities|vpp[_ -]?override[_ -]?"
+    r"(?:prob|probability)|acceptance[_ -]?(?:baseline[_ -]?)?probability|"
+    r"evaluator[_ -]?(?:note|score|rubric)|scoring[_ -]?rubric)\b\s*"
+    r"(?::|=|\bis\b|\bare\b)\s*"
+    r"(?:\{[^{}]{0,1200}\}|\[[^\[\]]{0,1200}\]|\"[^\"]*\"|'[^']*'|[^\s,;]+)",
+    re.IGNORECASE,
+)
+_EVALUATOR_NARRATIVE_RE = re.compile(
+    r"\b(?:agent\s+challenge|archetype|prototype|benchmark|aggregator\s+recruitment|"
+    r"(?:demand[- ]response|dr)\s+(?:resource\s+type|target)|resource\s+type|"
+    r"typical\s+user|target\s+persona|role\s+for\s+testing|testing\s+(?:the\s+)?"
+    r"(?:agent|controller|strategy)|evaluation\s+(?:agent|controller|strategy))\b",
+    re.IGNORECASE,
+)
+_SENSITIVE_TEXT_REPLACEMENT = "[sensitive value removed]"
+_PRIVATE_ENDPOINT_REPLACEMENT = "[private endpoint]"
+
+_PRIVATE_RESUME_KEY_PARTS = frozenset({
+    "agent",
+    "algorithm",
+    "archetype",
+    "api",
+    "auth",
+    "authorization",
+    "controller",
+    "credential",
+    "developer",
+    "endpoint",
+    "evaluator",
+    "fingerprint",
+    "host",
+    "hostname",
+    "instruction",
+    "key",
+    "llm",
+    "method",
+    "model",
+    "objective",
+    "optimizer",
+    "password",
+    "pem",
+    "planner",
+    "policy",
+    "private",
+    "prompt",
+    "provider",
+    "rubric",
+    "secret",
+    "skill",
+    "speaker",
+    "solver",
+    "tag",
+    "token",
+    "uri",
+    "url",
+    "weight",
+})
+_PRIVATE_RESUME_EXACT_KEYS = frozenset({
+    "acceptance",
+    "acceptance_profile",
+    "acceptance_profiles",
+    "agent_context",
+    "api_key",
+    "api_key_pool",
+    "base_url",
+    "behavioral_dimensions",
+    "controller_context_source",
+    "developer_message",
+    "display_name",
+    "evaluator_notes",
+    "objective_source",
+    "household_id",
+    "persona_prompt",
+    "policy_source",
+    "roleplay_prompt",
+    "roleplay_user_prompt",
+    "resume_id",
+    "scoring_weights",
+    "selected_skill",
+    "source",
+    "source_fingerprint",
+    "stable_priorities",
+    "system_prompt",
+    "tags",
+    "persona_id",
+    "vpp_override_prob",
+})
 
 _VISIBLE_DEVICE_KEYS = frozenset({
     "ac",
@@ -190,12 +361,62 @@ def _json_safe(value: Any) -> Any:
     return json.loads(json.dumps(value, ensure_ascii=False, sort_keys=True, default=str))
 
 
+def _sanitize_sensitive_text(value: Any) -> str:
+    """Redact credentials before whitespace compaction or length truncation."""
+    text = str(value or "")
+    for pattern in (
+        _PEM_BLOCK_RE,
+        _AUTH_HEADER_RE,
+        _SK_CREDENTIAL_RE,
+        _SENSITIVE_ASSIGNMENT_RE,
+        _CREDENTIAL_PHRASE_RE,
+        _TOKEN_VALUE_RE,
+        _GENERIC_KEY_VALUE_RE,
+        _EVALUATOR_ASSIGNMENT_RE,
+    ):
+        text = pattern.sub(_SENSITIVE_TEXT_REPLACEMENT, text)
+    for pattern in (
+        _URL_ENDPOINT_RE,
+        _LABELLED_DOTTED_HOST_ENDPOINT_RE,
+        _IP_ENDPOINT_RE,
+        _IPV6_ENDPOINT_RE,
+        _BARE_HOST_ENDPOINT_RE,
+        _SINGLE_LABEL_HOST_ENDPOINT_RE,
+    ):
+        text = pattern.sub(_PRIVATE_ENDPOINT_REPLACEMENT, text)
+    text = _LABELLED_TECH_IDENTITY_RE.sub("plan source omitted", text)
+    text = _UNKNOWN_TECH_IDENTITY_RE.sub("plan source omitted", text)
+    return text
+
+
+def _sanitize_persona_description(value: Any, limit: int = 2000) -> str:
+    """Keep household facts but remove sentences written for an evaluator."""
+    sentences = re.split(r"(?<=[.!?])\s+", str(value or "").strip())
+    household_sentences = [
+        sentence
+        for sentence in sentences
+        if sentence.strip() and not _EVALUATOR_NARRATIVE_RE.search(sentence)
+    ]
+    return _sanitize_identity_text(" ".join(household_sentences), limit)
+
+
 def _sanitize_identity_text(value: Any, limit: int) -> str:
-    """Remove controller/model identity while retaining household-visible facts."""
-    text = _compact_text(value, max(limit * 2, limit))
+    """Remove credentials and model identity while retaining visible facts."""
+    text = _compact_text(
+        _sanitize_sensitive_text(value),
+        max(limit * 2, limit),
+    )
     text = _IDENTITY_LABEL_RE.sub("plan source omitted", text)
     text = _PRODUCED_BY_RE.sub("produced for the household", text)
     text = _IDENTITY_SENTINEL_RE.sub("plan source omitted", text)
+    text = _HOUSEHOLD_SERVICE_PROVIDER_RE.sub(
+        lambda match: (
+            "service company"
+            if match.group(1).lower() == "service"
+            else f"{match.group(1)} service company"
+        ),
+        text,
+    )
     text = _KNOWN_IDENTITY_RE.sub("the plan", text)
     # Identity removal can turn natural phrases such as "the agent" into
     # "the the plan".  Keep the projected household narrative readable.
@@ -207,6 +428,63 @@ def _sanitize_identity_text(value: Any, limit: int) -> str:
         flags=re.IGNORECASE,
     )
     return _compact_text(text, limit)
+
+
+def _normalize_structured_key(value: Any) -> str:
+    """Canonicalize snake/kebab/camel-case keys for recursive privacy checks."""
+    text = str(value or "").strip()
+    text = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", text)
+    text = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", text)
+    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
+
+
+def _is_private_resume_key(value: Any) -> bool:
+    """Return whether a structured field is unsafe for role-play input."""
+    raw_key = str(value or "")
+    if any(pattern.search(raw_key) for pattern in (
+        _PEM_BLOCK_RE,
+        _AUTH_HEADER_RE,
+        _SK_CREDENTIAL_RE,
+        _SENSITIVE_ASSIGNMENT_RE,
+        _CREDENTIAL_PHRASE_RE,
+        _TOKEN_VALUE_RE,
+        _GENERIC_KEY_VALUE_RE,
+        _URL_ENDPOINT_RE,
+        _LABELLED_DOTTED_HOST_ENDPOINT_RE,
+        _BARE_HOST_ENDPOINT_RE,
+        _SINGLE_LABEL_HOST_ENDPOINT_RE,
+        _IP_ENDPOINT_RE,
+        _IPV6_ENDPOINT_RE,
+    )):
+        return True
+    normalized = _normalize_structured_key(value)
+    if not normalized:
+        return True
+    if normalized in _PRIVATE_RESUME_EXACT_KEYS:
+        return True
+    parts = set(normalized.split("_"))
+    singular_parts = {part[:-1] if part.endswith("s") else part for part in parts}
+    if parts & _PRIVATE_RESUME_KEY_PARTS or singular_parts & _PRIVATE_RESUME_KEY_PARTS:
+        return True
+    compact = normalized.replace("_", "")
+    if (
+        "acceptanceprobability" in compact
+        or {"acceptance", "probability"}.issubset(parts)
+    ):
+        return True
+    if "vppoverrideprob" in compact or "overrideprobability" in compact:
+        return True
+    return any(marker in compact for marker in {
+        "apikey",
+        "apikeypool",
+        "accesstoken",
+        "authtoken",
+        "baseurl",
+        "basicauth",
+        "bearertoken",
+        "endpoint",
+        "refreshtoken",
+    })
 
 
 def _is_visible_fact_key(value: Any) -> bool:
@@ -305,46 +583,21 @@ def _visible_relationship_history(resume: Mapping[str, Any]) -> list[dict[str, A
 
 
 def _sanitize_household_resume(value: Any) -> Any:
-    """Preserve household biography while removing source/model identity recursively."""
+    """Preserve household facts while recursively removing private internals."""
     if isinstance(value, Mapping):
         result: dict[str, Any] = {}
         for raw_key, raw_value in list(value.items())[:64]:
             key = str(raw_key)
-            normalized = key.strip().lower().replace("-", "_").replace(" ", "_")
-            if normalized in {"schema_version", "resume_id", "household_id"}:
-                result[key] = (
-                    "household_resume.v2"
-                    if normalized == "schema_version"
-                    else _json_safe(raw_value)
-                )
+            normalized = _normalize_structured_key(key)
+            if normalized == "schema_version":
+                result[key] = "household_resume.v2"
                 continue
-            if normalized == "audit" and isinstance(raw_value, Mapping):
-                result[key] = {
-                    audit_key: _json_safe(raw_value.get(audit_key))
-                    for audit_key in (
-                        "profile_fingerprint",
-                        "resume_fingerprint",
-                        "roleplay_projection",
-                    )
-                    if raw_value.get(audit_key) not in (None, "")
-                }
+            if normalized == "audit":
+                # Pre-projection hashes and provenance cover hidden evaluator
+                # fields.  They remain available to the controller-side audit
+                # log, but must not become model-visible side channels.
                 continue
-            parts = set(normalized.split("_"))
-            if normalized in {
-                "controller_context_source",
-                "agent_context",
-                "objective_source",
-                "persona_prompt",
-                "policy_source",
-                "roleplay_prompt",
-                "roleplay_user_prompt",
-                "selected_skill",
-                "source",
-                "source_fingerprint",
-                "system_prompt",
-            } or parts & {
-                "algorithm", "controller", "method", "model", "provider", "speaker",
-            }:
+            if _is_private_resume_key(key):
                 continue
             clean = _sanitize_household_resume(raw_value)
             if clean not in (None, "", [], {}):
@@ -363,8 +616,17 @@ def _sanitize_household_resume(value: Any) -> Any:
 
 
 def sanitize_household_resume_for_roleplay(resume: Mapping[str, Any] | None) -> dict[str, Any]:
-    """Project a resume to household facts without controller/model provenance."""
-    sanitized = _sanitize_household_resume(dict(resume or {}))
+    """Project a resume to household facts without private internals or credentials."""
+    source = dict(resume or {})
+    biography = source.get("biography")
+    if isinstance(biography, Mapping):
+        projected_biography = dict(biography)
+        if "description" in projected_biography:
+            projected_biography["description"] = _sanitize_persona_description(
+                projected_biography.get("description")
+            )
+        source["biography"] = projected_biography
+    sanitized = _sanitize_household_resume(source)
     return sanitized if isinstance(sanitized, dict) else {}
 
 
@@ -558,8 +820,8 @@ def _persona_baseline_probability(
         "source": "neutral_uninformed_consent_prior",
         "formula": "0.5",
         "note": (
-            "No explicit consent prior was supplied. Override propensity and satisfaction weights remain household "
-            "evidence for the role-play model; they are not relabelled as acceptance probabilities."
+            "No explicit consent prior was supplied. Hidden override propensity, scoring weights, and evaluator "
+            "metadata are excluded from model-visible role-play context; the neutral prior is used instead."
         ),
     }
 
@@ -588,10 +850,7 @@ def build_roleplay_acceptance_prompts(
     # cannot reveal which controller/model produced an earlier plan.
     resume["relationship_history"] = _visible_relationship_history(resume)
     resume = sanitize_household_resume_for_roleplay(resume)
-    resume.setdefault("audit", {})["roleplay_projection"] = (
-        "household_visible_method_identity_sanitized_v2"
-    )
-    baseline, baseline_audit = _persona_baseline_probability(
+    baseline, _ = _persona_baseline_probability(
         persona_config,
         baseline_acceptance_probability,
     )
@@ -610,7 +869,6 @@ def build_roleplay_acceptance_prompts(
         "verified_offer_facts": _visible_verified_plan_facts(verified_plan_facts),
         "live_household_statement": _sanitize_identity_text(user_preference_text, 1200),
         "persona_baseline_acceptance_probability": baseline,
-        "persona_baseline_audit": baseline_audit,
         "hard_safety_veto": {
             "active": bool(veto_reasons),
             "reasons": veto_reasons,
@@ -713,7 +971,7 @@ def _normalize_decision(value: Any, *, counterfactual: bool = False) -> str:
     if counterfactual:
         allowed.add("uncertain")
     if decision not in allowed:
-        raise RoleplayResponseError(f"invalid decision: {value!r}")
+        raise RoleplayResponseError("invalid decision")
     return decision
 
 
@@ -725,7 +983,7 @@ def _normalize_evidence(raw: Any) -> list[dict[str, str]]:
         if isinstance(item, str):
             evidence_id, source, fact, effect = f"E{index}", "other", item, "context_only"
         elif isinstance(item, Mapping):
-            evidence_id = _compact_text(item.get("id") or f"E{index}", 24)
+            evidence_id = _sanitize_identity_text(item.get("id") or f"E{index}", 24)
             source = str(item.get("source") or "other").strip().lower()
             fact = item.get("fact") or item.get("observation") or item.get("evidence")
             effect = str(item.get("effect") or "context_only").strip().lower()
@@ -733,7 +991,7 @@ def _normalize_evidence(raw: Any) -> list[dict[str, str]]:
             continue
         source = source if source in VALID_EVIDENCE_SOURCES else "other"
         effect = effect if effect in VALID_EVIDENCE_EFFECTS else "context_only"
-        fact_text = _compact_text(fact, 500)
+        fact_text = _sanitize_identity_text(fact, 500)
         if fact_text:
             result.append({
                 "id": evidence_id or f"E{index}",
@@ -766,9 +1024,15 @@ def _normalize_adjustments(raw: Any) -> list[dict[str, Any]]:
             raise RoleplayResponseError("adjustments[].delta must be finite")
         if delta == 0.0:
             raise RoleplayResponseError("adjustments[].delta must be a non-zero signed adjustment")
-        dimension = _compact_text(item.get("dimension") or item.get("factor"), 120)
-        evidence = _compact_text(item.get("evidence") or item.get("fact"), 500)
-        reason = _compact_text(item.get("reason"), 500)
+        dimension = _sanitize_identity_text(
+            item.get("dimension") or item.get("factor"),
+            120,
+        )
+        # This is a reference into evidence[].id, not free-form evidence. Apply
+        # the same sanitizer and bound as the target id so references remain
+        # consistent without becoming a text-identity side channel.
+        evidence = _sanitize_identity_text(item.get("evidence") or item.get("fact"), 24)
+        reason = _sanitize_identity_text(item.get("reason"), 500)
         if not dimension or not evidence or not reason:
             raise RoleplayResponseError(
                 "each adjustment requires dimension, evidence, and reason"
@@ -794,7 +1058,11 @@ def _normalize_counterfactual(raw: Any) -> dict[str, Any]:
         changes_raw = [changes_raw]
     if not isinstance(changes_raw, Sequence):
         raise RoleplayResponseError("counterfactual.changes must be a list")
-    changes = [_compact_text(item, 400) for item in changes_raw[:8] if _compact_text(item, 400)]
+    changes = [
+        clean
+        for item in changes_raw[:8]
+        if (clean := _sanitize_identity_text(item, 400))
+    ]
     decision_if_changed = _normalize_decision(
         raw.get("decision_if_changed") or ("uncertain" if not changes else "counteroffer"),
         counterfactual=True,
@@ -808,7 +1076,7 @@ def _normalize_counterfactual(raw: Any) -> dict[str, Any]:
         "changes": changes,
         "decision_if_changed": decision_if_changed,
         "acceptance_probability_if_changed": probability,
-        "reason": _compact_text(raw.get("reason", ""), 700),
+        "reason": _sanitize_identity_text(raw.get("reason", ""), 700),
     }
 
 
@@ -842,11 +1110,14 @@ def _normalize_valid_response(
     confidence = _unit_interval(data.get("confidence"), "confidence")
     evidence = _normalize_evidence(data.get("evidence"))
     counterfactual = _normalize_counterfactual(data.get("counterfactual"))
-    reasoning = _compact_text(
+    reasoning = _sanitize_identity_text(
         data.get("reason") or data.get("reasoning") or data.get("acceptance_reasoning"),
         1200,
     )
-    user_feedback = _compact_text(data.get("user_feedback") or data.get("energybridge_feedback"), 700)
+    user_feedback = _sanitize_identity_text(
+        data.get("user_feedback") or data.get("energybridge_feedback"),
+        700,
+    )
     if not reasoning:
         raise RoleplayResponseError("reason is required")
     if not user_feedback:
@@ -856,7 +1127,8 @@ def _normalize_valid_response(
         for item in evidence
         if str(item.get("id") or "").strip()
     }
-    for adjustment in adjustments:
+    evidence_sign_mismatches: list[dict[str, Any]] = []
+    for adjustment_index, adjustment in enumerate(adjustments):
         evidence_ref = str(adjustment.get("evidence") or "").strip().lower()
         cited = evidence_by_id.get(evidence_ref)
         if cited is None:
@@ -866,13 +1138,19 @@ def _normalize_valid_response(
         effect = str(cited.get("effect") or "")
         delta = float(adjustment["delta"])
         if delta > 0.0 and effect != "supports_acceptance":
-            raise RoleplayResponseError(
-                "positive adjustments must cite evidence marked supports_acceptance"
-            )
+            evidence_sign_mismatches.append({
+                "adjustment_index": adjustment_index,
+                "evidence_id": cited.get("id"),
+                "delta_sign": "positive",
+                "evidence_effect": effect,
+            })
         if delta < 0.0 and effect not in {"supports_rejection", "requires_change"}:
-            raise RoleplayResponseError(
-                "negative adjustments must cite evidence marked supports_rejection or requires_change"
-            )
+            evidence_sign_mismatches.append({
+                "adjustment_index": adjustment_index,
+                "evidence_id": cited.get("id"),
+                "delta_sign": "negative",
+                "evidence_effect": effect,
+            })
     adjustment_sum = math.fsum(float(item["delta"]) for item in adjustments)
     arithmetic_residual = float(probability) - float(baseline) - adjustment_sum
     if abs(arithmetic_residual) > PROBABILITY_ROUNDING_TOLERANCE:
@@ -903,11 +1181,21 @@ def _normalize_valid_response(
         response["normalization"]["expected_baseline"] = expected_baseline
     response["normalization"]["adjustment_sum"] = adjustment_sum
     response["normalization"]["arithmetic_residual"] = arithmetic_residual
+    # Evidence-effect labels are explanatory metadata authored by the same
+    # model, not a second decision channel.  Preserve and audit a mismatch
+    # instead of discarding an otherwise coherent probability judgement.  The
+    # arithmetic contract and evidence-reference existence remain strict.
+    response["normalization"]["evidence_sign_consistent"] = not evidence_sign_mismatches
+    response["normalization"]["evidence_sign_mismatches"] = evidence_sign_mismatches
     return response
 
 
 def _hard_veto_only_response(reasons: Sequence[str], error: Exception | None = None) -> dict[str, Any]:
-    clean_reasons = [_compact_text(reason, 400) for reason in reasons if str(reason).strip()]
+    clean_reasons = [
+        _sanitize_identity_text(reason, 400)
+        for reason in reasons
+        if str(reason).strip()
+    ]
     response = {
         "schema_version": ACCEPTANCE_SCHEMA_VERSION,
         "decision": "reject",
@@ -933,12 +1221,16 @@ def _hard_veto_only_response(reasons: Sequence[str], error: Exception | None = N
         "normalization": {"source": "hard_safety_veto"},
     }
     if error is not None:
-        response["normalization"]["roleplay_error"] = _compact_text(error, 300)
+        response["normalization"]["roleplay_error"] = _sanitize_identity_text(error, 300)
     return response
 
 
 def _apply_hard_veto(response: dict[str, Any], reasons: Sequence[str]) -> dict[str, Any]:
-    clean_reasons = [_compact_text(reason, 400) for reason in reasons if str(reason).strip()]
+    clean_reasons = [
+        _sanitize_identity_text(reason, 400)
+        for reason in reasons
+        if str(reason).strip()
+    ]
     if not clean_reasons:
         return response
     out = deepcopy(response)
@@ -1002,13 +1294,16 @@ def normalize_roleplay_acceptance_response(
                 if isinstance(fallback_exc, RoleplayResponseError)
                 else RoleplayResponseError(str(fallback_exc))
             )
+            safe_error = _sanitize_identity_text(error, 300)
+            safe_fallback_error = _sanitize_identity_text(normalized_error, 300)
             raise RoleplayResponseError(
-                f"role-play response invalid ({error}); caller fallback invalid ({normalized_error})"
+                f"role-play response invalid ({safe_error}); "
+                f"caller fallback invalid ({safe_fallback_error})"
             ) from fallback_exc
         response["normalization"] = {
             **dict(response.get("normalization") or {}),
             "source": "caller_fallback",
-            "roleplay_error": _compact_text(error, 300),
+            "roleplay_error": _sanitize_identity_text(error, 300),
         }
     return _apply_hard_veto(response, veto_reasons)
 
@@ -1020,4 +1315,5 @@ __all__ = [
     "VALID_DECISIONS",
     "build_roleplay_acceptance_prompts",
     "normalize_roleplay_acceptance_response",
+    "sanitize_household_resume_for_roleplay",
 ]
