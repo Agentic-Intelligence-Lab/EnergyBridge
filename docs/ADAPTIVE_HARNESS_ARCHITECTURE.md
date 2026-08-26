@@ -22,7 +22,10 @@ event + measured state -> stage-aware causal memory retrieval
                 open portfolio planning
                          |
                          v
-             common hard-constraint validator
+      common validator + physical/tariff evidence
+                         |
+                         v
+                model evidence deliberation
                          |
                          v
        role-play consent -> actuator-facing execution -> measured outcome
@@ -80,7 +83,18 @@ one semantic replan before the normal safe fallback path.
 Evidence and constraint references use JSON Pointers, avoiding the ambiguity
 between dotted field paths and private DNS names at the model boundary.
 
+After a model proposes a portfolio, a method-blind accounting tool evaluates
+each candidate independently. It can integrate fixed-power appliance schedules
+against the visible hourly tariff, measure half-open event-window overlap,
+check declared service windows and EV energy feasibility, and report the
+physical direction of an HVAC setpoint change. It labels water-heater and EV
+quantities as bounds when duty cycle or state trajectory is unknown, and does
+not invent whole-home or HVAC kWh. The tool neither scalarizes objectives nor
+selects a plan. The same base model sees the resulting evidence cards and owns
+the confirm-or-revise decision.
+
 Schema: `energybridge.open_portfolio_planning.v3`.
+Impact evidence schema: `energybridge.candidate_impact.v3`.
 
 ### Consent, execution, and outcome
 
@@ -97,10 +111,24 @@ attributed to that exposure sequence rather than only the last proposal. This
 closes the loop without treating an explanation, rejected plan, or unconfirmed
 actuator command as evidence that an action occurred.
 
+The selected candidate's pre-action impact card is stored with the attributed
+outcome in episodic memory. Future retrieval therefore links an observable
+tradeoff claim, the actual actuator exposure, and the household response. This
+supports calibration from evidence without converting one score into a fixed
+household rule.
+
 Consent is also treated as a commitment. A feasible pre-event plan that the
 household accepted is retained at event start instead of being silently
 replaced by a fresh model proposal. Replanning and renewed consent occur only
 when current hard constraints make that commitment infeasible.
+
+When a same-day event is already observable, consent is requested during the
+day-ahead decision before any event-specific appliance or HVAC action can run.
+The comparison plan is a separately constructed, event-free ordinary routine
+derived from visible device settings and current controls. It is never the
+controller's already-optimized offer relabelled as a default. A rejection thus
+restores the genuine ordinary routine, while an acceptance creates the
+commitment used by subsequent pre-event and event-start decisions.
 
 ## Prompt and identity boundaries
 

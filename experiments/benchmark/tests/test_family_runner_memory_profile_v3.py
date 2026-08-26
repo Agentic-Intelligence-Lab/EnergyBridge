@@ -1102,3 +1102,35 @@ def test_v3_feasible_pre_event_consent_is_retained_at_event_start() -> None:
     assert reused is False
     assert errors == ["washer schedule became infeasible"]
     assert not_retained == replacement
+
+
+def test_callback_scope_commitment_validator_rechecks_current_appliance_contract() -> None:
+    appliance_config = {
+        "washer": {
+            "present": True,
+            "earliest_h": 8.0,
+            "latest_h": 22.0,
+            "duration_h": 2.0,
+            "shiftable": True,
+            "dr_adjustable": True,
+        },
+        "dishwasher": {"present": False},
+        "dryer": {"present": False},
+        "water_heater": {"present": False},
+        "ev": {"present": False},
+    }
+    event = {"id": "vpp1", "trigger_h": 18.0, "end_h": 19.0}
+
+    assert fr._adaptive_v3_commitment_action_errors(
+        {"washer_start_h": 19.0, "washer_skip": False},
+        appliance_config=appliance_config,
+        vpp_event=event,
+        current_hod=18.0,
+    ) == []
+    errors = fr._adaptive_v3_commitment_action_errors(
+        {"washer_start_h": 18.0, "washer_skip": False},
+        appliance_config=appliance_config,
+        vpp_event=event,
+        current_hod=18.0,
+    )
+    assert any("VPP schedule conflict" in error for error in errors)

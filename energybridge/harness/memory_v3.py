@@ -318,6 +318,7 @@ _OUTCOME_FIELDS = {
     "belief_updates",
     "observed_preferences",
     "measurements",
+    "planning_evidence",
 }
 
 _NEGATIVE_TERMS = (
@@ -2126,6 +2127,22 @@ def _compact_episode(episode: Mapping[str, Any]) -> dict[str, Any]:
         )
         if key in observations
     }
+    planning_evidence = observations.get("planning_evidence")
+    if isinstance(planning_evidence, Mapping):
+        compact_outcome["planning_evidence"] = _safe({
+            key: planning_evidence.get(key)
+            for key in (
+                "schema_version",
+                "candidate_id",
+                "offer_specific_changed_paths",
+                "offer_specific_comparison",
+                "hvac_impact",
+                "aggregate",
+                "findings",
+                "limitations",
+            )
+            if key in planning_evidence
+        })
     return {
         "episode_id": episode.get("episode_id"),
         "context_signature": (episode.get("context") or {}).get("context_signature"),

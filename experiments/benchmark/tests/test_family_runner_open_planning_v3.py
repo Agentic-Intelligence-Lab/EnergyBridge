@@ -56,6 +56,78 @@ def test_portfolio_keeps_model_choice_across_distinct_candidates() -> None:
     assert resolution["selected_executable_plan"]["setpoint"] == 27.0
     assert resolution["selected_raw_plan"]["reason"] == "candidate late_restore"
     assert resolution["semantic_replan_attempted"] is False
+    impact = resolution["final_portfolio_audit"]["professional_impact_evidence"]
+    assert impact["ranking_performed"] is False
+    assert impact["selected_candidate_id"] is None
+
+
+def test_model_can_revise_its_own_choice_after_professional_evidence() -> None:
+    inputs = _planning_inputs()
+    inputs["observable_state"].update({
+        "ordinary_plan": {"setpoint": 25.0, "appliances": {}},
+        "device_capabilities": {"ac": {"present": True, "mode": "cooling"}},
+        "hourly_tariff": {"hours": [{"hour": hour, "price": 1.0} for hour in range(24)]},
+    })
+    first = {
+        "candidate_plans": [_candidate("cooler", 24.0), _candidate("warmer", 27.0)],
+        "selected_candidate_id": "cooler",
+    }
+    reviews: list[dict] = []
+
+    def review(evidence: dict) -> dict:
+        reviews.append(evidence)
+        return {
+            "candidate_plans": [_candidate("cooler", 24.0), _candidate("warmer", 27.0)],
+            "selected_candidate_id": "warmer",
+            "selection_reason": "The directional evidence changes my tradeoff judgment.",
+        }
+
+    resolution = fr._adaptive_v3_resolve_planning_response(
+        first,
+        planning_inputs=inputs,
+        impact_review_fn=review,
+    )
+
+    assert len(reviews) == 1
+    cards = reviews[0]["professional_impact_evidence"]["candidate_impacts"]
+    assert cards[0]["hvac_impact"]["expected_demand_direction"] == "higher_cooling_demand"
+    assert cards[1]["hvac_impact"]["expected_demand_direction"] == "lower_cooling_demand"
+    assert reviews[0]["professional_impact_evidence"]["selected_candidate_id"] is None
+    assert resolution["selected_candidate_id"] == "warmer"
+    assert resolution["evidence_review_attempted"] is True
+    assert [attempt["kind"] for attempt in resolution["attempts"]] == [
+        "initial_model_response",
+        "model_evidence_deliberation",
+    ]
+
+
+def test_invalid_evidence_review_gets_semantic_replan_without_tool_selection() -> None:
+    first = {
+        "candidate_plans": [_candidate("valid", 25.0)],
+        "selected_candidate_id": "valid",
+    }
+    feedback: list[dict] = []
+    resolution = fr._adaptive_v3_resolve_planning_response(
+        first,
+        planning_inputs=_planning_inputs(),
+        impact_review_fn=lambda evidence: {
+            "candidate_plans": [_candidate("reviewed", 26.0)],
+            "selected_candidate_id": "not-a-candidate",
+        },
+        replan_fn=lambda findings: feedback.append(findings) or {
+            "candidate_plans": [_candidate("repaired", 26.5)],
+            "selected_candidate_id": "repaired",
+        },
+    )
+
+    assert len(feedback) == 1
+    assert resolution["selected_candidate_id"] == "repaired"
+    assert resolution["semantic_replan_attempted"] is True
+    assert [attempt["kind"] for attempt in resolution["attempts"]] == [
+        "initial_model_response",
+        "model_evidence_deliberation",
+        "semantic_replan",
+    ]
 
 
 def test_advisor_is_compared_but_never_replaces_invalid_model_selection() -> None:
@@ -253,6 +325,12 @@ def test_observable_adapter_prefers_session_capsules_and_lists_live_requirements
         },
         setpoint_min_c=22.0,
         setpoint_max_c=28.0,
+        tariff_snapshot={"hours": [{"hour": 18, "price": 2.4}]},
+        ordinary_plan={"setpoint": 25.0, "appliance_actions": {"washer_start_h": 19.0}},
+        hvac_rollout={
+            "schema_version": "energybridge.observable_hvac_rollout.v1",
+            "candidate_setpoints": [{"setpoint_c": 25.0, "hvac_energy_kwh": 1.2}],
+        },
     )
 
     assert inputs["observable_profile"] == {"text": "Evening comfort matters."}
@@ -263,3 +341,100 @@ def test_observable_adapter_prefers_session_capsules_and_lists_live_requirements
         "washer_skip",
     ]
     assert "hidden_persona" not in inputs["observable_state"]["device_capabilities"]["washer"]
+    assert inputs["observable_state"]["hourly_tariff"]["hours"][0]["price"] == 2.4
+    assert inputs["observable_state"]["ordinary_plan"] == {
+        "setpoint": 25.0,
+        "appliances": {"washer_start_h": 19.0},
+    }
+    assert inputs["observable_state"]["professional_hvac_rollout"]["candidate_setpoints"][0][
+        "hvac_energy_kwh"
+    ] == 1.2
+
+
+def test_hvac_rollout_snapshot_extends_through_visible_event(monkeypatch) -> None:
+    captured: list[dict] = []
+    monkeypatch.setattr(
+        fr,
+        "_build_decision_time_state",
+        lambda *args, **kwargs: {"sim_h": kwargs["sim_h"]},
+    )
+
+    from experiments.benchmark.baselines import rule_milp
+
+    def fake_rollout(state: dict) -> dict:
+        captured.append(dict(state))
+        return {
+            "candidate_setpoints": [{
+                "setpoint_c": 26.0,
+                "hvac_energy_kwh": 1.5,
+                "vpp_hvac_energy_kwh": 0.3,
+                "predicted_final_temp_c": 25.7,
+                "comfort_violation_c": 0.0,
+            }]
+        }
+
+    monkeypatch.setattr(rule_milp, "_dynamic_setpoint_options", fake_rollout)
+    result = fr._adaptive_v3_hvac_rollout_snapshot(
+        SimpleNamespace(),
+        sim_h=16.5,
+        hod=16.5,
+        temp=25.0,
+        out_t=31.0,
+        facility_w=2000.0,
+        vpp_event={"id": "e1", "trigger_h": 18.0, "end_h": 19.0},
+        appliance_config={},
+        minimum_horizon_steps=6,
+    )
+
+    assert captured[0]["mpc_horizon_steps"] == 15
+    assert result["horizon_h"] == 2.5
+    assert result["candidate_setpoints"][0]["vpp_hvac_energy_kwh"] == 0.3
+    assert result["selection_performed"] is False
+
+
+def test_day_ahead_consent_selects_next_visible_same_day_event() -> None:
+    events = [
+        {"id": "past", "trigger_h": 6.0, "end_h": 7.0},
+        {"id": "later", "trigger_h": 20.0, "end_h": 21.0},
+        {"id": "next", "trigger_h": 18.0, "end_h": 19.0},
+        {"id": "tomorrow", "trigger_h": 42.0, "end_h": 43.0},
+    ]
+
+    selected = fr._adaptive_v3_day_ahead_consent_event(8.0, events)
+
+    assert selected == {"id": "next", "trigger_h": 18.0, "end_h": 19.0}
+    assert fr._adaptive_v3_day_ahead_consent_event(22.0, events) is None
+
+
+def test_observable_ordinary_plan_is_event_free_and_device_derived() -> None:
+    ordinary = fr._adaptive_v3_observable_ordinary_plan(
+        {
+            "ac": {
+                "present": True,
+                "setpoint_preferred_min_c": 24.0,
+                "setpoint_preferred_max_c": 26.0,
+            },
+            "washer": {
+                "present": True,
+                "preferred_h": 18.0,
+                "earliest_h": 8.0,
+                "latest_h": 22.0,
+                "duration_h": 2.0,
+            },
+            "water_heater": {
+                "present": True,
+                "normal_start_h": 18.0,
+                "normal_end_h": 20.0,
+                "normal_temp_c": 60.0,
+            },
+        },
+        current_setpoint=25.0,
+        current_hod=0.25,
+    )
+
+    assert ordinary["setpoint"] == 25.0
+    assert ordinary["appliance_actions"]["washer_start_h"] == 18.0
+    assert ordinary["appliance_actions"]["washer_skip"] is False
+    assert ordinary["appliance_actions"]["water_heater_preheat_start_h"] == 18.0
+    assert ordinary["objective_source"] == "observable_ordinary_routine_v3"
+    assert "vpp" not in ordinary["reason"].lower()

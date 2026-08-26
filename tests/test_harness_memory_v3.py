@@ -651,6 +651,43 @@ def test_compact_memory_retains_bounded_multi_dispatch_execution_evidence() -> N
     ]
 
 
+def test_compact_memory_links_professional_planning_evidence_to_outcome() -> None:
+    memory = initialize_memory_v3(_questionnaire(), household_id="home-7")
+    context = _context("evidence-linked")
+    planning_evidence = {
+        "schema_version": "energybridge.candidate_impact.v3",
+        "candidate_id": "household_choice",
+        "offer_specific_changed_paths": ["/setpoint", "/appliances/washer_start_h"],
+        "hvac_impact": {
+            "expected_demand_direction": "lower_cooling_demand",
+            "energy_kwh_estimate": None,
+        },
+        "aggregate": {
+            "fixed_load_vpp_overlap_energy_kwh": 0.0,
+            "whole_home_energy_claimed": False,
+        },
+        "findings": [],
+        "limitations": ["HVAC energy is directional until a thermal model supplies a trace"],
+        "provider": "must not survive",
+    }
+    memory = update_memory_v3(
+        memory,
+        context,
+        {
+            "overall_score": 4,
+            "feedback": "This worked well.",
+            "planning_evidence": planning_evidence,
+        },
+    )
+
+    capsule = compact_memory_context_v3(memory, context, k=1, max_chars=6000)
+    evidence = capsule["relevant_episodes"][0]["outcome"]["planning_evidence"]
+    assert evidence["candidate_id"] == "household_choice"
+    assert evidence["hvac_impact"]["energy_kwh_estimate"] is None
+    assert evidence["aggregate"]["whole_home_energy_claimed"] is False
+    assert "provider" not in evidence
+
+
 def test_v2_migration_rebuilds_contextual_attribution_and_drops_method() -> None:
     v2 = initialize_memory_v2(_questionnaire(), persona_id="private-namespace", method="secret-method")
     context = build_event_context_v2(

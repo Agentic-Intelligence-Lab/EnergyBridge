@@ -36,6 +36,13 @@ from .planning import (
     parse_planning_response,
     validate_plan_candidate,
 )
+from .energy_tools_v3 import (
+    ENERGY_IMPACT_SCHEMA_VERSION,
+    TARIFF_SNAPSHOT_VERSION,
+    build_hourly_tariff_snapshot,
+    evaluate_candidate_impact,
+    evaluate_portfolio_impacts,
+)
 from .profile_v3 import (
     HOUSEHOLD_MODEL_VERSION,
     PROFILE_CAPSULE_VERSION,
@@ -83,6 +90,11 @@ __all__ = [
     "evaluate_planning_response",
     "parse_planning_response",
     "validate_plan_candidate",
+    "ENERGY_IMPACT_SCHEMA_VERSION",
+    "TARIFF_SNAPSHOT_VERSION",
+    "build_hourly_tariff_snapshot",
+    "evaluate_candidate_impact",
+    "evaluate_portfolio_impacts",
     "HOUSEHOLD_MODEL_VERSION",
     "PROFILE_CAPSULE_VERSION",
     "build_profile_capsule",

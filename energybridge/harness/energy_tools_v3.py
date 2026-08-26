@@ -1,0 +1,795 @@
+"""Method-blind physical and tariff evidence for open household planning.
+
+The helpers in this module deliberately do not rank candidates or choose a
+plan.  They turn observable device capabilities, a tariff, an event window,
+and actuator-facing controls into compact evidence cards that a base model can
+deliberate over.  Exact values are emitted only for simple fixed-power loads;
+thermal and state-dependent devices are explicitly labelled as bounds or
+directional evidence.
+"""
+
+from __future__ import annotations
+
+from copy import deepcopy
+import hashlib
+import json
+import math
+import re
+from typing import Any, Mapping, Sequence
+
+
+ENERGY_IMPACT_SCHEMA_VERSION = "energybridge.candidate_impact.v3"
+TARIFF_SNAPSHOT_VERSION = "energybridge.hourly_tariff.v1"
+
+_SHIFTABLE_DEVICES = ("washer", "dishwasher", "dryer")
+_ACTION_KEYS = {
+    "washer": ("washer_start_h", "washer_skip"),
+    "dishwasher": ("dishwasher_start_h", "dishwasher_skip"),
+    "dryer": ("dryer_start_h", "dryer_skip"),
+}
+
+
+def _finite(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _round(value: float | None, digits: int = 6) -> float | None:
+    return None if value is None else round(float(value), digits)
+
+
+def _canonical(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _fingerprint(value: Any) -> str:
+    return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
+
+
+def _safe_id(value: Any, fallback: str) -> str:
+    text = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value or "")).strip("-._")
+    return text[:96] or fallback
+
+
+def build_hourly_tariff_snapshot(
+    hourly_prices: Mapping[Any, Any] | Sequence[Any] | None,
+    *,
+    unit: str = "cost/kWh",
+) -> dict[str, Any]:
+    """Build a provider-neutral recurring 24-hour tariff snapshot.
+
+    ``hourly_prices`` may be a mapping keyed by hour, a 24-value sequence, or
+    a sequence of ``{"hour": ..., "price": ...}`` records.  Source paths and
+    provider labels are intentionally not accepted into the model-visible
+    result.
+    """
+    parsed: dict[int, float] = {}
+    if isinstance(hourly_prices, Mapping):
+        items = list(hourly_prices.items())
+        for raw_hour, raw_price in items:
+            hour = _finite(raw_hour)
+            price = _finite(raw_price)
+            if hour is None or price is None or not float(hour).is_integer():
+                continue
+            hour_i = int(hour)
+            if 0 <= hour_i <= 23:
+                parsed[hour_i] = price
+    elif isinstance(hourly_prices, Sequence) and not isinstance(
+        hourly_prices, (str, bytes, bytearray)
+    ):
+        for index, item in enumerate(hourly_prices):
+            if isinstance(item, Mapping):
+                hour = _finite(item.get("hour", item.get("hour_start")))
+                price = _finite(item.get("price", item.get("value")))
+            else:
+                hour, price = float(index), _finite(item)
+            if hour is None or price is None or not float(hour).is_integer():
+                continue
+            hour_i = int(hour)
+            if 0 <= hour_i <= 23:
+                parsed[hour_i] = price
+    safe_unit = re.sub(r"[^A-Za-z0-9_ /().-]+", "", str(unit or "cost/kWh"))[:80]
+    hours = [{"hour": hour, "price": _round(parsed[hour])} for hour in sorted(parsed)]
+    return {
+        "schema_version": TARIFF_SNAPSHOT_VERSION,
+        "unit": safe_unit or "cost/kWh",
+        "hours": hours,
+        "coverage_hours": len(hours),
+        "complete_day": len(hours) == 24,
+    }
+
+
+def _tariff_map(tariff: Mapping[str, Any] | None) -> tuple[dict[int, float], str]:
+    tariff = tariff if isinstance(tariff, Mapping) else {}
+    values: dict[int, float] = {}
+    for item in list(tariff.get("hours") or []):
+        if not isinstance(item, Mapping):
+            continue
+        hour, price = _finite(item.get("hour")), _finite(item.get("price"))
+        if hour is not None and price is not None and float(hour).is_integer():
+            hour_i = int(hour)
+            if 0 <= hour_i <= 23:
+                values[hour_i] = price
+    return values, str(tariff.get("unit") or "cost/kWh")[:80]
+
+
+def _duration_interval(start: float, end: float) -> float:
+    duration = end - start
+    if duration < 0:
+        duration += 24.0
+    return max(0.0, min(24.0, duration))
+
+
+def _segments(start: float, duration: float) -> list[tuple[float, float]]:
+    duration = max(0.0, min(24.0, float(duration)))
+    if duration <= 1e-9:
+        return []
+    start_hod = float(start) % 24.0
+    end = start_hod + duration
+    if end <= 24.0 + 1e-9:
+        return [(start_hod, min(24.0, end))]
+    return [(start_hod, 24.0), (0.0, end - 24.0)]
+
+
+def _overlap_hours(
+    start: float,
+    duration: float,
+    event_start: float | None,
+    event_duration: float | None,
+) -> float | None:
+    if event_start is None or event_duration is None:
+        return None
+    total = 0.0
+    for a_start, a_end in _segments(start, duration):
+        for b_start, b_end in _segments(event_start, event_duration):
+            total += max(0.0, min(a_end, b_end) - max(a_start, b_start))
+    return min(duration, total)
+
+
+def _interval_cost(
+    start: float,
+    duration: float,
+    power_kw: float | None,
+    tariff: Mapping[int, float],
+) -> tuple[float | None, list[int]]:
+    if power_kw is None or not tariff:
+        return None, []
+    total = 0.0
+    missing: set[int] = set()
+    for seg_start, seg_end in _segments(start, duration):
+        cursor = seg_start
+        while cursor < seg_end - 1e-9:
+            hour = int(math.floor(cursor)) % 24
+            boundary = min(seg_end, math.floor(cursor) + 1.0)
+            span = boundary - cursor
+            if hour not in tariff:
+                missing.add(hour)
+            else:
+                total += power_kw * span * tariff[hour]
+            cursor = boundary
+    return (None if missing else total), sorted(missing)
+
+
+def _event_window(event: Mapping[str, Any] | None) -> tuple[float | None, float | None, dict[str, Any]]:
+    event = event if isinstance(event, Mapping) else {}
+    start = _finite(event.get("trigger_hod", event.get("start_hod")))
+    end = _finite(event.get("end_hod"))
+    absolute_start = _finite(event.get("trigger_h", event.get("start_h")))
+    absolute_end = _finite(event.get("end_h"))
+    if start is None and absolute_start is not None:
+        start = absolute_start % 24.0
+    if start is None:
+        return None, None, {"available": False}
+    if absolute_start is not None and absolute_end is not None:
+        duration = max(0.0, min(24.0, absolute_end - absolute_start))
+    elif end is not None:
+        duration = _duration_interval(start, end)
+    else:
+        duration = _finite(event.get("duration_h"))
+        duration = max(0.0, min(24.0, duration)) if duration is not None else None
+    return start % 24.0, duration, {
+        "available": duration is not None,
+        "start_hod": _round(start % 24.0, 3),
+        "end_hod": _round((start + duration) % 24.0, 3) if duration is not None else None,
+        "duration_h": _round(duration, 3),
+        "interval_semantics": "half_open_[start,end)",
+    }
+
+
+def _physical_plan(value: Mapping[str, Any] | None) -> dict[str, Any]:
+    value = value if isinstance(value, Mapping) else {}
+    if isinstance(value.get("validated_snapshot"), Mapping):
+        value = value["validated_snapshot"]
+    elif isinstance(value.get("plan"), Mapping):
+        value = value["plan"]
+    appliances = value.get("appliances", value.get("appliance_actions", {}))
+    appliances = appliances if isinstance(appliances, Mapping) else {}
+    out: dict[str, Any] = {"appliances": deepcopy(dict(appliances))}
+    setpoint = value.get("setpoint", value.get("setpoint_c"))
+    if setpoint is not None:
+        out["setpoint"] = deepcopy(setpoint)
+    return out
+
+
+def _flatten(value: Any, prefix: str = "") -> dict[str, Any]:
+    if isinstance(value, Mapping):
+        out: dict[str, Any] = {}
+        for key in sorted(value, key=str):
+            path = f"{prefix}/{str(key).replace('~', '~0').replace('/', '~1')}"
+            out.update(_flatten(value[key], path))
+        return out
+    return {prefix or "/": value}
+
+
+def _changed_paths(plan: Mapping[str, Any], ordinary: Mapping[str, Any]) -> list[str]:
+    first, second = _flatten(plan), _flatten(ordinary)
+    return sorted(path for path in set(first) | set(second) if first.get(path) != second.get(path))
+
+
+def _device_capabilities(observable_state: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    state = observable_state if isinstance(observable_state, Mapping) else {}
+    devices = state.get("device_capabilities")
+    return devices if isinstance(devices, Mapping) else {}
+
+
+def _fixed_device_card(
+    name: str,
+    actions: Mapping[str, Any],
+    capability: Mapping[str, Any],
+    service_state: Mapping[str, Any] | None,
+    *,
+    event_start: float | None,
+    event_duration: float | None,
+    tariff: Mapping[int, float],
+    tariff_unit: str,
+) -> dict[str, Any]:
+    start_key, skip_key = _ACTION_KEYS[name]
+    skipped = actions.get(skip_key)
+    start = _finite(actions.get(start_key))
+    duration = _finite(capability.get("duration_h"))
+    power = _finite(capability.get("power_kw", capability.get("rated_power_kw")))
+    card: dict[str, Any] = {
+        "present": bool(capability.get("present", False)),
+        "scheduled": start is not None and skipped is not True,
+        "explicitly_skipped": skipped is True,
+        "start_hod": _round(start % 24.0, 3) if start is not None else None,
+        "duration_h": _round(duration, 3),
+        "power_kw": _round(power, 3),
+        "estimate_class": "fixed_power_exact_when_capability_complete",
+        "evidence_paths": [
+            f"/observable_state/device_capabilities/{name}",
+            f"/candidate_plan/appliances/{start_key}",
+        ],
+    }
+    service_state = service_state if isinstance(service_state, Mapping) else {}
+    completed_before_decision = bool(service_state.get("completed"))
+    skipped_before_decision = bool(service_state.get("skipped"))
+    running_before_decision = bool(service_state.get("running"))
+    if completed_before_decision or skipped_before_decision or running_before_decision:
+        observed_start = _finite(
+            service_state.get("actual_start_h", service_state.get("start_h"))
+        )
+        card.update({
+            "scheduled": False,
+            "service_state_locked_before_proposal": True,
+            "observed_service_status": (
+                "completed" if completed_before_decision
+                else "skipped" if skipped_before_decision
+                else "running"
+            ),
+            "observed_start_hod": _round(observed_start % 24.0, 3)
+            if observed_start is not None else None,
+            "task_completed": completed_before_decision,
+            "incremental_scheduled_energy_kwh": 0.0,
+            "scheduled_energy_kwh": 0.0,
+            "vpp_overlap_h": 0.0 if completed_before_decision else None,
+            "vpp_overlap_energy_kwh": 0.0 if completed_before_decision else None,
+            "scheduled_cost": 0.0,
+            "action_effect": "no_incremental_schedule_effect_service_already_locked",
+            "evidence_paths": [
+                *card["evidence_paths"],
+                f"/observable_state/realtime_device_state/current_day_service_state/{name}",
+            ],
+        })
+        return card
+    if skipped is True:
+        card.update({"task_completed": False, "scheduled_energy_kwh": 0.0, "vpp_overlap_h": 0.0, "vpp_overlap_energy_kwh": 0.0})
+        return card
+    if start is None or duration is None or duration <= 0:
+        card["task_completed"] = None
+        card["uncertainty"] = ["start or duration is unavailable"]
+        return card
+    finish = start + duration
+    earliest = _finite(capability.get("earliest_h"))
+    latest = _finite(capability.get("latest_h"))
+    within_window = None
+    if earliest is not None and latest is not None:
+        latest_abs = latest + (24.0 if latest < earliest else 0.0)
+        start_abs = start + (24.0 if start < earliest and latest_abs > 24.0 else 0.0)
+        within_window = start_abs >= earliest - 1e-9 and start_abs + duration <= latest_abs + 1e-9
+    overlap = _overlap_hours(start, duration, event_start, event_duration)
+    cost, missing = _interval_cost(start, duration, power, tariff)
+    card.update({
+        "finish_hod": _round(finish % 24.0, 3),
+        "within_service_window": within_window,
+        "task_completed": within_window if within_window is not None else True,
+        "scheduled_energy_kwh": _round(power * duration) if power is not None else None,
+        "vpp_overlap_h": _round(overlap),
+        "vpp_overlap_energy_kwh": _round(power * overlap) if power is not None and overlap is not None else None,
+        "scheduled_cost": _round(cost),
+        "cost_unit": tariff_unit if cost is not None else None,
+    })
+    if missing:
+        card["tariff_missing_hours"] = missing
+    return card
+
+
+def _water_heater_card(
+    actions: Mapping[str, Any],
+    capability: Mapping[str, Any],
+    *,
+    event_start: float | None,
+    event_duration: float | None,
+    tariff: Mapping[int, float],
+    tariff_unit: str,
+) -> dict[str, Any]:
+    enabled = actions.get("water_heater_preheat")
+    start = _finite(actions.get("water_heater_preheat_start_h"))
+    end = _finite(actions.get("water_heater_preheat_end_h"))
+    power = _finite(capability.get("rated_kw", capability.get("rated_power_kw", capability.get("power_kw"))))
+    card: dict[str, Any] = {
+        "present": bool(capability.get("present", False)),
+        "enabled": enabled is True,
+        "start_hod": _round(start % 24.0, 3) if start is not None else None,
+        "end_hod": _round(end % 24.0, 3) if end is not None else None,
+        "rated_power_kw": _round(power, 3),
+        "estimate_class": "rated_power_upper_bound_duty_cycle_unknown",
+        "evidence_paths": [
+            "/observable_state/device_capabilities/water_heater",
+            "/candidate_plan/appliances/water_heater_preheat",
+        ],
+    }
+    if enabled is False:
+        card.update({"scheduled": False, "energy_upper_bound_kwh": 0.0, "vpp_overlap_h": 0.0, "vpp_overlap_energy_upper_bound_kwh": 0.0})
+        return card
+    if enabled is not True or start is None or end is None:
+        card.update({"scheduled": False, "uncertainty": ["explicit enable flag and complete preheat interval are required"]})
+        return card
+    duration = _duration_interval(start, end)
+    overlap = _overlap_hours(start, duration, event_start, event_duration)
+    cost, missing = _interval_cost(start, duration, power, tariff)
+    deadline = _finite(capability.get("bath_required_h"))
+    service_ready = None if deadline is None else ((end - deadline) % 24.0 >= 23.999999 or end <= deadline + 1e-9)
+    # For the benchmark's same-day windows, a direct comparison is clearer;
+    # wrapped intervals retain an explicitly unknown readiness judgment.
+    if deadline is not None and end >= start:
+        service_ready = end <= deadline + 1e-9
+    card.update({
+        "scheduled": duration > 0,
+        "duration_h": _round(duration, 3),
+        "ready_by_declared_deadline": service_ready,
+        "energy_upper_bound_kwh": _round(power * duration) if power is not None else None,
+        "vpp_overlap_h": _round(overlap),
+        "vpp_overlap_energy_upper_bound_kwh": _round(power * overlap) if power is not None and overlap is not None else None,
+        "cost_upper_bound": _round(cost),
+        "cost_unit": tariff_unit if cost is not None else None,
+        "uncertainty": ["tank thermostat duty cycle and thermal losses are not modeled by this accounting bound"],
+    })
+    if missing:
+        card["tariff_missing_hours"] = missing
+    return card
+
+
+def _ev_card(
+    actions: Mapping[str, Any],
+    capability: Mapping[str, Any],
+    realtime: Mapping[str, Any],
+    *,
+    event_start: float | None,
+    event_duration: float | None,
+    tariff: Mapping[int, float],
+    tariff_unit: str,
+) -> dict[str, Any]:
+    mode = str(actions.get("ev_mode") or "").strip().lower()
+    start = _finite(actions.get("ev_charge_start_h"))
+    end = _finite(actions.get("ev_charge_end_h"))
+    charger = _finite(capability.get("charger_kw", capability.get("power_kw")))
+    efficiency = _finite(capability.get("efficiency"))
+    efficiency = efficiency if efficiency is not None and 0 < efficiency <= 1 else None
+    card: dict[str, Any] = {
+        "present": bool(capability.get("present", False)),
+        "mode": mode or None,
+        "start_hod": _round(start % 24.0, 3) if start is not None else None,
+        "end_hod": _round(end % 24.0, 3) if end is not None else None,
+        "charger_kw": _round(charger, 3),
+        "efficiency": _round(efficiency, 4),
+        "estimate_class": "charger_power_upper_bound_with_observable_energy_requirement",
+        "evidence_paths": [
+            "/observable_state/device_capabilities/ev",
+            "/observable_state/realtime_device_state",
+            "/candidate_plan/appliances/ev_mode",
+        ],
+    }
+    if start is None or end is None:
+        card["scheduled"] = False
+        card["uncertainty"] = ["complete charge interval is unavailable"]
+        return card
+    duration = _duration_interval(start, end)
+    overlap = _overlap_hours(start, duration, event_start, event_duration)
+    cost, missing = _interval_cost(start, duration, charger, tariff)
+    deliverable = charger * duration * efficiency if charger is not None and efficiency is not None else None
+    daily_drive = _finite(capability.get("daily_drive_kwh"))
+    current_soc = _finite(realtime.get("ev_soc", realtime.get("soc")))
+    target_soc = _finite(capability.get("target_soc"))
+    capacity = _finite(capability.get("capacity_kwh"))
+    required = daily_drive
+    required_basis = "daily_drive_kwh" if daily_drive is not None else None
+    if current_soc is not None and target_soc is not None and capacity is not None:
+        soc_required = max(0.0, target_soc - current_soc) * capacity
+        if required is None or soc_required > required:
+            required, required_basis = soc_required, "target_soc_minus_observed_soc"
+    card.update({
+        "scheduled": duration > 0,
+        "duration_h": _round(duration, 3),
+        "deliverable_energy_upper_bound_kwh": _round(deliverable),
+        "required_battery_energy_kwh": _round(required),
+        "required_energy_basis": required_basis,
+        "energy_requirement_feasible": (deliverable + 1e-9 >= required) if deliverable is not None and required is not None else None,
+        "vpp_overlap_h": _round(overlap),
+        "vpp_overlap_grid_energy_upper_bound_kwh": _round(charger * overlap) if charger is not None and overlap is not None else None,
+        "grid_cost_upper_bound": _round(cost),
+        "cost_unit": tariff_unit if cost is not None else None,
+        "uncertainty": ["actual charger modulation and battery state trajectory are not modeled by this upper bound"],
+    })
+    if missing:
+        card["tariff_missing_hours"] = missing
+    return card
+
+
+def _hvac_card(
+    plan: Mapping[str, Any],
+    ordinary: Mapping[str, Any],
+    devices: Mapping[str, Any],
+    rollout: Mapping[str, Any] | None = None,
+    tariff: Mapping[int, float] | None = None,
+    tariff_unit: str = "cost/kWh",
+) -> dict[str, Any]:
+    proposed = _finite(plan.get("setpoint"))
+    baseline = _finite(ordinary.get("setpoint"))
+    ac = devices.get("ac") if isinstance(devices.get("ac"), Mapping) else {}
+    mode = str(ac.get("mode") or "unknown").strip().lower()
+    delta = proposed - baseline if proposed is not None and baseline is not None else None
+    direction = "unknown_without_reference_setpoint"
+    if delta is not None and abs(delta) <= 1e-9:
+        direction = "unchanged"
+    elif delta is not None and mode == "cooling":
+        direction = "lower_cooling_demand" if delta > 0 else "higher_cooling_demand"
+    elif delta is not None and mode == "heating":
+        direction = "higher_heating_demand" if delta > 0 else "lower_heating_demand"
+    card = {
+        "mode": mode,
+        "candidate_setpoint_c": _round(proposed, 3),
+        "ordinary_setpoint_c": _round(baseline, 3),
+        "setpoint_delta_c": _round(delta, 3),
+        "expected_demand_direction": direction,
+        "energy_kwh_estimate": None,
+        "estimate_class": "directional_only_requires_thermal_model_for_energy",
+        "evidence_paths": [
+            "/candidate_plan/setpoint",
+            "/ordinary_plan/setpoint",
+            "/observable_state/device_capabilities/ac/mode",
+        ],
+    }
+    rollout = rollout if isinstance(rollout, Mapping) else {}
+    rows = [item for item in list(rollout.get("candidate_setpoints") or []) if isinstance(item, Mapping)]
+
+    def row_for(setpoint: float | None) -> Mapping[str, Any] | None:
+        if setpoint is None:
+            return None
+        return next(
+            (
+                item for item in rows
+                if _finite(item.get("setpoint_c")) is not None
+                and abs(float(item.get("setpoint_c")) - setpoint) <= 1e-6
+            ),
+            None,
+        )
+
+    candidate_row, ordinary_row = row_for(proposed), row_for(baseline)
+    if candidate_row is not None:
+        candidate_energy = _finite(candidate_row.get("hvac_energy_kwh"))
+        ordinary_energy = _finite(ordinary_row.get("hvac_energy_kwh")) if ordinary_row else None
+        candidate_vpp = _finite(candidate_row.get("vpp_hvac_energy_kwh"))
+        ordinary_vpp = _finite(ordinary_row.get("vpp_hvac_energy_kwh")) if ordinary_row else None
+        horizon_h = _finite(rollout.get("horizon_h"))
+        rollout_start = _finite(rollout.get("start_hod"))
+        unit_cost = None
+        if horizon_h is not None and horizon_h > 0 and rollout_start is not None:
+            integrated, missing = _interval_cost(
+                rollout_start,
+                horizon_h,
+                1.0,
+                tariff or {},
+            )
+            if integrated is not None and not missing:
+                unit_cost = integrated / horizon_h
+        candidate_cost = candidate_energy * unit_cost if candidate_energy is not None and unit_cost is not None else None
+        ordinary_cost = ordinary_energy * unit_cost if ordinary_energy is not None and unit_cost is not None else None
+        card.update({
+            "energy_kwh_estimate": _round(candidate_energy),
+            "ordinary_energy_kwh_estimate": _round(ordinary_energy),
+            "energy_delta_vs_ordinary_kwh": _round(candidate_energy - ordinary_energy)
+            if candidate_energy is not None and ordinary_energy is not None else None,
+            "vpp_energy_kwh_estimate": _round(candidate_vpp),
+            "ordinary_vpp_energy_kwh_estimate": _round(ordinary_vpp),
+            "vpp_energy_delta_vs_ordinary_kwh": _round(candidate_vpp - ordinary_vpp)
+            if candidate_vpp is not None and ordinary_vpp is not None else None,
+            "horizon_cost_estimate": _round(candidate_cost),
+            "ordinary_horizon_cost_estimate": _round(ordinary_cost),
+            "horizon_cost_delta_vs_ordinary": _round(candidate_cost - ordinary_cost)
+            if candidate_cost is not None and ordinary_cost is not None else None,
+            "cost_unit": tariff_unit if candidate_cost is not None else None,
+            "cost_estimate_class": (
+                "thermal_rollout_energy_times_horizon_average_tariff"
+                if candidate_cost is not None else None
+            ),
+            "predicted_final_temp_c": _round(_finite(candidate_row.get("predicted_final_temp_c")), 3),
+            "comfort_violation_c": _round(_finite(candidate_row.get("comfort_violation_c"))),
+            "estimate_class": "observable_regional_thermal_rollout",
+            "rollout_horizon_h": _round(_finite(rollout.get("horizon_h")), 3),
+            "rollout_uncertainty": str(
+                rollout.get("uncertainty")
+                or "model estimate; compare with measured execution before treating as calibrated"
+            )[:300],
+        })
+    return card
+
+
+def _aggregate_cards(cards: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    exact_energy = 0.0
+    exact_energy_seen = False
+    bound_energy = 0.0
+    bound_energy_seen = False
+    exact_overlap = 0.0
+    exact_overlap_seen = False
+    bound_overlap = 0.0
+    bound_overlap_seen = False
+    exact_cost = 0.0
+    exact_cost_seen = False
+    bound_cost = 0.0
+    bound_cost_seen = False
+    for card in cards.values():
+        for key, total_name in (
+            ("scheduled_energy_kwh", "exact_energy"),
+            ("energy_upper_bound_kwh", "bound_energy"),
+            ("deliverable_energy_upper_bound_kwh", "bound_energy"),
+            ("vpp_overlap_energy_kwh", "exact_overlap"),
+            ("vpp_overlap_energy_upper_bound_kwh", "bound_overlap"),
+            ("vpp_overlap_grid_energy_upper_bound_kwh", "bound_overlap"),
+            ("scheduled_cost", "exact_cost"),
+            ("cost_upper_bound", "bound_cost"),
+            ("grid_cost_upper_bound", "bound_cost"),
+        ):
+            value = _finite(card.get(key))
+            if value is None:
+                continue
+            if total_name == "exact_energy":
+                exact_energy, exact_energy_seen = exact_energy + value, True
+            elif total_name == "bound_energy":
+                bound_energy, bound_energy_seen = bound_energy + value, True
+            elif total_name == "exact_overlap":
+                exact_overlap, exact_overlap_seen = exact_overlap + value, True
+            elif total_name == "bound_overlap":
+                bound_overlap, bound_overlap_seen = bound_overlap + value, True
+            elif total_name == "exact_cost":
+                exact_cost, exact_cost_seen = exact_cost + value, True
+            else:
+                bound_cost, bound_cost_seen = bound_cost + value, True
+    return {
+        "fixed_load_scheduled_energy_kwh": _round(exact_energy) if exact_energy_seen else None,
+        "state_dependent_energy_upper_bound_kwh": _round(bound_energy) if bound_energy_seen else None,
+        "fixed_load_vpp_overlap_energy_kwh": _round(exact_overlap) if exact_overlap_seen else None,
+        "state_dependent_vpp_overlap_energy_upper_bound_kwh": _round(bound_overlap) if bound_overlap_seen else None,
+        "fixed_load_scheduled_cost": _round(exact_cost) if exact_cost_seen else None,
+        "state_dependent_cost_upper_bound": _round(bound_cost) if bound_cost_seen else None,
+        "whole_home_energy_claimed": False,
+        "scalar_utility_score": None,
+    }
+
+
+def evaluate_candidate_impact(
+    candidate: Mapping[str, Any] | None,
+    *,
+    observable_state: Mapping[str, Any] | None,
+    event: Mapping[str, Any] | None,
+    ordinary_plan: Mapping[str, Any] | None = None,
+    tariff: Mapping[str, Any] | None = None,
+    candidate_id: str | None = None,
+) -> dict[str, Any]:
+    """Return an evidence card for one candidate without ranking it."""
+    plan = _physical_plan(candidate)
+    ordinary = _physical_plan(ordinary_plan)
+    devices = _device_capabilities(observable_state)
+    state = observable_state if isinstance(observable_state, Mapping) else {}
+    realtime = state.get("realtime_device_state")
+    realtime = realtime if isinstance(realtime, Mapping) else {}
+    service_states = realtime.get("current_day_service_state")
+    service_states = service_states if isinstance(service_states, Mapping) else {}
+    actions = plan.get("appliances") if isinstance(plan.get("appliances"), Mapping) else {}
+    event_start, event_duration, event_card = _event_window(event)
+    tariff_map, tariff_unit = _tariff_map(tariff)
+    cards: dict[str, dict[str, Any]] = {}
+    for name in _SHIFTABLE_DEVICES:
+        capability = devices.get(name) if isinstance(devices.get(name), Mapping) else {}
+        if capability.get("present") or any(key in actions for key in _ACTION_KEYS[name]):
+            cards[name] = _fixed_device_card(
+                name,
+                actions,
+                capability,
+                service_states.get(name)
+                if isinstance(service_states.get(name), Mapping)
+                else {},
+                event_start=event_start,
+                event_duration=event_duration,
+                tariff=tariff_map,
+                tariff_unit=tariff_unit,
+            )
+    wh = devices.get("water_heater") if isinstance(devices.get("water_heater"), Mapping) else {}
+    if wh.get("present") or any(str(key).startswith("water_heater_") for key in actions):
+        cards["water_heater"] = _water_heater_card(
+            actions,
+            wh,
+            event_start=event_start,
+            event_duration=event_duration,
+            tariff=tariff_map,
+            tariff_unit=tariff_unit,
+        )
+    ev = devices.get("ev") if isinstance(devices.get("ev"), Mapping) else {}
+    if ev.get("present") or any(str(key).startswith("ev_") for key in actions):
+        cards["ev"] = _ev_card(
+            actions,
+            ev,
+            realtime,
+            event_start=event_start,
+            event_duration=event_duration,
+            tariff=tariff_map,
+            tariff_unit=tariff_unit,
+        )
+    changed = _changed_paths(plan, ordinary) if ordinary_plan is not None else []
+    findings: list[dict[str, Any]] = []
+    for name, card in cards.items():
+        overlap = _finite(card.get("vpp_overlap_h"))
+        if overlap is not None and overlap > 1e-9:
+            findings.append({
+                "code": "scheduled_load_overlaps_event",
+                "device": name,
+                "severity": "material_tradeoff",
+                "overlap_h": _round(overlap),
+                "evidence_paths": card.get("evidence_paths", []),
+            })
+        if card.get("within_service_window") is False or card.get("ready_by_declared_deadline") is False or card.get("energy_requirement_feasible") is False:
+            findings.append({
+                "code": "declared_service_requirement_not_met",
+                "device": name,
+                "severity": "hard_service_risk",
+                "evidence_paths": card.get("evidence_paths", []),
+            })
+    result = {
+        "schema_version": ENERGY_IMPACT_SCHEMA_VERSION,
+        "candidate_id": _safe_id(candidate_id or (candidate or {}).get("candidate_id"), "candidate"),
+        "plan_fingerprint": _fingerprint(plan),
+        "selection_authority": "base_model",
+        "ranking_performed": False,
+        "event_window": event_card,
+        "offer_specific_changed_paths": changed,
+        "device_impacts": cards,
+        "hvac_impact": _hvac_card(
+            plan,
+            ordinary,
+            devices,
+            state.get("professional_hvac_rollout")
+            if isinstance(state.get("professional_hvac_rollout"), Mapping)
+            else {},
+            tariff_map,
+            tariff_unit,
+        ),
+        "aggregate": _aggregate_cards(cards),
+        "findings": findings,
+        "tariff_coverage_hours": len(tariff_map),
+        "limitations": [
+            "fixed-power appliance arithmetic is not a whole-home simulation",
+            "water-heater and EV values are bounds when duty cycle or state trajectory is unavailable",
+            "HVAC energy is directional until a thermal model supplies a trace",
+        ],
+    }
+    if ordinary_plan is not None:
+        ordinary_card = evaluate_candidate_impact(
+            ordinary_plan,
+            observable_state=observable_state,
+            event=event,
+            ordinary_plan=None,
+            tariff=tariff,
+            candidate_id="ordinary_plan_reference",
+        )
+        candidate_aggregate = result["aggregate"]
+        ordinary_aggregate = ordinary_card["aggregate"]
+        deltas: dict[str, float | None] = {}
+        for key in (
+            "fixed_load_scheduled_energy_kwh",
+            "state_dependent_energy_upper_bound_kwh",
+            "fixed_load_vpp_overlap_energy_kwh",
+            "state_dependent_vpp_overlap_energy_upper_bound_kwh",
+            "fixed_load_scheduled_cost",
+            "state_dependent_cost_upper_bound",
+        ):
+            candidate_value = _finite(candidate_aggregate.get(key))
+            ordinary_value = _finite(ordinary_aggregate.get(key))
+            deltas[f"{key}_delta_vs_ordinary"] = (
+                _round(candidate_value - ordinary_value)
+                if candidate_value is not None and ordinary_value is not None
+                else None
+            )
+        result["offer_specific_comparison"] = {
+            "changed_path_count": len(changed),
+            "candidate_minus_ordinary": deltas,
+            "hvac_energy_delta_vs_ordinary_kwh": result["hvac_impact"].get(
+                "energy_delta_vs_ordinary_kwh"
+            ),
+            "hvac_vpp_energy_delta_vs_ordinary_kwh": result["hvac_impact"].get(
+                "vpp_energy_delta_vs_ordinary_kwh"
+            ),
+            "hvac_cost_delta_vs_ordinary": result["hvac_impact"].get(
+                "horizon_cost_delta_vs_ordinary"
+            ),
+            "hvac_cost_unit": result["hvac_impact"].get("cost_unit"),
+            "ordinary_plan_fingerprint": ordinary_card["plan_fingerprint"],
+            "interpretation": (
+                "negative deltas indicate less modeled energy, event overlap, or cost than the ordinary plan"
+            ),
+        }
+    return json.loads(json.dumps(result, ensure_ascii=False, allow_nan=False))
+
+
+def evaluate_portfolio_impacts(
+    candidates: Sequence[Mapping[str, Any]] | None,
+    *,
+    observable_state: Mapping[str, Any] | None,
+    event: Mapping[str, Any] | None,
+    ordinary_plan: Mapping[str, Any] | None = None,
+    tariff: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Evaluate every candidate independently and preserve model ownership."""
+    cards = [
+        evaluate_candidate_impact(
+            candidate,
+            observable_state=observable_state,
+            event=event,
+            ordinary_plan=ordinary_plan,
+            tariff=tariff,
+            candidate_id=str(candidate.get("candidate_id") or f"candidate_{index:02d}"),
+        )
+        for index, candidate in enumerate(list(candidates or [])[:24], start=1)
+        if isinstance(candidate, Mapping)
+    ]
+    return {
+        "schema_version": ENERGY_IMPACT_SCHEMA_VERSION,
+        "candidate_impacts": cards,
+        "candidate_count": len(cards),
+        "ranking_performed": False,
+        "selected_candidate_id": None,
+        "selection_authority": "base_model",
+    }
+
+
+__all__ = [
+    "ENERGY_IMPACT_SCHEMA_VERSION",
+    "TARIFF_SNAPSHOT_VERSION",
+    "build_hourly_tariff_snapshot",
+    "evaluate_candidate_impact",
+    "evaluate_portfolio_impacts",
+]

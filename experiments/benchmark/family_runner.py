@@ -259,8 +259,169 @@ _ADAPTIVE_V3_DEVICE_CAPABILITY_FIELDS = frozenset({
     "pre_heat_window_start_h",
     "pre_heat_window_end_h",
     "power_kw",
+    "rated_kw",
     "rated_power_kw",
 })
+
+
+def _adaptive_v3_tariff_snapshot(price_profile: Any, day: Any) -> dict:
+    """Project a day-ahead profile to model-visible hourly values only."""
+    from energybridge.harness.energy_tools_v3 import build_hourly_tariff_snapshot
+
+    if price_profile is None or day is None:
+        return build_hourly_tariff_snapshot(None)
+    try:
+        points = list(price_profile.points_for_day(day))
+        prices = {
+            int(point.local_time.hour): float(point.price_eur_per_kwh)
+            for point in points
+        }
+        return build_hourly_tariff_snapshot(
+            prices,
+            unit=str(getattr(price_profile, "price_unit", "cost/kWh") or "cost/kWh"),
+        )
+    except Exception:
+        return build_hourly_tariff_snapshot(None)
+
+
+def _adaptive_v3_physical_plan_snapshot(plan: dict | None) -> dict:
+    """Return only actuator-facing fields for ordinary-plan comparison."""
+    plan = plan if isinstance(plan, dict) else {}
+    actions = plan.get("appliances", plan.get("appliance_actions", {}))
+    actions = actions if isinstance(actions, dict) else {}
+    result = {"appliances": deepcopy(actions)}
+    setpoint = plan.get("setpoint", plan.get("setpoint_c"))
+    if setpoint is not None:
+        result["setpoint"] = deepcopy(setpoint)
+    return result
+
+
+def _adaptive_v3_commitment_action_errors(
+    actions: dict | None,
+    *,
+    appliance_config: dict | None,
+    vpp_event: dict | None,
+    current_hod: float | None,
+) -> list[str]:
+    """Revalidate an accepted action commitment at the callback boundary."""
+    actions = actions if isinstance(actions, dict) else {}
+    errors: list[str] = []
+    missing = _missing_explicit_appliance_actions(
+        actions,
+        appliance_config,
+        adaptive_contract=True,
+    )
+    if missing:
+        errors.append("missing explicit appliance commands: " + ", ".join(missing))
+    errors.extend(
+        "adaptive action contract: " + item
+        for item in _adaptive_v3_appliance_action_contract_errors(
+            actions,
+            appliance_config,
+        )
+    )
+    errors.extend(
+        "shiftable service infeasible: " + item
+        for item in _shiftable_service_window_errors(actions, appliance_config)
+    )
+    if isinstance(vpp_event, dict):
+        errors.extend(
+            "VPP schedule conflict: " + item
+            for item in _vpp_appliance_conflicts(
+                actions,
+                appliance_config,
+                vpp_event,
+                current_hod=current_hod,
+            )
+        )
+    errors.extend(
+        "EV service infeasible: " + item
+        for item in _ev_service_window_errors(
+            actions,
+            appliance_config,
+            vpp_event=vpp_event,
+        )
+    )
+    return errors
+
+
+def _adaptive_v3_hvac_rollout_snapshot(
+    loop: Any,
+    *,
+    sim_h: float,
+    hod: float,
+    temp: float | None,
+    out_t: float | None,
+    facility_w: float | None,
+    vpp_event: dict | None,
+    appliance_config: dict | None,
+    minimum_horizon_steps: int = 6,
+) -> dict:
+    """Run the local thermal model and expose only decision-relevant physics.
+
+    This is automatic evidence acquisition, not an advisor selection.  It is
+    invoked for a visible event because directional HVAC evidence alone cannot
+    support a truthful household savings estimate.
+    """
+    if not isinstance(vpp_event, dict):
+        return {}
+    try:
+        from experiments.benchmark.baselines.rule_milp import _dynamic_setpoint_options
+
+        event_end = float(vpp_event.get("end_h", sim_h + 1.0))
+        horizon_steps = max(
+            int(minimum_horizon_steps),
+            int(math.ceil(max(1.0 / 6.0, event_end - float(sim_h)) * 6.0)),
+        )
+        state = _build_decision_time_state(
+            loop,
+            sim_h=sim_h,
+            hod=hod,
+            temp=temp,
+            out_t=out_t,
+            facility_w=facility_w,
+            vpp_event=vpp_event,
+            vpp_target_kwh=None,
+            appliance_config=appliance_config or {},
+        )
+        state["mpc_horizon_steps"] = horizon_steps
+        raw = _dynamic_setpoint_options(state)
+        rows = []
+        for item in list(raw.get("candidate_setpoints") or []):
+            if not isinstance(item, dict):
+                continue
+            rows.append({
+                key: deepcopy(item.get(key))
+                for key in (
+                    "setpoint_c",
+                    "hvac_energy_kwh",
+                    "vpp_hvac_energy_kwh",
+                    "predicted_final_temp_c",
+                    "predicted_max_temp_c",
+                    "predicted_min_temp_c",
+                    "comfort_violation_c",
+                    "pmv",
+                    "pmv_ok",
+                    "dynamic_feasible",
+                )
+                if item.get(key) is not None
+            })
+        return {
+            "schema_version": "energybridge.observable_hvac_rollout.v1",
+            "horizon_h": round(horizon_steps / 6.0, 6),
+            "start_hod": round(float(hod) % 24.0, 6),
+            "candidate_setpoints": rows,
+            "event_window": {
+                "trigger_h": vpp_event.get("trigger_h"),
+                "end_h": vpp_event.get("end_h"),
+            },
+            "selection_performed": False,
+            "uncertainty": (
+                "regional thermal-model estimate; retain measured outcome residuals for calibration"
+            ),
+        }
+    except Exception:
+        return {}
 
 
 def _adaptive_v3_realtime_device_state(loop, sim_h: float) -> dict:
@@ -322,6 +483,9 @@ def _adaptive_v3_observable_planning_inputs(
     setpoint_min_c: float,
     setpoint_max_c: float,
     price_context: str = "",
+    tariff_snapshot: dict | None = None,
+    ordinary_plan: dict | None = None,
+    hvac_rollout: dict | None = None,
     demand_context: dict | None = None,
 ) -> dict:
     """Assemble the V3 planner inputs from controller-observable evidence.
@@ -424,6 +588,9 @@ def _adaptive_v3_observable_planning_inputs(
                 "expected_benefit": "truthful supported benefit and material uncertainty",
             },
         },
+        "hourly_tariff": deepcopy(tariff_snapshot or {}),
+        "ordinary_plan": _adaptive_v3_physical_plan_snapshot(ordinary_plan),
+        "professional_hvac_rollout": deepcopy(hvac_rollout or {}),
     }
     observable_event = deepcopy(memory_event or vpp_event or {})
     observable_event.update({
@@ -555,12 +722,14 @@ def _adaptive_v3_resolve_planning_response(
     advisor_candidates: list[dict] | None = None,
     policy_error_fn: Any = None,
     replan_fn: Any = None,
+    impact_review_fn: Any = None,
 ) -> dict:
-    """Evaluate model ownership, permit one semantic retry, then stop.
+    """Evaluate model ownership, permit evidence review and one semantic retry.
 
     Crucially, this function never chooses a feasible advisor or another model
     candidate on the base model's behalf.
     """
+    from energybridge.harness.energy_tools_v3 import evaluate_portfolio_impacts
     from energybridge.harness.planning import evaluate_planning_response
 
     def evaluate(raw: Any) -> tuple[dict, list[str]]:
@@ -573,6 +742,23 @@ def _adaptive_v3_resolve_planning_response(
             advisor_candidates=advisor_candidates or [],
             explicit_constraints=planning_inputs.get("explicit_constraints") or [],
         )
+        audit = result.get("portfolio_audit") if isinstance(result, dict) else {}
+        audit = audit if isinstance(audit, dict) else {}
+        model_candidates = [
+            item
+            for item in list(audit.get("candidate_lifecycles") or [])
+            if isinstance(item, dict) and item.get("origin") == "model"
+        ]
+        state = planning_inputs.get("observable_state") or {}
+        evidence = evaluate_portfolio_impacts(
+            model_candidates,
+            observable_state=state,
+            event=planning_inputs.get("event") or {},
+            ordinary_plan=state.get("ordinary_plan") or {},
+            tariff=state.get("hourly_tariff") or {},
+        )
+        audit["professional_impact_evidence"] = evidence
+        result["portfolio_audit"] = audit
         selected = result.get("selected_executable_plan")
         errors = (
             [str(value) for value in list(policy_error_fn(selected) or [])]
@@ -591,13 +777,38 @@ def _adaptive_v3_resolve_planning_response(
     }]
     final = first
     final_policy_errors = first_policy_errors
+    review_error = ""
     replan_error = ""
-    if (first.get("selected_executable_plan") is None or first_policy_errors) and callable(replan_fn):
+    if (
+        first.get("selected_executable_plan") is not None
+        and not first_policy_errors
+        and callable(impact_review_fn)
+    ):
         try:
-            retry_raw = replan_fn(_adaptive_v3_replan_feedback(first, first_policy_errors))
-            final, final_policy_errors = evaluate(retry_raw)
+            first_audit = first.get("portfolio_audit") or {}
+            review_payload = {
+                "original_model_response": deepcopy(first_audit.get("raw_response_snapshot") or {}),
+                "professional_impact_evidence": deepcopy(
+                    first_audit.get("professional_impact_evidence") or {}
+                ),
+            }
+            reviewed_raw = impact_review_fn(review_payload)
+            final, final_policy_errors = evaluate(reviewed_raw)
             attempts.append({
                 "attempt": 2,
+                "kind": "model_evidence_deliberation",
+                "evaluation": deepcopy(final.get("portfolio_audit") or {}),
+                "selection_status": final.get("selection_status"),
+                "runtime_contract_errors": final_policy_errors,
+            })
+        except Exception as exc:
+            review_error = _adaptive_exception_audit_text(exc, limit=500)
+    if (final.get("selected_executable_plan") is None or final_policy_errors) and callable(replan_fn):
+        try:
+            retry_raw = replan_fn(_adaptive_v3_replan_feedback(final, final_policy_errors))
+            final, final_policy_errors = evaluate(retry_raw)
+            attempts.append({
+                "attempt": len(attempts) + 1,
                 "kind": "semantic_replan",
                 "evaluation": deepcopy(final.get("portfolio_audit") or {}),
                 "selection_status": final.get("selection_status"),
@@ -629,7 +840,13 @@ def _adaptive_v3_resolve_planning_response(
         "selected_candidate_id": final.get("selected_candidate_id") if selected_plan is not None else None,
         "selected_executable_plan": selected_plan,
         "selected_raw_plan": selected_raw_plan,
-        "semantic_replan_attempted": len(attempts) > 1 or bool(replan_error),
+        "evidence_review_attempted": any(
+            item.get("kind") == "model_evidence_deliberation" for item in attempts
+        ) or bool(review_error),
+        "evidence_review_error": review_error,
+        "semantic_replan_attempted": any(
+            item.get("kind") == "semantic_replan" for item in attempts
+        ) or bool(replan_error),
         "semantic_replan_error": replan_error,
         "attempts": attempts,
         "final_portfolio_audit": deepcopy(final.get("portfolio_audit") or {}),
@@ -1071,6 +1288,59 @@ def _event_end_hod(event: dict | None) -> float:
 
 def _event_window_text(event: dict | None) -> str:
     return f"{_fmt_clock_h(_event_start_hod(event))}-{_fmt_clock_h(_event_end_hod(event))}"
+
+
+def _adaptive_v3_day_ahead_consent_event(
+    sim_h: float,
+    vpp_events: list[dict] | None,
+) -> dict | None:
+    """Return the next visible same-day event that needs anticipatory consent.
+
+    Adaptive EnergyBridge plans can schedule appliances many hours before a DR
+    event.  Consent therefore has to precede the first event-specific action,
+    rather than being deferred until the event window.  The lookup is purely
+    temporal and does not inspect persona or evaluator metadata.
+    """
+    try:
+        now = float(sim_h)
+    except (TypeError, ValueError):
+        return None
+    day_index = int(now // 24.0)
+    visible = []
+    for raw in list(vpp_events or []):
+        if not isinstance(raw, dict):
+            continue
+        try:
+            trigger = float(raw.get("trigger_h"))
+        except (TypeError, ValueError):
+            continue
+        if trigger + 1e-9 < now or int(trigger // 24.0) != day_index:
+            continue
+        visible.append((trigger, raw))
+    return dict(min(visible, key=lambda item: item[0])[1]) if visible else None
+
+
+def _adaptive_v3_observable_ordinary_plan(
+    appliance_config: dict | None,
+    *,
+    current_setpoint: float | None,
+    current_hod: float | None,
+) -> dict:
+    """Build the event-free household counterfactual from observable settings."""
+    ordinary = _manual_no_vpp_user_plan(
+        persona_config=None,
+        appliance_config=appliance_config or {},
+        current_setpoint=current_setpoint,
+        vpp_rejection_event=None,
+        current_hod=current_hod,
+    )
+    return {
+        "setpoint": ordinary.get("setpoint"),
+        "next_check_hour": ordinary.get("next_check_hour"),
+        "reason": "observable ordinary household routine before event consent",
+        "appliance_actions": dict(ordinary.get("appliance_actions", {}) or {}),
+        "objective_source": "observable_ordinary_routine_v3",
+    }
 
 
 def _event_preheat_safe_end_hod(event: dict | None) -> float:
@@ -8408,6 +8678,22 @@ def _update_agent_v3_memory(loop, event_result: dict, feedback_text: str) -> Non
     gate = gate if isinstance(gate, dict) else {}
     if not proposed_plan:
         proposed_plan = dict(gate.get("proposed_plan") or {})
+    portfolio_resolution = lifecycle.get("portfolio_planning")
+    portfolio_resolution = portfolio_resolution if isinstance(portfolio_resolution, dict) else {}
+    portfolio_audit = portfolio_resolution.get("final_portfolio_audit")
+    portfolio_audit = portfolio_audit if isinstance(portfolio_audit, dict) else {}
+    professional_evidence = portfolio_audit.get("professional_impact_evidence")
+    professional_evidence = professional_evidence if isinstance(professional_evidence, dict) else {}
+    selected_candidate_id = portfolio_resolution.get("selected_candidate_id")
+    selected_planning_evidence = next(
+        (
+            deepcopy(item)
+            for item in list(professional_evidence.get("candidate_impacts") or [])
+            if isinstance(item, dict)
+            and str(item.get("candidate_id")) == str(selected_candidate_id)
+        ),
+        {},
+    )
     outcome = {
         "accepted": gate.get("accepted") if "accepted" in gate else event_result.get("accepted"),
         "score": event_result.get("score"),
@@ -8423,6 +8709,7 @@ def _update_agent_v3_memory(loop, event_result: dict, feedback_text: str) -> Non
         "member_feedback_summary": event_result.get("member_feedback_summary"),
         "comment": event_result.get("comment"),
         "preference_observations": deepcopy(event_result.get("preference_observations") or []),
+        "planning_evidence": selected_planning_evidence,
     }
     context_event = cached_context.get("event") or {
         "id": event_id,
@@ -9720,6 +10007,7 @@ These fields are for auditability and may differ across capable models; do not i
         # scoring metadata.  V2 uses only its evidence-backed memory capsule.
         mem_tag = "" if adaptive_agent else loop.vpp_mem_ctx
         price_tag = "\nDAY_AHEAD_PRICE: unavailable."
+        current_day = None
         if run_start_date is not None and day_ahead_price_profile is not None:
             try:
                 current_day = run_start_date + _timedelta(days=int(sim_h // 24))
@@ -9731,6 +10019,10 @@ These fields are for auditability and may differ across capable models; do not i
                     else str(_pe)[:80]
                 )
                 price_tag = f"\nDAY_AHEAD_PRICE: unavailable ({detail})."
+        adaptive_tariff_snapshot = _adaptive_v3_tariff_snapshot(
+            day_ahead_price_profile,
+            current_day,
+        )
         agent_skill_bundle: dict | None = None
         agent_skill_tag = ""
         agent_memory_tag = ""
@@ -9962,6 +10254,18 @@ These fields are for auditability and may differ across capable models; do not i
             initial_system_prompt = _LLM_SYS_FAM
             initial_prompt = prompt
             if adaptive_agent and not force_mpc_primary:
+                ordinary_plan = loop.no_vpp_daily_plan_by_day.get(int(sim_h // 24), {})
+                professional_hvac_rollout = _adaptive_v3_hvac_rollout_snapshot(
+                    loop,
+                    sim_h=sim_h,
+                    hod=hod,
+                    temp=temp,
+                    out_t=out_t,
+                    facility_w=facility_w,
+                    vpp_event=vpp_event,
+                    appliance_config=appliance_config or {},
+                    minimum_horizon_steps=mpc_horizon_steps,
+                )
                 adaptive_planning_inputs = _adaptive_v3_observable_planning_inputs(
                     loop,
                     event_id=str(memory_event.get("id", "")),
@@ -9978,6 +10282,9 @@ These fields are for auditability and may differ across capable models; do not i
                     setpoint_min_c=_run_sp_min,
                     setpoint_max_c=_run_sp_max,
                     price_context=price_tag,
+                    tariff_snapshot=adaptive_tariff_snapshot,
+                    ordinary_plan=ordinary_plan,
+                    hvac_rollout=professional_hvac_rollout,
                     demand_context=prompt_vpp_demand,
                 )
                 initial_system_prompt, initial_prompt = _adaptive_v3_planning_prompts(
@@ -10140,12 +10447,48 @@ These fields are for auditability and may differ across capable models; do not i
                     )
                     return _call_llm_json(retry_prompt, system_prompt=retry_system)
 
+                review_event_id = str((vpp_event or {}).get("id", ""))
+                review_stage = "active" if vpp_active else "pre_event"
+                review_key = f"{review_event_id}:{review_stage}" if review_event_id else ""
+                reviewed_keys = getattr(loop, "agent_professional_review_keys", set())
+                if not isinstance(reviewed_keys, set):
+                    reviewed_keys = set(reviewed_keys or [])
+                loop.agent_professional_review_keys = reviewed_keys
+
+                def _impact_evidence_review(evidence_payload: dict) -> dict:
+                    review_system, review_prompt = _adaptive_v3_planning_prompts(
+                        adaptive_planning_inputs,
+                        advisor_candidates=adaptive_advisor_candidates,
+                        allow_skill_request=False,
+                    )
+                    review_prompt += (
+                        "\n\n[INDEPENDENT PHYSICAL AND TARIFF EVIDENCE]\n"
+                        "A method-blind accounting tool checked the portfolio below. It reports fixed-load "
+                        "arithmetic, event overlap, tariff integration, service feasibility, physical direction, "
+                        "and explicit uncertainty; it does not rank or choose a candidate. Reconsider your own "
+                        "selection using this evidence. If it changes a material claim or tradeoff, revise the "
+                        "portfolio. Otherwise return a complete confirmed portfolio. Keep unsupported energy or "
+                        "savings claims null and preserve your own decision authority.\n"
+                        + _j.dumps(evidence_payload, ensure_ascii=False, default=str)
+                    )
+                    reviewed = _call_llm_json(review_prompt, system_prompt=review_system)
+                    if review_key:
+                        reviewed_keys.add(review_key)
+                    return reviewed
+
+                impact_review_fn = (
+                    _impact_evidence_review
+                    if review_key and review_key not in reviewed_keys
+                    else None
+                )
+
                 adaptive_planning_resolution = _adaptive_v3_resolve_planning_response(
                     data,
                     planning_inputs=adaptive_planning_inputs,
                     advisor_candidates=adaptive_advisor_candidates,
                     policy_error_fn=_portfolio_runtime_errors,
                     replan_fn=_semantic_replan,
+                    impact_review_fn=impact_review_fn,
                 )
                 selected_plan = adaptive_planning_resolution.get("selected_executable_plan")
                 if not isinstance(selected_plan, dict):
@@ -11739,6 +12082,16 @@ These fields are for auditability and may differ across capable models; do not i
                 is_vpp = triggered_vpp is not None
                 vid = triggered_vpp["id"] if triggered_vpp else ""
                 planning_vpp_event = triggered_vpp or triggered_vpp_preplan
+                if (
+                    planning_vpp_event is None
+                    and triggered_daily_plan
+                    and method == "agent"
+                    and _adaptive_harness_v2()
+                ):
+                    planning_vpp_event = _adaptive_v3_day_ahead_consent_event(
+                        sim_h,
+                        vpp_events,
+                    )
                 is_vpp_preplan = triggered_vpp_preplan is not None and not is_vpp
                 planning_vid = str(planning_vpp_event.get("id", "")) if planning_vpp_event else ""
                 day_num = int(sim_h // 24) + 1
@@ -11956,7 +12309,11 @@ These fields are for auditability and may differ across capable models; do not i
                                        vpp_id=vid or planning_vid or (str(active_vpp.get("id", "")) if active_vpp else ""),
                                        user_pref_input=loop.vpp_user_input,
                                        facility_w=fac,
-                                       suppress_vpp_context=bool(triggered_daily_plan and not is_vpp))
+                                       suppress_vpp_context=bool(
+                                           triggered_daily_plan
+                                           and planning_vpp_event is None
+                                           and not is_vpp
+                                       ))
                     if "objective_terms_posthoc" not in res:
                         try:
                             res["objective_terms_posthoc"] = _compute_posthoc_decision_objective(
@@ -12131,6 +12488,21 @@ These fields are for auditability and may differ across capable models; do not i
                 _vpp_acceptance_gate = {}
                 if method != "no_dr" and planning_vpp_event is not None:
                     _default_plan = loop.no_vpp_daily_plan_by_day.get(_day_i)
+                    if (
+                        _default_plan is None
+                        and method == "agent"
+                        and _adaptive_harness_v2()
+                    ):
+                        # Keep the counterfactual household routine separate
+                        # from the event-aware model offer.  This snapshot uses
+                        # only observable device settings/current setpoint and
+                        # is created before any event action can execute.
+                        _default_plan = _adaptive_v3_observable_ordinary_plan(
+                            appliance_config or {},
+                            current_setpoint=loop.sp,
+                            current_hod=hod,
+                        )
+                        loop.no_vpp_daily_plan_by_day[_day_i] = deepcopy(_default_plan)
                     if _default_plan is None:
                         _default_plan = {
                             "setpoint": _ac_sp_default,
@@ -12190,7 +12562,6 @@ These fields are for auditability and may differ across capable models; do not i
                     if (
                         method == "agent"
                         and _adaptive_harness_v2()
-                        and is_vpp
                         and isinstance(_existing_gate, dict)
                         and bool(_existing_gate.get("accepted"))
                     ):
@@ -12198,7 +12569,12 @@ These fields are for auditability and may differ across capable models; do not i
                             _adaptive_v3_retain_feasible_accepted_commitment(
                                 _existing_gate,
                                 res,
-                                action_validator=_hard_policy_errors,
+                                action_validator=lambda actions: _adaptive_v3_commitment_action_errors(
+                                    actions,
+                                    appliance_config=appliance_config,
+                                    vpp_event=planning_vpp_event,
+                                    current_hod=hod,
+                                ),
                                 setpoint_min_c=_run_sp_min,
                                 setpoint_max_c=_run_sp_max,
                             )
@@ -12211,7 +12587,6 @@ These fields are for auditability and may differ across capable models; do not i
                             )
                     _reuse_existing_gate = (
                         _existing_gate is not None
-                        and is_vpp
                         and not disable_acceptance_fallback
                         and _vpp_gate_matches_current_plan(_existing_gate, res)
                     )

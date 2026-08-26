@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
+from energybridge.harness.energy_tools_v3 import ENERGY_IMPACT_SCHEMA_VERSION
 from energybridge.harness.memory_v3 import MEMORY_V3_VERSION
 from energybridge.harness.planning import PLANNING_SCHEMA_VERSION
 from energybridge.harness.profile_v3 import HOUSEHOLD_MODEL_VERSION
@@ -77,11 +78,12 @@ def _uses_adaptive_agent_components(profile: str, method: str) -> bool:
 def _agent_component_schemas(profile: str, method: str) -> dict[str, str | None]:
     """Describe the agent stack without exposing its state or storage location."""
     if not _uses_adaptive_agent_components(profile, method):
-        return {"profile": None, "memory": None, "planning": None}
+        return {"profile": None, "memory": None, "planning": None, "impact_evidence": None}
     return {
         "profile": HOUSEHOLD_MODEL_VERSION,
         "memory": MEMORY_V3_VERSION,
         "planning": PLANNING_SCHEMA_VERSION,
+        "impact_evidence": ENERGY_IMPACT_SCHEMA_VERSION,
     }
 
 
