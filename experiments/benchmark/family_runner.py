@@ -9201,6 +9201,31 @@ def _write_agent_preference_memory(loop) -> None:
         print(f"  [Agent Memory] write failed: {detail}")
 
 
+def _adaptive_v3_attitude_transition(score_audit: object) -> dict:
+    """Project one live consent/satisfaction audit into observable memory."""
+    if not isinstance(score_audit, dict) or not score_audit.get(
+        "live_acceptance_judgement"
+    ):
+        return {}
+    return {
+        "schema_version": "energybridge.observable_attitude_transition.v1",
+        "pre_event_willingness": score_audit.get("acceptance_probability"),
+        "post_event_normalized_rating": score_audit.get(
+            "normalized_authored_rating"
+        ),
+        "signed_post_minus_pre": score_audit.get(
+            "signed_rating_minus_acceptance"
+        ),
+        "phase_interpretation": score_audit.get("phase_interpretation"),
+        "observed_outcome_evidence": deepcopy(
+            score_audit.get("post_event_evidence") or {}
+        ),
+        "posthoc_score_remap": bool(
+            score_audit.get("score_was_posthoc_remapped", False)
+        ),
+    }
+
+
 def _update_agent_v3_memory(loop, event_result: dict, feedback_text: str) -> None:
     """Attribute one scored event to the observed V3 plan lifecycle."""
     from energybridge.harness.memory_v3 import build_event_context_v3, update_memory_v3
@@ -9426,6 +9451,15 @@ def _update_agent_v3_memory(loop, event_result: dict, feedback_text: str) -> Non
         "preference_observations": deepcopy(event_result.get("preference_observations") or []),
         "planning_evidence": selected_planning_evidence,
     }
+    attitude_transition = _adaptive_v3_attitude_transition(
+        event_result.get("score_consistency_audit")
+    )
+    if attitude_transition:
+        # Memory accepts a narrow observable projection rather than opening a
+        # generic path for hidden evaluator probabilities.  The renamed fields
+        # describe the household's two judgement phases and carry no method or
+        # target-rate metadata.
+        outcome["attitude_transition"] = attitude_transition
     if planning_calibration:
         outcome["planning_calibration"] = planning_calibration
     context_event = cached_context.get("event") or {

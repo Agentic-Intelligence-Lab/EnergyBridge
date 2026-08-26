@@ -742,6 +742,45 @@ def test_compact_memory_calibrates_only_attributed_executed_outcomes() -> None:
     assert "policy_weight" not in serialized
 
 
+def test_compact_memory_preserves_pre_event_to_post_event_attitude_evidence() -> None:
+    memory = initialize_memory_v3(_questionnaire(), household_id="home-attitude-change")
+    context = _context("attitude-change-event")
+    attitude_transition = {
+        "schema_version": "energybridge.observable_attitude_transition.v1",
+        "posthoc_score_remap": False,
+        "pre_event_willingness": 0.66,
+        "post_event_normalized_rating": 1.0,
+        "signed_post_minus_pre": 0.34,
+        "phase_interpretation": (
+            "higher_post_event_rating_has_new_positive_outcome_evidence"
+        ),
+        "observed_outcome_evidence": {
+            "offer_judgement_phase": "pre_event_proposal",
+            "satisfaction_phase": "post_event_experience",
+            "realised_plan_basis": "accepted_offered_plan",
+            "positive_outcome_evidence": [
+                "observed_comfort_preserved",
+                "observed_vpp_service_achieved",
+            ],
+            "negative_outcome_evidence": [],
+        },
+    }
+    memory = update_memory_v3(
+        memory,
+        context,
+        {"overall_score": 5, "attitude_transition": attitude_transition},
+    )
+
+    capsule = compact_memory_context_v3(memory, context, k=1, max_chars=6000)
+    remembered = capsule["relevant_episodes"][0]["outcome"][
+        "attitude_transition"
+    ]
+    assert remembered == attitude_transition
+    assert capsule["relevant_episodes"][0]["attribution"][
+        "outcome_attribution"
+    ] == "observational_executed_plan"
+
+
 def test_compact_memory_does_not_calibrate_unexecuted_outcome() -> None:
     memory = initialize_memory_v3(_questionnaire(), household_id="home-no-execution")
     context = _context("not-executed", executed_setpoint=None)

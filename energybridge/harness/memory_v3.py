@@ -320,6 +320,7 @@ _OUTCOME_FIELDS = {
     "measurements",
     "planning_evidence",
     "planning_calibration",
+    "attitude_transition",
 }
 
 _NEGATIVE_TERMS = (
@@ -2147,6 +2148,9 @@ def _compact_episode(episode: Mapping[str, Any]) -> dict[str, Any]:
     planning_calibration = observations.get("planning_calibration")
     if isinstance(planning_calibration, Mapping):
         compact_outcome["planning_calibration"] = _safe(planning_calibration)
+    attitude_transition = observations.get("attitude_transition")
+    if isinstance(attitude_transition, Mapping):
+        compact_outcome["attitude_transition"] = _safe(attitude_transition)
     return {
         "episode_id": episode.get("episode_id"),
         "context_signature": (episode.get("context") or {}).get("context_signature"),

@@ -45,6 +45,45 @@ def _questionnaire(*, benefit: str = "bill_savings_first") -> dict:
     }
 
 
+def test_attitude_transition_uses_only_live_observable_judgement() -> None:
+    audit = {
+        "live_acceptance_judgement": True,
+        "acceptance_probability": 0.66,
+        "normalized_authored_rating": 1.0,
+        "signed_rating_minus_acceptance": 0.34,
+        "phase_interpretation": (
+            "higher_post_event_rating_has_new_positive_outcome_evidence"
+        ),
+        "post_event_evidence": {
+            "realised_plan_basis": "accepted_offered_plan",
+            "positive_outcome_evidence": ["observed_comfort_preserved"],
+        },
+        "score_was_posthoc_remapped": False,
+        "method": "HIDDEN_METHOD",
+        "target_acceptance": 0.8,
+    }
+
+    transition = fr._adaptive_v3_attitude_transition(audit)
+
+    assert transition == {
+        "schema_version": "energybridge.observable_attitude_transition.v1",
+        "pre_event_willingness": 0.66,
+        "post_event_normalized_rating": 1.0,
+        "signed_post_minus_pre": 0.34,
+        "phase_interpretation": (
+            "higher_post_event_rating_has_new_positive_outcome_evidence"
+        ),
+        "observed_outcome_evidence": {
+            "realised_plan_basis": "accepted_offered_plan",
+            "positive_outcome_evidence": ["observed_comfort_preserved"],
+        },
+        "posthoc_score_remap": False,
+    }
+    assert fr._adaptive_v3_attitude_transition(
+        {**audit, "live_acceptance_judgement": False}
+    ) == {}
+
+
 def _init_v3(
     monkeypatch,
     tmp_path,
