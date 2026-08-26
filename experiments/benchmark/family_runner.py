@@ -5729,6 +5729,14 @@ def _evaluate_adaptive_v2_vpp_plan_acceptance_gate(
     )
 
     hard_veto_reasons = _adaptive_v2_hard_veto_reasons(intrusion)
+    invalid_controller_offer = (
+        str((proposed_plan or {}).get("controller_fallback_source") or "")
+        == "adaptive_v2_invalid_model_selection"
+    )
+    if invalid_controller_offer:
+        hard_veto_reasons.append(
+            "The controller did not produce a valid executable household offer."
+        )
     event_for_prompt = dict(event or {})
     event_for_prompt["current_hod"] = current_hod
     system_prompt, user_prompt, prompt_payload = build_roleplay_acceptance_prompts(
@@ -5751,37 +5759,65 @@ def _evaluate_adaptive_v2_vpp_plan_acceptance_gate(
     raw: dict = {}
     source = "roleplay_llm"
     use_llm = _env_flag("ENERGYBRIDGE_ROLEPLAY_ACCEPTANCE_GATE_USE_LLM", "1")
-    try:
-        if not use_llm:
-            raise RuntimeError("adaptive V2 role-play acceptance LLM disabled")
-        raw, metrics = _call_roleplay_acceptance_gate_llm(
-            system_prompt,
-            user_prompt,
-            expected_baseline=baseline,
-        )
-        roleplay = normalize_roleplay_acceptance_response(
-            raw,
-            hard_veto_reasons=hard_veto_reasons,
-            expected_baseline=baseline,
-        )
-    except Exception as exc:
-        failure_metrics = getattr(exc, "metrics", None)
-        if isinstance(failure_metrics, dict):
-            metrics = dict(failure_metrics)
-        if _acceptance_fallback_disabled():
-            raise
-        source = "roleplay_model_unavailable_fail_closed"
-        fallback_raw = _adaptive_v2_fallback_response(
-            baseline=baseline,
-            error=exc,
-        )
-        roleplay = fallback_raw
-        if hard_veto_reasons:
-            roleplay["final_acceptance_probability"] = 0.0
-            roleplay["acceptance_probability"] = 0.0
-            roleplay["hard_veto_applied"] = True
-            roleplay["hard_veto_reasons"] = list(hard_veto_reasons)
-            roleplay["normalization"]["hard_veto_override"] = True
+    if invalid_controller_offer:
+        source = "controller_offer_invalid_fail_closed"
+        metrics = {
+            "used": False,
+            "skipped_reason": "controller_offer_not_executable",
+        }
+        roleplay = _adaptive_v2_fallback_response(baseline=baseline)
+        roleplay.update({
+            "decision": "reject",
+            "final_acceptance_probability": 0.0,
+            "acceptance_probability": 0.0,
+            "reason": "No valid executable offer was available for household consent.",
+            "user_feedback": "Please provide a complete executable plan before asking for consent.",
+            "hard_veto_applied": True,
+            "hard_veto_reasons": list(hard_veto_reasons),
+            "fallback_source": source,
+        })
+        roleplay["evidence"] = [{
+            "id": "E1",
+            "source": "plan",
+            "fact": "The proposed controller output did not pass the executable-plan contract.",
+            "effect": "supports_rejection",
+        }]
+        roleplay["normalization"].update({
+            "source": source,
+            "hard_veto_override": True,
+        })
+    else:
+        try:
+            if not use_llm:
+                raise RuntimeError("adaptive V2 role-play acceptance LLM disabled")
+            raw, metrics = _call_roleplay_acceptance_gate_llm(
+                system_prompt,
+                user_prompt,
+                expected_baseline=baseline,
+            )
+            roleplay = normalize_roleplay_acceptance_response(
+                raw,
+                hard_veto_reasons=hard_veto_reasons,
+                expected_baseline=baseline,
+            )
+        except Exception as exc:
+            failure_metrics = getattr(exc, "metrics", None)
+            if isinstance(failure_metrics, dict):
+                metrics = dict(failure_metrics)
+            if _acceptance_fallback_disabled():
+                raise
+            source = "roleplay_model_unavailable_fail_closed"
+            fallback_raw = _adaptive_v2_fallback_response(
+                baseline=baseline,
+                error=exc,
+            )
+            roleplay = fallback_raw
+            if hard_veto_reasons:
+                roleplay["final_acceptance_probability"] = 0.0
+                roleplay["acceptance_probability"] = 0.0
+                roleplay["hard_veto_applied"] = True
+                roleplay["hard_veto_reasons"] = list(hard_veto_reasons)
+                roleplay["normalization"]["hard_veto_override"] = True
 
     probability = float(roleplay["acceptance_probability"])
     roleplay_decision = str(roleplay.get("decision", "reject"))
@@ -5816,7 +5852,11 @@ def _evaluate_adaptive_v2_vpp_plan_acceptance_gate(
         "roleplay_decision": roleplay_decision,
         "acceptance_probability": round(probability, 6),
         "stable_draw": None,
-        "decision_source": "direct_roleplay_household_judgement",
+        "decision_source": (
+            "controller_executable_contract"
+            if invalid_controller_offer
+            else "direct_roleplay_household_judgement"
+        ),
         "high_confidence_accept": bool(accepted and float(roleplay.get("confidence", 0.0) or 0.0) >= 0.8),
         # Hidden evaluator propensity is neither observable household evidence
         # nor an adaptive consent input. Keep the field structurally compatible
@@ -5856,7 +5896,11 @@ def _evaluate_adaptive_v2_vpp_plan_acceptance_gate(
             ),
             "prompt_fingerprint": prompt_fingerprint,
             "model_response_fingerprint": response_fingerprint,
-            "roleplay_model": metrics.get("model") or str(os.getenv("ROLEPLAY_LLM_MODEL", "")),
+            "roleplay_model": (
+                metrics.get("model") or str(os.getenv("ROLEPLAY_LLM_MODEL", ""))
+                if metrics.get("used")
+                else None
+            ),
         },
         "proposed_plan": _plan_snapshot_for_gate(proposed_plan),
         "default_plan": _plan_snapshot_for_gate(default_plan),

@@ -129,6 +129,50 @@ def test_v2_gate_preserves_roleplay_probability_and_direct_decision(monkeypatch)
     assert "cap" not in " ".join(rejected["factors"]).lower()
 
 
+def test_invalid_controller_fallback_is_not_presented_as_a_household_offer(
+    monkeypatch,
+) -> None:
+    persona, event, appliances, ordinary, offered = _fixture()
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")
+    monkeypatch.setenv("ENERGYBRIDGE_VPP_ACCEPTANCE_GATE", "adaptive_roleplay_v2")
+    monkeypatch.setenv("ENERGYBRIDGE_ROLEPLAY_ACCEPTANCE_GATE_USE_LLM", "1")
+    called = False
+
+    def must_not_call(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("invalid controller output must not consume role-play consent")
+
+    monkeypatch.setattr(fr, "_call_roleplay_acceptance_gate_llm", must_not_call)
+    invalid_offer = {
+        **offered,
+        "controller_fallback_source": "adaptive_v2_invalid_model_selection",
+    }
+
+    gate = fr._evaluate_vpp_plan_acceptance_gate(
+        method="agent",
+        persona_config=persona,
+        appliance_config=appliances,
+        event=event,
+        proposed_plan=invalid_offer,
+        default_plan=ordinary,
+        user_preference_text="Keep the change specific and reversible.",
+    )
+
+    assert called is False
+    assert gate["accepted"] is False
+    assert gate["acceptance_probability"] == 0.0
+    assert gate["decision_source"] == "controller_executable_contract"
+    assert gate["roleplay_source"] == "controller_offer_invalid_fail_closed"
+    assert gate["fallback_source"] == "controller_offer_invalid_fail_closed"
+    assert gate["hard_veto_applied"] is True
+    assert gate["prompt_gate_metrics"] == {
+        "used": False,
+        "skipped_reason": "controller_offer_not_executable",
+    }
+    assert gate["prompt_audit"]["roleplay_model"] is None
+
+
 def test_acceptance_transport_uses_json_mode_only_for_adaptive_contract(monkeypatch) -> None:
     calls: list[dict] = []
 
