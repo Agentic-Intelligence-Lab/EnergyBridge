@@ -387,7 +387,8 @@ def test_accepted_effective_vpp_penalty_counts_service_misses() -> None:
     assert penalty["penalty_kwh"] == 5.5
 
 
-def test_missing_fixed_actions_mean_keep_daily_plan_for_vpp_gate() -> None:
+def test_missing_fixed_actions_mean_keep_daily_plan_for_vpp_gate(monkeypatch) -> None:
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")
     appliances = {
         "ac": {"setpoint_preferred_max_c": 25.5, "temp_tolerance_c": 1.0},
         "washer": {"present": True, "shiftable": False, "dr_adjustable": False},
@@ -416,6 +417,9 @@ def test_missing_fixed_actions_mean_keep_daily_plan_for_vpp_gate() -> None:
     assert intrusion["changed_service_count"] == 0
     assert intrusion["fixed_services_modified"] == []
     assert intrusion["vpp_conflicts"] == []
+    assert intrusion["specified_services"] == ["washer", "water_heater"]
+    assert intrusion["unspecified_services"] == []
+    assert intrusion["weak_action_coverage"] is False
 
     conflict_actions = dict(default_actions)
     conflict_actions["water_heater_preheat_start_h"] = 18.0
@@ -439,6 +443,97 @@ def test_missing_fixed_actions_mean_keep_daily_plan_for_vpp_gate() -> None:
         event={"id": "vpp1", "trigger_h": 18.0, "end_h": 19.0},
     )
     assert flexible_conflict["vpp_conflicts"]
+
+
+def test_adaptive_v2_coverage_uses_effective_inherited_actions(monkeypatch) -> None:
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")
+    intrusion = _vpp_plan_intrusion_metrics(
+        proposed_plan={"setpoint": 26.0, "appliance_actions": {}},
+        default_plan={
+            "setpoint": 25.5,
+            "appliance_actions": {"washer_start_h": 20.0, "washer_skip": False},
+        },
+        persona_config={},
+        appliance_config={
+            "ac": {
+                "setpoint_preferred_min_c": 24.0,
+                "setpoint_preferred_max_c": 26.0,
+                "temp_tolerance_c": 1.0,
+            },
+            "washer": {"present": True, "shiftable": True, "dr_adjustable": True},
+        },
+        event={"id": "vpp1", "trigger_h": 18.0, "end_h": 19.0},
+    )
+
+    assert intrusion["present_services"] == ["washer"]
+    assert intrusion["specified_services"] == ["washer"]
+    assert intrusion["unspecified_services"] == []
+    assert intrusion["weak_action_coverage"] is False
+
+
+@pytest.mark.parametrize("profile", ["legacy_v1", "paper_v1"])
+def test_frozen_profiles_preserve_head_intrusion_shape_and_raw_coverage(
+    monkeypatch,
+    profile: str,
+) -> None:
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", profile)
+    appliances = {
+        "ac": {
+            "setpoint_preferred_min_c": 24.0,
+            "setpoint_preferred_max_c": 26.0,
+            "temp_tolerance_c": 1.0,
+        },
+        "washer": {"present": True, "shiftable": True, "dr_adjustable": True},
+    }
+    default_plan = {
+        "setpoint": 25.5,
+        "appliance_actions": {"washer_start_h": 20.0, "washer_skip": False},
+    }
+    sparse_proposal = {"setpoint": 26.0, "appliance_actions": {}}
+
+    intrusion = _vpp_plan_intrusion_metrics(
+        proposed_plan=sparse_proposal,
+        default_plan=default_plan,
+        persona_config={},
+        appliance_config=appliances,
+        event={"id": "vpp1", "trigger_h": 18.0, "end_h": 19.0},
+    )
+
+    assert intrusion == {
+        "proposed_setpoint_c": 26.0,
+        "default_setpoint_c": 25.5,
+        "preferred_max_c": 26.0,
+        "comfort_excess_c": 0.0,
+        "default_delta_c": 0.5,
+        "hvac_off": False,
+        "changed_service_count": 0,
+        "changed_services": [],
+        "fixed_services_modified": [],
+        "skip_devices": [],
+        "vpp_conflicts": [],
+        "has_user_facing_explanation": False,
+        "raw_policy_only": False,
+        "weak_action_coverage": True,
+    }
+
+    # Preserve the historical <= max(1, floor(35% * n)) boundary as well:
+    # one explicitly covered service out of one remains "weak" in V1.
+    explicit = _vpp_plan_intrusion_metrics(
+        proposed_plan={
+            "setpoint": 26.0,
+            "appliance_actions": {"washer_start_h": 20.0, "washer_skip": False},
+        },
+        default_plan=default_plan,
+        persona_config={},
+        appliance_config=appliances,
+        event={"id": "vpp1", "trigger_h": 18.0, "end_h": 19.0},
+    )
+    assert explicit["weak_action_coverage"] is True
+    assert "present_services" not in explicit
+    assert "specified_services" not in explicit
+    assert "unspecified_services" not in explicit
+    assert "preferred_min_c" not in explicit
+    assert "preference_tolerance_c" not in explicit
 
 
 def test_preserve_fixed_routine_actions_restores_only_non_dr_services() -> None:

@@ -16,7 +16,7 @@ M2 — zone_group_scores: office only, per-group comfort scores {Core, Bottom, M
 L3 — past_events included so Day 3 agent sees Day 1+2 feedback.
 """
 from __future__ import annotations
-import os, sys, json, random, datetime
+import os, sys, json, random, datetime, re
 from pathlib import Path
 from energybridge.roleplay.calendar import calendar_brief_for_prompt, calendar_context_for_event
 
@@ -132,6 +132,111 @@ def _is_user_facing_controller_explanation(reason: str) -> bool:
         # multiple household-facing terms before treating them as explanations.
         return sum(1 for word in user_words if word in lower) >= 3
     return len(text) >= 24
+
+
+_CONTROLLER_IDENTITY_RE = re.compile(
+    r"\b(?:energybridge(?:\s*v\d+)?|hema(?:\s*agent)?|mpc(?:\s*dynamic)?|"
+    r"rl(?:[-_\s]*ppo(?:[-_\s]*pref(?:[-_\s]*v\d+)?)?)?|rule[-+_\s]*milp|"
+    r"openai|anthropic|xai|dmxapi|"
+    r"(?:gpt|chatgpt|claude|gemini|qwen|deepseek|llama|mistral|grok|o[134])[-\w.]*)\b",
+    re.IGNORECASE,
+)
+
+
+def _method_blind_observable_text(
+    value: object,
+    *,
+    identities: list[str] | tuple[str, ...] = (),
+    limit: int = 320,
+) -> str:
+    """Compact free text while removing controller/model identity tokens."""
+    text = " ".join(str(value or "").split())
+    for identity in sorted(
+        {str(item).strip() for item in identities if str(item).strip()},
+        key=len,
+        reverse=True,
+    ):
+        # Short method aliases such as ``rl`` must not corrupt ordinary words
+        # such as ``world``.  Match complete identifier tokens only.
+        token_pattern = rf"(?<![\w]){re.escape(identity)}(?![\w])"
+        text = re.sub(token_pattern, "controller", text, flags=re.IGNORECASE)
+    text = _CONTROLLER_IDENTITY_RE.sub("controller", text)
+    text = re.sub(r"\bcontroller(?:\s+controller)+\b", "controller", text, flags=re.IGNORECASE)
+    return text[:limit].rstrip()
+
+
+def _observable_acceptance_judgement(
+    gate: dict | None,
+    *,
+    identities: list[str] | tuple[str, ...] = (),
+) -> dict | None:
+    """Allowlist method-blind gate evidence for the independent feedback LLM."""
+    if not isinstance(gate, dict) or not gate:
+        return None
+    is_live_judgement = bool(
+        str(gate.get("roleplay_source", "")) == "roleplay_llm"
+        and not gate.get("fallback_source")
+    )
+    probability = _gate_acceptance_probability(gate) if is_live_judgement else None
+    decision = gate.get("roleplay_decision", gate.get("decision"))
+    reason = gate.get("roleplay_acceptance_reasoning") or gate.get("energybridge_feedback") or ""
+    summary: dict = {
+        "judgement_status": "live_household_judgement" if is_live_judgement else "unavailable",
+        "acceptance_probability": probability,
+        "roleplay_decision": (
+            _method_blind_observable_text(decision, identities=identities, limit=40)
+            if is_live_judgement
+            else None
+        ),
+        "accepted": (
+            bool(gate.get("accepted")) if is_live_judgement and "accepted" in gate else None
+        ),
+        "reason": (
+            _method_blind_observable_text(reason, identities=identities)
+            if is_live_judgement
+            else "No live household judgement was available; do not infer satisfaction from a fallback prior.",
+        ),
+    }
+
+    if not is_live_judgement:
+        summary["evidence"] = []
+        summary["probability_adjustments"] = []
+        return summary
+
+    evidence_items: list[dict] = []
+    for item in list(gate.get("roleplay_evidence") or [])[:6]:
+        if not isinstance(item, dict):
+            continue
+        evidence_items.append({
+            "id": _method_blind_observable_text(item.get("id"), identities=identities, limit=24),
+            "source": _method_blind_observable_text(item.get("source"), identities=identities, limit=40),
+            "fact": _method_blind_observable_text(item.get("fact"), identities=identities, limit=180),
+            "effect": _method_blind_observable_text(item.get("effect"), identities=identities, limit=60),
+        })
+    summary["evidence"] = evidence_items
+
+    adjustment_items: list[dict] = []
+    for item in list(gate.get("roleplay_probability_adjustments") or [])[:6]:
+        if not isinstance(item, dict):
+            continue
+        try:
+            delta = round(float(item.get("delta")), 4)
+        except (TypeError, ValueError):
+            delta = None
+        adjustment_items.append({
+            "dimension": _method_blind_observable_text(
+                item.get("dimension"), identities=identities, limit=40
+            ),
+            "delta": delta,
+            "evidence": _method_blind_observable_text(
+                item.get("evidence"), identities=identities, limit=24
+            ),
+            "reason": _method_blind_observable_text(
+                item.get("reason"), identities=identities, limit=160
+            ),
+        })
+    summary["probability_adjustments"] = adjustment_items
+    return summary
 
 
 def normalize_persona(persona: dict) -> dict:
@@ -259,6 +364,23 @@ def _score_label(value: float) -> str:
     return _SCORE_LABELS[idx]
 
 
+def _record_v2_non_safety_factual_audit(
+    result: dict,
+    *,
+    check: str,
+    facts: dict,
+) -> None:
+    """Record a V2 factual disagreement without rewriting role-play judgement."""
+    result.setdefault("non_safety_factual_audits", []).append({
+        "check": str(check),
+        "mode": "observation_only_adaptive_v2",
+        "facts": dict(facts),
+        "score_was_posthoc_remapped_by_guard": False,
+        "label_was_posthoc_rewritten_by_guard": False,
+        "comment_was_posthoc_rewritten_by_guard": False,
+    })
+
+
 def _apply_unserved_service_score_cap(result: dict, devices: list[str]) -> dict:
     """Apply the required-service failure cap after any scoring backend."""
     if not devices:
@@ -371,6 +493,26 @@ def _hard_energy_component(energy_kwh_per_day: float, mode: str) -> float:
     return 1.0
 
 
+def _gate_acceptance_probability(gate: dict | None) -> float | None:
+    """Return the role-play willingness probability carried by an event gate.
+
+    Keep this deliberately independent of controller identity.  The gate is the
+    household's pre-event judgement of the *observed proposal*; satisfaction can
+    therefore share it as evidence without learning a method-specific offset.
+    """
+    if not isinstance(gate, dict):
+        return None
+    for key in ("acceptance_probability", "final_acceptance_probability"):
+        value = gate.get(key)
+        if value is None:
+            continue
+        try:
+            return max(0.0, min(1.0, float(value)))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def _hard_vpp_component(vpp_result_context: dict | None, gate: dict | None, mode: str) -> float:
     ctx = vpp_result_context or {}
     gate = gate or {}
@@ -423,7 +565,9 @@ def _rl_raw_policy_appliance_failure(policy_control_context: dict | None) -> boo
     empty_policy_actions = isinstance(actions, dict) and not actions
     emitted = set(policy_control_context.get("emitted_services") or [])
     action_space = set(policy_control_context.get("action_space_services") or [])
-    weak_coverage = bool(action_space) and len(emitted & action_space) <= max(1, int(0.35 * len(action_space)))
+    weak_coverage = bool(action_space) and len(emitted & action_space) <= max(
+        1, int(0.35 * len(action_space))
+    )
     return bool(raw_missing_text or (empty_policy_actions and weak_coverage))
 
 
@@ -443,8 +587,22 @@ def _calibrate_roleplay_score(
     policy_control_context: dict | None,
     severe_service_issue: bool,
 ) -> dict:
-    """Blend role-play judgement with hard evidence so scores remain persona-plausible."""
-    if severe_service_issue:
+    """Make satisfaction consistent with willingness using method-blind evidence.
+
+    The acceptance probability is a shared *proposal perception* signal, not the
+    final rating. Realised comfort, energy and VPP service remain independent
+    evidence. V2 preserves the feedback LLM's coherent score/comment tuple and
+    audits disagreement; legacy retains its frozen calibration. No method name,
+    controller family, or target baseline rate enters the V2 judgement.
+    """
+    adaptive_v2 = _adaptive_harness_v2()
+    policy_guard = result.get("policy_service_guard")
+    v2_missing_service_evidence = bool(
+        adaptive_v2
+        and isinstance(policy_guard, dict)
+        and policy_guard.get("missing_policy_services")
+    )
+    if severe_service_issue and not v2_missing_service_evidence:
         return result
     mode = _persona_score_mode(persona)
     weights = _normalised_scoring_weights(persona, mode)
@@ -454,8 +612,55 @@ def _calibrate_roleplay_score(
         if isinstance(maybe_gate, dict):
             gate = maybe_gate
     intrusion = gate.get("intrusion", {}) if isinstance(gate.get("intrusion"), dict) else {}
-    accepted = bool(gate.get("accepted", True)) if gate else True
 
+    if adaptive_v2:
+        # V2 consistency is prompt-owned.  Preserve the LLM-authored score and
+        # comment as one coherent judgement instead of deterministically
+        # remapping the score from acceptance probability.  The audit makes any
+        # disagreement observable for evals without changing either value.
+        authored_score = round(_clamp_score(float(result.get("score", 3.0) or 3.0)), 2)
+        result["score"] = authored_score
+        result["comfort_score"] = round(
+            _clamp_score(float(result.get("comfort_score", 3.0) or 3.0)), 2
+        )
+        result["energy_score"] = round(
+            _clamp_score(float(result.get("energy_score", 3.0) or 3.0)), 2
+        )
+        result["vpp_score"] = round(
+            _clamp_score(float(result.get("vpp_score", 3.0) or 3.0)), 2
+        )
+        result["label"] = _score_label(authored_score)
+        is_live_judgement = bool(
+            gate
+            and str(gate.get("roleplay_source", "")) == "roleplay_llm"
+            and not gate.get("fallback_source")
+        )
+        probability = _gate_acceptance_probability(gate) if is_live_judgement else None
+        rating_willingness = (authored_score - 1.0) / 4.0
+        result["score_consistency_audit"] = {
+            "version": "prompt_owned_acceptance_satisfaction_v2",
+            "method_blind": True,
+            "score_was_posthoc_remapped": False,
+            "non_safety_factual_audit_count": len(
+                result.get("non_safety_factual_audits") or []
+            ),
+            "non_safety_factual_checks": [
+                str(item.get("check", ""))
+                for item in (result.get("non_safety_factual_audits") or [])
+                if isinstance(item, dict) and item.get("check")
+            ],
+            "live_acceptance_judgement": is_live_judgement,
+            "acceptance_probability": probability,
+            "normalized_authored_rating": round(rating_willingness, 6),
+            "signed_rating_minus_acceptance": (
+                round(rating_willingness - probability, 6)
+                if probability is not None
+                else None
+            ),
+        }
+        return result
+
+    accepted = bool(gate.get("accepted", True)) if gate else True
     comfort_hard = _hard_comfort_component(
         mean_temp_c, pmv_ok_fraction, pref_min, pref_max, pref_tol, intrusion, mode
     )
@@ -481,7 +686,9 @@ def _calibrate_roleplay_score(
     similarity = _nested_float(
         gate, ("adaptability_diagnostics", "rule_milp_similarity", "similarity_score"), 0.5
     )
-    no_explanation = bool(gate) and not bool(intrusion.get("has_user_facing_explanation", explanation_is_user_facing))
+    no_explanation = bool(gate) and not bool(
+        intrusion.get("has_user_facing_explanation", explanation_is_user_facing)
+    )
     rl_method = _is_rl_method(method, policy_control_context)
     rl_policy_failure = rl_method and _rl_raw_policy_appliance_failure(policy_control_context)
     if rl_policy_failure:
@@ -599,9 +806,15 @@ def _calibrate_roleplay_score(
     calibrated = round(_clamp_score(calibrated), 2)
     old_score = result.get("score", calibrated)
     result["score"] = calibrated
-    result["comfort_score"] = round(_clamp_score(0.50 * float(result.get("comfort_score", 3) or 3) + 0.50 * comfort_hard), 2)
-    result["energy_score"] = round(_clamp_score(0.45 * float(result.get("energy_score", 3) or 3) + 0.55 * energy_hard), 2)
-    result["vpp_score"] = round(_clamp_score(0.45 * float(result.get("vpp_score", 3) or 3) + 0.55 * vpp_hard), 2)
+    result["comfort_score"] = round(
+        _clamp_score(0.50 * float(result.get("comfort_score", 3) or 3) + 0.50 * comfort_hard), 2
+    )
+    result["energy_score"] = round(
+        _clamp_score(0.45 * float(result.get("energy_score", 3) or 3) + 0.55 * energy_hard), 2
+    )
+    result["vpp_score"] = round(
+        _clamp_score(0.45 * float(result.get("vpp_score", 3) or 3) + 0.55 * vpp_hard), 2
+    )
     result["label"] = _score_label(calibrated)
     if abs(float(old_score or calibrated) - calibrated) >= 0.25:
         result["original_roleplay_score"] = old_score
@@ -1741,7 +1954,7 @@ def score_user_preference(
         if calendar_context.get("available"):
             print(f"  ║  Calendar constraints: {calendar_context.get('summary', '')[:80]}")
         if agent_reason:
-            print(f"  ║  EnergyBridge explanation: {agent_reason[:160]}")
+            print(f"  ║  Controller explanation: {agent_reason[:160]}")
         print(f"  ╚{'═'*52}")
         print("  Rate this VPP handling (1=very dissatisfied / 5=very satisfied), press Enter=3:")
         try:
@@ -1761,7 +1974,38 @@ def score_user_preference(
             "zone_comfort_scores": None, "source": "human",
         }
 
+    adaptive_v2 = _adaptive_harness_v2()
+    policy_control_context = dict(policy_control_context or {})
+    acceptance_gate = policy_control_context.get("vpp_acceptance_gate")
+    identity_tokens = [
+        str(method or ""),
+        str(policy_control_context.get("method") or ""),
+        str(policy_control_context.get("objective_source") or ""),
+    ]
+    if isinstance(acceptance_gate, dict):
+        prompt_audit = (
+            acceptance_gate.get("prompt_audit")
+            if isinstance(acceptance_gate.get("prompt_audit"), dict)
+            else {}
+        )
+        prompt_metrics = (
+            acceptance_gate.get("prompt_gate_metrics")
+            if isinstance(acceptance_gate.get("prompt_gate_metrics"), dict)
+            else {}
+        )
+        identity_tokens.extend([
+            str(acceptance_gate.get("method") or ""),
+            str(prompt_audit.get("roleplay_model") or ""),
+            str(prompt_metrics.get("model") or ""),
+            str(prompt_metrics.get("provider") or ""),
+        ])
+
     explanation_is_user_facing = _is_user_facing_controller_explanation(agent_reason)
+    method_blind_agent_reason = _method_blind_observable_text(
+        agent_reason,
+        identities=identity_tokens,
+        limit=1200,
+    )
     home_state = {
         "indoor_temp": round(mean_temp_c, 1),
         "hvac_setpoint": agent_setpoint_c or round(mean_temp_c, 1),
@@ -1792,17 +2036,49 @@ def score_user_preference(
         },
         "controller_explanation_is_user_facing": bool(explanation_is_user_facing),
     }
+    if adaptive_v2:
+        home_state["roleplay_scoring_contract"]["acceptance_satisfaction_consistency"] = (
+            "The pre-event role-play judgement concerns the offered proposal. If that offer was accepted and "
+            "executed, overall satisfaction should normally move in the same direction as its continuous "
+            "willingness. If it was rejected, realised comfort, energy, appliance service, and VPP outcomes come "
+            "from the ordinary fallback instead; they may change satisfaction, but the comment must distinguish "
+            "the rejected offer from the fallback experience. Do not mechanically convert probability into a "
+            "rating. If realised outcomes make the rating materially depart from the earlier willingness, explain "
+            "the new evidence and direction naturally."
+        )
     if agent_reason:
-        home_state["controller_explanation_excerpt"] = str(agent_reason)[:1200]
+        if adaptive_v2 and explanation_is_user_facing:
+            home_state["controller_explanation_excerpt"] = method_blind_agent_reason
+        elif not adaptive_v2:
+            home_state["controller_explanation_excerpt"] = str(agent_reason)[:1200]
     if agent_reason and not explanation_is_user_facing:
         home_state["controller_explanation_note"] = (
-            "The provided controller explanation is not household-facing. It may be used as a technical trace, "
+            "No concrete household-facing explanation was supplied. A technical trace existed, but its controller "
+            "identity and implementation details are hidden and must not earn explanation/communication credit."
+            if adaptive_v2
+            else "The provided controller explanation is not household-facing. It may be used as a technical trace, "
             "but it must not earn explanation/communication credit."
         )
     if vpp_result_context:
         home_state["vpp_result"] = vpp_result_context
     appliance_summary = appliance_summary or {}
-    policy_control_context = dict(policy_control_context or {})
+    observable_acceptance = _observable_acceptance_judgement(
+        acceptance_gate,
+        identities=identity_tokens,
+    )
+    if adaptive_v2 and observable_acceptance is not None:
+        home_state["pre_event_roleplay_acceptance"] = observable_acceptance
+        live_offer_accepted = observable_acceptance.get("accepted")
+        home_state["offer_execution_status"] = {
+            "offered_plan_accepted": live_offer_accepted,
+            "realised_outcomes_plan": (
+                "offered_plan"
+                if live_offer_accepted is True
+                else "ordinary_fallback_plan"
+                if live_offer_accepted is False
+                else "unknown_because_household_judgement_was_unavailable"
+            ),
+        }
     skipped_devices = [
         name for name, info in appliance_summary.items()
         if name in {"washer", "dishwasher", "dryer"} and bool(info.get("present")) and bool(info.get("skipped"))
@@ -1912,8 +2188,6 @@ def score_user_preference(
     )
     if policy_control_context:
         home_state["policy_control_context"] = {
-            "method": policy_control_context.get("method", method),
-            "objective_source": policy_control_context.get("objective_source", ""),
             "action_space_services": sorted(policy_action_space),
             "emitted_services": sorted(emitted_policy_services),
             "present_required_services": sorted(present_required_services),
@@ -1922,24 +2196,26 @@ def score_user_preference(
             "vpp_trigger_actions": policy_control_context.get("vpp_trigger_actions", {}),
             "occupancy_decisions": policy_control_context.get("occupancy_decisions", []),
         }
+        if not adaptive_v2:
+            home_state["policy_control_context"].update({
+                "method": policy_control_context.get("method", method),
+                "objective_source": policy_control_context.get("objective_source", ""),
+            })
 
     policy_scored_method = (
         method in (
-            "agent",
-            "eb_rule_milp",
-            "agent_pmv",
-            "EnergyBridge",
-            "hema_agent",
-            "rl",
-            "rl_ppo_pref_v2",
-            "mpc",
-            "mpc_dynamic",
-            "rule_milp",
+            "agent", "eb_rule_milp", "agent_pmv", "EnergyBridge", "hema_agent",
+            "rl", "rl_ppo_pref_v2", "mpc", "mpc_dynamic", "rule_milp",
         )
         or str(method).startswith("rl_")
     )
-    if policy_scored_method and agent_setpoint_c:
-        if method == "rl" or str(method).startswith("rl_"):
+    if (adaptive_v2 and agent_setpoint_c is not None) or (
+        not adaptive_v2 and policy_scored_method and agent_setpoint_c
+    ):
+        if adaptive_v2:
+            # The V2 resident judges observed facts, never an algorithm brand.
+            controller = "Household controller"
+        elif method == "rl" or str(method).startswith("rl_"):
             controller = "RL baseline"
         elif method == "hema_agent":
             controller = "HEMA Agent baseline"
@@ -1959,20 +2235,27 @@ def score_user_preference(
                 f"protective user's preferred range ({pref_min:.1f}-{pref_max:.1f}°C). "
                 "Do not treat this status/setpoint log as an aggressive DR temperature raise; "
                 "score based on actual comfort, whether the event-specific user preference/confirmation was followed, "
-                "consent sensitivity, and preserved routines. "
-                f"Controller explanation: {agent_reason[:100]}"
+                "consent sensitivity, and preserved routines."
             )
         else:
             action_name = "set_hvac_temperature"
             rationale = (
-                f"{controller} set cooling setpoint to {agent_setpoint_c}°C during VPP DR event. "
-                f"Controller explanation: {agent_reason[:100]}"
+                f"{controller} set cooling setpoint to {agent_setpoint_c}°C during VPP DR event."
             )
-        if agent_reason and not explanation_is_user_facing:
+        if adaptive_v2 and agent_reason and explanation_is_user_facing:
+            rationale += f" | Household-facing explanation: {method_blind_agent_reason[:400]}"
+        elif adaptive_v2 and agent_reason:
             rationale += (
-                " | The controller explanation is only a technical objective/solver trace, not a user-facing explanation; "
-                "do not praise clarity, reassurance, consent handling, or price explanation based on it."
+                " | No concrete household-facing explanation was supplied; a hidden technical trace must not earn "
+                "clarity, reassurance, consent-handling, or price-explanation credit."
             )
+        elif agent_reason:
+            rationale += f" Controller explanation: {agent_reason[:100]}"
+            if not explanation_is_user_facing:
+                rationale += (
+                    " | The controller explanation is only a technical objective/solver trace, not a user-facing "
+                    "explanation; do not praise clarity, reassurance, consent handling, or price explanation."
+                )
         if calendar_context.get("available"):
             rationale += f" | User calendar context: {calendar_brief[:240]}"
         if user_preference_text:
@@ -2064,47 +2347,66 @@ def score_user_preference(
                 + ". User should be very dissatisfied; this should score at the lowest level."
             )
         if policy_control_context:
+            policy_evidence_label = (
+                "Observable policy action evidence"
+                if adaptive_v2
+                else "Policy action evidence for this method"
+            )
+            policy_attribution = (
+                "controller-controlled"
+                if adaptive_v2
+                else "method-controlled"
+            )
             rationale += (
-                " | Policy action evidence for this method: "
+                f" | {policy_evidence_label}: "
                 f"action_space={sorted(policy_action_space)}, "
                 f"emitted_services={sorted(emitted_policy_services)}, "
                 f"present_required_services={sorted(present_required_services)}, "
                 f"vpp_trigger_actions={policy_control_context.get('vpp_trigger_actions', {})}, "
                 f"occupancy_ac_modes={policy_control_context.get('occupancy_decisions', [])}. "
-                "Only count appliance service as method-controlled when it appears in emitted policy actions; "
+                f"Only count appliance service as {policy_attribution} when it appears in emitted policy actions; "
                 "do not credit baseline routines or simulator default completion as policy success."
             )
             if ev_policy_explicit:
+                ev_attribution = "controller" if adaptive_v2 else "method"
                 rationale += (
-                    " EV factual evidence: the method emitted an explicit EV charging action/window "
+                    f" EV factual evidence: the {ev_attribution} emitted an explicit EV charging action/window "
                     "and the simulator reached the EV target SOC; do not describe the EV schedule as "
                     "missing, absent, or not explicit."
                 )
             if missing_policy_services:
-                rationale += (
-                    " | CRITICAL APPLIANCE STRATEGY FAILURE: required present controllable appliances "
-                    "have no emitted policy strategy/action: "
-                    + ", ".join(missing_policy_services)
-                    + ". This is a service failure. The role-play user must assign a punitive low overall score, normally 1/5, even if comfort or VPP energy target looks acceptable."
-                )
-        if str(method).startswith("rl") or str(policy_control_context.get("objective_source", "")).startswith("rl_"):
+                if adaptive_v2:
+                    rationale += (
+                        " | Observable appliance-strategy gap: these present controllable services had no "
+                        "emitted controller action: "
+                        + ", ".join(missing_policy_services)
+                        + ". Treat the missing action as evidence when judging whether the controller addressed "
+                        "this household's needs. Do not automatically convert it into a missed service outcome "
+                        "when the supplied outcome facts show completion, and do not credit ordinary/default "
+                        "completion as a controller contribution."
+                    )
+                else:
+                    rationale += (
+                        " | CRITICAL APPLIANCE STRATEGY FAILURE: required present controllable appliances "
+                        "have no emitted policy strategy/action: "
+                        + ", ".join(missing_policy_services)
+                        + ". This is a service failure. The role-play user must assign a punitive low overall score, normally 1/5, even if comfort or VPP energy target looks acceptable."
+                    )
+        if not adaptive_v2 and (
+            str(method).startswith("rl")
+            or str(policy_control_context.get("objective_source", "")).startswith("rl_")
+        ):
             rationale += (
                 " | CRITICAL RL SCORING RULE: this benchmark evaluates the raw RL policy only. "
-                "Do not give RL credit for fallback/default appliance behavior or routine completion that was not emitted by the RL action. "
-                "If present required appliances are outside the RL action space or missing from emitted RL actions, treat the task as incomplete and score it as a punitive service failure even if the simulator service outcome later looks completed."
+                "Do not give RL credit for fallback/default appliance behavior or routine completion that was not "
+                "emitted by the RL action. If present required appliances are outside the RL action space or missing "
+                "from emitted RL actions, treat the task as incomplete and score it as a punitive service failure "
+                "even if the simulator service outcome later looks completed."
             )
             if unsupported_policy_services:
-                rationale += (
-                    " Unsupported-by-RL required services: "
-                    + ", ".join(unsupported_policy_services)
-                    + "."
-                )
+                rationale += " Unsupported-by-RL required services: " + ", ".join(unsupported_policy_services) + "."
             if missing_policy_services:
-                rationale += (
-                    " Required services with no emitted RL control action: "
-                    + ", ".join(missing_policy_services)
-                    + "."
-                )
+                rationale += " Required services with no emitted RL control action: " + ", ".join(missing_policy_services) + "."
         control_plan = {
             "action": action_name,
             "setpoint": agent_setpoint_c,
@@ -2124,7 +2426,7 @@ def score_user_preference(
 
     safety = {"status": "approved", "reason": "Within safe operation bounds."}
 
-    if missing_policy_services:
+    if missing_policy_services and not adaptive_v2:
         result = {
             "score": 1,
             "comfort_score": 2,
@@ -2146,7 +2448,10 @@ def score_user_preference(
                 "present_required_services": sorted(present_required_services),
             },
         }
-        if str(method).startswith("rl") or str(policy_control_context.get("objective_source", "")).startswith("rl_"):
+        if not adaptive_v2 and (
+            str(method).startswith("rl")
+            or str(policy_control_context.get("objective_source", "")).startswith("rl_")
+        ):
             result["rl_policy_service_guard"] = result["policy_service_guard"]
         if log_path:
             _append_dialogue_log(log_path, {
@@ -2216,14 +2521,25 @@ def score_user_preference(
                 or unserved_service_devices
             )
             if (misleading_miss or result["vpp_score"] <= 2) and not severe_service_issue:
-                result["vpp_score"] = max(result["vpp_score"], 4)
-                result["energy_score"] = max(result["energy_score"], 3)
-                if result["comfort_score"] >= 4 and result["score"] < 4:
-                    result["score"] = 4
-                    result["label"] = "satisfied"
-                if misleading_miss:
-                    result["comment"] = "VPP appliance criterion achieved; comfort/routine were preserved."
-                result["factual_consistency_guard"] = "corrected_achieved_vpp_missed_label"
+                if adaptive_v2:
+                    _record_v2_non_safety_factual_audit(
+                        result,
+                        check="achieved_vpp_authored_judgement_disagreement",
+                        facts={
+                            "vpp_achieved": True,
+                            "comment_claimed_vpp_miss": bool(misleading_miss),
+                            "authored_vpp_score": result["vpp_score"],
+                        },
+                    )
+                else:
+                    result["vpp_score"] = max(result["vpp_score"], 4)
+                    result["energy_score"] = max(result["energy_score"], 3)
+                    if result["comfort_score"] >= 4 and result["score"] < 4:
+                        result["score"] = 4
+                        result["label"] = "satisfied"
+                    if misleading_miss:
+                        result["comment"] = "VPP appliance criterion achieved; comfort/routine were preserved."
+                    result["factual_consistency_guard"] = "corrected_achieved_vpp_missed_label"
         if ev_policy_explicit:
             comment_lower = str(result.get("comment", "")).lower()
             false_ev_missing = (
@@ -2246,24 +2562,35 @@ def score_user_preference(
                 or unserved_service_devices
             )
             if false_ev_missing and not severe_service_issue:
-                result["energy_score"] = max(result["energy_score"], 3)
-                if vpp_result_context and vpp_result_context.get("achieved") is True:
-                    result["vpp_score"] = max(result["vpp_score"], 4)
-                result["score"] = max(result["score"], 3)
-                if result["comfort_score"] >= 4 and result["vpp_score"] >= 4:
-                    result["score"] = max(result["score"], 4)
-                result["label"] = [
-                    "very_dissatisfied",
-                    "dissatisfied",
-                    "neutral",
-                    "satisfied",
-                    "very_satisfied",
-                ][max(1, min(5, int(result["score"]))) - 1]
-                result["comment"] = (
-                    "EV charging schedule was emitted and target SOC was reached; "
-                    "remaining concerns are comfort/routine only."
-                )
-                result["factual_consistency_guard"] = "corrected_false_ev_missing_label"
+                if adaptive_v2:
+                    _record_v2_non_safety_factual_audit(
+                        result,
+                        check="explicit_ev_action_authored_comment_disagreement",
+                        facts={
+                            "ev_policy_explicit": True,
+                            "ev_target_reached": bool(ev_target_reached),
+                            "comment_claimed_ev_missing": True,
+                        },
+                    )
+                else:
+                    result["energy_score"] = max(result["energy_score"], 3)
+                    if vpp_result_context and vpp_result_context.get("achieved") is True:
+                        result["vpp_score"] = max(result["vpp_score"], 4)
+                    result["score"] = max(result["score"], 3)
+                    if result["comfort_score"] >= 4 and result["vpp_score"] >= 4:
+                        result["score"] = max(result["score"], 4)
+                    result["label"] = [
+                        "very_dissatisfied",
+                        "dissatisfied",
+                        "neutral",
+                        "satisfied",
+                        "very_satisfied",
+                    ][max(1, min(5, int(result["score"]))) - 1]
+                    result["comment"] = (
+                        "EV charging schedule was emitted and target SOC was reached; "
+                        "remaining concerns are comfort/routine only."
+                    )
+                    result["factual_consistency_guard"] = "corrected_false_ev_missing_label"
         if skipped_task_count > 0:
             skipped_names = ", ".join(skipped_devices)
             result.update({
@@ -2280,6 +2607,7 @@ def score_user_preference(
         if (
             _low_disruption_strategy_language(persona)
             and fixed_appliances
+            and (not adaptive_v2 or not missing_policy_services)
             and result["score"] < 4
             and result["comfort_score"] >= 4
             and agent_setpoint_c is not None
@@ -2288,14 +2616,27 @@ def score_user_preference(
             and vpp_result_context.get("achieved") is False
             and not nonfixed_appliances_during_vpp
         ):
-            result["score"] = 4
-            result["label"] = "satisfied"
-            result["comment"] = (
-                "Comfort/consent preserved; fixed loads limited VPP."
-            )
-            result["fixed_constraint_satisfaction_guard"] = (
-                "overall_user_satisfaction_not_penalized_for_fixed_non_dr_loads"
-            )
+            if adaptive_v2:
+                _record_v2_non_safety_factual_audit(
+                    result,
+                    check="fixed_load_limited_vpp_authored_judgement",
+                    facts={
+                        "fixed_appliances": list(fixed_appliances),
+                        "vpp_achieved": False,
+                        "comfort_score_at_least_four": True,
+                        "setpoint_within_preference_tolerance": True,
+                        "nonfixed_appliances_during_vpp": [],
+                    },
+                )
+            else:
+                result["score"] = 4
+                result["label"] = "satisfied"
+                result["comment"] = (
+                    "Comfort/consent preserved; fixed loads limited VPP."
+                )
+                result["fixed_constraint_satisfaction_guard"] = (
+                    "overall_user_satisfaction_not_penalized_for_fixed_non_dr_loads"
+                )
     except Exception as e:
         result = _rule_score(persona, mean_temp_c, pmv_ok_fraction, energy_kwh_per_day,
                              zone_group_temps, washer_completed, washer_during_vpp,
@@ -2303,24 +2644,28 @@ def score_user_preference(
         result["source"] = "rule_based_fallback"
 
     if missing_policy_services:
-        result["score"] = 1
-        result["comfort_score"] = min(result["comfort_score"], 2)
-        result["energy_score"] = 1
-        result["vpp_score"] = 1
-        result["label"] = "very_dissatisfied"
-        result["comment"] = (
-            "Required present controllable appliance(s) had no emitted policy strategy/action "
-            f"(missing: {', '.join(missing_policy_services)}; "
-            f"unsupported_by_action_space: {', '.join(unsupported_policy_services) or 'none'}). "
-            "Baseline routine/default completion was not credited as method success."
-        )
+        if not adaptive_v2:
+            result["score"] = 1
+            result["comfort_score"] = min(result["comfort_score"], 2)
+            result["energy_score"] = 1
+            result["vpp_score"] = 1
+            result["label"] = "very_dissatisfied"
+            result["comment"] = (
+                "Required present controllable appliance(s) had no emitted policy strategy/action "
+                f"(missing: {', '.join(missing_policy_services)}; "
+                f"unsupported_by_action_space: {', '.join(unsupported_policy_services) or 'none'}). "
+                "Baseline routine/default completion was not credited as method success."
+            )
         result["policy_service_guard"] = {
             "missing_policy_services": missing_policy_services,
             "unsupported_policy_services": unsupported_policy_services,
             "emitted_policy_services": sorted(emitted_policy_services),
             "present_required_services": sorted(present_required_services),
         }
-        if str(method).startswith("rl") or str(policy_control_context.get("objective_source", "")).startswith("rl_"):
+        if not adaptive_v2 and (
+            str(method).startswith("rl")
+            or str(policy_control_context.get("objective_source", "")).startswith("rl_")
+        ):
             result["rl_policy_service_guard"] = result["policy_service_guard"]
 
     result = _calibrate_roleplay_score(

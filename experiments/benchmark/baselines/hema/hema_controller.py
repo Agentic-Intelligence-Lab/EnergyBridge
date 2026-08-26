@@ -24,6 +24,11 @@ from agents.tools.control_tools import (
 from agents.tools.analysis_tools import get_utility_rate
 from agents.tools.knowledge_tools import get_current_weather
 from .device_bridge import EnergyBridgeToHEMA
+from .message_utils import (
+    explanation_output_fields,
+    extract_assistant_explanation,
+    schedule_prompt_fields,
+)
 
 # ------------------------------------------------------------------
 # Read EnergyBridge .env config (fixes base_url and model)
@@ -44,6 +49,11 @@ _MODEL = (
         or os.getenv("OPENAI_MODEL")
         or "gpt-5.4-mini"
 )
+
+
+def _adaptive_harness_v2() -> bool:
+    value = str(os.getenv("ENERGYBRIDGE_HARNESS_PROFILE", "legacy_v1")).strip().lower()
+    return value in {"v2", "adaptive", "adaptive_v2", "energybridge_v2"}
 
 
 class HEMAControlBaseline:
@@ -131,6 +141,10 @@ class HEMAControlBaseline:
             user_pref=user_pref,
         )
 
+        prompt_fields = schedule_prompt_fields(
+            vpp_event,
+            adaptive_v2=_adaptive_harness_v2(),
+        )
         query += (
             "\n\nCRITICAL: You have access to all HEMA control tools. "
             "Use get_device_list / get_device_status / get_available_actions to query device state if needed. "
@@ -153,7 +167,7 @@ class HEMAControlBaseline:
             "- water_heater: MUST set a preheat schedule using schedule_device_action. "
             "   ONLY provide 'value' parameter (temperature in °F as a number, e.g., '135'), DO NOT provide 'time' parameter for set_temperature. "
             "   Set start time with action 'start', end time with action 'stop', and temperature with action 'set_temperature'. "
-            "   For ordinary day-ahead planning, keep hot water ready through the early evening rather than minimizing cost. For active VPP requests, try to finish before 18:00 only if it does not require a disruptive rebuild.\n"
+            f"   {prompt_fields['water_heater']}\n"
             "- ev_charger: MUST set the charging schedule. "
             "   Ensure the charging window greater or equal to Minimum charging hours to reach target_soc. "
             "  EV CHARGING TIME CALCULATION GUIDE:\n"
@@ -162,11 +176,16 @@ class HEMAControlBaseline:
             "  - Target SOC: {target_soc}\n"
             "  - Required charge = target_soc * capacity\n"
             "  - Minimum charging hours = required_charge / charger_power\n"
-            "   Use schedule_device_action to set start time with action 'start' and stop time with action 'stop' separately. Choose a time outside the VPP window (18:00-19:00)."
-            "   start charging as soon as VPP_WINDOW ends."
+            "   Use schedule_device_action to set start time with action 'start' and stop time with action 'stop' separately. "
+            f"{prompt_fields['ev']}"
             "   start time and stop time must be after arrival_h of the first day and before departure_h of the second day. \n"
-            "If you fail to emit commands for any present device, the system will report failure and user satisfaction will be 1/5."
+            f"{prompt_fields['missing_commands']}"
         )
+        if prompt_fields["event_check"]:
+            query += (
+                "\n\nV2 ACTIVE-EVENT SCHEDULE CHECK: "
+                + prompt_fields["event_check"]
+            )
 
         if missing_appliances:
             query += (
@@ -194,6 +213,7 @@ class HEMAControlBaseline:
                 completion_tokens += um.get("output_tokens", 0)
 
         parsed = self._bridge.extract_actions(result)
+        household_explanation = extract_assistant_explanation(result)
 
         cfg = appliance_config or {}
         present = set()
@@ -231,7 +251,13 @@ class HEMAControlBaseline:
         elif missing:
             print(f"  [HEMA Retry] Max retries reached. Still missing: {missing}")
 
-        energybridge_actions = self._to_energybridge(parsed, eplus_state, vpp_event, appliance_config)
+        energybridge_actions = self._to_energybridge(
+            parsed,
+            eplus_state,
+            vpp_event,
+            appliance_config,
+            household_explanation=household_explanation,
+        )
         energybridge_actions["llm_metrics"] = {
             "latency_seconds": round(latency, 3),
             "prompt_tokens": prompt_tokens,
@@ -245,6 +271,7 @@ class HEMAControlBaseline:
             eplus_state: Dict[str, Any],
             vpp_event: Optional[Dict[str, Any]],
             appliance_config: Optional[Dict[str, Any]] = None,
+            household_explanation: str = "",
     ) -> Dict[str, Any]:
         """Convert parsed HEMA actions to EnergyBridge format."""
         default_sp = eplus_state.get("current_setpoint_c", 24.0)
@@ -279,9 +306,15 @@ class HEMAControlBaseline:
         if vpp_event:
             next_check = float(vpp_event.get("end_h", 0.0)) + 0.5
 
-        return {
+        output = {
             "setpoint": setpoint,
             "next_check_hour": next_check,
-            "reason": "HEMA Agent",
             "appliance_actions": appl,
         }
+        output.update(
+            explanation_output_fields(
+                household_explanation,
+                adaptive_v2=_adaptive_harness_v2(),
+            )
+        )
+        return output

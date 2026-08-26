@@ -68,10 +68,10 @@ _IDENTITY_SENTINEL_RE = re.compile(
     r"[A-Z0-9_-]*(?:SENTINEL|_ID)?)\b"
 )
 _KNOWN_IDENTITY_RE = re.compile(
-    r"\b(?:energybridge|agent|controller|algorithm|provider|"
-    r"mpc(?:_dynamic)?|hema(?:_agent)?|rule[_+ -]?milp|milp|"
-    r"rl[_+ -]?ppo(?:_pref_v2)?|ppo|"
-    r"(?:gpt|claude|gemini|llama|qwen|deepseek|model)[-_.a-z0-9]*)\b",
+    r"\b(?:synthetic[_-]*energybridge[-_.a-z0-9]*|energybridge|agent|controller|algorithm|provider|openai|anthropic|xai|dmxapi|"
+    r"mpc[-_.a-z0-9]*|hema[-_.a-z0-9]*|rule[_+ -]?milp|milp|"
+    r"rl[-_.a-z0-9]*|ppo[-_.a-z0-9]*|"
+    r"(?:gpt|chatgpt|claude|gemini|llama|qwen|deepseek|mistral|grok|o[134]|model)[-_.a-z0-9]*)\b",
     re.IGNORECASE,
 )
 _PRODUCED_BY_RE = re.compile(
@@ -197,6 +197,15 @@ def _sanitize_identity_text(value: Any, limit: int) -> str:
     text = _PRODUCED_BY_RE.sub("produced for the household", text)
     text = _IDENTITY_SENTINEL_RE.sub("plan source omitted", text)
     text = _KNOWN_IDENTITY_RE.sub("the plan", text)
+    # Identity removal can turn natural phrases such as "the agent" into
+    # "the the plan".  Keep the projected household narrative readable.
+    text = re.sub(r"\bthe\s+the plan\b", "the household plan", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"\b(?:the plan|plan source omitted)(?:\s+(?:the plan|plan source omitted))+\b",
+        "plan source omitted",
+        text,
+        flags=re.IGNORECASE,
+    )
     return _compact_text(text, limit)
 
 
@@ -295,6 +304,70 @@ def _visible_relationship_history(resume: Mapping[str, Any]) -> list[dict[str, A
     return result
 
 
+def _sanitize_household_resume(value: Any) -> Any:
+    """Preserve household biography while removing source/model identity recursively."""
+    if isinstance(value, Mapping):
+        result: dict[str, Any] = {}
+        for raw_key, raw_value in list(value.items())[:64]:
+            key = str(raw_key)
+            normalized = key.strip().lower().replace("-", "_").replace(" ", "_")
+            if normalized in {"schema_version", "resume_id", "household_id"}:
+                result[key] = (
+                    "household_resume.v2"
+                    if normalized == "schema_version"
+                    else _json_safe(raw_value)
+                )
+                continue
+            if normalized == "audit" and isinstance(raw_value, Mapping):
+                result[key] = {
+                    audit_key: _json_safe(raw_value.get(audit_key))
+                    for audit_key in (
+                        "profile_fingerprint",
+                        "resume_fingerprint",
+                        "roleplay_projection",
+                    )
+                    if raw_value.get(audit_key) not in (None, "")
+                }
+                continue
+            parts = set(normalized.split("_"))
+            if normalized in {
+                "controller_context_source",
+                "agent_context",
+                "objective_source",
+                "persona_prompt",
+                "policy_source",
+                "roleplay_prompt",
+                "roleplay_user_prompt",
+                "selected_skill",
+                "source",
+                "source_fingerprint",
+                "system_prompt",
+            } or parts & {
+                "algorithm", "controller", "method", "model", "provider", "speaker",
+            }:
+                continue
+            clean = _sanitize_household_resume(raw_value)
+            if clean not in (None, "", [], {}):
+                result[key] = clean
+        return result
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        items = [_sanitize_household_resume(item) for item in list(value)[:32]]
+        return [item for item in items if item not in (None, "", [], {})]
+    if isinstance(value, str):
+        return _sanitize_identity_text(value, 2000)
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    return None
+
+
+def sanitize_household_resume_for_roleplay(resume: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Project a resume to household facts without controller/model provenance."""
+    sanitized = _sanitize_household_resume(dict(resume or {}))
+    return sanitized if isinstance(sanitized, dict) else {}
+
+
 def _visible_plan(plan: Mapping[str, Any] | None) -> dict[str, Any]:
     """Expose household-visible proposal facts and omit controller identity."""
     source = dict(plan or {})
@@ -331,7 +404,7 @@ def _visible_plan(plan: Mapping[str, Any] | None) -> dict[str, Any]:
 
 def _visible_event(event: Mapping[str, Any] | None) -> dict[str, Any]:
     source = dict(event or {})
-    return {
+    visible = {
         key: _sanitize_visible_tree(source.get(key), text_limit=300)
         for key in (
             "id",
@@ -349,6 +422,115 @@ def _visible_event(event: Mapping[str, Any] | None) -> dict[str, Any]:
         )
         if _sanitize_visible_tree(source.get(key), text_limit=300) not in (None, "", [], {})
     }
+    if source.get("trigger_h") is not None and source.get("end_h") is not None:
+        try:
+            visible["trigger_hod"] = float(source["trigger_h"]) % 24.0
+            visible["end_hod"] = float(source["end_h"]) % 24.0
+        except (TypeError, ValueError):
+            pass
+        visible["window_semantics"] = (
+            "Event trigger_h/end_h may be absolute simulation hours; appliance action times are local hour-of-day. "
+            "Compare actions to [trigger_hod, end_hod). An action starting exactly at end_hod is outside the event, "
+            "while an interval spanning any time before end_hod overlaps it."
+        )
+    return visible
+
+
+def _visible_verified_plan_facts(facts: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Expose checked household impacts without controller identity or scores."""
+    source = dict(facts or {})
+    allowed = (
+        "proposed_setpoint_c",
+        "default_setpoint_c",
+        "preferred_min_c",
+        "preferred_max_c",
+        "preference_tolerance_c",
+        "changed_service_count",
+        "changed_services",
+        "fixed_services_modified",
+        "skip_devices",
+        "vpp_conflicts",
+        "present_services",
+        "specified_services",
+        "unspecified_services",
+    )
+    visible = {
+        key: _sanitize_visible_tree(source.get(key), text_limit=400)
+        for key in allowed
+        if source.get(key) not in (None, "", [], {})
+        or isinstance(source.get(key), bool)
+        or source.get(key) == 0
+        or (
+            key in {
+                "present_services",
+                "specified_services",
+                "unspecified_services",
+                "fixed_services_modified",
+                "skip_devices",
+                "vpp_conflicts",
+            }
+            and key in source
+        )
+    }
+    if "vpp_conflicts" in source:
+        visible["event_overlap_note"] = (
+            "vpp_conflicts is the checked overlap result under the event's half-open interval. An empty list means "
+            "none of the supplied effective appliance intervals overlaps this event."
+        )
+    if "changed_service_count" in source:
+        visible["offer_change_note"] = (
+            "changed_services contains only appliance services whose effective action differs from the ordinary plan. "
+            "Other displayed actions are inherited context and must not receive offer-specific credit."
+        )
+    try:
+        if source.get("proposed_setpoint_c") is not None and source.get("default_setpoint_c") is not None:
+            visible["setpoint_change_c"] = round(
+                float(source["proposed_setpoint_c"]) - float(source["default_setpoint_c"]),
+                3,
+            )
+    except (TypeError, ValueError):
+        pass
+    if source.get("unspecified_services"):
+        visible["action_coverage_note"] = (
+            "The effective offered plan does not explicitly cover these present household services. Missing actions are "
+            "not proof that service is protected; use the visible explanation and ordinary plan to decide whether the "
+            "offer resolves that uncertainty."
+        )
+    return visible
+
+
+def _effective_visible_offer(
+    proposed_plan: Mapping[str, Any] | None,
+    default_plan: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Project the plan that will actually execute after sparse fields inherit defaults."""
+    ordinary = _visible_plan(default_plan)
+    proposed = _visible_plan(proposed_plan)
+    # Only executable fields inherit. Explanations, projections, and claimed
+    # benefits must come from this offer; inheriting them would manufacture
+    # communication quality that the offer never supplied.
+    effective: dict[str, Any] = {}
+    if ordinary.get("setpoint_c") is not None:
+        effective["setpoint_c"] = ordinary["setpoint_c"]
+    if isinstance(ordinary.get("appliance_actions"), Mapping):
+        effective["appliance_actions"] = deepcopy(dict(ordinary["appliance_actions"]))
+    for key, value in proposed.items():
+        if key == "appliance_actions" and isinstance(value, Mapping):
+            inherited_actions = (
+                dict(effective.get("appliance_actions") or {})
+                if isinstance(effective.get("appliance_actions"), Mapping)
+                else {}
+            )
+            inherited_actions.update(dict(value))
+            effective[key] = inherited_actions
+        else:
+            effective[key] = value
+    if ordinary:
+        effective["plan_field_semantics"] = (
+            "Only omitted executable setpoint/appliance fields inherit the ordinary household plan. The actions "
+            "shown here are the merged actions that would execute; explanation and benefit claims never inherit."
+        )
+    return effective
 
 
 def _persona_baseline_probability(
@@ -372,34 +554,13 @@ def _persona_baseline_probability(
             "formula": "explicit_persona_prior",
         }
 
-    override = preferences.get("vpp_override_prob", persona.get("vpp_override_prob"))
-    if override is not None:
-        override_probability = float(_unit_interval(override, "vpp_override_prob"))
-        return 1.0 - override_probability, {
-            "source": "persona_config.preferences.vpp_override_prob",
-            "formula": "1 - vpp_override_prob",
-            "input": override_probability,
-        }
-
-    weights = preferences.get("scoring_weights")
-    if not isinstance(weights, Mapping):
-        weights = persona.get("scoring_weights") if isinstance(persona.get("scoring_weights"), Mapping) else {}
-    try:
-        comfort = max(0.0, float(weights.get("comfort", 0.0) or 0.0))
-        energy = max(0.0, float(weights.get("energy", 0.0) or 0.0))
-        vpp = max(0.0, float(weights.get("vpp", 0.0) or 0.0))
-    except (TypeError, ValueError):
-        comfort = energy = vpp = 0.0
-    total = comfort + energy + vpp
-    if total > 0.0:
-        return (energy + vpp) / total, {
-            "source": "persona_config.preferences.scoring_weights",
-            "formula": "(energy + vpp) / (comfort + energy + vpp)",
-            "inputs": {"comfort": comfort, "energy": energy, "vpp": vpp},
-        }
     return 0.5, {
-        "source": "neutral_missing_persona_prior",
-        "formula": "neutral prior used only because the persona has no acceptance signal",
+        "source": "neutral_uninformed_consent_prior",
+        "formula": "0.5",
+        "note": (
+            "No explicit consent prior was supplied. Override propensity and satisfaction weights remain household "
+            "evidence for the role-play model; they are not relabelled as acceptance probabilities."
+        ),
     }
 
 
@@ -414,6 +575,7 @@ def build_roleplay_acceptance_prompts(
     user_preference_text: str = "",
     hard_veto_reasons: Sequence[str] | None = None,
     baseline_acceptance_probability: float | None = None,
+    verified_plan_facts: Mapping[str, Any] | None = None,
 ) -> tuple[str, str, dict[str, Any]]:
     """Build method-blind V2 acceptance prompts and their auditable payload."""
     resume = build_household_resume(
@@ -425,6 +587,7 @@ def build_roleplay_acceptance_prompts(
     # projected again at the role-play boundary so free-form past feedback
     # cannot reveal which controller/model produced an earlier plan.
     resume["relationship_history"] = _visible_relationship_history(resume)
+    resume = sanitize_household_resume_for_roleplay(resume)
     resume.setdefault("audit", {})["roleplay_projection"] = (
         "household_visible_method_identity_sanitized_v2"
     )
@@ -443,6 +606,8 @@ def build_roleplay_acceptance_prompts(
         "event": _visible_event(event),
         "ordinary_household_plan": _visible_plan(default_plan),
         "offered_vpp_plan": _visible_plan(proposed_plan),
+        "effective_plan_if_accepted": _effective_visible_offer(proposed_plan, default_plan),
+        "verified_offer_facts": _visible_verified_plan_facts(verified_plan_facts),
         "live_household_statement": _sanitize_identity_text(user_preference_text, 1200),
         "persona_baseline_acceptance_probability": baseline,
         "persona_baseline_audit": baseline_audit,
@@ -452,17 +617,29 @@ def build_roleplay_acceptance_prompts(
         },
     }
     system_prompt = (
-        "You are simulating the residential user or household described in the supplied resume. "
-        "Make this event decision in that household's own voice and from its lived circumstances. "
-        "Treat biography, routines, household relationships, prior experiences, current context, and the "
-        "specific offered actions as evidence; do not collapse the person into a tag or scoring weight. "
-        "Do not infer, name, reward, or punish the controller, algorithm, provider, or model that produced the plan. "
-        "Repeat the supplied persona baseline exactly, then usually give 2-4 short, non-duplicate signed adjustments for "
-        "facts that actually matter now. Their sum plus the baseline must equal the final probability, allowing only normal "
-        "decimal rounding; never use hidden clipping, floors, caps, bands, or canned deltas. Distinguish accepting the plan as written "
-        "from making a counteroffer. A counteroffer must state the concrete change needed. "
-        "Use 2-4 non-duplicate evidence items and refer to them by E1, E2, and so on from adjustments instead of repeating facts. "
-        "A listed hard safety veto cannot be waived by the role-play user. Return valid JSON only."
+        "Speak as the household in the supplied resume and decide on this offer as written. Use its biography, routines, "
+        "relationships, previous experiences, live statement, and today's facts as a person would; do not reduce it to a tag or "
+        "weight. Never infer or judge which controller, algorithm, provider, or model made the offer. "
+        "Start from the supplied consent prior and compare offered_vpp_plan with ordinary_household_plan. "
+        "effective_plan_if_accepted shows what would actually run. Its inherited ordinary actions are context, not new benefits. "
+        "Give positive weight only to an offer-specific change or explanation that genuinely helps this household or resolves a "
+        "concern. Merely preserving ordinary comfort, safety, or service earns no extra credit. A useful explanation connects an exact "
+        "change to this family's routine or constraint and a concrete benefit or tradeoff. When that link is specific, truthful, and "
+        "gives the household meaningful control, let the explanation materially raise willingness instead of treating it as cosmetic; "
+        "weigh its communication value separately from any correctable physical drawback. Generic claims, unanswered requests for "
+        "benefit information, missing actions, unresolved 'if/only if/as long as' conditions, or claims contradicted by checked facts "
+        "should lower willingness. A proposal without a household-specific reason is an incomplete request for consent, even when the "
+        "household is generally cooperative. Read conditional statements literally: willingness to consider an offer if a condition "
+        "is met is not positive evidence while that condition is still unmet. An acceptable thermostat, an empty conflict list, and "
+        "unchanged ordinary chores are context_only unless this offer improves them or answers an earlier concern. Check times and "
+        "claims against the event, both plans, and verified_offer_facts; an action "
+        "at the exclusive event end is outside the event. Do not invent savings, guarantees, outcomes, failures, or personal details. "
+        "The final probability is how often this household would accept the unchanged offer in 100 comparable situations. The prior "
+        "is a starting point, not a floor. Use short signed adjustments only for facts that really change willingness—usually 2-4, "
+        "or an empty list when nothing does. Baseline plus adjustments must equal the final probability; do not apply hidden clipping "
+        "or canned deltas. Keep decision, probability, first-person reason, and feedback consistent. A counteroffer names the concrete "
+        "change required and credits it only in the counterfactual. Cite 2-4 concise, non-duplicate evidence items by E1, E2, and so "
+        "on. A hard safety veto cannot be waived. Return valid JSON only."
     )
     user_prompt = (
         "Decide whether this household accepts the offered VPP plan as written. Keep the whole answer compact.\n\n"
@@ -566,12 +743,17 @@ def _normalize_evidence(raw: Any) -> list[dict[str, str]]:
             })
     if not result:
         raise RoleplayResponseError("evidence must contain at least one factual item")
+    normalized_ids = [str(item["id"]).strip().lower() for item in result]
+    if len(normalized_ids) != len(set(normalized_ids)):
+        raise RoleplayResponseError("evidence ids must be unique")
     return result
 
 
 def _normalize_adjustments(raw: Any) -> list[dict[str, Any]]:
     if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
         raise RoleplayResponseError("adjustments must be a list")
+    if not raw:
+        return []
     result: list[dict[str, Any]] = []
     for item in raw[:12]:
         if not isinstance(item, Mapping):
@@ -598,7 +780,9 @@ def _normalize_adjustments(raw: Any) -> list[dict[str, Any]]:
             "reason": reason,
         })
     if not result:
-        raise RoleplayResponseError("adjustments must contain at least one signed item")
+        raise RoleplayResponseError(
+            "non-empty adjustments must contain at least one signed item"
+        )
     return result
 
 
@@ -667,6 +851,28 @@ def _normalize_valid_response(
         raise RoleplayResponseError("reason is required")
     if not user_feedback:
         raise RoleplayResponseError("user_feedback is required")
+    evidence_by_id = {
+        str(item.get("id") or "").strip().lower(): item
+        for item in evidence
+        if str(item.get("id") or "").strip()
+    }
+    for adjustment in adjustments:
+        evidence_ref = str(adjustment.get("evidence") or "").strip().lower()
+        cited = evidence_by_id.get(evidence_ref)
+        if cited is None:
+            raise RoleplayResponseError(
+                f"adjustment evidence reference {adjustment.get('evidence')!r} was not defined"
+            )
+        effect = str(cited.get("effect") or "")
+        delta = float(adjustment["delta"])
+        if delta > 0.0 and effect != "supports_acceptance":
+            raise RoleplayResponseError(
+                "positive adjustments must cite evidence marked supports_acceptance"
+            )
+        if delta < 0.0 and effect not in {"supports_rejection", "requires_change"}:
+            raise RoleplayResponseError(
+                "negative adjustments must cite evidence marked supports_rejection or requires_change"
+            )
     adjustment_sum = math.fsum(float(item["delta"]) for item in adjustments)
     arithmetic_residual = float(probability) - float(baseline) - adjustment_sum
     if abs(arithmetic_residual) > PROBABILITY_ROUNDING_TOLERANCE:

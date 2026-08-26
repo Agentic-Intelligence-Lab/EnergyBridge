@@ -12,6 +12,7 @@ from .roleplay import (
     RoleplayResponseError,
     build_roleplay_acceptance_prompts,
     normalize_roleplay_acceptance_response,
+    sanitize_household_resume_for_roleplay,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "build_household_resume",
     "build_roleplay_acceptance_prompts",
     "normalize_roleplay_acceptance_response",
+    "sanitize_household_resume_for_roleplay",
 ]

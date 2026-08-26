@@ -50,7 +50,7 @@ def _fixture() -> tuple[dict, dict, dict, dict, dict]:
     return persona, event, appliances, ordinary, offered
 
 
-def _response(*, decision: str, probability: float, delta: float, baseline: float = 0.75) -> dict:
+def _response(*, decision: str, probability: float, delta: float, baseline: float = 0.5) -> dict:
     return {
         "decision": decision,
         "baseline_acceptance_probability": baseline,
@@ -58,7 +58,7 @@ def _response(*, decision: str, probability: float, delta: float, baseline: floa
             {
                 "dimension": "routine fit",
                 "delta": delta,
-                "evidence": "washer runs after the event",
+                "evidence": "E1",
                 "reason": "the chore still finishes",
             }
         ],
@@ -66,9 +66,10 @@ def _response(*, decision: str, probability: float, delta: float, baseline: floa
         "confidence": 0.81,
         "evidence": [
             {
+                "id": "E1",
                 "source": "plan",
                 "fact": "washer starts at 20:00",
-                "effect": "supports_acceptance" if decision == "accept" else "context_only",
+                "effect": "supports_acceptance" if delta > 0 else "supports_rejection",
             }
         ],
         "counterfactual": {
@@ -91,7 +92,7 @@ def test_v2_gate_preserves_roleplay_probability_and_direct_decision(monkeypatch)
     monkeypatch.setattr(
         fr,
         "_call_roleplay_acceptance_gate_llm",
-        lambda system, user, **kwargs: (_response(decision="accept", probability=0.613, delta=-0.137), {"used": True, "model": "model-a"}),
+        lambda system, user, **kwargs: (_response(decision="accept", probability=0.513, delta=0.013), {"used": True, "model": "model-a"}),
     )
     accepted = fr._evaluate_vpp_plan_acceptance_gate(
         method="agent",
@@ -103,7 +104,7 @@ def test_v2_gate_preserves_roleplay_probability_and_direct_decision(monkeypatch)
         user_preference_text="Please keep the change specific and reversible.",
     )
     assert accepted["version"] == "vpp_plan_acceptance_gate_adaptive_roleplay_v2"
-    assert accepted["acceptance_probability"] == pytest.approx(0.613)
+    assert accepted["acceptance_probability"] == pytest.approx(0.513)
     assert accepted["accepted"] is True
     assert accepted["stable_draw"] is None
     assert accepted["prompt_gate_metrics"]["model"] == "model-a"
@@ -111,7 +112,7 @@ def test_v2_gate_preserves_roleplay_probability_and_direct_decision(monkeypatch)
     monkeypatch.setattr(
         fr,
         "_call_roleplay_acceptance_gate_llm",
-        lambda system, user, **kwargs: (_response(decision="reject", probability=0.271, delta=-0.479), {"used": True, "model": "model-b"}),
+        lambda system, user, **kwargs: (_response(decision="reject", probability=0.171, delta=-0.329), {"used": True, "model": "model-b"}),
     )
     rejected = fr._evaluate_vpp_plan_acceptance_gate(
         method="agent",
@@ -122,7 +123,7 @@ def test_v2_gate_preserves_roleplay_probability_and_direct_decision(monkeypatch)
         default_plan=ordinary,
         user_preference_text="Please keep the change specific and reversible.",
     )
-    assert rejected["acceptance_probability"] == pytest.approx(0.271)
+    assert rejected["acceptance_probability"] == pytest.approx(0.171)
     assert rejected["accepted"] is False
     assert "floor" not in " ".join(rejected["factors"]).lower()
     assert "cap" not in " ".join(rejected["factors"]).lower()
@@ -137,7 +138,7 @@ def test_v2_roleplay_prompt_is_method_blind(monkeypatch) -> None:
 
     def fake_call(system: str, user: str, **kwargs):
         prompts.append((system, user))
-        return _response(decision="accept", probability=0.54, delta=-0.21), {"used": True, "model": "same-model"}
+        return _response(decision="accept", probability=0.54, delta=0.04), {"used": True, "model": "same-model"}
 
     monkeypatch.setattr(fr, "_call_roleplay_acceptance_gate_llm", fake_call)
     for method in ("agent", "mpc_dynamic"):
@@ -172,6 +173,26 @@ def test_v2_model_owns_valid_plan_and_explanation(monkeypatch) -> None:
     assert fr._adaptive_v2_strategy_explanation(None) == {}
 
 
+def test_v2_gate_snapshot_preserves_native_explanation_but_legacy_shape_does_not(
+    monkeypatch,
+) -> None:
+    plan = {
+        "setpoint": 25.0,
+        "reason": "I shifted one task and kept hot water ready.",
+        "appliance_actions": {"washer_start_h": 20.0},
+        "strategy_explanation": {
+            "natural_language": "I shifted the washer until after the event and protected the shower.",
+        },
+    }
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")
+    v2_snapshot = fr._plan_snapshot_for_gate(plan)
+    assert v2_snapshot["strategy_explanation"] == plan["strategy_explanation"]
+
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "legacy_v1")
+    legacy_snapshot = fr._plan_snapshot_for_gate(plan)
+    assert "strategy_explanation" not in legacy_snapshot
+
+
 def test_v2_roleplay_error_fails_closed_without_legacy_estimator(monkeypatch) -> None:
     persona, event, appliances, ordinary, offered = _fixture()
     monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")
@@ -193,9 +214,10 @@ def test_v2_roleplay_error_fails_closed_without_legacy_estimator(monkeypatch) ->
         user_preference_text="Keep the change reversible.",
     )
 
-    # Transparent prior is 1 - vpp_override_prob = 0.75, not the V1 clamp.
-    assert gate["baseline_acceptance_probability"] == pytest.approx(0.75)
-    assert gate["acceptance_probability"] == pytest.approx(0.75)
+    # Without an explicit household consent prior, the prompt uses a transparent
+    # neutral starting point rather than relabelling other persona weights.
+    assert gate["baseline_acceptance_probability"] == pytest.approx(0.5)
+    assert gate["acceptance_probability"] == pytest.approx(0.5)
     assert gate["accepted"] is False
     assert gate["roleplay_source"] == "roleplay_model_unavailable_fail_closed"
     assert gate["fallback_source"] == "roleplay_model_unavailable_fail_closed"

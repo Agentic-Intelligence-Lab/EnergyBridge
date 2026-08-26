@@ -2575,12 +2575,15 @@ def _non_null_actions(actions: dict | None) -> dict:
 
 def _plan_snapshot_for_gate(plan: dict | None) -> dict:
     plan = plan or {}
-    return {
+    snapshot = {
         "setpoint": plan.get("setpoint"),
-        "reason": str(plan.get("reason", ""))[:240],
+        "reason": str(plan.get("reason", ""))[: (600 if _adaptive_harness_v2() else 240)],
         "appliance_actions": _non_null_actions(plan.get("appliance_actions")),
         "objective_source": plan.get("objective_source", ""),
     }
+    if _adaptive_harness_v2() and isinstance(plan.get("strategy_explanation"), dict):
+        snapshot["strategy_explanation"] = deepcopy(plan["strategy_explanation"])
+    return snapshot
 
 
 def _traditional_method_neutral_acceptance_plan(
@@ -3091,6 +3094,12 @@ def _vpp_plan_intrusion_metrics(
 ) -> dict:
     persona_config = persona_config or {}
     ac_cfg = (appliance_config or {}).get("ac", {}) or {}
+    adaptive_v2 = _adaptive_harness_v2()
+    if adaptive_v2:
+        try:
+            pref_min = float(ac_cfg.get("setpoint_preferred_min_c", 24.0))
+        except (TypeError, ValueError):
+            pref_min = 24.0
     try:
         pref_max = float(ac_cfg.get("setpoint_preferred_max_c", 26.0))
     except (TypeError, ValueError):
@@ -3132,11 +3141,25 @@ def _vpp_plan_intrusion_metrics(
         for key in ("reason", "objective_source", "source", "policy_source")
     )
     present_services = _present_appliance_services(appliance_config)
-    proposed_services = _services_from_appliance_actions(proposed_actions)
-    weak_action_coverage = bool(present_services) and len(proposed_services & present_services) <= max(
-        1,
-        int(0.35 * len(present_services)),
-    )
+    if adaptive_v2:
+        effective_services = _services_from_appliance_actions(effective_actions)
+        specified_services = effective_services & present_services
+        unspecified_services = present_services - specified_services
+        weak_action_coverage = bool(present_services) and (
+            len(specified_services) / len(present_services) < 0.5
+        )
+    else:
+        # Preserve the historical paper/legacy contract exactly: coverage is
+        # measured only from fields present in the raw proposal, using the V1
+        # low-coverage threshold.  Inherited ordinary actions and the V2
+        # coverage detail fields must not alter frozen-profile behavior.
+        proposed_services = _services_from_appliance_actions(proposed_actions)
+        weak_action_coverage = bool(present_services) and len(
+            proposed_services & present_services
+        ) <= max(
+            1,
+            int(0.35 * len(present_services)),
+        )
     policy_source_text = bool(
         re.search(
             r"(?:\braw[_ -]?policy\b|\bppo\b|\bpolicy action\b|\baction vector\b|\bno fallback appliance commands\b)",
@@ -3144,7 +3167,7 @@ def _vpp_plan_intrusion_metrics(
         )
     )
     raw_policy_only = bool(policy_source_text or (proposed_plan or {}).get("raw_policy_only"))
-    return {
+    metrics = {
         "proposed_setpoint_c": round(proposed_sp, 3),
         "default_setpoint_c": round(default_sp, 3),
         "preferred_max_c": round(pref_max, 3),
@@ -3160,6 +3183,15 @@ def _vpp_plan_intrusion_metrics(
         "raw_policy_only": bool(raw_policy_only),
         "weak_action_coverage": bool(weak_action_coverage),
     }
+    if adaptive_v2:
+        metrics.update({
+            "preferred_min_c": round(pref_min, 3),
+            "preference_tolerance_c": round(tol, 3),
+            "present_services": sorted(present_services),
+            "specified_services": sorted(specified_services),
+            "unspecified_services": sorted(unspecified_services),
+        })
+    return metrics
 
 
 def _roleplay_acceptance_tolerance_adjustment(
@@ -4144,10 +4176,10 @@ def _evaluate_adaptive_v2_vpp_plan_acceptance_gate(
         past_events=past_events,
         user_preference_text=user_preference_text,
         hard_veto_reasons=hard_veto_reasons,
-        # Let the V2 role-play harness derive its transparent prior directly
-        # (explicit prior, 1-override probability, normalized weights, or the
-        # documented neutral default).  Do not feed it the legacy 0.06-0.24
-        # benchmark clamp.
+        verified_plan_facts=intrusion,
+        # Use an explicit household consent prior when one exists, otherwise
+        # the documented neutral prior. Do not relabel override/satisfaction
+        # weights or feed this V2 path the legacy benchmark estimate.
         baseline_acceptance_probability=None,
     )
     baseline = float(prompt_payload["persona_baseline_acceptance_probability"])
@@ -4245,6 +4277,7 @@ def _evaluate_adaptive_v2_vpp_plan_acceptance_gate(
         },
         "adaptability_diagnostics": adaptability,
         "prompt_gate_metrics": metrics,
+        "verified_offer_facts": dict(prompt_payload.get("verified_offer_facts") or {}),
         "prompt_audit": {
             "schema_version": prompt_payload.get("schema_version"),
             "household_resume_id": (prompt_payload.get("household_resume") or {}).get("resume_id"),
@@ -7468,6 +7501,11 @@ The final plan should reflect your own comparison of at least one conservative a
 Your valid final control is executed as written; it will not be silently replaced by the MPC candidate.
 Only hard safety/service/physical validation may reject or minimally repair it.
 
+If an observable user message asks what they save or gain, answer that question directly in
+`strategy_explanation.expected_benefit`. Use only the supplied price, device power, event-window, and planned-action
+facts. Give a rough kW/kWh or tariff-impact estimate when it is supportable; if money or compensation cannot be
+calculated, say exactly what is known and what is unavailable. Never turn an unknown incentive into promised savings.
+
 Alongside the required control fields, include:
   "decision_basis": [{"evidence": "observable fact or memory", "implication": "effect on this plan"}],
   "memory_citations": ["onboarding:<answer id>" or "event:<event id>"],
@@ -8676,10 +8714,22 @@ These fields are for auditability and may differ across capable models; do not i
             res = {
                 "setpoint": sp,
                 "next_check_hour": control_intent.get("next_check_hour"),
-                "reason": reason[:240],
+                "reason": reason[: (600 if _adaptive_harness_v2() else 240)],
                 "appliance_actions": appl_actions,
                 "generic_user_explanation": True,
             }
+            if _adaptive_harness_v2() and isinstance(
+                control_intent.get("strategy_explanation"), dict
+            ):
+                native_explanation = _adaptive_v2_strategy_explanation(
+                    control_intent["strategy_explanation"]
+                )
+                if native_explanation:
+                    # Preserve HEMA's own ReAct explanation. The acceptance
+                    # model still verifies every claim against physical facts.
+                    native_explanation["source"] = "native_controller_explanation"
+                    native_explanation["speaker"] = "household_controller"
+                    res["strategy_explanation"] = native_explanation
 
             try:
                 res["objective_terms_posthoc"] = _compute_posthoc_decision_objective(
@@ -9862,13 +9912,17 @@ These fields are for auditability and may differ across capable models; do not i
                                 vpp_event=_mpc_cmp_event,
                             )
                         )
+                        _use_neutral_acceptance_interface = bool(
+                            method in TRADITIONAL_METHOD_NEUTRAL_ACCEPTANCE_METHODS
+                            and not _adaptive_harness_v2()
+                        )
                         _acceptance_plan = (
                             _traditional_method_neutral_acceptance_plan(
                                 res,
                                 default_plan=_default_plan,
                                 event=planning_vpp_event,
                             )
-                            if method in TRADITIONAL_METHOD_NEUTRAL_ACCEPTANCE_METHODS
+                            if _use_neutral_acceptance_interface
                             else res
                         )
                         if disable_acceptance_fallback:
@@ -9897,7 +9951,7 @@ These fields are for auditability and may differ across capable models; do not i
                                 user_preference_text=loop.vpp_user_input_by_id.get(planning_vid, loop.vpp_user_input),
                                 current_hod=hod if is_vpp else None,
                             )
-                            if method in TRADITIONAL_METHOD_NEUTRAL_ACCEPTANCE_METHODS:
+                            if _use_neutral_acceptance_interface:
                                 _vpp_acceptance_gate["acceptance_interface"] = (
                                     "method_neutral_action_summary_v1"
                                 )

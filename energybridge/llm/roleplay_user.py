@@ -211,10 +211,13 @@ def _adaptive_harness_v2() -> bool:
 
 def _household_resume(persona: dict[str, Any]) -> dict[str, Any]:
     from energybridge.harness.profile import build_household_resume
+    from energybridge.harness.roleplay import sanitize_household_resume_for_roleplay
 
-    return build_household_resume(
-        persona,
-        appliance_config=(persona.get("appliances") if isinstance(persona, dict) else None),
+    return sanitize_household_resume_for_roleplay(
+        build_household_resume(
+            persona,
+            appliance_config=(persona.get("appliances") if isinstance(persona, dict) else None),
+        )
     )
 
 
