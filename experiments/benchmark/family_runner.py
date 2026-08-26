@@ -1078,7 +1078,19 @@ def _adaptive_v3_resolve_planning_response(
                     full_impact_evidence
                 ),
             }
-            reviewed_raw = impact_review_fn(review_payload)
+            review_result = impact_review_fn(review_payload)
+            review_orchestration: dict[str, Any] = {}
+            if (
+                isinstance(review_result, dict)
+                and review_result.get("schema_version")
+                == "energybridge.impact_review_orchestration.v1"
+            ):
+                reviewed_raw = review_result.get("model_response")
+                review_orchestration = deepcopy(
+                    review_result.get("orchestration") or {}
+                )
+            else:
+                reviewed_raw = review_result
             final, final_policy_errors = evaluate(reviewed_raw)
             attempts.append({
                 "attempt": 2,
@@ -1098,6 +1110,7 @@ def _adaptive_v3_resolve_planning_response(
                     ].get("candidate_count"),
                     "ranking_performed": False,
                 },
+                "review_orchestration": review_orchestration,
             })
         except Exception as exc:
             review_error = _adaptive_exception_audit_text(exc, limit=500)
@@ -1167,6 +1180,51 @@ def _adaptive_v3_resolve_planning_response(
         # Persist the bounded, model-visible calibration capsule so repeated
         # event studies can verify what evidence the base model actually saw.
         "calibration_memory_used": calibration_memory_used,
+    }
+
+
+def _adaptive_v3_review_cache_key(scope: str, payload: dict) -> str:
+    """Identify an exact model response + checked-evidence review request."""
+    canonical = json.dumps(
+        {"scope": str(scope), "payload": payload},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24]
+
+
+def _adaptive_v3_cached_impact_review(
+    cache: dict[str, dict],
+    *,
+    scope: str,
+    evidence_payload: dict,
+    call_model: Any,
+) -> dict:
+    """Reuse only a byte-equivalent review request; changed evidence calls the model."""
+    from energybridge.harness.planning import parse_planning_response
+
+    cache_key = _adaptive_v3_review_cache_key(scope, evidence_payload)
+    cached = cache.get(cache_key)
+    if isinstance(cached, dict):
+        reviewed = deepcopy(cached)
+        status = "exact_evidence_hit"
+        provider_called = False
+    else:
+        reviewed = parse_planning_response(call_model())
+        cache[cache_key] = deepcopy(reviewed)
+        status = "miss"
+        provider_called = True
+    return {
+        "schema_version": "energybridge.impact_review_orchestration.v1",
+        "model_response": reviewed,
+        "orchestration": {
+            "cache_status": status,
+            "review_scope": str(scope),
+            "request_fingerprint": cache_key,
+            "provider_call_performed": provider_called,
+        },
     }
 
 
@@ -11355,41 +11413,59 @@ These fields are for auditability and may differ across capable models; do not i
                 review_event_id = str((vpp_event or {}).get("id", ""))
                 review_stage = "active" if vpp_active else "pre_event"
                 review_key = f"{review_event_id}:{review_stage}" if review_event_id else ""
-                reviewed_keys = getattr(loop, "agent_professional_review_keys", set())
-                if not isinstance(reviewed_keys, set):
-                    reviewed_keys = set(reviewed_keys or [])
-                loop.agent_professional_review_keys = reviewed_keys
+                review_context_fingerprint = _adaptive_v3_review_cache_key(
+                    review_key,
+                    {
+                        "planning_inputs": adaptive_planning_inputs,
+                        "advisor_candidates": adaptive_advisor_candidates,
+                    },
+                )
+                review_scope = (
+                    f"{review_key}:{review_context_fingerprint}"
+                    if review_key
+                    else ""
+                )
+                review_cache = getattr(loop, "agent_professional_review_cache", {})
+                if not isinstance(review_cache, dict):
+                    review_cache = {}
+                loop.agent_professional_review_cache = review_cache
 
                 def _impact_evidence_review(evidence_payload: dict) -> dict:
-                    review_system, review_prompt = _adaptive_v3_planning_prompts(
-                        adaptive_planning_inputs,
-                        advisor_candidates=adaptive_advisor_candidates,
-                        allow_skill_request=False,
+                    def _call_review_model() -> dict:
+                        review_system, review_prompt = _adaptive_v3_planning_prompts(
+                            adaptive_planning_inputs,
+                            advisor_candidates=adaptive_advisor_candidates,
+                            allow_skill_request=False,
+                        )
+                        review_prompt += (
+                            "\n\n[INDEPENDENT PHYSICAL AND TARIFF EVIDENCE]\n"
+                            "A method-blind accounting tool checked the portfolio below. It reports fixed-load "
+                            "arithmetic, event overlap, tariff integration, service feasibility, physical direction, "
+                            "and explicit uncertainty; it does not rank or choose a candidate. Reconsider your own "
+                            "selection using this evidence. If it changes a material claim or tradeoff, revise the "
+                            "portfolio. Otherwise return a complete confirmed portfolio. Keep unsupported energy or "
+                            "savings claims null and preserve your own decision authority. A zero changed-path count "
+                            "means the candidate is physically the ordinary plan: do not describe inherited timing or "
+                            "cost as an offer-specific benefit. When exact fixed-load cost deltas are present, use their "
+                            "reported normalized tariff unit rather than inventing a currency payment or incentive. If "
+                            "the household-facing explanation states a numeric cost change, it must match a listed "
+                            "supported_benefit_claim amount and unit; otherwise correct it or remove the number.\n"
+                            + _j.dumps(evidence_payload, ensure_ascii=False, default=str)
+                        )
+                        return _call_llm_json(
+                            review_prompt,
+                            system_prompt=review_system,
+                        )
+
+                    return _adaptive_v3_cached_impact_review(
+                        review_cache,
+                        scope=review_scope,
+                        evidence_payload=evidence_payload,
+                        call_model=_call_review_model,
                     )
-                    review_prompt += (
-                        "\n\n[INDEPENDENT PHYSICAL AND TARIFF EVIDENCE]\n"
-                        "A method-blind accounting tool checked the portfolio below. It reports fixed-load "
-                        "arithmetic, event overlap, tariff integration, service feasibility, physical direction, "
-                        "and explicit uncertainty; it does not rank or choose a candidate. Reconsider your own "
-                        "selection using this evidence. If it changes a material claim or tradeoff, revise the "
-                        "portfolio. Otherwise return a complete confirmed portfolio. Keep unsupported energy or "
-                        "savings claims null and preserve your own decision authority. A zero changed-path count "
-                        "means the candidate is physically the ordinary plan: do not describe inherited timing or "
-                        "cost as an offer-specific benefit. When exact fixed-load cost deltas are present, use their "
-                        "reported normalized tariff unit rather than inventing a currency payment or incentive. If "
-                        "the household-facing explanation states a numeric cost change, it must match a listed "
-                        "supported_benefit_claim amount and unit; otherwise correct it or remove the number.\n"
-                        + _j.dumps(evidence_payload, ensure_ascii=False, default=str)
-                    )
-                    reviewed = _call_llm_json(review_prompt, system_prompt=review_system)
-                    if review_key:
-                        reviewed_keys.add(review_key)
-                    return reviewed
 
                 impact_review_fn = (
-                    _impact_evidence_review
-                    if review_key and review_key not in reviewed_keys
-                    else None
+                    _impact_evidence_review if review_key else None
                 )
 
                 adaptive_planning_resolution = _adaptive_v3_resolve_planning_response(

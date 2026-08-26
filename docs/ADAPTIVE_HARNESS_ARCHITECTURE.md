@@ -127,6 +127,14 @@ and limitations. Repeated evidence-path strings move out of the model-visible
 copy but remain intact in the lifecycle audit. This is context budgeting, not
 candidate pruning, scoring, or a harness-authored choice.
 
+Within one run, an exact review request may reuse its already validated,
+privacy-projected model deliberation. The cache key covers the event stage,
+model-visible planning context, anonymous advisor evidence, original portfolio,
+and checked impact capsule. Any changed plan, profile/memory context, state, or
+evidence therefore invokes the base model again; the audit records cache hit or
+miss and whether a provider call occurred. This removes duplicate deliberation
+without treating a merely similar decision as equivalent.
+
 At event start, a separate state-physical capacity estimator combines current
 device state, deadlines, thermal comfort headroom, measured facility power,
 device reliability, and an explicit safety margin. When the external A3

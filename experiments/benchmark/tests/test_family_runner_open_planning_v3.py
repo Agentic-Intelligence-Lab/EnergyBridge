@@ -259,6 +259,65 @@ def test_model_can_revise_its_own_choice_after_professional_evidence() -> None:
     assert full_audit["schema_version"] != review_evidence["schema_version"]
 
 
+def test_exact_impact_review_request_reuses_sanitized_model_deliberation() -> None:
+    cache: dict[str, dict] = {}
+    calls: list[int] = []
+
+    def model_review() -> dict:
+        calls.append(1)
+        return {
+            "candidate_plans": [_candidate("confirmed", 26.0)],
+            "selected_candidate_id": "confirmed",
+            "selection_reason": "The checked evidence supports this tradeoff.",
+        }
+
+    def review(payload: dict) -> dict:
+        return fr._adaptive_v3_cached_impact_review(
+            cache,
+            scope="event-1:pre_event",
+            evidence_payload=payload,
+            call_model=model_review,
+        )
+
+    initial = {
+        "candidate_plans": [_candidate("initial", 26.0)],
+        "selected_candidate_id": "initial",
+    }
+    first = fr._adaptive_v3_resolve_planning_response(
+        initial,
+        planning_inputs=_planning_inputs(),
+        impact_review_fn=review,
+    )
+    second = fr._adaptive_v3_resolve_planning_response(
+        deepcopy(initial),
+        planning_inputs=deepcopy(_planning_inputs()),
+        impact_review_fn=review,
+    )
+
+    assert len(calls) == 1
+    assert first["selected_candidate_id"] == "confirmed"
+    assert second["selected_candidate_id"] == "confirmed"
+    first_orchestration = first["attempts"][1]["review_orchestration"]
+    second_orchestration = second["attempts"][1]["review_orchestration"]
+    assert first_orchestration["cache_status"] == "miss"
+    assert first_orchestration["provider_call_performed"] is True
+    assert second_orchestration["cache_status"] == "exact_evidence_hit"
+    assert second_orchestration["provider_call_performed"] is False
+    assert (
+        first_orchestration["request_fingerprint"]
+        == second_orchestration["request_fingerprint"]
+    )
+
+    changed = deepcopy(initial)
+    changed["candidate_plans"][0]["plan"]["setpoint"] = 27.0
+    fr._adaptive_v3_resolve_planning_response(
+        changed,
+        planning_inputs=_planning_inputs(),
+        impact_review_fn=review,
+    )
+    assert len(calls) == 2
+
+
 def test_deferred_clarification_preserves_model_question_only_for_material_choice() -> None:
     resolution = {
         "status": "selected",
