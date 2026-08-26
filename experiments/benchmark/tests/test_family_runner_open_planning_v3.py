@@ -338,6 +338,56 @@ def test_deferred_clarification_does_not_force_question_or_material_choice() -> 
     assert fr._adaptive_v3_deferred_clarification_request(with_benefit) is None
 
 
+def test_vpp_demand_uses_observable_capacity_when_reference_data_is_missing() -> None:
+    demand = fr._call_vpp_demand_agent(
+        "event-1",
+        {"status": "not_computed"},
+        household_capacity={
+            "assessment": {
+                "committable_kw": 1.4,
+                "recommended_bid_kw": 1.0,
+                "success_probability": 0.73,
+                "safety_margin": 0.7,
+            }
+        },
+        observed_baseline_kw=2.8,
+        duration_h=1.5,
+    )
+
+    assert demand["source"] == "state_physical_capacity_envelope"
+    assert demand["baseline_kwh"] == 4.2
+    assert demand["target_shed_kw"] == 1.0
+    assert demand["target_shed_kwh"] == 1.5
+    assert demand["target_kwh"] == 2.7
+    assert demand["capacity_success_probability"] == 0.73
+    assert demand["reference_quantification_available"] is False
+
+
+def test_reference_quantification_remains_authoritative_when_available() -> None:
+    demand = fr._call_vpp_demand_agent(
+        "event-1",
+        {
+            "status": "computed",
+            "duration_hours": 1.0,
+            "avg_p_base_q50_kw": 3.0,
+            "vpp_target_kwh": 1.7,
+            "vpp_target_capacity_120_kw": 1.3,
+            "vpp_target_capacity_energy_kwh": 1.3,
+        },
+        household_capacity={
+            "assessment": {
+                "committable_kw": 0.4,
+                "recommended_bid_kw": 0.2,
+            }
+        },
+        observed_baseline_kw=2.0,
+    )
+
+    assert demand["source"] == "total_quantification_120"
+    assert demand["target_kwh"] == 1.7
+    assert demand["target_shed_kw"] == 1.3
+
+
 def test_invalid_evidence_review_gets_semantic_replan_without_tool_selection() -> None:
     first = {
         "candidate_plans": [_candidate("valid", 25.0)],

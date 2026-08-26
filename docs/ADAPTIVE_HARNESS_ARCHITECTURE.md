@@ -119,6 +119,15 @@ not invent whole-home or HVAC kWh. The tool neither scalarizes objectives nor
 selects a plan. The same base model sees the resulting evidence cards and owns
 the confirm-or-revise decision.
 
+At event start, a separate state-physical capacity estimator combines current
+device state, deadlines, thermal comfort headroom, measured facility power,
+device reliability, and an explicit safety margin. When the external A3
+reference forecast is unavailable, the VPP demand context is derived from this
+observable household bid envelope rather than a fixed zero-shed fallback. The
+result retains its point-in-time baseline basis and uncertainty fields; an A3
+forecast, when present, remains authoritative. This is a traditional
+deliverability calculation, not a planner reward or a method-specific bonus.
+
 Schema: `energybridge.open_portfolio_planning.v3`.
 Impact evidence schema: `energybridge.candidate_impact.v3`.
 Flexible-load opportunity schema: `energybridge.flexible_load_opportunities.v1`.

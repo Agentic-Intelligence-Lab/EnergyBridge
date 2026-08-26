@@ -2340,7 +2340,14 @@ def _print_prev_day_completion(suite, day_idx: int, day_num: int) -> None:
         print(f"    (no controllable appliances in this household)")
 
 
-def _call_vpp_demand_agent(event_id: str, total_quantification: dict | None = None) -> dict:
+def _call_vpp_demand_agent(
+    event_id: str,
+    total_quantification: dict | None = None,
+    *,
+    household_capacity: dict | None = None,
+    observed_baseline_kw: float | None = None,
+    duration_h: float = 1.0,
+) -> dict:
     """Build the VPP demand target directly from reference capacity quantification.
 
     Returns: {"target_kwh": float, "reason": str, "source": str}
@@ -2371,6 +2378,45 @@ def _call_vpp_demand_agent(event_id: str, total_quantification: dict | None = No
                 float(tq.get("vpp_target_capacity_energy_kwh", 0.0) or 0.0), 3
             ),
         }
+
+    assessment = (
+        (household_capacity or {}).get("assessment")
+        if isinstance(household_capacity, dict)
+        else None
+    )
+    if isinstance(assessment, dict):
+        try:
+            bid_kw = max(0.0, float(assessment.get("recommended_bid_kw") or 0.0))
+            committable_kw = max(0.0, float(assessment.get("committable_kw") or 0.0))
+            baseline_kw = max(0.0, float(observed_baseline_kw or 0.0))
+            duration = max(1e-6, float(duration_h))
+        except (TypeError, ValueError):
+            bid_kw = committable_kw = baseline_kw = 0.0
+            duration = 1.0
+        if bid_kw > 0.0 and baseline_kw > 0.0:
+            deliverable_kw = min(bid_kw, committable_kw, baseline_kw)
+            baseline_kwh = baseline_kw * duration
+            shed_kwh = deliverable_kw * duration
+            return {
+                "target_kwh": round(max(0.1, baseline_kwh - shed_kwh), 3),
+                "reason": "observable household state capacity envelope",
+                "source": "state_physical_capacity_envelope",
+                "baseline_kwh": round(baseline_kwh, 3),
+                "baseline_basis": "event_start_facility_power_snapshot",
+                "accepted_capacity_kw": round(deliverable_kw, 3),
+                "target_shed_kw": round(deliverable_kw, 3),
+                "target_shed_kwh": round(shed_kwh, 3),
+                "capacity_success_probability": round(
+                    max(0.0, min(1.0, float(assessment.get("success_probability") or 0.0))),
+                    6,
+                ),
+                "capacity_safety_margin": round(
+                    max(0.0, min(1.0, float(assessment.get("safety_margin") or 0.0))),
+                    6,
+                ),
+                "capacity_basis": "state_physical_with_optional_baseline",
+                "reference_quantification_available": False,
+            }
 
     return {
         "target_kwh": 2.0,
@@ -13131,7 +13177,13 @@ These fields are for auditability and may differ across capable models; do not i
                         f"bid={float(_assessment.get('recommended_bid_kw', 0.0)):.3f}kW "
                         f"success={float(_assessment.get('success_probability', 0.0)):.1%}"
                     )
-                    _vpp_demand = _call_vpp_demand_agent(vid, _total_q90)
+                    _vpp_demand = _call_vpp_demand_agent(
+                        vid,
+                        _total_q90,
+                        household_capacity=_capacity,
+                        observed_baseline_kw=max(0.0, float(fac or 0.0) / 1000.0),
+                        duration_h=ev_duration_h,
+                    )
                     loop.vpp_demand_by_id[vid] = _vpp_demand
                     loop.current_vpp_demand_kwh = _vpp_demand["target_kwh"]
                     loop.current_vpp_demand_kw = _vpp_demand.get("target_shed_kw", 0.0)
