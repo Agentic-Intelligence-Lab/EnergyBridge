@@ -84,6 +84,25 @@ def _persona_manifest(**overrides):
     return build_run_manifest(**values)
 
 
+def test_current_harness_is_default_and_named_aliases_are_canonical(monkeypatch) -> None:
+    monkeypatch.delenv("ENERGYBRIDGE_HARNESS_PROFILE", raising=False)
+    default = _persona_manifest()
+    assert default["harness_profile"] == "adaptive_v2"
+    assert default["harness"]["agent_component_schemas"]["planning"] == PLANNING_SCHEMA_VERSION
+
+    for alias in ("latest", "current", "agentic_v3"):
+        monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", alias)
+        assert _persona_manifest()["harness_profile"] == "adaptive_v2"
+
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "paper_v1")
+    compatibility = _persona_manifest()
+    assert compatibility["harness_profile"] == "paper_v1"
+    assert all(
+        value is None
+        for value in compatibility["harness"]["agent_component_schemas"].values()
+    )
+
+
 def test_manifest_is_stable_across_api_key_rotation(monkeypatch) -> None:
     _stable_environment(monkeypatch)
     first_keys = ("sk-test-first-primary", "sk-test-first-pool")

@@ -52,8 +52,10 @@ _MODEL = (
 
 
 def _adaptive_harness_v2() -> bool:
-    value = str(os.getenv("ENERGYBRIDGE_HARNESS_PROFILE", "legacy_v1")).strip().lower()
-    return value in {"v2", "adaptive", "adaptive_v2", "energybridge_v2"}
+    value = str(os.getenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")).strip().lower()
+    return value in {
+        "latest", "current", "agentic_v3", "v2", "adaptive", "adaptive_v2", "energybridge_v2"
+    }
 
 
 class HEMAControlBaseline:

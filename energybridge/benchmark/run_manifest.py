@@ -42,6 +42,9 @@ _FORBIDDEN_FIELD_PARTS = (
     "secret",
 )
 _HARNESS_PROFILE_ALIASES = {
+    "latest": "adaptive_v2",
+    "current": "adaptive_v2",
+    "agentic_v3": "adaptive_v2",
     "v2": "adaptive_v2",
     "adaptive": "adaptive_v2",
     "adaptive_v2": "adaptive_v2",
@@ -59,8 +62,8 @@ def _env_flag(name: str, default: str = "0") -> bool:
 
 
 def _harness_profile() -> str:
-    raw = str(os.getenv("ENERGYBRIDGE_HARNESS_PROFILE", "legacy_v1")).strip().lower()
-    return _HARNESS_PROFILE_ALIASES.get(raw, raw or "legacy_v1")
+    raw = str(os.getenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")).strip().lower()
+    return _HARNESS_PROFILE_ALIASES.get(raw, raw or "adaptive_v2")
 
 
 def _acceptance_gate(profile: str) -> str:

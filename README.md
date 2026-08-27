@@ -78,8 +78,9 @@ older run. Explicit cross-run memory is the exception: warm-start jobs always
 execute because private memory contents are intentionally absent from the
 manifest fingerprint.
 
-The launch wrappers use `adaptive_v2` by default. To reproduce the historical
-frozen V1 consent path explicitly:
+The launch wrappers use the current `agentic_v3` harness by default (internally
+canonicalized to the existing `adaptive_v2` result profile for compatibility).
+To reproduce the historical frozen V1 consent path explicitly:
 
 ```bash
 export ENERGYBRIDGE_HARNESS_PROFILE=paper_v1

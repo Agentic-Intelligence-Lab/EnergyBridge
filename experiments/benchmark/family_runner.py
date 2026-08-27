@@ -58,13 +58,15 @@ def _acceptance_fallback_disabled() -> bool:
 def _harness_profile() -> str:
     """Return the explicit benchmark harness profile.
 
-    The code-level fallback stays on the historical profile so existing callers
-    do not silently change semantics after upgrading.  The V2 environment
-    template opts new runs into ``adaptive_v2`` and the paper wrappers pin
-    ``paper_v1`` for exact reproduction.
+    New and unconfigured runs use the current agentic harness. Historical
+    behavior remains available only through an explicit ``paper_v1`` or
+    ``legacy_v1`` compatibility profile.
     """
-    raw = str(os.getenv("ENERGYBRIDGE_HARNESS_PROFILE", "legacy_v1")).strip().lower()
+    raw = str(os.getenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")).strip().lower()
     aliases = {
+        "latest": "adaptive_v2",
+        "current": "adaptive_v2",
+        "agentic_v3": "adaptive_v2",
         "v2": "adaptive_v2",
         "adaptive": "adaptive_v2",
         "adaptive_v2": "adaptive_v2",
@@ -75,7 +77,7 @@ def _harness_profile() -> str:
         "legacy": "legacy_v1",
         "legacy_v1": "legacy_v1",
     }
-    return aliases.get(raw, raw or "legacy_v1")
+    return aliases.get(raw, raw or "adaptive_v2")
 
 
 def _adaptive_harness_v2() -> bool:

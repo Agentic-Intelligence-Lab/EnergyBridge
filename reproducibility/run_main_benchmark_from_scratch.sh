@@ -14,7 +14,7 @@ workers="${ENERGYBRIDGE_WORKERS:-5}"
 methods=(EnergyBridge hema_agent mpc_dynamic rule_milp rl_ppo_pref_v2)
 
 cd "${repo_root}"
-export ENERGYBRIDGE_HARNESS_PROFILE="${ENERGYBRIDGE_HARNESS_PROFILE:-adaptive_v2}"
+export ENERGYBRIDGE_HARNESS_PROFILE="${ENERGYBRIDGE_HARNESS_PROFILE:-agentic_v3}"
 if [[ "${ENERGYBRIDGE_HARNESS_PROFILE}" == "paper_v1" ]]; then
   export ENERGYBRIDGE_VPP_ACCEPTANCE_GATE=method_neutral_v1
   export ENERGYBRIDGE_ROLEPLAY_ACCEPTANCE_GATE_USE_LLM=0

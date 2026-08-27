@@ -9,6 +9,21 @@ from energybridge.harness.memory import build_event_context, initialize_memory
 from experiments.benchmark import family_runner as fr
 
 
+def test_current_harness_is_runtime_default_and_legacy_is_explicit(monkeypatch) -> None:
+    monkeypatch.delenv("ENERGYBRIDGE_HARNESS_PROFILE", raising=False)
+    assert fr._harness_profile() == "adaptive_v2"
+    assert fr._adaptive_harness_v2() is True
+
+    for alias in ("latest", "current", "agentic_v3"):
+        monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", alias)
+        assert fr._harness_profile() == "adaptive_v2"
+        assert fr._adaptive_harness_v2() is True
+
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "legacy_v1")
+    assert fr._harness_profile() == "legacy_v1"
+    assert fr._adaptive_harness_v2() is False
+
+
 def _fixture() -> tuple[dict, dict, dict, dict, dict]:
     persona = {
         "id": "v2_household",

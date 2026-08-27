@@ -1,9 +1,10 @@
 # Adaptive harness architecture
 
-EnergyBridge's public harness profile is still `adaptive_v2`. Within that
-profile, the EnergyBridge controller uses V3 component schemas for household
-modelling, memory, and planning. The V3 label describes internal data contracts;
-it is not a new benchmark protocol and does not change the frozen paper profile.
+EnergyBridge's current public harness name is `agentic_v3`. It is the default
+for unconfigured Python entry points and launch wrappers, and is internally
+canonicalized to the existing `adaptive_v2` result profile so prior V2/V3 result
+manifests remain comparable. The controller uses V3 component schemas for
+household modelling, memory, and planning.
 
 `paper_v1` and `legacy_v1` remain frozen compatibility paths. They do not
 silently opt into the components described here.
@@ -192,7 +193,7 @@ quality.
 
 ### Consent, execution, and outcome
 
-The role-play LLM remains active in `adaptive_v2`. It judges the concrete plan
+The role-play LLM remains active in the current harness. It judges the concrete plan
 and its event-specific explanation using observable household context. A
 household prior may anchor that judgement, but the controller prompt contains
 no desired acceptance probability or score. Acceptance and user rating are
