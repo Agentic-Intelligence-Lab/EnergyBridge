@@ -76,6 +76,34 @@ def test_json_response_format_is_transport_only_and_audited(monkeypatch) -> None
     assert result["metrics"]["validation_failures"] == 0
 
 
+def test_optional_thinking_transport_hint_is_forwarded_without_model_coupling(monkeypatch) -> None:
+    calls = _install_fake_openai(
+        monkeypatch,
+        lambda _kwargs: _response('{"choice":"model_owned"}'),
+    )
+    config = _config()
+    config.enable_thinking = False
+    llm = LLMClient(config=config)
+
+    result = llm.chat_with_metrics("system", "user")
+
+    assert calls[0]["extra_body"] == {"enable_thinking": False}
+    assert result["metrics"]["enable_thinking_explicit"] is True
+
+
+def test_thinking_transport_hint_is_omitted_by_default(monkeypatch) -> None:
+    calls = _install_fake_openai(
+        monkeypatch,
+        lambda _kwargs: _response('{"choice":"model_owned"}'),
+    )
+    llm = LLMClient(config=_config())
+
+    result = llm.chat_with_metrics("system", "user")
+
+    assert "extra_body" not in calls[0]
+    assert result["metrics"]["enable_thinking_explicit"] is False
+
+
 def test_unsupported_json_mode_downgrades_without_changing_prompt(monkeypatch) -> None:
     def create(kwargs: dict):
         if "response_format" in kwargs:

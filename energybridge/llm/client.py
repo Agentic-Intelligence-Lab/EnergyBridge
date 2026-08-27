@@ -166,6 +166,10 @@ class LLMClient:
                     "temperature": self.config.temperature,
                     "max_tokens": self.config.max_tokens,
                 }
+                if self.config.enable_thinking is not None:
+                    request_kwargs["extra_body"] = {
+                        "enable_thinking": self.config.enable_thinking,
+                    }
                 if active_response_format is not None:
                     request_kwargs["response_format"] = active_response_format
                 try:
@@ -236,6 +240,7 @@ class LLMClient:
                         "response_format_active": active_response_format is not None,
                         "response_format_fallback": response_format_fallback_type is not None,
                         "response_format_fallback_type": response_format_fallback_type,
+                        "enable_thinking_explicit": self.config.enable_thinking is not None,
                         "provider_failures": provider_failures,
                         "validation_failures": validation_failures,
                         "empty_response_failures": empty_response_failures,

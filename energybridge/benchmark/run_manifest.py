@@ -163,6 +163,7 @@ def _safe_llm_settings(
         "temperature": float(config.temperature),
         "max_tokens": int(config.max_tokens),
         "timeout_seconds": float(config.timeout_seconds),
+        "enable_thinking": config.enable_thinking,
     }
 
 

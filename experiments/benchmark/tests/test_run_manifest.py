@@ -185,6 +185,19 @@ def test_manifest_changes_with_model_profile_and_roleplay_gate(monkeypatch) -> N
     assert legacy["fingerprint"] != baseline["fingerprint"]
 
 
+def test_manifest_fingerprints_optional_thinking_transport(monkeypatch) -> None:
+    _stable_environment(monkeypatch)
+    monkeypatch.delenv("LLM_ENABLE_THINKING", raising=False)
+    provider_default = _persona_manifest()
+
+    monkeypatch.setenv("LLM_ENABLE_THINKING", "0")
+    explicit_non_thinking = _persona_manifest()
+
+    assert provider_default["llm"]["controller"]["enable_thinking"] is None
+    assert explicit_non_thinking["llm"]["controller"]["enable_thinking"] is False
+    assert provider_default["fingerprint"] != explicit_non_thinking["fingerprint"]
+
+
 def test_manifest_records_warm_start_without_memory_store_provenance(monkeypatch) -> None:
     _stable_environment(monkeypatch)
     cold = _persona_manifest()

@@ -25,6 +25,9 @@ class LLMConfig:
     max_tokens: int
     timeout_seconds: float
     api_key_pool: list  # ordered list of keys to rotate on retry; defaults to [api_key]
+    # Optional OpenAI-compatible transport hint used by providers that expose
+    # switchable reasoning models. ``None`` leaves provider defaults untouched.
+    enable_thinking: bool | None = None
 
 
 def _env_with_fallback(primary_key: str, default: str, fallback_key: str | None = None) -> str:
@@ -52,6 +55,10 @@ def load_llm_config(
         if not fallback_prefix:
             return None
         return f"{fallback_prefix}_{name}"
+
+    raw_enable_thinking = os.getenv(get_key("ENABLE_THINKING"))
+    if raw_enable_thinking is None and get_fallback_key("ENABLE_THINKING"):
+        raw_enable_thinking = os.getenv(str(get_fallback_key("ENABLE_THINKING")))
 
     primary_key = _env_with_fallback(
         get_key("API_KEY"), "", get_fallback_key("API_KEY")
@@ -103,4 +110,9 @@ def load_llm_config(
             )
         ),
         api_key_pool=api_key_pool,
+        enable_thinking=(
+            None
+            if raw_enable_thinking is None or not raw_enable_thinking.strip()
+            else _to_bool(raw_enable_thinking)
+        ),
     )
