@@ -669,6 +669,106 @@ def test_nullable_future_check_constraint_accepts_none_but_rejects_past() -> Non
     assert stale_check["feasible"] is False
 
 
+def test_conditional_disjoint_interval_only_applies_when_action_is_enabled() -> None:
+    constraint = {
+        "constraint_id": "preheat_outside_event",
+        "kind": "disjoint_interval_if_true",
+        "enabled_path": "/appliances/water_heater_preheat",
+        "start_path": "/appliances/water_heater_preheat_start_h",
+        "end_path": "/appliances/water_heater_preheat_end_h",
+        "forbidden_window": [18.0, 19.0],
+    }
+    disabled = validate_plan_candidate(
+        {
+            "setpoint": 25.0,
+            "appliances": {"water_heater_preheat": False},
+        },
+        explicit_constraints=[constraint],
+    )
+    overlapping = validate_plan_candidate(
+        {
+            "setpoint": 25.0,
+            "appliances": {
+                "water_heater_preheat": True,
+                "water_heater_preheat_start_h": 18.0,
+                "water_heater_preheat_end_h": 20.0,
+            },
+        },
+        explicit_constraints=[constraint],
+    )
+    boundary_safe = validate_plan_candidate(
+        {
+            "setpoint": 25.0,
+            "appliances": {
+                "water_heater_preheat": True,
+                "water_heater_preheat_start_h": 19.0,
+                "water_heater_preheat_end_h": 20.0,
+            },
+        },
+        explicit_constraints=[constraint],
+    )
+
+    assert disabled["feasible"] is True
+    assert overlapping["feasible"] is False
+    assert overlapping["violations"][0]["message"] == "half-open intervals overlap"
+    assert boundary_safe["feasible"] is True
+
+
+def test_cyclic_interval_constraints_cover_overnight_windows() -> None:
+    constraints = [
+        {
+            "constraint_id": "ev_outside_event",
+            "kind": "cyclic_disjoint_interval",
+            "start_path": "/appliances/ev_charge_start_h",
+            "end_path": "/appliances/ev_charge_end_h",
+            "forbidden_window": [18.0, 19.0],
+        },
+        {
+            "constraint_id": "ev_service_duration",
+            "kind": "cyclic_interval_duration",
+            "start_path": "/appliances/ev_charge_start_h",
+            "end_path": "/appliances/ev_charge_end_h",
+            "min_duration_h": 2.0,
+        },
+    ]
+    overlaps = validate_plan_candidate(
+        {
+            "setpoint": 25.0,
+            "appliances": {
+                "ev_charge_start_h": 18.5,
+                "ev_charge_end_h": 7.5,
+            },
+        },
+        explicit_constraints=constraints,
+    )
+    safe_overnight = validate_plan_candidate(
+        {
+            "setpoint": 25.0,
+            "appliances": {
+                "ev_charge_start_h": 19.0,
+                "ev_charge_end_h": 7.5,
+            },
+        },
+        explicit_constraints=constraints,
+    )
+    too_short = validate_plan_candidate(
+        {
+            "setpoint": 25.0,
+            "appliances": {
+                "ev_charge_start_h": 19.0,
+                "ev_charge_end_h": 19.5,
+            },
+        },
+        explicit_constraints=constraints,
+    )
+
+    assert overlaps["feasible"] is False
+    assert "cyclic half-open interval overlaps" in overlaps["violations"][0]["message"]
+    assert safe_overnight["feasible"] is True
+    assert too_short["feasible"] is False
+    assert too_short["violations"][0]["constraint_id"] == "ev_service_duration"
+
+
 def test_dotted_constraint_paths_are_canonicalized_before_text_redaction() -> None:
     constraints = derive_planning_constraints(
         observable_state={

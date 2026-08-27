@@ -748,6 +748,68 @@ def _adaptive_v3_observable_planning_inputs(
                     "/event/end_h",
                 ],
             })
+        water_heater = devices.get("water_heater") or {}
+        if water_heater.get("present") and bool(
+            water_heater.get("dr_adjustable", True)
+        ):
+            explicit_constraints.append({
+                "constraint_id": "water_heater_outside_vpp_window_when_preheating",
+                "kind": "disjoint_interval_if_true",
+                "enabled_path": "/appliances/water_heater_preheat",
+                "start_path": "/appliances/water_heater_preheat_start_h",
+                "end_path": "/appliances/water_heater_preheat_end_h",
+                "forbidden_window": [event_start_hod, event_end_hod],
+                "severity": "hard",
+                "evidence_paths": [
+                    "/event/trigger_h",
+                    "/event/end_h",
+                    "/observable_state/device_capabilities/water_heater",
+                ],
+            })
+        ev = devices.get("ev") or {}
+        if ev.get("present") and bool(ev.get("dr_adjustable", True)):
+            try:
+                arrival_h = float(ev.get("arrival_h", 18.0)) % 24.0
+            except (TypeError, ValueError):
+                arrival_h = 18.0
+            explicit_constraints.extend([
+                {
+                    "constraint_id": "ev_charge_starts_after_observed_arrival",
+                    "kind": "range",
+                    "path": "/appliances/ev_charge_start_h",
+                    "min": arrival_h,
+                    "severity": "hard",
+                    "evidence_paths": [
+                        "/observable_state/device_capabilities/ev/arrival_h",
+                    ],
+                },
+                {
+                    "constraint_id": "ev_charge_window_outside_vpp",
+                    "kind": "cyclic_disjoint_interval",
+                    "start_path": "/appliances/ev_charge_start_h",
+                    "end_path": "/appliances/ev_charge_end_h",
+                    "forbidden_window": [event_start_hod, event_end_hod],
+                    "severity": "hard",
+                    "evidence_paths": [
+                        "/event/trigger_h",
+                        "/event/end_h",
+                        "/observable_state/device_capabilities/ev",
+                    ],
+                },
+                {
+                    "constraint_id": "ev_charge_window_service_duration",
+                    "kind": "cyclic_interval_duration",
+                    "start_path": "/appliances/ev_charge_start_h",
+                    "end_path": "/appliances/ev_charge_end_h",
+                    "min_duration_h": _ev_required_charge_hours(appliance_config),
+                    "severity": "hard",
+                    "evidence_paths": [
+                        "/observable_state/device_capabilities/ev/charger_kw",
+                        "/observable_state/device_capabilities/ev/efficiency",
+                        "/observable_state/device_capabilities/ev/daily_drive_kwh",
+                    ],
+                },
+            ])
     return {
         "observable_state": observable_state,
         "observable_profile": observable_profile,
@@ -1026,10 +1088,12 @@ def _adaptive_v3_resolve_planning_response(
     replan_fn: Any = None,
     impact_review_fn: Any = None,
 ) -> dict:
-    """Evaluate model ownership, permit evidence review and one semantic retry.
+    """Evaluate model ownership with bounded, convergence-aware semantic repair.
 
     Crucially, this function never chooses a feasible advisor or another model
-    candidate on the base model's behalf.
+    candidate on the base model's behalf.  A second repair turn is available
+    only when the first revision remains machine-invalid; repeated identical
+    output stops the loop instead of spending another model call.
     """
     from energybridge.harness.energy_tools_v3 import (
         compact_portfolio_impacts_for_review,
@@ -1134,9 +1198,24 @@ def _adaptive_v3_resolve_planning_response(
             })
         except Exception as exc:
             review_error = _adaptive_exception_audit_text(exc, limit=500)
-    if (final.get("selected_executable_plan") is None or final_policy_errors) and callable(replan_fn):
+    prior_semantic_signature = _adaptive_v3_review_cache_key(
+        "semantic-replan-response",
+        {
+            "response": (final.get("portfolio_audit") or {}).get(
+                "raw_response_snapshot"
+            )
+        },
+    )
+    for _ in range(2):
+        if not (
+            (final.get("selected_executable_plan") is None or final_policy_errors)
+            and callable(replan_fn)
+        ):
+            break
         try:
-            retry_raw = replan_fn(_adaptive_v3_replan_feedback(final, final_policy_errors))
+            retry_raw = replan_fn(
+                _adaptive_v3_replan_feedback(final, final_policy_errors)
+            )
             final, final_policy_errors = evaluate(retry_raw)
             attempts.append({
                 "attempt": len(attempts) + 1,
@@ -1145,8 +1224,20 @@ def _adaptive_v3_resolve_planning_response(
                 "selection_status": final.get("selection_status"),
                 "runtime_contract_errors": final_policy_errors,
             })
+            semantic_signature = _adaptive_v3_review_cache_key(
+                "semantic-replan-response",
+                {
+                    "response": (final.get("portfolio_audit") or {}).get(
+                        "raw_response_snapshot"
+                    )
+                },
+            )
+            if semantic_signature == prior_semantic_signature:
+                break
+            prior_semantic_signature = semantic_signature
         except Exception as exc:
             replan_error = _adaptive_exception_audit_text(exc, limit=500)
+            break
 
     selected_plan = (
         deepcopy(final.get("selected_executable_plan"))
@@ -4273,10 +4364,13 @@ def _vpp_appliance_conflicts(
             pass
     if "ev" in present and _service_is_dr_adjustable("ev", appliance_config):
         mode = str(actions.get("ev_mode") or "").lower()
-        if mode == "normal":
-            conflicts.append(f"ev: normal mode may charge during VPP {window_text}")
         start = actions.get("ev_charge_start_h")
         end = actions.get("ev_charge_end_h")
+        # An explicit charge window overrides the simulator's mode schedule.
+        # Therefore a normal-mode label is ambiguous only when the model did
+        # not provide both physical interval endpoints.
+        if mode == "normal" and (start is None or end is None):
+            conflicts.append(f"ev: normal mode may charge during VPP {window_text}")
         try:
             if start is not None and end is not None and _interval_overlaps(float(start), float(end), vpp_start, vpp_end):
                 conflicts.append(

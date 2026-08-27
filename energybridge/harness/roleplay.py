@@ -894,13 +894,15 @@ def build_roleplay_acceptance_prompts(
         "should lower willingness. A proposal without a household-specific reason is an incomplete request for consent, even when the "
         "household is generally cooperative. Read conditional statements literally: willingness to consider an offer if a condition "
         "is met is not positive evidence while that condition is still unmet. An acceptable thermostat, an empty conflict list, and "
-        "unchanged ordinary chores are context_only unless this offer improves them or answers an earlier concern. Check times and "
+        "unchanged ordinary chores are background context unless this offer improves them or answers an earlier concern. Check times and "
         "claims against the event, both plans, and verified_offer_facts; an action "
         "at the exclusive event end is outside the event. Do not invent savings, guarantees, outcomes, failures, or personal details. "
         "The final probability is how often this household would accept the unchanged offer in 100 comparable situations. The prior "
-        "is a starting point, not a floor. Use short signed adjustments only for facts that really change willingness—usually 2-4, "
+        "is a starting point, not a floor. Use short adjustments only for facts that really change willingness—usually 2-4, "
         "or an empty list when nothing does. Baseline plus adjustments must equal the final probability; do not apply hidden clipping "
-        "or canned deltas. Each signed adjustment must cite evidence whose effect points in the same direction. Write every probability "
+        "or canned deltas. Each adjustment must cite one factual evidence item; its delta already states the direction, so "
+        "do not repeat that direction as a separate evidence label. A background fact may remain evidence without an adjustment; "
+        "a zero delta is also valid and leaves probability unchanged. Write every probability "
         "and delta as a decimal probability unit, never as a percentage or percentage-point "
         "number. Keep decision, probability, first-person reason, and feedback consistent. A counteroffer names the concrete "
         "change required and credits it only in the counterfactual. Cite 2-4 concise, non-duplicate evidence items by E1, E2, and so "
@@ -916,7 +918,7 @@ def build_roleplay_acceptance_prompts(
         '  "adjustments": [{"dimension": "...", "delta": signed_number, "evidence": "E1", "reason": "one short clause"}],\n'
         '  "final_acceptance_probability": number,\n'
         '  "confidence": number,\n'
-        '  "evidence": [{"id": "E1", "source": "resume|event|live_preference|plan|ordinary_plan|history|other", "fact": "one short fact", "effect": "supports_acceptance|supports_rejection|requires_change|context_only"}],\n'
+        '  "evidence": [{"id": "E1", "source": "resume|event|live_preference|plan|ordinary_plan|history|other", "fact": "one short fact"}],\n'
         '  "counterfactual": {"changes": ["one minimal concrete change"], "decision_if_changed": "accept|reject|counteroffer|uncertain", "acceptance_probability_if_changed": number_or_null, "reason": "one short clause"},\n'
         '  "reason": "first-person reasoning, at most two short sentences",\n'
         '  "user_feedback": "exactly one short first-person sentence"\n'
@@ -988,24 +990,29 @@ def _normalize_evidence(raw: Any) -> list[dict[str, str]]:
     result: list[dict[str, str]] = []
     for index, item in enumerate(raw[:12], start=1):
         if isinstance(item, str):
-            evidence_id, source, fact, effect = f"E{index}", "other", item, "context_only"
+            evidence_id, source, fact, effect = f"E{index}", "other", item, ""
         elif isinstance(item, Mapping):
             evidence_id = _sanitize_identity_text(item.get("id") or f"E{index}", 24)
             source = str(item.get("source") or "other").strip().lower()
             fact = item.get("fact") or item.get("observation") or item.get("evidence")
-            effect = str(item.get("effect") or "context_only").strip().lower()
+            effect = str(item.get("effect") or "").strip().lower()
         else:
             continue
         source = source if source in VALID_EVIDENCE_SOURCES else "other"
-        effect = effect if effect in VALID_EVIDENCE_EFFECTS else "context_only"
+        effect = effect if effect in VALID_EVIDENCE_EFFECTS else ""
         fact_text = _sanitize_identity_text(fact, 500)
         if fact_text:
-            result.append({
+            normalized = {
                 "id": evidence_id or f"E{index}",
                 "source": source,
                 "fact": fact_text,
-                "effect": effect,
-            })
+            }
+            # `effect` was required by early V2 responses. Preserve a valid
+            # legacy label for audit compatibility, but it is redundant with
+            # the signed adjustment and is no longer required or repaired.
+            if effect:
+                normalized["effect"] = effect
+            result.append(normalized)
     if not result:
         raise RoleplayResponseError("evidence must contain at least one factual item")
     normalized_ids = [str(item["id"]).strip().lower() for item in result]
@@ -1029,8 +1036,6 @@ def _normalize_adjustments(raw: Any) -> list[dict[str, Any]]:
             raise RoleplayResponseError("adjustments[].delta must be numeric") from exc
         if not math.isfinite(delta):
             raise RoleplayResponseError("adjustments[].delta must be finite")
-        if delta == 0.0:
-            raise RoleplayResponseError("adjustments[].delta must be a non-zero signed adjustment")
         dimension = _sanitize_identity_text(
             item.get("dimension") or item.get("factor"),
             120,
@@ -1144,14 +1149,14 @@ def _normalize_valid_response(
             )
         effect = str(cited.get("effect") or "")
         delta = float(adjustment["delta"])
-        if delta > 0.0 and effect != "supports_acceptance":
+        if effect and delta > 0.0 and effect != "supports_acceptance":
             evidence_sign_mismatches.append({
                 "adjustment_index": adjustment_index,
                 "evidence_id": cited.get("id"),
                 "delta_sign": "positive",
                 "evidence_effect": effect,
             })
-        if delta < 0.0 and effect not in {"supports_rejection", "requires_change"}:
+        if effect and delta < 0.0 and effect not in {"supports_rejection", "requires_change"}:
             evidence_sign_mismatches.append({
                 "adjustment_index": adjustment_index,
                 "evidence_id": cited.get("id"),
@@ -1187,14 +1192,16 @@ def _normalize_valid_response(
     if expected_baseline is not None:
         response["normalization"]["expected_baseline"] = expected_baseline
     response["normalization"]["adjustment_sum"] = adjustment_sum
+    response["normalization"]["zero_adjustment_count"] = sum(
+        1 for item in adjustments if float(item["delta"]) == 0.0
+    )
     response["normalization"]["arithmetic_residual"] = arithmetic_residual
-    if evidence_sign_mismatches:
-        raise RoleplayResponseError(
-            "signed adjustments must cite evidence whose effect has the same direction "
-            f"({json.dumps(evidence_sign_mismatches, ensure_ascii=False, sort_keys=True)})"
-        )
-    response["normalization"]["evidence_sign_consistent"] = True
-    response["normalization"]["evidence_sign_mismatches"] = []
+    effect_label_count = sum(1 for item in evidence if item.get("effect"))
+    response["normalization"]["redundant_effect_label_count"] = effect_label_count
+    response["normalization"]["evidence_sign_consistent"] = (
+        not evidence_sign_mismatches if effect_label_count else None
+    )
+    response["normalization"]["evidence_sign_mismatches"] = evidence_sign_mismatches
     return response
 
 
@@ -1281,8 +1288,7 @@ def validate_roleplay_response_against_verified_facts(
         for index, item in enumerate(out.get("evidence") or []):
             if not isinstance(item, Mapping):
                 continue
-            if str(item.get("effect") or "") in {"supports_rejection", "requires_change"}:
-                text_fields.append((f"evidence[{index}].fact", item.get("fact")))
+            text_fields.append((f"evidence[{index}].fact", item.get("fact")))
         counterfactual = out.get("counterfactual") or {}
         if isinstance(counterfactual, Mapping):
             for index, change in enumerate(counterfactual.get("changes") or []):

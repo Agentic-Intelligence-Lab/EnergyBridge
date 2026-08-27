@@ -209,6 +209,36 @@ def test_agent_ev_service_repair_fills_non_vpp_window() -> None:
     )
 
 
+def test_explicit_ev_window_overrides_mode_for_vpp_overlap_check() -> None:
+    appliances = {
+        "ev": {
+            "present": True,
+            "dr_adjustable": True,
+            "arrival_h": 18.0,
+            "departure_h": 7.5,
+        }
+    }
+    event = {"id": "vpp1", "trigger_h": 18.0, "end_h": 19.0}
+
+    assert fr._vpp_appliance_conflicts(
+        {
+            "ev_mode": "normal",
+            "ev_charge_start_h": 19.0,
+            "ev_charge_end_h": 7.5,
+        },
+        appliances,
+        event,
+    ) == []
+    assert any(
+        "normal mode may charge" in item
+        for item in fr._vpp_appliance_conflicts(
+            {"ev_mode": "normal"},
+            appliances,
+            event,
+        )
+    )
+
+
 def test_household_member_min_preferred_max_uses_strictest_member() -> None:
     household_persona = {
         "meta": {"persona_type": "multi_user_household"},

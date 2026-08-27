@@ -1286,7 +1286,20 @@ def test_planning_inputs_expose_machine_checked_event_timing_constraints() -> No
                 "shiftable": True,
                 "dr_adjustable": True,
                 "duration_h": 2.0,
-            }
+            },
+            "water_heater": {
+                "present": True,
+                "dr_adjustable": True,
+            },
+            "ev": {
+                "present": True,
+                "dr_adjustable": True,
+                "arrival_h": 18.5,
+                "departure_h": 7.5,
+                "charger_kw": 7.4,
+                "efficiency": 0.92,
+                "daily_drive_kwh": 8.0,
+            },
         },
         setpoint_min_c=22.0,
         setpoint_max_c=28.0,
@@ -1321,6 +1334,35 @@ def test_planning_inputs_expose_machine_checked_event_timing_constraints() -> No
             "/event/end_h",
         ],
     }
+    assert by_id["water_heater_outside_vpp_window_when_preheating"] == {
+        "constraint_id": "water_heater_outside_vpp_window_when_preheating",
+        "kind": "disjoint_interval_if_true",
+        "enabled_path": "/appliances/water_heater_preheat",
+        "start_path": "/appliances/water_heater_preheat_start_h",
+        "end_path": "/appliances/water_heater_preheat_end_h",
+        "forbidden_window": [18.0, 19.0],
+        "severity": "hard",
+        "evidence_paths": [
+            "/event/trigger_h",
+            "/event/end_h",
+            "/observable_state/device_capabilities/water_heater",
+        ],
+    }
+    assert by_id["ev_charge_starts_after_observed_arrival"]["min"] == 18.5
+    assert by_id["ev_charge_window_outside_vpp"] == {
+        "constraint_id": "ev_charge_window_outside_vpp",
+        "kind": "cyclic_disjoint_interval",
+        "start_path": "/appliances/ev_charge_start_h",
+        "end_path": "/appliances/ev_charge_end_h",
+        "forbidden_window": [18.0, 19.0],
+        "severity": "hard",
+        "evidence_paths": [
+            "/event/trigger_h",
+            "/event/end_h",
+            "/observable_state/device_capabilities/ev",
+        ],
+    }
+    assert by_id["ev_charge_window_service_duration"]["min_duration_h"] > 1.0
 
 
 def test_completed_shiftable_service_is_not_required_again_but_cannot_be_rescheduled() -> None:

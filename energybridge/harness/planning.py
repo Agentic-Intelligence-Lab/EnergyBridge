@@ -558,6 +558,11 @@ def derive_planning_constraints(
             "immutable": "equals",
             "disjoint": "disjoint_interval",
             "interval_disjoint": "disjoint_interval",
+            "conditional_disjoint": "disjoint_interval_if_true",
+            "disjoint_when_enabled": "disjoint_interval_if_true",
+            "cyclic_disjoint": "cyclic_disjoint_interval",
+            "overnight_disjoint": "cyclic_disjoint_interval",
+            "cyclic_duration": "cyclic_interval_duration",
             "within": "within_interval",
             "interval_within": "within_interval",
         }
@@ -569,6 +574,9 @@ def derive_planning_constraints(
             "equals",
             "disjoint_interval",
             "disjoint_interval_duration",
+            "disjoint_interval_if_true",
+            "cyclic_disjoint_interval",
+            "cyclic_interval_duration",
             "within_interval",
         }:
             continue
@@ -582,7 +590,7 @@ def derive_planning_constraints(
         # without creating a general dotted-text privacy exception.
         trusted_paths = {
             key: _pointer(raw.get(key))
-            for key in ("path", "start_path", "end_path")
+            for key in ("path", "start_path", "end_path", "enabled_path")
             if raw.get(key) is not None
         }
         trusted_evidence_paths = [
@@ -593,7 +601,7 @@ def derive_planning_constraints(
         item = _sanitize_planning_input(raw)
         assert isinstance(item, dict)
         item["kind"] = kind
-        for key in ("path", "start_path", "end_path"):
+        for key in ("path", "start_path", "end_path", "enabled_path"):
             pointer = trusted_paths.get(key)
             if pointer:
                 item[key] = pointer
@@ -1127,7 +1135,13 @@ def _validate_constraint(
     if value is None and bool(constraint.get("nullable", False)):
         return violations, patches
 
-    if value is _MISSING and kind not in {"disjoint_interval", "within_interval"}:
+    if value is _MISSING and kind not in {
+        "disjoint_interval",
+        "disjoint_interval_if_true",
+        "cyclic_disjoint_interval",
+        "cyclic_interval_duration",
+        "within_interval",
+    }:
         # Optional paths are not errors.  Pair `required` with another rule when
         # the field must be present.
         return violations, patches
@@ -1215,21 +1229,79 @@ def _validate_constraint(
                         message="duration-derived half-open interval overlaps forbidden window",
                     )
                 )
-    elif kind in {"disjoint_interval", "within_interval"}:
+    elif kind in {
+        "disjoint_interval",
+        "disjoint_interval_if_true",
+        "cyclic_disjoint_interval",
+        "cyclic_interval_duration",
+        "within_interval",
+    }:
+        if kind == "disjoint_interval_if_true":
+            enabled_path = str(constraint.get("enabled_path") or "")
+            enabled = _get_pointer(document, enabled_path) if enabled_path else _MISSING
+            if enabled is False:
+                return violations, patches
+            if enabled is not True:
+                violations.append(
+                    _violation(
+                        constraint,
+                        path=enabled_path,
+                        actual=enabled,
+                        message="conditional interval enable flag must be exactly true or false",
+                    )
+                )
+                return violations, patches
         start_path = str(constraint.get("start_path") or "")
         end_path = str(constraint.get("end_path") or "")
         start = _finite_number(_get_pointer(document, start_path)) if start_path else None
         end = _finite_number(_get_pointer(document, end_path)) if end_path else None
-        if start is None or end is None or end <= start:
+        cyclic = kind in {"cyclic_disjoint_interval", "cyclic_interval_duration"}
+        endpoints_invalid = (
+            start is None
+            or end is None
+            or (
+                cyclic
+                and not (0.0 <= start < 24.0 and 0.0 <= end <= 24.0)
+            )
+            or (not cyclic and end <= start)
+            or (cyclic and abs(end - start) <= 1e-9)
+        )
+        if endpoints_invalid:
             violations.append(
                 _violation(
                     constraint,
                     path=f"{start_path},{end_path}",
                     actual={"start": start, "end": end},
-                    message="interval endpoints must be finite with end greater than start",
+                    message=(
+                        "cyclic interval endpoints must be finite local hours and describe a non-empty window"
+                        if cyclic
+                        else "interval endpoints must be finite with end greater than start"
+                    ),
                 )
             )
         else:
+            assert start is not None and end is not None
+            duration = end - start if end > start else end + 24.0 - start
+            if kind == "cyclic_interval_duration":
+                minimum = _finite_number(
+                    constraint.get("min_duration_h", constraint.get("min"))
+                )
+                maximum = _finite_number(
+                    constraint.get("max_duration_h", constraint.get("max"))
+                )
+                if (
+                    (minimum is not None and duration < minimum)
+                    or (maximum is not None and duration > maximum)
+                ):
+                    violations.append(
+                        _violation(
+                            constraint,
+                            path=f"{start_path},{end_path}",
+                            actual={"start": start, "end": end, "duration_h": duration},
+                            message="cyclic interval duration is outside the declared range",
+                        )
+                    )
+                return violations, patches
             reference = _interval(
                 constraint.get("interval", constraint.get("window", constraint.get("forbidden_window")))
             )
@@ -1242,7 +1314,26 @@ def _validate_constraint(
                         message="constraint reference interval is invalid",
                     )
                 )
-            elif kind == "disjoint_interval" and max(start, reference[0]) < min(end, reference[1]):
+            elif kind == "cyclic_disjoint_interval":
+                segments = (
+                    [(start, end)]
+                    if end > start
+                    else [(start, 24.0), (0.0, end)]
+                )
+                if any(
+                    max(segment_start, reference[0]) < min(segment_end, reference[1])
+                    for segment_start, segment_end in segments
+                    if segment_end > segment_start
+                ):
+                    violations.append(
+                        _violation(
+                            constraint,
+                            path=f"{start_path},{end_path}",
+                            actual={"start": start, "end": end},
+                            message="cyclic half-open interval overlaps forbidden window",
+                        )
+                    )
+            elif kind in {"disjoint_interval", "disjoint_interval_if_true"} and max(start, reference[0]) < min(end, reference[1]):
                 violations.append(
                     _violation(
                         constraint,

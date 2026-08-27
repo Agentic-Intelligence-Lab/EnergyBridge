@@ -524,7 +524,7 @@ def test_advisor_is_compared_but_never_replaces_invalid_model_selection() -> Non
     assert retries[0]["validator_reason"] == "selected ID is not a base-model candidate"
 
 
-def test_invalid_selection_gets_one_semantic_replan_then_model_choice_is_evaluated() -> None:
+def test_invalid_selection_gets_bounded_semantic_replan_then_model_choice_is_evaluated() -> None:
     first = {
         "candidate_plans": [_candidate("only", 25.0)],
         "selected_candidate_id": "missing",
@@ -551,6 +551,42 @@ def test_invalid_selection_gets_one_semantic_replan_then_model_choice_is_evaluat
     assert resolution["selected_executable_plan"]["setpoint"] == 26.5
     assert [attempt["kind"] for attempt in resolution["attempts"]] == [
         "initial_model_response",
+        "semantic_replan",
+    ]
+
+
+def test_second_semantic_replan_can_resolve_a_distinct_machine_invalid_revision() -> None:
+    first = {
+        "candidate_plans": [_candidate("only", 25.0)],
+        "selected_candidate_id": "missing",
+    }
+    calls: list[dict] = []
+
+    def replan(feedback: dict) -> dict:
+        calls.append(feedback)
+        if len(calls) == 1:
+            return {
+                "candidate_plans": [_candidate("still_invalid", 25.5)],
+                "selected_candidate_id": "also_missing",
+            }
+        return {
+            "candidate_plans": [_candidate("resolved", 26.0)],
+            "selected_candidate_id": "resolved",
+            "selection_reason": "The second revision resolves the remaining machine finding.",
+        }
+
+    resolution = fr._adaptive_v3_resolve_planning_response(
+        first,
+        planning_inputs=_planning_inputs(),
+        replan_fn=replan,
+    )
+
+    assert len(calls) == 2
+    assert resolution["status"] == "selected"
+    assert resolution["selected_candidate_id"] == "resolved"
+    assert [attempt["kind"] for attempt in resolution["attempts"]] == [
+        "initial_model_response",
+        "semantic_replan",
         "semantic_replan",
     ]
 

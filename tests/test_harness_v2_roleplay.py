@@ -544,7 +544,7 @@ def test_hidden_weight_and_label_changes_do_not_change_model_visible_prompt() ->
 
 def test_acceptance_prompt_penalizes_generic_explanations_without_method_targets() -> None:
     persona = _load_persona("basic_role_a_commuter_price_cooperative")
-    system, _, payload = build_roleplay_acceptance_prompts(
+    system, user, payload = build_roleplay_acceptance_prompts(
         persona_config=persona,
         appliance_config=persona["appliances"],
         event={"id": "vpp1", "trigger_h": 18.0, "end_h": 19.0},
@@ -575,7 +575,9 @@ def test_acceptance_prompt_penalizes_generic_explanations_without_method_targets
     assert "incomplete request for consent" in instruction
     assert "not positive evidence while that condition is still unmet" in instruction
     assert "an empty conflict list" in instruction
-    assert "context_only unless this offer improves them" in instruction
+    assert "background context unless this offer improves them" in instruction
+    assert '"effect"' not in user
+    assert "separate evidence label" in instruction
     assert "in 100 comparable situations" in instruction
     assert "prior is a starting point, not a floor" in instruction
     assert "do not apply hidden clipping or canned deltas" in instruction
@@ -867,7 +869,7 @@ def test_explanation_quality_adjustment_remains_model_authored() -> None:
     assert normalized["acceptance_probability"] == 0.33
 
 
-def test_normalizer_allows_no_change_but_rejects_mismatch_zero_item_and_unexplained_final() -> None:
+def test_normalizer_allows_empty_or_explicit_zero_change_but_rejects_bad_arithmetic() -> None:
     with pytest.raises(RoleplayResponseError, match="supplied persona baseline"):
         normalize_roleplay_acceptance_response(
             _valid_response(baseline_acceptance_probability=0.44, final_acceptance_probability=0.41),
@@ -882,19 +884,20 @@ def test_normalizer_allows_no_change_but_rejects_mismatch_zero_item_and_unexplai
     assert unchanged["final_acceptance_probability"] == 0.37
     assert unchanged["normalization"]["adjustment_sum"] == 0.0
 
-    with pytest.raises(RoleplayResponseError, match="non-zero signed adjustment"):
-        normalize_roleplay_acceptance_response(
-            _valid_response(
-                adjustments=[{
-                    "dimension": "no material change",
-                    "delta": 0.0,
-                    "evidence": "E1",
-                    "reason": "Nothing changed.",
-                }],
-                final_acceptance_probability=0.37,
-            ),
-            expected_baseline=0.37,
-        )
+    explicit_zero = normalize_roleplay_acceptance_response(
+        _valid_response(
+            adjustments=[{
+                "dimension": "background context",
+                "delta": 0.0,
+                "evidence": "E1",
+                "reason": "This fact does not change willingness.",
+            }],
+            final_acceptance_probability=0.37,
+        ),
+        expected_baseline=0.37,
+    )
+    assert explicit_zero["adjustments"][0]["delta"] == 0.0
+    assert explicit_zero["normalization"]["zero_adjustment_count"] == 1
 
     with pytest.raises(RoleplayResponseError, match="baseline plus signed adjustments"):
         normalize_roleplay_acceptance_response(
@@ -903,25 +906,38 @@ def test_normalizer_allows_no_change_but_rejects_mismatch_zero_item_and_unexplai
         )
 
 
-def test_normalizer_rejects_adjustment_evidence_sign_contradictions() -> None:
+def test_normalizer_audits_legacy_effect_labels_without_retrying_judgement() -> None:
     cases = (
         ("contradictory positive", 0.08, "E1", 0.45),
         ("contradictory negative", -0.06, "E2", 0.31),
     )
     for dimension, delta, evidence, probability in cases:
-        with pytest.raises(RoleplayResponseError, match="same direction"):
-            normalize_roleplay_acceptance_response(
-                _valid_response(
-                    adjustments=[{
-                        "dimension": dimension,
-                        "delta": delta,
-                        "evidence": evidence,
-                        "reason": "The cited evidence points the other way.",
-                    }],
-                    final_acceptance_probability=probability,
-                ),
-                expected_baseline=0.37,
-            )
+        normalized = normalize_roleplay_acceptance_response(
+            _valid_response(
+                adjustments=[{
+                    "dimension": dimension,
+                    "delta": delta,
+                    "evidence": evidence,
+                    "reason": "The cited evidence points the other way.",
+                }],
+                final_acceptance_probability=probability,
+            ),
+            expected_baseline=0.37,
+        )
+        assert normalized["final_acceptance_probability"] == probability
+        assert normalized["normalization"]["evidence_sign_consistent"] is False
+        assert len(normalized["normalization"]["evidence_sign_mismatches"]) == 1
+
+    response = _valid_response()
+    for item in response["evidence"]:
+        item.pop("effect", None)
+    normalized = normalize_roleplay_acceptance_response(
+        response,
+        expected_baseline=0.37,
+    )
+    assert all("effect" not in item for item in normalized["evidence"])
+    assert normalized["normalization"]["redundant_effect_label_count"] == 0
+    assert normalized["normalization"]["evidence_sign_consistent"] is None
 
 
 def test_verified_fact_validator_rejects_false_appliance_overlap_without_reshaping() -> None:
