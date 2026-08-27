@@ -148,6 +148,7 @@ Schema: `energybridge.open_portfolio_planning.v3`.
 Impact evidence schema: `energybridge.candidate_impact.v3`.
 Impact review schema: `energybridge.impact_review_capsule.v1`.
 Flexible-load opportunity schema: `energybridge.flexible_load_opportunities.v1`.
+Decision-epoch schema: `energybridge.decision_epochs.v1`.
 
 Decision-evidence schema: `energybridge.decision_evidence_ledger.v1`. The
 ledger distinguishes a direct household statement made for the current event
@@ -169,6 +170,14 @@ The model-visible version uses a lossless columnar option capsule: every start
 and every dimension remains available in its original order, while repeated
 JSON field names are emitted once. This reduces context cost without pruning
 alternatives or changing their trade-offs.
+
+A companion event-triggered control primitive enumerates future times when new
+observable evidence can appear: VPP boundaries, tariff transitions, device
+availability, ordinary service starts/finishes, and declared service
+deadlines. These epochs are unranked. The model remains free to choose any
+future `next_check_hour` or `null`; the harness neither inserts a fixed cadence
+nor forces another model call. This gives receding-horizon planning a physical
+time structure without encoding one preferred policy.
 
 Adaptive controller and role-play calls that require an object use the
 provider's JSON-object response mode when available, followed by the existing

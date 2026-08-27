@@ -601,7 +601,10 @@ def _adaptive_v3_observable_planning_inputs(
         "required_appliance_action_fields": required_action_fields,
         "supported_plan_fields": {
             "setpoint": "finite thermostat setpoint in degrees C",
-            "next_check_hour": "optional future simulation hour",
+            "next_check_hour": (
+                "optional future simulation hour chosen when new observable evidence is expected; "
+                "professional_decision_epochs are unranked opportunities, and null is valid"
+            ),
             "appliances": "object using the required action fields and device capabilities above",
             "water_heater_action_contract": (
                 "water_heater_preheat must be boolean when the device is present; "
@@ -653,6 +656,22 @@ def _adaptive_v3_observable_planning_inputs(
             "available": False,
             "selection_performed": False,
         }
+    try:
+        from energybridge.harness.energy_tools_v3 import build_decision_epoch_snapshot
+
+        observable_state["professional_decision_epochs"] = (
+            build_decision_epoch_snapshot(
+                observable_state=observable_state,
+                event=observable_event,
+                ordinary_plan=observable_state.get("ordinary_plan") or {},
+            )
+        )
+    except Exception:
+        observable_state["professional_decision_epochs"] = {
+            "available": False,
+            "selection_performed": False,
+            "ranking_performed": False,
+        }
     explicit_constraints = [
         {
             "constraint_id": "family_setpoint_required",
@@ -672,9 +691,10 @@ def _adaptive_v3_observable_planning_inputs(
             "constraint_id": "future_next_check_when_present",
             "kind": "range",
             "path": "/next_check_hour",
-            # Match the actuator/runtime contract exactly: callbacks at or
-            # within 15 minutes are not a meaningful future replan.
-            "min": round(float(sim_h) + 0.250001, 6),
+            # A quarter-hour callback is a valid future checkpoint. Reject
+            # only earlier values; the simulator observes this boundary at
+            # the first reachable timestep.
+            "min": round(float(sim_h) + 0.25, 6),
             "nullable": True,
             "severity": "hard",
             "evidence_paths": ["/observable_state/time/simulation_hour"],
@@ -3005,7 +3025,7 @@ def _adaptive_v3_plan_control_errors(
             next_value = float(next_check)
             if not math.isfinite(next_value):
                 raise ValueError("non-finite")
-            if next_value <= float(sim_h) + 0.25:
+            if next_value < float(sim_h) + 0.25 - 1e-9:
                 errors.append("next_check_hour must be in the future")
             elif next_value > float(total_sim_hours):
                 errors.append("next_check_hour exceeds the simulation horizon")

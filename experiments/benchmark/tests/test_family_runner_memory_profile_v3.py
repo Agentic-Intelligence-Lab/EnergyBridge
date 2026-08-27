@@ -1002,6 +1002,22 @@ def test_adaptive_runtime_contract_rejects_noncanonical_types_hours_and_next_che
         setpoint_max_c=28.0,
     )
     assert "next_check_hour must be a finite number or null" in plan_errors
+    assert fr._adaptive_v3_plan_control_errors(
+        {"setpoint": 27.0, "next_check_hour": 8.25, "appliances": {}},
+        sim_h=8.0,
+        total_sim_hours=24.0,
+        setpoint_min_c=22.0,
+        setpoint_max_c=28.0,
+    ) == []
+    assert "next_check_hour must be in the future" in (
+        fr._adaptive_v3_plan_control_errors(
+            {"setpoint": 27.0, "next_check_hour": 8.249, "appliances": {}},
+            sim_h=8.0,
+            total_sim_hours=24.0,
+            setpoint_min_c=22.0,
+            setpoint_max_c=28.0,
+        )
+    )
 
 
 def test_adaptive_ev_mode_contract_matches_the_appliance_simulator() -> None:
@@ -1277,11 +1293,17 @@ def test_planning_inputs_expose_machine_checked_event_timing_constraints() -> No
     )
 
     by_id = {item["constraint_id"]: item for item in inputs["explicit_constraints"]}
+    epochs = inputs["observable_state"]["professional_decision_epochs"]
+    assert epochs["schema_version"] == "energybridge.decision_epochs.v1"
+    assert epochs["selection_performed"] is False
+    assert epochs["ranking_performed"] is False
+    assert any(row[0] == 42.0 for row in epochs["epoch_rows"])
+    assert any(row[0] == 43.0 for row in epochs["epoch_rows"])
     assert by_id["future_next_check_when_present"] == {
         "constraint_id": "future_next_check_when_present",
         "kind": "range",
         "path": "/next_check_hour",
-        "min": 40.750001,
+        "min": 40.75,
         "nullable": True,
         "severity": "hard",
         "evidence_paths": ["/observable_state/time/simulation_hour"],

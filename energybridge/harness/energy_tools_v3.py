@@ -22,6 +22,7 @@ ENERGY_IMPACT_SCHEMA_VERSION = "energybridge.candidate_impact.v3"
 TARIFF_SNAPSHOT_VERSION = "energybridge.hourly_tariff.v1"
 FLEXIBLE_LOAD_OPPORTUNITY_VERSION = "energybridge.flexible_load_opportunities.v1"
 FLEXIBLE_LOAD_PROMPT_CAPSULE_VERSION = "energybridge.flexible_load_prompt_capsule.v1"
+DECISION_EPOCH_SNAPSHOT_VERSION = "energybridge.decision_epochs.v1"
 
 _SHIFTABLE_DEVICES = ("washer", "dishwasher", "dryer")
 _ACTION_KEYS = {
@@ -118,6 +119,161 @@ def _tariff_map(tariff: Mapping[str, Any] | None) -> tuple[dict[int, float], str
             if 0 <= hour_i <= 23:
                 values[hour_i] = price
     return values, str(tariff.get("unit") or "cost/kWh")[:80]
+
+
+def build_decision_epoch_snapshot(
+    *,
+    observable_state: Mapping[str, Any] | None,
+    event: Mapping[str, Any] | None = None,
+    ordinary_plan: Mapping[str, Any] | None = None,
+    horizon_h: float = 24.0,
+) -> dict[str, Any]:
+    """Expose observable future state-change times without choosing a cadence.
+
+    Event-triggered and receding-horizon controllers normally reconsider a
+    plan when new information can arrive, a tariff interval changes, or a
+    service boundary is reached.  This tool enumerates those times so the base
+    model can decide whether and when another check is useful.  It never ranks
+    epochs, inserts a mandatory callback, or selects a plan.
+    """
+    state = observable_state if isinstance(observable_state, Mapping) else {}
+    event = event if isinstance(event, Mapping) else {}
+    ordinary = ordinary_plan if isinstance(ordinary_plan, Mapping) else {}
+    time_state = state.get("time")
+    time_state = time_state if isinstance(time_state, Mapping) else {}
+    current = _finite(time_state.get("simulation_hour"))
+    if current is None:
+        return {
+            "schema_version": DECISION_EPOCH_SNAPSHOT_VERSION,
+            "available": False,
+            "epoch_columns": ["simulation_hour", "hour_of_day", "signals"],
+            "epoch_rows": [],
+            "selection_performed": False,
+            "ranking_performed": False,
+        }
+    horizon = _finite(horizon_h)
+    horizon = max(0.25, min(48.0, horizon if horizon is not None else 24.0))
+    horizon_end = current + horizon
+    epochs: dict[float, list[dict[str, Any]]] = {}
+
+    def future_absolute(hour_of_day: Any) -> float | None:
+        hod = _finite(hour_of_day)
+        if hod is None:
+            return None
+        absolute = math.floor(current / 24.0) * 24.0 + (hod % 24.0)
+        while absolute <= current + 1e-9:
+            absolute += 24.0
+        return absolute if absolute <= horizon_end + 1e-9 else None
+
+    def add_epoch(absolute_h: Any, signal: dict[str, Any]) -> None:
+        absolute = _finite(absolute_h)
+        if (
+            absolute is None
+            or absolute <= current + 1e-9
+            or absolute > horizon_end + 1e-9
+        ):
+            return
+        key = round(absolute, 6)
+        clean = json.loads(json.dumps(signal, ensure_ascii=False, allow_nan=False))
+        if clean not in epochs.setdefault(key, []):
+            epochs[key].append(clean)
+
+    for kind, key in (("vpp_event_starts", "trigger_h"), ("vpp_event_ends", "end_h")):
+        add_epoch(event.get(key), {
+            "kind": kind,
+            "evidence_path": f"/event/{key}",
+        })
+
+    tariff, tariff_unit = _tariff_map(state.get("hourly_tariff"))
+    if tariff:
+        for hour, price in sorted(tariff.items()):
+            previous = tariff.get((hour - 1) % 24)
+            if previous is None or abs(price - previous) <= 1e-12:
+                continue
+            add_epoch(future_absolute(hour), {
+                "kind": "tariff_interval_changes",
+                "from_price": _round(previous),
+                "to_price": _round(price),
+                "unit": tariff_unit,
+                "evidence_path": f"/observable_state/hourly_tariff/hours/{hour}",
+            })
+
+    devices = state.get("device_capabilities")
+    devices = devices if isinstance(devices, Mapping) else {}
+    for name, raw in devices.items():
+        if not isinstance(raw, Mapping) or raw.get("present") is False:
+            continue
+        for field, kind in (
+            ("earliest_h", "service_window_opens"),
+            ("latest_h", "service_window_closes"),
+            ("arrival_h", "device_becomes_available"),
+            ("departure_h", "service_deadline"),
+            ("bath_required_h", "service_deadline"),
+        ):
+            absolute = future_absolute(raw.get(field))
+            add_epoch(absolute, {
+                "kind": kind,
+                "device": str(name),
+                "evidence_path": f"/observable_state/device_capabilities/{name}/{field}",
+            })
+
+    actions = ordinary.get("appliances")
+    actions = actions if isinstance(actions, Mapping) else {}
+    for name in _SHIFTABLE_DEVICES:
+        start = future_absolute(actions.get(f"{name}_start_h"))
+        if start is None or actions.get(f"{name}_skip") is True:
+            continue
+        add_epoch(start, {
+            "kind": "ordinary_service_starts",
+            "device": name,
+            "evidence_path": f"/ordinary_plan/appliances/{name}_start_h",
+        })
+        duration = _finite((devices.get(name) or {}).get("duration_h"))
+        if duration is not None and duration > 0:
+            add_epoch(start + duration, {
+                "kind": "ordinary_service_finishes",
+                "device": name,
+                "evidence_path": f"/observable_state/device_capabilities/{name}/duration_h",
+            })
+    for name, start_key, end_key in (
+        ("water_heater", "water_heater_preheat_start_h", "water_heater_preheat_end_h"),
+        ("ev", "ev_charge_start_h", "ev_charge_end_h"),
+    ):
+        start = future_absolute(actions.get(start_key))
+        end = future_absolute(actions.get(end_key))
+        if start is not None:
+            add_epoch(start, {
+                "kind": "ordinary_service_starts",
+                "device": name,
+                "evidence_path": f"/ordinary_plan/appliances/{start_key}",
+            })
+        if end is not None:
+            if start is not None and end <= start:
+                end += 24.0
+            add_epoch(end, {
+                "kind": "ordinary_service_finishes",
+                "device": name,
+                "evidence_path": f"/ordinary_plan/appliances/{end_key}",
+            })
+
+    rows = [
+        [absolute, round(absolute % 24.0, 6), signals]
+        for absolute, signals in sorted(epochs.items())
+    ]
+    return json.loads(json.dumps({
+        "schema_version": DECISION_EPOCH_SNAPSHOT_VERSION,
+        "available": bool(rows),
+        "observed_at_simulation_hour": round(current, 6),
+        "horizon_end_simulation_hour": round(horizon_end, 6),
+        "epoch_columns": ["simulation_hour", "hour_of_day", "signals"],
+        "epoch_rows": rows,
+        "selection_performed": False,
+        "ranking_performed": False,
+        "interpretation": (
+            "Rows are unranked opportunities for new observable evidence; "
+            "the model may choose any future checkpoint or no checkpoint."
+        ),
+    }, ensure_ascii=False, allow_nan=False))
 
 
 def _duration_interval(start: float, end: float) -> float:
@@ -1282,11 +1438,13 @@ def evaluate_portfolio_impacts(
 
 
 __all__ = [
+    "DECISION_EPOCH_SNAPSHOT_VERSION",
     "ENERGY_IMPACT_SCHEMA_VERSION",
     "FLEXIBLE_LOAD_OPPORTUNITY_VERSION",
     "FLEXIBLE_LOAD_PROMPT_CAPSULE_VERSION",
     "TARIFF_SNAPSHOT_VERSION",
     "build_flexible_load_opportunity_snapshot",
+    "build_decision_epoch_snapshot",
     "compact_flexible_load_opportunities_for_prompt",
     "compact_portfolio_impacts_for_review",
     "build_hourly_tariff_snapshot",

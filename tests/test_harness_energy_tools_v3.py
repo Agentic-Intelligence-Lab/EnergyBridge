@@ -4,9 +4,11 @@ from copy import deepcopy
 import json
 
 from energybridge.harness.energy_tools_v3 import (
+    DECISION_EPOCH_SNAPSHOT_VERSION,
     ENERGY_IMPACT_SCHEMA_VERSION,
     FLEXIBLE_LOAD_OPPORTUNITY_VERSION,
     build_flexible_load_opportunity_snapshot,
+    build_decision_epoch_snapshot,
     build_hourly_tariff_snapshot,
     compact_flexible_load_opportunities_for_prompt,
     compact_portfolio_impacts_for_review,
@@ -52,6 +54,67 @@ def test_tariff_snapshot_is_compact_complete_and_provider_neutral() -> None:
     assert result["coverage_hours"] == 24
     assert result["hours"][18] == {"hour": 18, "price": 1.18}
     assert "source" not in result
+
+
+def test_decision_epochs_expose_state_changes_without_choosing_replan_time() -> None:
+    state = _state()
+    state["time"] = {"simulation_hour": 16.5, "hour_of_day": 16.5}
+    state["device_capabilities"]["washer"].update({
+        "earliest_h": 8.0,
+        "latest_h": 22.0,
+        "duration_h": 2.0,
+    })
+    state["device_capabilities"]["water_heater"]["bath_required_h"] = 21.0
+    state["device_capabilities"]["ev"].update({
+        "arrival_h": 18.5,
+        "departure_h": 7.5,
+    })
+    state["hourly_tariff"] = build_hourly_tariff_snapshot({
+        hour: (1.0 if hour < 18 else 2.0)
+        for hour in range(24)
+    })
+
+    snapshot = build_decision_epoch_snapshot(
+        observable_state=state,
+        event={"trigger_h": 18.0, "end_h": 19.0},
+        ordinary_plan={
+            "appliances": {"washer_start_h": 19.0, "washer_skip": False}
+        },
+    )
+
+    assert snapshot["schema_version"] == DECISION_EPOCH_SNAPSHOT_VERSION
+    assert snapshot["selection_performed"] is False
+    assert snapshot["ranking_performed"] is False
+    rows = {
+        row[0]: row[2]
+        for row in snapshot["epoch_rows"]
+    }
+    assert {signal["kind"] for signal in rows[18.0]} == {
+        "tariff_interval_changes",
+        "vpp_event_starts",
+    }
+    assert any(
+        signal["kind"] == "device_becomes_available"
+        and signal["device"] == "ev"
+        for signal in rows[18.5]
+    )
+    assert {signal["kind"] for signal in rows[19.0]} >= {
+        "ordinary_service_starts",
+        "vpp_event_ends",
+    }
+    assert any(
+        signal["kind"] == "ordinary_service_finishes"
+        and signal["device"] == "washer"
+        for signal in rows[21.0]
+    )
+    assert any(
+        signal["kind"] == "service_deadline"
+        and signal["device"] == "ev"
+        for signal in rows[31.5]
+    )
+    serialized = json.dumps(snapshot)
+    assert "selected_epoch" not in serialized
+    assert "recommended" not in serialized
 
 
 def test_half_open_event_boundary_does_not_count_action_at_end() -> None:
