@@ -618,7 +618,9 @@ def test_explicit_half_open_event_constraint_rejects_overlap() -> None:
     )
 
     assert overlapping["feasible"] is False
-    assert overlapping["violations"][0]["message"] == "half-open intervals overlap"
+    assert overlapping["violations"][0]["message"].startswith(
+        "half-open intervals overlap forbidden window"
+    )
     assert adjacent["feasible"] is True
 
 
@@ -710,7 +712,9 @@ def test_conditional_disjoint_interval_only_applies_when_action_is_enabled() -> 
 
     assert disabled["feasible"] is True
     assert overlapping["feasible"] is False
-    assert overlapping["violations"][0]["message"] == "half-open intervals overlap"
+    assert overlapping["violations"][0]["message"].startswith(
+        "half-open intervals overlap forbidden window"
+    )
     assert boundary_safe["feasible"] is True
 
 
@@ -767,6 +771,24 @@ def test_cyclic_interval_constraints_cover_overnight_windows() -> None:
     assert safe_overnight["feasible"] is True
     assert too_short["feasible"] is False
     assert too_short["violations"][0]["constraint_id"] == "ev_service_duration"
+
+    exact_minimum = validate_plan_candidate(
+        {
+            "setpoint": 25.0,
+            "appliances": {
+                "ev_charge_start_h": 19.0,
+                "ev_charge_end_h": 22.287720329024676,
+            },
+        },
+        explicit_constraints=[{
+            "constraint_id": "floating_minimum",
+            "kind": "cyclic_interval_duration",
+            "start_path": "/appliances/ev_charge_start_h",
+            "end_path": "/appliances/ev_charge_end_h",
+            "min_duration_h": 3.2877203290246766,
+        }],
+    )
+    assert exact_minimum["feasible"] is True
 
 
 def test_dotted_constraint_paths_are_canonicalized_before_text_redaction() -> None:

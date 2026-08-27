@@ -201,6 +201,54 @@ def test_candidate_level_explanation_reaches_selected_raw_and_executable_plan() 
     assert resolution["selected_raw_plan"]["strategy_explanation"] == explanation
 
 
+def test_selected_plan_carries_method_blind_user_visible_assurance() -> None:
+    inputs = _planning_inputs()
+    inputs["observable_state"].update({
+        "ordinary_plan": {
+            "setpoint": 25.0,
+            "appliances": {"washer_start_h": 18.0, "washer_skip": False},
+        },
+        "device_capabilities": {
+            "ac": {"present": True, "mode": "cooling"},
+            "washer": {
+                "present": True,
+                "service_required_today": True,
+                "earliest_h": 8.0,
+                "latest_h": 22.0,
+                "duration_h": 2.0,
+                "power_kw": 1.5,
+            },
+        },
+        "hourly_tariff": {
+            "unit": "normalized/kWh",
+            "hours": [{"hour": hour, "price": 1.0} for hour in range(24)],
+        },
+    })
+    raw = {
+        "candidate_plans": [{
+            "candidate_id": "assured",
+            "plan": {
+                "setpoint": 26.0,
+                "appliances": {"washer_start_h": 19.0, "washer_skip": False},
+                "reason": "The washer finishes before the household deadline.",
+            },
+        }],
+        "selected_candidate_id": "assured",
+    }
+
+    resolution = fr._adaptive_v3_resolve_planning_response(
+        raw,
+        planning_inputs=inputs,
+    )
+
+    selected = resolution["selected_executable_plan"]
+    washer = selected["projected_service_outcomes"]["devices"]["washer"]
+    assert washer["service_margin_h"] == 1
+    assert washer["vpp_overlap_h"] == 0
+    assert selected["projected_cost"]["unsupported_claims_must_remain_unknown"] is True
+    assert "method" not in json.dumps(selected["projected_service_outcomes"]).lower()
+
+
 def test_model_can_revise_its_own_choice_after_professional_evidence() -> None:
     inputs = _planning_inputs()
     inputs["observable_state"].update({

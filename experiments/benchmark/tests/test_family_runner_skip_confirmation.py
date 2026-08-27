@@ -794,6 +794,52 @@ def test_adaptive_v2_coverage_uses_effective_inherited_actions(monkeypatch) -> N
     assert intrusion["weak_action_coverage"] is False
 
 
+def test_adaptive_verified_service_outcomes_follow_effective_actions(monkeypatch) -> None:
+    monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")
+    intrusion = _vpp_plan_intrusion_metrics(
+        proposed_plan={"setpoint": 23.3, "appliance_actions": {}},
+        default_plan={
+            "setpoint": 24.0,
+            "appliance_actions": {
+                "washer_start_h": 21.0,
+                "washer_skip": False,
+                "water_heater_preheat": True,
+                "water_heater_preheat_start_h": 17.0,
+                "water_heater_preheat_end_h": 22.0,
+                "ev_charge_start_h": 1.0,
+                "ev_charge_end_h": 5.0,
+                "ev_mode": "smart",
+            },
+        },
+        persona_config={},
+        appliance_config={
+            "ac": {"setpoint_preferred_min_c": 24.0, "setpoint_preferred_max_c": 26.0},
+            "washer": {
+                "present": True,
+                "earliest_h": 8.0,
+                "latest_h": 22.0,
+                "duration_h": 2.0,
+            },
+            "water_heater": {"present": True, "bath_required_h": 20.0},
+            "ev": {
+                "present": True,
+                "charger_kw": 7.4,
+                "daily_drive_kwh": 20.0,
+                "departure_h": 7.5,
+            },
+        },
+        event={"id": "vpp1", "trigger_h": 18.0, "end_h": 19.0},
+    )
+
+    services = intrusion["verified_service_outcomes"]
+    assert services["washer"]["within_service_window"] is False
+    assert services["washer"]["service_margin_h"] == -1
+    assert services["water_heater"]["ready_by_declared_deadline"] is False
+    assert services["water_heater"]["readiness_margin_h"] == -2
+    assert services["ev"]["completion_margin_before_departure_h"] == 2.5
+    assert services["ev"]["energy_upper_bound_covers_declared_requirement"] is True
+
+
 @pytest.mark.parametrize("profile", ["legacy_v1", "paper_v1"])
 def test_frozen_profiles_preserve_head_intrusion_shape_and_raw_coverage(
     monkeypatch,

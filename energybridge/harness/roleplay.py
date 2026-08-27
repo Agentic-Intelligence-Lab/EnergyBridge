@@ -279,21 +279,30 @@ _VISIBLE_FACT_KEYS = frozenset({
     "consequence",
     "cost",
     "count",
+    "devices",
+    "declared_daily_energy_requirement_kwh",
     "currency",
     "deadline_h",
     "description",
     "device",
     "duration_h",
     "effect",
+    "estimate_class",
     "enabled",
     "end_h",
     "energy",
     "energy_kwh",
     "expected_benefit",
+    "energy_upper_bound_covers_declared_requirement",
+    "findings",
     "fact",
     "humidity",
     "indoor_temp_c",
+    "interpretation",
+    "kind",
     "location",
+    "limitations",
+    "material_tradeoffs",
     "member_id",
     "member_role",
     "mode",
@@ -307,16 +316,23 @@ _VISIBLE_FACT_KEYS = frozenset({
     "present",
     "price",
     "projected_value",
+    "ready_by_declared_deadline",
+    "readiness_evidence_status",
     "protected_constraints",
     "reason",
     "recommended_actions",
     "required",
+    "severity",
     "savings",
+    "scheduled",
     "setpoint",
     "setpoint_c",
     "skip",
     "start_h",
     "status",
+    "supported_claims",
+    "offer_specific_supported_claims",
+    "unsupported_claims_must_remain_unknown",
     "target",
     "target_soc",
     "temperature_c",
@@ -329,6 +345,8 @@ _VISIBLE_FACT_KEYS = frozenset({
     "wind",
     "why_not",
     "why_request",
+    "within_service_window",
+    "verified_service_outcomes",
 })
 _VISIBLE_FACT_SUFFIXES = (
     "_h",
@@ -720,6 +738,7 @@ def _visible_verified_plan_facts(facts: Mapping[str, Any] | None) -> dict[str, A
         "present_services",
         "specified_services",
         "unspecified_services",
+        "verified_service_outcomes",
     )
     visible = {
         key: _sanitize_visible_tree(source.get(key), text_limit=400)
@@ -735,6 +754,7 @@ def _visible_verified_plan_facts(facts: Mapping[str, Any] | None) -> dict[str, A
                 "fixed_services_modified",
                 "skip_devices",
                 "vpp_conflicts",
+                "verified_service_outcomes",
             }
             and key in source
         )
@@ -897,6 +917,10 @@ def build_roleplay_acceptance_prompts(
         "unchanged ordinary chores are background context unless this offer improves them or answers an earlier concern. Check times and "
         "claims against the event, both plans, and verified_offer_facts; an action "
         "at the exclusive event end is outside the event. Do not invent savings, guarantees, outcomes, failures, or personal details. "
+        "When the offer includes method-blind projections, judge the user-visible assurance rather than the sophistication behind it: "
+        "a meaningful verified service margin, an honestly bounded benefit, or a useful review point can strengthen trust, while a bare "
+        "deadline pass, an unknown outcome presented confidently, or an explanation that exceeds its evidence should not. Treat these "
+        "as contextual evidence, not a checklist, and do not award credit for architecture the household cannot observe. "
         "The final probability is how often this household would accept the unchanged offer in 100 comparable situations. The prior "
         "is a starting point, not a floor. Use short adjustments only for facts that really change willingness—usually 2-4, "
         "or an empty list when nothing does. Baseline plus adjustments must equal the final probability; do not apply hidden clipping "

@@ -878,6 +878,9 @@ Before planning, you may request either one timely household clarification or op
 For a demand-response proposal or another material household change, the selected plan may carry a `strategy_explanation`. Make it brief, natural, household-specific, and traceable to the observed action, profile, event, or memory. Explain meaningful protections, tradeoffs, uncertainty, and user control; quantify a benefit only when the payload supports it. A fluent explanation does not excuse an infeasible or contradictory action."""
     system_prompt += """
 
+Plan for user confidence as an observable service property, not as an acceptance score. When the evidence permits, distinguish merely meeting a deadline from leaving a useful service margin, and distinguish a verified benefit from an unsupported promise. Prefer plans whose explanation can truthfully show what changed, the remaining service or comfort margin, any material tradeoff, and what is still uncertain or can be revisited. These are planning considerations, not a fixed rubric: use only the dimensions that matter for this household and never manufacture a margin, benefit, or control option."""
+    system_prompt += """
+
 The professional flexible-load opportunity table is nonbinding evidence, not a recommendation. It enumerates feasible starts and separate tariff, event-overlap, and routine-shift dimensions without combining them into a score. Use it when it reveals a real alternative, but keep the final timing and tradeoff judgment your own. If an exact fixed-load cost delta versus the ordinary plan is available, you may explain that normalized tariff difference with its unit; never relabel it as a bill payment or incentive. Do not claim offer-specific savings or event benefit when the selected physical plan is unchanged from the ordinary plan."""
     return system_prompt, user_prompt
 
@@ -1245,6 +1248,7 @@ def _adaptive_v3_resolve_planning_response(
         else None
     )
     selected_raw_plan = None
+    selected_impact: dict = {}
     if selected_plan is not None:
         selected_id = final.get("selected_candidate_id")
         for item in (final.get("portfolio_audit") or {}).get("candidate_lifecycles") or []:
@@ -1261,6 +1265,81 @@ def _adaptive_v3_resolve_planning_response(
                     elif isinstance(explanation, str) and explanation.strip():
                         selected_raw_plan["strategy_explanation"] = explanation.strip()
                 break
+        professional_evidence = (
+            (final.get("portfolio_audit") or {}).get("professional_impact_evidence")
+            or {}
+        )
+        selected_impact = next(
+            (
+                deepcopy(item)
+                for item in list(professional_evidence.get("candidate_impacts") or [])
+                if isinstance(item, dict)
+                and str(item.get("candidate_id")) == str(selected_id)
+            ),
+            {},
+        )
+        if selected_impact:
+            device_fields = (
+                "scheduled",
+                "explicitly_skipped",
+                "start_hod",
+                "finish_hod",
+                "within_service_window",
+                "service_margin_h",
+                "ready_by_declared_deadline",
+                "readiness_margin_h",
+                "readiness_evidence_status",
+                "energy_requirement_feasible",
+                "completion_margin_before_departure_h",
+                "deliverable_energy_margin_kwh",
+                "task_completed",
+                "vpp_overlap_h",
+                "uncertainty",
+            )
+            service_projection = {
+                str(name): {
+                    key: deepcopy(card.get(key))
+                    for key in device_fields
+                    if card.get(key) is not None
+                }
+                for name, card in (selected_impact.get("device_impacts") or {}).items()
+                if isinstance(card, dict)
+            }
+            comparison = selected_impact.get("offer_specific_comparison") or {}
+            supported_claims = deepcopy(
+                list(comparison.get("supported_benefit_claims") or [])
+            )
+            hvac = selected_impact.get("hvac_impact") or {}
+            selected_plan["projected_service_outcomes"] = {
+                "devices": service_projection,
+                "material_tradeoffs": deepcopy(selected_impact.get("findings") or []),
+                "limitations": deepcopy(selected_impact.get("limitations") or []),
+            }
+            selected_plan["projected_cost"] = {
+                "offer_specific_supported_claims": supported_claims,
+                "claim_status": comparison.get("benefit_claim_status"),
+                "unsupported_claims_must_remain_unknown": True,
+            }
+            selected_plan["projected_energy"] = {
+                "offer_specific_supported_claims": [
+                    claim for claim in supported_claims
+                    if "energy" in str(claim.get("kind", ""))
+                ],
+                "event_overlap": deepcopy(selected_impact.get("aggregate") or {}),
+            }
+            selected_plan["projected_comfort"] = {
+                key: deepcopy(hvac.get(key))
+                for key in (
+                    "candidate_setpoint_c",
+                    "ordinary_setpoint_c",
+                    "setpoint_delta_c",
+                    "predicted_final_temp_c",
+                    "comfort_violation_c",
+                    "estimate_class",
+                    "rollout_uncertainty",
+                )
+                if hvac.get(key) is not None
+            }
     status = "selected" if selected_plan is not None else "fallback_required"
     memory_capsule = planning_inputs.get("memory")
     memory_capsule = memory_capsule if isinstance(memory_capsule, dict) else {}
@@ -1361,6 +1440,10 @@ def _adaptive_v2_plan_snapshot(plan: dict | None) -> dict:
             "uncertainty",
             "fallback_after_vpp_rejection",
             "objective_source",
+            "projected_comfort",
+            "projected_service_outcomes",
+            "projected_cost",
+            "projected_energy",
         )
         if plan.get(key) not in (None, "", [], {})
     }
@@ -4620,6 +4703,15 @@ def _plan_snapshot_for_gate(plan: dict | None) -> dict:
     }
     if _adaptive_harness_v2() and isinstance(plan.get("strategy_explanation"), dict):
         snapshot["strategy_explanation"] = deepcopy(plan["strategy_explanation"])
+    if _adaptive_harness_v2():
+        for projection_key in (
+            "projected_comfort",
+            "projected_service_outcomes",
+            "projected_cost",
+            "projected_energy",
+        ):
+            if plan.get(projection_key) not in (None, "", [], {}):
+                snapshot[projection_key] = deepcopy(plan[projection_key])
     return snapshot
 
 
@@ -5221,12 +5313,99 @@ def _vpp_plan_intrusion_metrics(
         "weak_action_coverage": bool(weak_action_coverage),
     }
     if adaptive_v2:
+        verified_service_outcomes: dict[str, dict] = {}
+        for service in ("washer", "dishwasher", "dryer"):
+            cfg = (appliance_config or {}).get(service, {}) or {}
+            if not isinstance(cfg, dict) or not cfg.get("present"):
+                continue
+            try:
+                start_h = float(effective_actions.get(f"{service}_start_h"))
+                duration_h = float(cfg.get("duration_h"))
+                earliest_h = float(cfg.get("earliest_h"))
+                latest_h = float(cfg.get("latest_h"))
+                latest_abs = latest_h + (24.0 if latest_h < earliest_h else 0.0)
+                start_abs = start_h + (
+                    24.0 if start_h < earliest_h and latest_abs > 24.0 else 0.0
+                )
+                finish_abs = start_abs + duration_h
+                verified_service_outcomes[service] = {
+                    "start_h": round(start_h % 24.0, 3),
+                    "finish_h": round(finish_abs % 24.0, 3),
+                    "within_service_window": bool(
+                        start_abs >= earliest_h - 1e-9
+                        and finish_abs <= latest_abs + 1e-9
+                    ),
+                    "service_margin_h": round(latest_abs - finish_abs, 3),
+                    "evidence_status": "verified_from_effective_schedule",
+                }
+            except (TypeError, ValueError):
+                verified_service_outcomes[service] = {
+                    "evidence_status": "not_verifiable_from_effective_schedule"
+                }
+
+        wh_cfg = (appliance_config or {}).get("water_heater", {}) or {}
+        if isinstance(wh_cfg, dict) and wh_cfg.get("present"):
+            wh_enabled = effective_actions.get("water_heater_preheat") is True
+            try:
+                wh_end = float(effective_actions.get("water_heater_preheat_end_h"))
+                wh_deadline = float(wh_cfg.get("bath_required_h"))
+            except (TypeError, ValueError):
+                wh_end = wh_deadline = None
+            verified_service_outcomes["water_heater"] = {
+                "ready_by_declared_deadline": (
+                    bool(wh_end <= wh_deadline + 1e-9)
+                    if wh_enabled and wh_end is not None and wh_deadline is not None
+                    else None
+                ),
+                "readiness_margin_h": (
+                    round(wh_deadline - wh_end, 3)
+                    if wh_enabled and wh_end is not None and wh_deadline is not None
+                    else None
+                ),
+                "evidence_status": (
+                    "verified_from_explicit_preheat_schedule"
+                    if wh_enabled and wh_end is not None and wh_deadline is not None
+                    else "not_verified_without_complete_preheat_schedule"
+                ),
+            }
+
+        ev_cfg = (appliance_config or {}).get("ev", {}) or {}
+        if isinstance(ev_cfg, dict) and ev_cfg.get("present"):
+            try:
+                ev_start = float(effective_actions.get("ev_charge_start_h"))
+                ev_end = float(effective_actions.get("ev_charge_end_h"))
+                ev_departure = float(ev_cfg.get("departure_h"))
+                ev_duration = ev_end - ev_start if ev_end > ev_start else ev_end + 24.0 - ev_start
+                departure_abs = ev_departure + (24.0 if ev_departure <= ev_start else 0.0)
+                end_abs = ev_start + ev_duration
+                charger_kw = float(ev_cfg.get("charger_kw"))
+                required_kwh = float(ev_cfg.get("daily_drive_kwh"))
+                verified_service_outcomes["ev"] = {
+                    "completion_margin_before_departure_h": round(
+                        departure_abs - end_abs, 3
+                    ),
+                    "scheduled_grid_energy_upper_bound_kwh": round(
+                        charger_kw * ev_duration, 3
+                    ),
+                    "declared_daily_energy_requirement_kwh": round(required_kwh, 3),
+                    "energy_upper_bound_covers_declared_requirement": bool(
+                        charger_kw * ev_duration + 1e-9 >= required_kwh
+                    ),
+                    "evidence_status": (
+                        "schedule_and_grid_energy_upper_bound_only; actual battery delivery remains uncertain"
+                    ),
+                }
+            except (TypeError, ValueError):
+                verified_service_outcomes["ev"] = {
+                    "evidence_status": "not_verifiable_from_effective_schedule"
+                }
         metrics.update({
             "preferred_min_c": round(pref_min, 3),
             "preference_tolerance_c": round(tol, 3),
             "present_services": sorted(present_services),
             "specified_services": sorted(specified_services),
             "unspecified_services": sorted(unspecified_services),
+            "verified_service_outcomes": verified_service_outcomes,
         })
     return metrics
 
@@ -12154,6 +12333,15 @@ These fields are for auditability and may differ across capable models; do not i
                 print(f"  └{'─'*56}")
             result = {"setpoint": sp, "next_check_hour": nch, "reason": reason,
                     "appliance_actions": appl_actions if isinstance(appl_actions, dict) else {}}
+            if _agent_model_owns_valid_plan(method):
+                for projection_key in (
+                    "projected_comfort",
+                    "projected_service_outcomes",
+                    "projected_cost",
+                    "projected_energy",
+                ):
+                    if data.get(projection_key) not in (None, "", [], {}):
+                        result[projection_key] = deepcopy(data[projection_key])
             if _agent_model_owns_valid_plan(method):
                 validation_reason = "; ".join(hard_errors)[:500] if hard_errors else "hard checks passed"
                 adaptive_lifecycle = _adaptive_v2_record_plan_stage(

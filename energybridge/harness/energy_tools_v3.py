@@ -634,9 +634,14 @@ def compact_portfolio_impacts_for_review(
         "explicitly_skipped",
         "start_hod",
         "finish_hod",
+        "service_margin_h",
         "within_service_window",
         "ready_by_declared_deadline",
+        "readiness_margin_h",
+        "readiness_evidence_status",
         "energy_requirement_feasible",
+        "completion_margin_before_departure_h",
+        "deliverable_energy_margin_kwh",
         "task_completed",
         "scheduled_energy_kwh",
         "energy_upper_bound_kwh",
@@ -888,11 +893,15 @@ def _fixed_device_card(
         latest_abs = latest + (24.0 if latest < earliest else 0.0)
         start_abs = start + (24.0 if start < earliest and latest_abs > 24.0 else 0.0)
         within_window = start_abs >= earliest - 1e-9 and start_abs + duration <= latest_abs + 1e-9
+        service_margin = latest_abs - (start_abs + duration)
+    else:
+        service_margin = None
     overlap = _overlap_hours(start, duration, event_start, event_duration)
     cost, missing = _interval_cost(start, duration, power, tariff)
     card.update({
         "finish_hod": _round(finish % 24.0, 3),
         "within_service_window": within_window,
+        "service_margin_h": _round(service_margin, 3),
         "task_completed": within_window if within_window is not None else True,
         "scheduled_energy_kwh": _round(power * duration) if power is not None else None,
         "vpp_overlap_h": _round(overlap),
@@ -931,7 +940,18 @@ def _water_heater_card(
         ],
     }
     if enabled is False:
-        card.update({"scheduled": False, "energy_upper_bound_kwh": 0.0, "vpp_overlap_h": 0.0, "vpp_overlap_energy_upper_bound_kwh": 0.0})
+        card.update({
+            "scheduled": False,
+            "ready_by_declared_deadline": None,
+            "readiness_margin_h": None,
+            "readiness_evidence_status": "not_verified_without_preheat_or_state_forecast",
+            "energy_upper_bound_kwh": 0.0,
+            "vpp_overlap_h": 0.0,
+            "vpp_overlap_energy_upper_bound_kwh": 0.0,
+            "uncertainty": [
+                "disabling scheduled preheat does not by itself prove hot-water readiness"
+            ],
+        })
         return card
     if enabled is not True or start is None or end is None:
         card.update({"scheduled": False, "uncertainty": ["explicit enable flag and complete preheat interval are required"]})
@@ -945,10 +965,21 @@ def _water_heater_card(
     # wrapped intervals retain an explicitly unknown readiness judgment.
     if deadline is not None and end >= start:
         service_ready = end <= deadline + 1e-9
+    readiness_margin = None
+    if deadline is not None and end is not None and end >= start:
+        readiness_margin = deadline - end
     card.update({
         "scheduled": duration > 0,
         "duration_h": _round(duration, 3),
         "ready_by_declared_deadline": service_ready,
+        "readiness_margin_h": _round(readiness_margin, 3),
+        "readiness_evidence_status": (
+            "verified_by_explicit_schedule"
+            if service_ready is True
+            else "explicit_schedule_misses_deadline"
+            if service_ready is False
+            else "not_verifiable_from_observable_schedule"
+        ),
         "energy_upper_bound_kwh": _round(power * duration) if power is not None else None,
         "vpp_overlap_h": _round(overlap),
         "vpp_overlap_energy_upper_bound_kwh": _round(power * overlap) if power is not None and overlap is not None else None,
@@ -1009,6 +1040,17 @@ def _ev_card(
         soc_required = max(0.0, target_soc - current_soc) * capacity
         if required is None or soc_required > required:
             required, required_basis = soc_required, "target_soc_minus_observed_soc"
+    departure = _finite(capability.get("departure_h"))
+    completion_margin = None
+    if departure is not None:
+        departure_abs = departure + (24.0 if departure <= start else 0.0)
+        end_abs = start + duration
+        completion_margin = departure_abs - end_abs
+    energy_margin = (
+        deliverable - required
+        if deliverable is not None and required is not None
+        else None
+    )
     card.update({
         "scheduled": duration > 0,
         "duration_h": _round(duration, 3),
@@ -1016,6 +1058,8 @@ def _ev_card(
         "required_battery_energy_kwh": _round(required),
         "required_energy_basis": required_basis,
         "energy_requirement_feasible": (deliverable + 1e-9 >= required) if deliverable is not None and required is not None else None,
+        "completion_margin_before_departure_h": _round(completion_margin, 3),
+        "deliverable_energy_margin_kwh": _round(energy_margin),
         "vpp_overlap_h": _round(overlap),
         "vpp_overlap_grid_energy_upper_bound_kwh": _round(charger * overlap) if charger is not None and overlap is not None else None,
         "grid_cost_upper_bound": _round(cost),

@@ -1348,3 +1348,43 @@ def test_roleplay_json_transport_is_adaptive_only(monkeypatch) -> None:
     monkeypatch.setenv("ENERGYBRIDGE_HARNESS_PROFILE", "legacy_v1")
     assert simulator._call_json("system", "user")["data"] == {"ok": True}
     assert calls[-1]["response_format"] is None
+
+
+def test_roleplay_sees_service_margin_and_uncertainty_without_method_credit() -> None:
+    system_prompt, _, payload = build_roleplay_acceptance_prompts(
+        persona_config={"description": "I need laundry finished by 22:00."},
+        proposed_plan={
+            "setpoint": 26,
+            "appliance_actions": {"washer_start_h": 19, "washer_skip": False},
+            "projected_service_outcomes": {
+                "devices": {
+                    "washer": {
+                        "service_margin_h": 1.0,
+                        "within_service_window": True,
+                    },
+                    "water_heater": {
+                        "readiness_evidence_status": "not_verified_without_state_forecast"
+                    },
+                },
+            },
+        },
+        default_plan={"setpoint": 25, "appliance_actions": {}},
+        verified_plan_facts={
+            "verified_service_outcomes": {
+                "washer": {
+                    "within_service_window": False,
+                    "service_margin_h": -1.0,
+                }
+            }
+        },
+    )
+
+    projected = payload["offered_vpp_plan"]["projected_service_outcomes"]
+    assert projected["devices"]["washer"]["service_margin_h"] == 1.0
+    assert "not_verified" in projected["devices"]["water_heater"]["readiness_evidence_status"]
+    assert payload["verified_offer_facts"]["verified_service_outcomes"]["washer"][
+        "within_service_window"
+    ] is False
+    assert "service margin" in system_prompt
+    assert "architecture the household cannot observe" in system_prompt
+    assert "EnergyBridge" not in system_prompt and "HEMA" not in system_prompt

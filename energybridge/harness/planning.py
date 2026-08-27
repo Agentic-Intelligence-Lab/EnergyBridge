@@ -1290,15 +1290,18 @@ def _validate_constraint(
                     constraint.get("max_duration_h", constraint.get("max"))
                 )
                 if (
-                    (minimum is not None and duration < minimum)
-                    or (maximum is not None and duration > maximum)
+                    (minimum is not None and duration < minimum - 1e-9)
+                    or (maximum is not None and duration > maximum + 1e-9)
                 ):
                     violations.append(
                         _violation(
                             constraint,
                             path=f"{start_path},{end_path}",
                             actual={"start": start, "end": end, "duration_h": duration},
-                            message="cyclic interval duration is outside the declared range",
+                            message=(
+                                "cyclic interval duration is outside the declared range "
+                                f"(required minimum={minimum}, maximum={maximum})"
+                            ),
                         )
                     )
                 return violations, patches
@@ -1330,7 +1333,11 @@ def _validate_constraint(
                             constraint,
                             path=f"{start_path},{end_path}",
                             actual={"start": start, "end": end},
-                            message="cyclic half-open interval overlaps forbidden window",
+                            message=(
+                                "cyclic half-open interval overlaps forbidden window "
+                                f"{reference}; end before or at {reference[0]} or start at or after "
+                                f"{reference[1]} to be disjoint"
+                            ),
                         )
                     )
             elif kind in {"disjoint_interval", "disjoint_interval_if_true"} and max(start, reference[0]) < min(end, reference[1]):
@@ -1339,7 +1346,11 @@ def _validate_constraint(
                         constraint,
                         path=f"{start_path},{end_path}",
                         actual={"start": start, "end": end},
-                        message="half-open intervals overlap",
+                        message=(
+                            f"half-open intervals overlap forbidden window {reference}; "
+                            f"end before or at {reference[0]} or start at or after "
+                            f"{reference[1]} to be disjoint"
+                        ),
                     )
                 )
             elif kind == "within_interval" and not (start >= reference[0] and end <= reference[1]):

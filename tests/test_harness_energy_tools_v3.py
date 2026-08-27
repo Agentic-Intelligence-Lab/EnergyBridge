@@ -147,8 +147,45 @@ def test_water_heater_overlap_is_bound_not_fake_exact_energy() -> None:
     wh = result["device_impacts"]["water_heater"]
     assert wh["vpp_overlap_h"] == 1
     assert wh["vpp_overlap_energy_upper_bound_kwh"] == 2
+    assert wh["readiness_margin_h"] == 1
+    assert wh["readiness_evidence_status"] == "verified_by_explicit_schedule"
     assert "scheduled_energy_kwh" not in wh
     assert result["findings"][0]["code"] == "scheduled_load_overlaps_event"
+
+
+def test_service_assurance_exposes_margins_without_inventing_readiness() -> None:
+    state = _state()
+    state["device_capabilities"]["ev"].update({
+        "departure_h": 8,
+        "target_soc": 0.8,
+        "capacity_kwh": 40,
+    })
+    result = evaluate_candidate_impact(
+        {"plan": {
+            "setpoint": 26,
+            "appliances": {
+                "washer_start_h": 19,
+                "washer_skip": False,
+                "water_heater_preheat": False,
+                "ev_mode": "smart",
+                "ev_charge_start_h": 20,
+                "ev_charge_end_h": 2,
+            },
+        }},
+        observable_state=state,
+        event={"trigger_h": 18, "end_h": 19},
+        ordinary_plan={"setpoint": 25, "appliances": {}},
+        tariff=_tariff(),
+    )
+
+    devices = result["device_impacts"]
+    assert devices["washer"]["service_margin_h"] == 1
+    assert devices["water_heater"]["ready_by_declared_deadline"] is None
+    assert devices["water_heater"]["readiness_evidence_status"] == (
+        "not_verified_without_preheat_or_state_forecast"
+    )
+    assert devices["ev"]["completion_margin_before_departure_h"] == 6
+    assert devices["ev"]["deliverable_energy_margin_kwh"] == 25.8
 
 
 def test_fixed_load_cost_integrates_across_hourly_prices() -> None:
