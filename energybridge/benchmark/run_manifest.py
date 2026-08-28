@@ -26,6 +26,7 @@ from energybridge.harness.calibration_v3 import OUTCOME_CALIBRATION_VERSION
 from energybridge.harness.memory_v3 import MEMORY_V3_VERSION
 from energybridge.harness.planning import PLANNING_SCHEMA_VERSION
 from energybridge.harness.profile_v3 import HOUSEHOLD_MODEL_VERSION
+from energybridge.harness.operations_knowledge_v3 import OPERATIONS_KNOWLEDGE_VERSION
 from energybridge.llm.client import STRUCTURED_OUTPUT_TRANSPORT_VERSION
 from energybridge.utils.config import load_llm_config
 
@@ -103,6 +104,7 @@ def _agent_component_schemas(profile: str, method: str) -> dict[str, str | None]
             "decision_evidence_ledger": None,
             "outcome_calibration": None,
             "structured_output_transport": None,
+            "operations_knowledge": None,
         }
     return {
         "profile": HOUSEHOLD_MODEL_VERSION,
@@ -113,6 +115,7 @@ def _agent_component_schemas(profile: str, method: str) -> dict[str, str | None]
         "decision_evidence_ledger": DECISION_EVIDENCE_LEDGER_VERSION,
         "outcome_calibration": OUTCOME_CALIBRATION_VERSION,
         "structured_output_transport": STRUCTURED_OUTPUT_TRANSPORT_VERSION,
+        "operations_knowledge": OPERATIONS_KNOWLEDGE_VERSION,
     }
 
 

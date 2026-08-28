@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from experiments.benchmark import family_runner as fr
+from energybridge.harness.operations_knowledge_v3 import initialize_operations_knowledge
 
 
 def _planning_inputs() -> dict:
@@ -807,6 +808,9 @@ def test_observable_adapter_prefers_session_capsules_and_lists_live_requirements
             "source": "direct_household_clarification",
         }},
         agent_preference_memory={"persona_id": "must-not-be-needed"},
+        agent_operations_knowledge=initialize_operations_knowledge({
+            "washer": {"present": True, "duration_h": 1.0},
+        }),
     )
     inputs = fr._adaptive_v3_observable_planning_inputs(
         loop,
@@ -880,6 +884,47 @@ def test_observable_adapter_prefers_session_capsules_and_lists_live_requirements
     }
     assert washer_options[18.0]["event_overlap_h"] == 1.0
     assert washer_options[19.0]["event_overlap_h"] == 0.0
+    operational = inputs["observable_state"]["operational_knowledge"]
+    assert operational["selection_performed"] is False
+    assert operational["facts"][0]["knowledge_id"] == "washer.declared_cycle_duration"
+
+
+def test_planning_prompt_treats_operational_knowledge_as_revisable_evidence() -> None:
+    inputs = _planning_inputs()
+    inputs["observable_state"]["operational_knowledge"] = {
+        "schema_version": "energybridge.operations_knowledge_capsule.v3",
+        "selection_performed": False,
+        "facts": [{
+            "knowledge_id": "water_heater.initial_duration_probe",
+            "value": 1.0,
+            "unit": "hours",
+            "confidence": 0.35,
+            "status": "advisory",
+        }],
+    }
+    system_prompt, user_prompt = fr._adaptive_v3_planning_prompts(inputs)
+    assert "revisable evidence library, not a policy" in system_prompt
+    assert "Never turn a low-confidence probe into a universal device rule" in system_prompt
+    assert "water_heater.initial_duration_probe" in user_prompt
+
+
+def test_semantic_replan_feedback_surfaces_retrieved_operational_examples() -> None:
+    feedback = fr._adaptive_v3_replan_feedback(
+        {
+            "selection_status": "replan_required",
+            "portfolio_audit": {"candidate_lifecycles": []},
+        },
+        operational_knowledge={
+            "current_decision_notes": [{
+                "device": "water_heater",
+                "kind": "nonbinding_feasible_probe_examples",
+                "examples": [{"start_h": 19.0, "end_h": 20.0}],
+            }],
+        },
+    )
+    retrieved = feedback["retrieved_operational_examples"]
+    assert "Nonbinding examples" in retrieved["usage"]
+    assert retrieved["items"][0]["examples"] == [{"start_h": 19.0, "end_h": 20.0}]
 
 
 def test_hvac_rollout_snapshot_extends_through_visible_event(monkeypatch) -> None:

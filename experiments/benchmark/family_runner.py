@@ -685,6 +685,22 @@ def _adaptive_v3_observable_planning_inputs(
         "demand_context": deepcopy(demand_context or {}),
         "price_context": str(price_context or "")[:8000],
     })
+    if _adaptive_harness_v2():
+        try:
+            from energybridge.harness.operations_knowledge_v3 import (
+                build_operations_knowledge_capsule,
+            )
+
+            observable_state["operational_knowledge"] = build_operations_knowledge_capsule(
+                getattr(loop, "agent_operations_knowledge", {}) or {},
+                event=observable_event,
+                max_facts=12,
+            )
+        except Exception:
+            observable_state["operational_knowledge"] = {
+                "available": False,
+                "selection_performed": False,
+            }
     try:
         from energybridge.harness.energy_tools_v3 import (
             build_flexible_load_opportunity_snapshot,
@@ -933,6 +949,9 @@ Plan for user confidence as an observable service property, not as an acceptance
     system_prompt += """
 
 The professional flexible-load opportunity table is nonbinding evidence, not a recommendation. It enumerates feasible starts and separate tariff, event-overlap, and routine-shift dimensions without combining them into a score. Use it when it reveals a real alternative, but keep the final timing and tradeoff judgment your own. If an exact fixed-load cost delta versus the ordinary plan is available, you may explain that normalized tariff difference with its unit; never relabel it as a bill payment or incentive. Do not claim offer-specific savings or event benefit when the selected physical plan is unchanged from the ordinary plan."""
+    system_prompt += """
+
+The operational-knowledge capsule is a revisable evidence library, not a policy. Consult relevant device facts before choosing durations or service margins. Distinguish observed constraints, weak cold-start probes, and household-specific execution outcomes by their confidence and provenance. You may depart from a knowledge item when current evidence supports doing so; briefly cite the reason. Never turn a low-confidence probe into a universal device rule."""
     return system_prompt, user_prompt
 
 
@@ -1016,12 +1035,17 @@ def _adaptive_v3_answer_clarification(
     return updated, audit, metrics
 
 
-def _adaptive_v3_replan_feedback(evaluation: dict, policy_errors: list[str] | None = None) -> dict:
+def _adaptive_v3_replan_feedback(
+    evaluation: dict,
+    policy_errors: list[str] | None = None,
+    *,
+    operational_knowledge: dict | None = None,
+) -> dict:
     """Expose semantic validation failures without prescribing a replacement."""
     audit = evaluation.get("portfolio_audit") if isinstance(evaluation, dict) else {}
     audit = audit if isinstance(audit, dict) else {}
     lifecycles = audit.get("candidate_lifecycles") or []
-    return {
+    result = {
         "selection_status": evaluation.get("selection_status"),
         "requested_candidate_id": (audit.get("model_selection") or {}).get("requested_candidate_id"),
         "validator_reason": (audit.get("model_selection") or {}).get("validator_reason"),
@@ -1044,6 +1068,21 @@ def _adaptive_v3_replan_feedback(evaluation: dict, policy_errors: list[str] | No
         ][:16],
         "runtime_contract_errors": [str(error)[:500] for error in list(policy_errors or [])[:16]],
     }
+    knowledge = operational_knowledge if isinstance(operational_knowledge, dict) else {}
+    decision_notes = [
+        deepcopy(item)
+        for item in list(knowledge.get("current_decision_notes") or [])[:8]
+        if isinstance(item, dict)
+    ]
+    if decision_notes:
+        result["retrieved_operational_examples"] = {
+            "usage": (
+                "Nonbinding examples retrieved from the operational knowledge layer. "
+                "Use them to repair time arithmetic when applicable; verify every hard constraint."
+            ),
+            "items": decision_notes,
+        }
+    return result
 
 
 def _adaptive_v3_deferred_clarification_request(
@@ -1268,7 +1307,15 @@ def _adaptive_v3_resolve_planning_response(
             break
         try:
             retry_raw = replan_fn(
-                _adaptive_v3_replan_feedback(final, final_policy_errors)
+                _adaptive_v3_replan_feedback(
+                    final,
+                    final_policy_errors,
+                    operational_knowledge=(
+                        (planning_inputs.get("observable_state") or {}).get(
+                            "operational_knowledge"
+                        ) or {}
+                    ),
+                )
             )
             final, final_policy_errors = evaluate(retry_raw)
             attempts.append({
@@ -2557,6 +2604,7 @@ class _FamilyLoop:
         self.agent_household_model: Dict[str, Any] = {}
         self.agent_profile_capsule_by_event_id: Dict[str, dict] = {}
         self.agent_memory_capsule_by_event_id: Dict[str, dict] = {}
+        self.agent_operations_knowledge: Dict[str, Any] = {}
         self.agent_memory_v3_audit: Dict[str, Any] = {}
         self.agent_memory_v3_store_path: Optional[Path] = None
         self.agent_memory_v3_save_allowed: bool = False
@@ -3767,17 +3815,29 @@ def _present_agent_controlled_appliances(appliance_config: dict | None) -> List[
 
 
 def _ev_required_charge_hours(appliance_config: dict | None) -> float:
-    """Conservative EV charge hours needed after daily driving."""
+    """Conservative EV charge hours for the observable departure target."""
     ev_cfg = ((appliance_config or {}).get("ev", {}) or {})
     try:
         charger_kw = max(0.1, float(ev_cfg.get("charger_kw", 7.0)))
         efficiency = max(0.1, float(ev_cfg.get("efficiency", 0.92)))
         daily_drive = max(0.5, float(ev_cfg.get("daily_drive_kwh", 8.0)))
+        soc_contract_complete = all(
+            key in ev_cfg for key in ("capacity_kwh", "target_soc", "min_soc")
+        )
+        capacity_kwh = max(0.5, float(ev_cfg.get("capacity_kwh", 60.0)))
+        target_soc = max(0.0, min(1.0, float(ev_cfg.get("target_soc", 0.8))))
+        min_soc = max(0.0, min(target_soc, float(ev_cfg.get("min_soc", 0.15))))
     except (TypeError, ValueError):
         return 3.0
-    # Add one control timestep plus a small safety margin so the explicit
-    # policy is robust after a prior missed EV target.
-    return min(6.0, max(0.5, daily_drive / (charger_kw * efficiency) + 0.35))
+    # At a post-commute evening decision the car can be near its observable
+    # minimum SOC.  Daily-drive replacement alone is therefore not sufficient
+    # to guarantee the stated departure target.  Add a control-step and
+    # uncertainty reserve so an exact-boundary plan does not miss by rounding.
+    soc_requirement = (
+        (target_soc - min_soc) * capacity_kwh if soc_contract_complete else 0.0
+    )
+    required_kwh = max(daily_drive, soc_requirement)
+    return min(8.0, max(0.5, required_kwh / (charger_kw * efficiency) + 0.5))
 
 
 def _ev_service_window_guidance_text(
@@ -8744,6 +8804,12 @@ def _adaptive_v3_component_audit(loop, event_id: str = "") -> dict:
         "evidence_memory_schema": memory.get("version"),
         "profile_capsule_schema": profile_capsule.get("schema_version"),
         "memory_capsule_schema": memory_capsule.get("memory_version"),
+        "operations_knowledge_schema": (
+            (getattr(loop, "agent_operations_knowledge", {}) or {}).get("schema_version")
+        ),
+        "operations_knowledge_revision": int(
+            (getattr(loop, "agent_operations_knowledge", {}) or {}).get("revision", 0) or 0
+        ),
         "memory_session_state": state.get("memory_session_state", "cold"),
         "load_status": state.get("load_status", "not_requested"),
         "persistence_enabled": bool(state.get("persistence_enabled", False)),
@@ -8843,6 +8909,23 @@ def _init_agent_preference_memory(
             feedback_history=feedback_history,
         )
         loop.agent_household_model = household_model
+        from energybridge.harness.operations_knowledge_v3 import (
+            initialize_operations_knowledge,
+        )
+
+        cold_operations_knowledge = initialize_operations_knowledge(appliance_config or {})
+        loaded_operations_knowledge = memory.get("operations_knowledge")
+        if (
+            isinstance(loaded_operations_knowledge, dict)
+            and loaded_operations_knowledge.get("schema_version")
+            == cold_operations_knowledge.get("schema_version")
+            and loaded_operations_knowledge.get("device_capabilities_fingerprint")
+            == cold_operations_knowledge.get("device_capabilities_fingerprint")
+        ):
+            loop.agent_operations_knowledge = deepcopy(loaded_operations_knowledge)
+        else:
+            loop.agent_operations_knowledge = cold_operations_knowledge
+        memory["operations_knowledge"] = deepcopy(loop.agent_operations_knowledge)
         loop.agent_profile_capsule_by_event_id = {}
         loop.agent_memory_capsule_by_event_id = {}
         loop.agent_memory_v3_store_path = store_path
@@ -9547,6 +9630,48 @@ def _write_agent_preference_memory(loop) -> None:
                     if isinstance(item, dict)
                 ],
             },
+            "operations_knowledge": {
+                "schema_version": (
+                    (getattr(loop, "agent_operations_knowledge", {}) or {}).get(
+                        "schema_version"
+                    )
+                ),
+                "revision": int(
+                    (getattr(loop, "agent_operations_knowledge", {}) or {}).get(
+                        "revision", 0
+                    ) or 0
+                ),
+                "fact_count": len(
+                    list(
+                        (getattr(loop, "agent_operations_knowledge", {}) or {}).get(
+                            "facts"
+                        ) or []
+                    )
+                ),
+                "observation_count": len(
+                    list(
+                        (getattr(loop, "agent_operations_knowledge", {}) or {}).get(
+                            "observations"
+                        ) or []
+                    )
+                ),
+                "learned_facts": [
+                    {
+                        "knowledge_id": item.get("knowledge_id"),
+                        "statement": item.get("statement"),
+                        "confidence": item.get("confidence"),
+                        "value": deepcopy(item.get("value")),
+                        "evidence_count": len(list(item.get("evidence") or [])),
+                    }
+                    for item in list(
+                        (getattr(loop, "agent_operations_knowledge", {}) or {}).get(
+                            "facts"
+                        ) or []
+                    )
+                    if isinstance(item, dict)
+                    and item.get("source") == "observed_execution_outcomes"
+                ],
+            },
         }
         try:
             _adaptive_v3_atomic_private_artifact_write(
@@ -9563,6 +9688,7 @@ def _write_agent_preference_memory(loop) -> None:
                 f"- Save: `{state.get('save_status', 'not_requested')}`",
                 f"- Profile revision: `{model.get('revision', 0)}`",
                 f"- Memory revision: `{memory.get('revision', 0)}`",
+                f"- Operations knowledge revision: `{(getattr(loop, 'agent_operations_knowledge', {}) or {}).get('revision', 0)}`",
                 "",
                 "## Current unknowns",
                 "",
@@ -9931,6 +10057,7 @@ def _update_agent_v3_memory(loop, event_result: dict, feedback_text: str) -> Non
         "member_feedback_summary": event_result.get("member_feedback_summary"),
         "comment": event_result.get("comment"),
         "preference_observations": deepcopy(event_result.get("preference_observations") or []),
+        "appliance_summary": deepcopy(event_result.get("appliance_summary") or {}),
         "planning_evidence": selected_planning_evidence,
     }
     if portfolio_resolution:
@@ -10021,6 +10148,16 @@ def _update_agent_v3_memory(loop, event_result: dict, feedback_text: str) -> Non
         event_context=profile_context,
         feedback=profile_feedback,
     )
+    from energybridge.harness.operations_knowledge_v3 import update_operations_knowledge
+
+    loop.agent_operations_knowledge = update_operations_knowledge(
+        getattr(loop, "agent_operations_knowledge", {}) or {},
+        event_id=event_id,
+        executed_plan=actual_executed if execution_observed else None,
+        outcome=outcome,
+    )
+    updated_memory["operations_knowledge"] = deepcopy(loop.agent_operations_knowledge)
+    loop.agent_preference_memory = updated_memory
     _write_agent_preference_memory(loop)
     component_audit = _adaptive_v3_component_audit(loop, event_id)
     latest_episode = (

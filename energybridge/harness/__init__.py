@@ -76,6 +76,13 @@ from .session_v3 import (
     record_harness_outcome,
     resolve_harness_plan,
 )
+from .operations_knowledge_v3 import (
+    OPERATIONS_CAPSULE_VERSION,
+    OPERATIONS_KNOWLEDGE_VERSION,
+    build_operations_knowledge_capsule,
+    initialize_operations_knowledge,
+    update_operations_knowledge,
+)
 
 __all__ = [
     "RoleplayResponseError",
@@ -136,4 +143,9 @@ __all__ = [
     "prepare_harness_decision",
     "record_harness_outcome",
     "resolve_harness_plan",
+    "OPERATIONS_CAPSULE_VERSION",
+    "OPERATIONS_KNOWLEDGE_VERSION",
+    "build_operations_knowledge_capsule",
+    "initialize_operations_knowledge",
+    "update_operations_knowledge",
 ]
