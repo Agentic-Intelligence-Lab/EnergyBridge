@@ -107,7 +107,7 @@ def _adaptive_v3_safe_fallback_ac_setpoint(appliance_config: dict | None) -> flo
 
     The challenge fallback is intentionally a simple comfort-first household
     routine rather than a hidden optimizer.  Keep an operator override, but
-    clamp it to the household's declared normal comfort band.
+    clamp it to the household's declared comfort-plus-tolerance band.
     """
     ac = (appliance_config or {}).get("ac", {})
     ac = ac if isinstance(ac, dict) else {}
@@ -119,13 +119,18 @@ def _adaptive_v3_safe_fallback_ac_setpoint(appliance_config: dict | None) -> flo
         pref_max = float(ac.get("setpoint_preferred_max_c", 26.0))
     except (TypeError, ValueError):
         pref_max = 26.0
+    try:
+        tolerance = max(0.0, float(ac.get("temp_tolerance_c", 0.0)))
+    except (TypeError, ValueError):
+        tolerance = 0.0
     if pref_max < pref_min:
         pref_min, pref_max = pref_max, pref_min
+    safe_min = pref_min - tolerance
     try:
         requested = float(os.getenv("ENERGYBRIDGE_SAFE_FALLBACK_AC_SETPOINT_C", "24.0"))
     except (TypeError, ValueError):
         requested = 24.0
-    return round(max(pref_min, min(pref_max, requested)), 1)
+    return round(max(safe_min, min(pref_max, requested)), 1)
 
 
 def _agent_model_owns_valid_plan(method: str, *, force_mpc_primary: bool = False) -> bool:

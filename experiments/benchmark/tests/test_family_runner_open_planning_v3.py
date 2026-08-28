@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from pathlib import Path
 from types import SimpleNamespace
 
 from experiments.benchmark import family_runner as fr
@@ -1057,6 +1058,59 @@ def test_service_first_fallback_ac_setpoint_is_configurable_within_comfort_band(
 
     assert configured["setpoint"] == 25.5
     assert clamped["setpoint"] == 24.0
+
+
+def test_all_basic_roles_use_24c_and_vpp_unaware_service_fallback() -> None:
+    expected_conflicts = {
+        "basic_role_a_commuter_price_cooperative": {"dishwasher", "washer", "water_heater"},
+        "basic_role_b_home_comfort_gated": {"washer", "water_heater"},
+        "basic_role_c_irregular_cautious": {"washer", "water_heater"},
+        "basic_role_d_commuter_ideal_dr": {"dishwasher", "washer", "water_heater"},
+        # This caregiver's washer must finish by 18:00, so violating that fixed
+        # service deadline merely to create peak load would not be a safe fallback.
+        "basic_role_e_caregiver_low_dr": {"water_heater"},
+        "basic_role_f_commuter_ev_optimizer": {"ev", "washer", "water_heater"},
+    }
+    persona_root = Path(fr.__file__).resolve().parents[2] / "energybridge" / "roleplay" / "personas"
+
+    for persona_id, expected in expected_conflicts.items():
+        persona_path = next(persona_root.glob(f"{persona_id}.json"))
+        persona = json.loads(persona_path.read_text(encoding="utf-8"))
+        ordinary = fr._adaptive_v3_observable_ordinary_plan(
+            persona["appliances"],
+            current_setpoint=26.0,
+            current_hod=0.0,
+        )
+        actions = ordinary["appliance_actions"]
+        overlaps: set[str] = set()
+        for name in ("washer", "dishwasher", "dryer"):
+            device = persona["appliances"].get(name, {})
+            start = actions.get(f"{name}_start_h")
+            if device.get("present") and start is not None and not actions.get(f"{name}_skip"):
+                if fr._interval_overlaps(
+                    float(start),
+                    float(start) + float(device.get("duration_h", 1.0)),
+                    18.0,
+                    19.0,
+                ):
+                    overlaps.add(name)
+        if actions.get("water_heater_preheat") and fr._interval_overlaps(
+            float(actions["water_heater_preheat_start_h"]),
+            float(actions["water_heater_preheat_end_h"]),
+            18.0,
+            19.0,
+        ):
+            overlaps.add("water_heater")
+        if actions.get("ev_charge_start_h") is not None and fr._interval_overlaps(
+            float(actions["ev_charge_start_h"]),
+            float(actions["ev_charge_end_h"]),
+            18.0,
+            19.0,
+        ):
+            overlaps.add("ev")
+
+        assert ordinary["setpoint"] == 24.0, persona_id
+        assert overlaps == expected, persona_id
 
 
 def test_service_first_fallback_concentrates_role_f_loads_in_evening_peak() -> None:
