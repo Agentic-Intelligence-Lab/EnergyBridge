@@ -522,6 +522,16 @@ def build_run_manifest(
                 method,
             ),
             "force_mpc_primary_without_llm": force_primary,
+            "safe_fallback_profile": (
+                str(
+                    os.getenv(
+                        "ENERGYBRIDGE_SAFE_FALLBACK_PROFILE",
+                        "evening_peak_service_first_v1",
+                    )
+                ).strip().lower()
+                if _uses_adaptive_agent_components(profile, method)
+                else None
+            ),
         },
         "runner_options": _runner_options(
             runner=runner,

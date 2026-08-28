@@ -198,6 +198,22 @@ def test_manifest_fingerprints_optional_thinking_transport(monkeypatch) -> None:
     assert provider_default["fingerprint"] != explicit_non_thinking["fingerprint"]
 
 
+def test_manifest_fingerprints_safe_fallback_profile(monkeypatch) -> None:
+    _stable_environment(monkeypatch)
+    monkeypatch.setenv(
+        "ENERGYBRIDGE_SAFE_FALLBACK_PROFILE",
+        "evening_peak_service_first_v1",
+    )
+    service_first = _persona_manifest()
+
+    monkeypatch.setenv("ENERGYBRIDGE_SAFE_FALLBACK_PROFILE", "ordinary_v1")
+    historical = _persona_manifest()
+
+    assert service_first["harness"]["safe_fallback_profile"] == "evening_peak_service_first_v1"
+    assert historical["harness"]["safe_fallback_profile"] == "ordinary_v1"
+    assert service_first["fingerprint"] != historical["fingerprint"]
+
+
 def test_manifest_records_warm_start_without_memory_store_provenance(monkeypatch) -> None:
     _stable_environment(monkeypatch)
     cold = _persona_manifest()

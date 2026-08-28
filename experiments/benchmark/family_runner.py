@@ -84,6 +84,24 @@ def _adaptive_harness_v2() -> bool:
     return _harness_profile() == "adaptive_v2"
 
 
+def _adaptive_v3_safe_fallback_profile() -> str:
+    """Return the explicit service-safe fallback policy for current runs."""
+    raw = str(
+        os.getenv(
+            "ENERGYBRIDGE_SAFE_FALLBACK_PROFILE",
+            "evening_peak_service_first_v1",
+        )
+    ).strip().lower()
+    aliases = {
+        "ordinary": "ordinary_v1",
+        "ordinary_v1": "ordinary_v1",
+        "service_first": "evening_peak_service_first_v1",
+        "evening_peak": "evening_peak_service_first_v1",
+        "evening_peak_service_first_v1": "evening_peak_service_first_v1",
+    }
+    return aliases.get(raw, raw or "evening_peak_service_first_v1")
+
+
 def _agent_model_owns_valid_plan(method: str, *, force_mpc_primary: bool = False) -> bool:
     """Whether a valid model plan must survive preference-level postprocessing."""
     return (
@@ -1925,12 +1943,71 @@ def _adaptive_v3_observable_ordinary_plan(
         vpp_rejection_event=None,
         current_hod=current_hod,
     )
+    profile = _adaptive_v3_safe_fallback_profile()
+    actions = dict(ordinary.get("appliance_actions", {}) or {})
+    if profile == "evening_peak_service_first_v1":
+        cfg = appliance_config or {}
+        evening_peak_h = 18.0
+        for name in ("washer", "dishwasher", "dryer"):
+            dev = cfg.get(name, {}) if isinstance(cfg.get(name, {}), dict) else {}
+            if not bool(dev.get("present", False)):
+                continue
+            try:
+                earliest = float(dev.get("earliest_h", evening_peak_h))
+                duration = max(0.1, float(dev.get("duration_h", 1.0)))
+                latest = float(dev.get("latest_h", evening_peak_h + duration))
+                latest_start = latest - duration
+                if latest_start < earliest:
+                    continue
+                start_h = max(earliest, min(evening_peak_h, latest_start))
+                actions[f"{name}_start_h"] = round(start_h % 24.0, 3)
+                actions[f"{name}_skip"] = False
+            except (TypeError, ValueError):
+                continue
+
+        wh = cfg.get("water_heater", {}) if isinstance(cfg.get("water_heater", {}), dict) else {}
+        if bool(wh.get("present", False)):
+            try:
+                configured_start = float(
+                    wh.get("normal_start_h", wh.get("pre_heat_window_start_h", 17.0))
+                )
+                configured_end = float(
+                    wh.get("normal_end_h", wh.get("pre_heat_window_end_h", 21.0))
+                )
+                service_deadline = float(wh.get("bath_required_h", configured_end))
+                target_end = max(configured_end, service_deadline)
+                configured_duration = max(1.0, configured_end - configured_start)
+                conservative_duration = min(8.0, max(4.0, configured_duration + 2.0))
+                target_start = max(0.0, target_end - conservative_duration)
+                actions.update(
+                    {
+                        "water_heater_preheat": True,
+                        "water_heater_preheat_start_h": round(target_start, 3),
+                        "water_heater_preheat_end_h": round(min(24.0, target_end), 3),
+                        "water_heater_preheat_temp_c": round(
+                            float(wh.get("normal_temp_c", 60.0)), 1
+                        ),
+                    }
+                )
+            except (TypeError, ValueError):
+                pass
+
+    objective_source = (
+        "observable_service_first_evening_routine_v1"
+        if profile == "evening_peak_service_first_v1"
+        else "observable_ordinary_routine_v3"
+    )
     return {
         "setpoint": ordinary.get("setpoint"),
         "next_check_hour": ordinary.get("next_check_hour"),
-        "reason": "observable ordinary household routine before event consent",
-        "appliance_actions": dict(ordinary.get("appliance_actions", {}) or {}),
-        "objective_source": "observable_ordinary_routine_v3",
+        "reason": (
+            "observable service-first evening routine with conservative hot-water preparation"
+            if profile == "evening_peak_service_first_v1"
+            else "observable ordinary household routine before event consent"
+        ),
+        "appliance_actions": actions,
+        "objective_source": objective_source,
+        "safe_fallback_profile": profile,
     }
 
 
@@ -7137,6 +7214,7 @@ def _fallback_plan_after_vpp_rejection(
             "fallback_after_vpp_rejection": True,
             "fallback_is_vpp_aware": False,
             "fallback_mode": "stored_ordinary_plan",
+            "safe_fallback_profile": default_plan.get("safe_fallback_profile"),
             "fallback_manual_rebound": False,
             "fallback_default_plan": _plan_snapshot_for_gate(default_plan),
             "fallback_daily_plan_gate": daily_gate,
@@ -13957,6 +14035,7 @@ These fields are for auditability and may differ across capable models; do not i
                             "reason": res.get("reason", ""),
                             "appliance_actions": dict(res.get("appliance_actions", {}) or {}),
                             "objective_source": res.get("objective_source", ""),
+                            "safe_fallback_profile": res.get("safe_fallback_profile"),
                             "no_vpp_daily_plan_gate": res.get("no_vpp_daily_plan_gate", {}),
                         }
                     else:
@@ -13985,6 +14064,7 @@ These fields are for auditability and may differ across capable models; do not i
                             "reason": res.get("reason", ""),
                             "appliance_actions": dict(res.get("appliance_actions", {}) or {}),
                             "objective_source": res.get("objective_source", ""),
+                            "safe_fallback_profile": res.get("safe_fallback_profile"),
                             "no_vpp_daily_plan_gate": res.get("no_vpp_daily_plan_gate", {}),
                         }
                 _vpp_acceptance_gate = {}

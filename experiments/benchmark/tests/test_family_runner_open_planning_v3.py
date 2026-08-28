@@ -936,7 +936,7 @@ def test_day_ahead_consent_selects_next_visible_same_day_event() -> None:
     assert fr._adaptive_v3_day_ahead_consent_event(22.0, events) is None
 
 
-def test_observable_ordinary_plan_is_event_free_and_device_derived() -> None:
+def test_observable_service_first_fallback_is_event_free_and_device_derived() -> None:
     ordinary = fr._adaptive_v3_observable_ordinary_plan(
         {
             "ac": {
@@ -965,8 +965,10 @@ def test_observable_ordinary_plan_is_event_free_and_device_derived() -> None:
     assert ordinary["setpoint"] == 25.0
     assert ordinary["appliance_actions"]["washer_start_h"] == 18.0
     assert ordinary["appliance_actions"]["washer_skip"] is False
-    assert ordinary["appliance_actions"]["water_heater_preheat_start_h"] == 18.0
-    assert ordinary["objective_source"] == "observable_ordinary_routine_v3"
+    assert ordinary["appliance_actions"]["water_heater_preheat_start_h"] == 16.0
+    assert ordinary["appliance_actions"]["water_heater_preheat_end_h"] == 20.0
+    assert ordinary["objective_source"] == "observable_service_first_evening_routine_v1"
+    assert ordinary["safe_fallback_profile"] == "evening_peak_service_first_v1"
     assert "vpp" not in ordinary["reason"].lower()
 
 
@@ -999,8 +1001,79 @@ def test_observable_ordinary_plan_is_materialized_once_before_offer() -> None:
 
     assert first is second
     assert second["setpoint"] == 26.0
-    assert second["appliance_actions"]["washer_start_h"] == 19.0
-    assert second["objective_source"] == "observable_ordinary_routine_v3"
+    assert second["appliance_actions"]["washer_start_h"] == 18.0
+    assert second["objective_source"] == "observable_service_first_evening_routine_v1"
+
+
+def test_historical_ordinary_fallback_remains_explicitly_selectable(monkeypatch) -> None:
+    monkeypatch.setenv("ENERGYBRIDGE_SAFE_FALLBACK_PROFILE", "ordinary_v1")
+    ordinary = fr._adaptive_v3_observable_ordinary_plan(
+        {
+            "washer": {
+                "present": True,
+                "preferred_h": 20.0,
+                "earliest_h": 8.0,
+                "latest_h": 22.0,
+                "duration_h": 2.0,
+            },
+            "water_heater": {
+                "present": True,
+                "normal_start_h": 15.0,
+                "normal_end_h": 19.0,
+            },
+        },
+        current_setpoint=26.0,
+        current_hod=0.0,
+    )
+
+    assert ordinary["appliance_actions"]["washer_start_h"] == 20.0
+    assert ordinary["appliance_actions"]["water_heater_preheat_start_h"] == 15.0
+    assert ordinary["objective_source"] == "observable_ordinary_routine_v3"
+    assert ordinary["safe_fallback_profile"] == "ordinary_v1"
+
+
+def test_service_first_fallback_concentrates_role_f_loads_in_evening_peak() -> None:
+    appliances = {
+        "washer": {
+            "present": True,
+            "earliest_h": 8.0,
+            "latest_h": 22.0,
+            "preferred_h": 20.0,
+            "duration_h": 2.0,
+        },
+        "water_heater": {
+            "present": True,
+            "pre_heat_window_start_h": 15.0,
+            "pre_heat_window_end_h": 19.0,
+            "bath_required_h": 20.0,
+        },
+        "ev": {
+            "present": True,
+            "arrival_h": 18.5,
+            "departure_h": 7.5,
+        },
+    }
+    ordinary = fr._adaptive_v3_observable_ordinary_plan(
+        appliances,
+        current_setpoint=26.0,
+        current_hod=0.0,
+    )
+    actions = ordinary["appliance_actions"]
+
+    assert actions["washer_start_h"] == 18.0
+    assert actions["water_heater_preheat_start_h"] == 14.0
+    assert actions["water_heater_preheat_end_h"] == 20.0
+    assert actions["ev_charge_start_h"] == 18.5
+    conflicts = fr._vpp_appliance_conflicts(
+        actions,
+        appliances,
+        {"trigger_h": 18.0, "end_h": 19.0},
+    )
+    assert {item.split(":", 1)[0] for item in conflicts} == {
+        "ev",
+        "washer",
+        "water_heater",
+    }
 
 
 def test_consent_explanation_prefers_the_exact_offered_plan_snapshot() -> None:
