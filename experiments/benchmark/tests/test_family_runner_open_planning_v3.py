@@ -962,7 +962,7 @@ def test_observable_service_first_fallback_is_event_free_and_device_derived() ->
         current_hod=0.25,
     )
 
-    assert ordinary["setpoint"] == 25.0
+    assert ordinary["setpoint"] == 24.0
     assert ordinary["appliance_actions"]["washer_start_h"] == 18.0
     assert ordinary["appliance_actions"]["washer_skip"] is False
     assert ordinary["appliance_actions"]["water_heater_preheat_start_h"] == 16.0
@@ -1000,7 +1000,7 @@ def test_observable_ordinary_plan_is_materialized_once_before_offer() -> None:
     )
 
     assert first is second
-    assert second["setpoint"] == 26.0
+    assert second["setpoint"] == 24.0
     assert second["appliance_actions"]["washer_start_h"] == 18.0
     assert second["objective_source"] == "observable_service_first_evening_routine_v1"
 
@@ -1030,6 +1030,33 @@ def test_historical_ordinary_fallback_remains_explicitly_selectable(monkeypatch)
     assert ordinary["appliance_actions"]["water_heater_preheat_start_h"] == 15.0
     assert ordinary["objective_source"] == "observable_ordinary_routine_v3"
     assert ordinary["safe_fallback_profile"] == "ordinary_v1"
+
+
+def test_service_first_fallback_ac_setpoint_is_configurable_within_comfort_band(
+    monkeypatch,
+) -> None:
+    config = {
+        "ac": {
+            "present": True,
+            "setpoint_preferred_min_c": 24.0,
+            "setpoint_preferred_max_c": 26.0,
+        }
+    }
+    monkeypatch.setenv("ENERGYBRIDGE_SAFE_FALLBACK_AC_SETPOINT_C", "25.5")
+    configured = fr._adaptive_v3_observable_ordinary_plan(
+        config,
+        current_setpoint=26.0,
+        current_hod=0.0,
+    )
+    monkeypatch.setenv("ENERGYBRIDGE_SAFE_FALLBACK_AC_SETPOINT_C", "21.0")
+    clamped = fr._adaptive_v3_observable_ordinary_plan(
+        config,
+        current_setpoint=26.0,
+        current_hod=0.0,
+    )
+
+    assert configured["setpoint"] == 25.5
+    assert clamped["setpoint"] == 24.0
 
 
 def test_service_first_fallback_concentrates_role_f_loads_in_evening_peak() -> None:

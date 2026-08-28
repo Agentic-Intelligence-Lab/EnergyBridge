@@ -102,6 +102,32 @@ def _adaptive_v3_safe_fallback_profile() -> str:
     return aliases.get(raw, raw or "evening_peak_service_first_v1")
 
 
+def _adaptive_v3_safe_fallback_ac_setpoint(appliance_config: dict | None) -> float:
+    """Return the explicit occupied cooling setpoint for the V3 fallback.
+
+    The challenge fallback is intentionally a simple comfort-first household
+    routine rather than a hidden optimizer.  Keep an operator override, but
+    clamp it to the household's declared normal comfort band.
+    """
+    ac = (appliance_config or {}).get("ac", {})
+    ac = ac if isinstance(ac, dict) else {}
+    try:
+        pref_min = float(ac.get("setpoint_preferred_min_c", 24.0))
+    except (TypeError, ValueError):
+        pref_min = 24.0
+    try:
+        pref_max = float(ac.get("setpoint_preferred_max_c", 26.0))
+    except (TypeError, ValueError):
+        pref_max = 26.0
+    if pref_max < pref_min:
+        pref_min, pref_max = pref_max, pref_min
+    try:
+        requested = float(os.getenv("ENERGYBRIDGE_SAFE_FALLBACK_AC_SETPOINT_C", "24.0"))
+    except (TypeError, ValueError):
+        requested = 24.0
+    return round(max(pref_min, min(pref_max, requested)), 1)
+
+
 def _agent_model_owns_valid_plan(method: str, *, force_mpc_primary: bool = False) -> bool:
     """Whether a valid model plan must survive preference-level postprocessing."""
     return (
@@ -1945,8 +1971,10 @@ def _adaptive_v3_observable_ordinary_plan(
     )
     profile = _adaptive_v3_safe_fallback_profile()
     actions = dict(ordinary.get("appliance_actions", {}) or {})
+    fallback_setpoint = ordinary.get("setpoint")
     if profile == "evening_peak_service_first_v1":
         cfg = appliance_config or {}
+        fallback_setpoint = _adaptive_v3_safe_fallback_ac_setpoint(cfg)
         evening_peak_h = 18.0
         for name in ("washer", "dishwasher", "dryer"):
             dev = cfg.get(name, {}) if isinstance(cfg.get(name, {}), dict) else {}
@@ -1998,7 +2026,7 @@ def _adaptive_v3_observable_ordinary_plan(
         else "observable_ordinary_routine_v3"
     )
     return {
-        "setpoint": ordinary.get("setpoint"),
+        "setpoint": fallback_setpoint,
         "next_check_hour": ordinary.get("next_check_hour"),
         "reason": (
             "observable service-first evening routine with conservative hot-water preparation"

@@ -214,6 +214,19 @@ def test_manifest_fingerprints_safe_fallback_profile(monkeypatch) -> None:
     assert service_first["fingerprint"] != historical["fingerprint"]
 
 
+def test_manifest_fingerprints_safe_fallback_ac_setpoint(monkeypatch) -> None:
+    _stable_environment(monkeypatch)
+    monkeypatch.setenv("ENERGYBRIDGE_SAFE_FALLBACK_AC_SETPOINT_C", "24.0")
+    cool = _persona_manifest()
+
+    monkeypatch.setenv("ENERGYBRIDGE_SAFE_FALLBACK_AC_SETPOINT_C", "25.0")
+    mild = _persona_manifest()
+
+    assert cool["harness"]["safe_fallback_ac_setpoint_c"] == 24.0
+    assert mild["harness"]["safe_fallback_ac_setpoint_c"] == 25.0
+    assert cool["fingerprint"] != mild["fingerprint"]
+
+
 def test_manifest_records_warm_start_without_memory_store_provenance(monkeypatch) -> None:
     _stable_environment(monkeypatch)
     cold = _persona_manifest()

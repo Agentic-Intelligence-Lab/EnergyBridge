@@ -61,6 +61,13 @@ def _env_flag(name: str, default: str = "0") -> bool:
     return str(os.getenv(name, default)).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return float(default)
+
+
 def _harness_profile() -> str:
     raw = str(os.getenv("ENERGYBRIDGE_HARNESS_PROFILE", "adaptive_v2")).strip().lower()
     return _HARNESS_PROFILE_ALIASES.get(raw, raw or "adaptive_v2")
@@ -529,6 +536,11 @@ def build_run_manifest(
                         "evening_peak_service_first_v1",
                     )
                 ).strip().lower()
+                if _uses_adaptive_agent_components(profile, method)
+                else None
+            ),
+            "safe_fallback_ac_setpoint_c": (
+                _env_float("ENERGYBRIDGE_SAFE_FALLBACK_AC_SETPOINT_C", 24.0)
                 if _uses_adaptive_agent_components(profile, method)
                 else None
             ),
